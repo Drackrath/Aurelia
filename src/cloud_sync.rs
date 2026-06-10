@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use steam_vent::connection::Connection;
-use steam_vent::proto::steammessages_cloud_steamclient::{
+use steam_vent_proto::steammessages_cloud_steamclient::{
     CCloud_ClientBeginFileUpload_Request, CCloud_ClientBeginFileUpload_Response,
     CCloud_ClientCommitFileUpload_Request, CCloud_ClientCommitFileUpload_Response,
     CCloud_ClientFileDownload_Request, CCloud_ClientFileDownload_Response,

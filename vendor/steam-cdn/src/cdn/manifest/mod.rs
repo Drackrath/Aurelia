@@ -6,7 +6,7 @@ use std::{
     io::{Cursor, Read},
     str,
 };
-use steam_vent::proto::{
+use steam_vent_proto::{
     content_manifest::{ContentManifestMetadata, ContentManifestPayload},
     protobuf::Message,
 };

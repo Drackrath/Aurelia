@@ -1,12 +1,10 @@
 use reqwest::{Client, Response};
 use std::sync::Arc;
-use steam_vent::{
-    proto::steammessages_clientserver_appinfo::{
-        cmsg_client_picsproduct_info_request::AppInfo, CMsgClientPICSAccessTokenRequest,
-        CMsgClientPICSAccessTokenResponse, CMsgClientPICSProductInfoRequest,
-        CMsgClientPICSProductInfoResponse,
-    },
-    Connection, ConnectionTrait,
+use steam_vent::{Connection, ConnectionTrait};
+use steam_vent_proto::steammessages_clientserver_appinfo::{
+    cmsg_client_picsproduct_info_request::AppInfo, CMsgClientPICSAccessTokenRequest,
+    CMsgClientPICSAccessTokenResponse, CMsgClientPICSProductInfoRequest,
+    CMsgClientPICSProductInfoResponse,
 };
 
 use crate::{web_api::content_service::CDNServer, Error};

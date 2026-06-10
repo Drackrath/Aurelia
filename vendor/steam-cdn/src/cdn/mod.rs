@@ -3,14 +3,12 @@ use inner::InnerClient;
 use manifest::DepotManifest;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use steam_vent::{
-    proto::{
-        steammessages_clientserver_2::{
-            CMsgClientGetDepotDecryptionKey, CMsgClientGetDepotDecryptionKeyResponse,
-        },
-        steammessages_contentsystem_steamclient::CContentServerDirectory_GetManifestRequestCode_Request,
+use steam_vent::{Connection, ConnectionTrait};
+use steam_vent_proto::{
+    steammessages_clientserver_2::{
+        CMsgClientGetDepotDecryptionKey, CMsgClientGetDepotDecryptionKeyResponse,
     },
-    Connection, ConnectionTrait,
+    steammessages_contentsystem_steamclient::CContentServerDirectory_GetManifestRequestCode_Request,
 };
 
 use crate::{error::Error, web_api, web_api::content_service::CDNServer};

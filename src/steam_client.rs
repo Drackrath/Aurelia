@@ -24,15 +24,15 @@ use steam_vent::auth::{
     UserProvidedAuthConfirmationHandler,
 };
 use steam_vent::connection::Connection;
-use steam_vent::proto::steammessages_clientserver::CMsgClientGetAppOwnershipTicket;
-use steam_vent::proto::steammessages_clientserver_2::{
+use steam_vent_proto::steammessages_clientserver::CMsgClientGetAppOwnershipTicket;
+use steam_vent_proto::steammessages_clientserver_2::{
     CMsgClientGetDepotDecryptionKey, CMsgClientGetDepotDecryptionKeyResponse,
 };
-use steam_vent::proto::steammessages_clientserver_appinfo::{
+use steam_vent_proto::steammessages_clientserver_appinfo::{
     cmsg_client_picsproduct_info_request, CMsgClientPICSProductInfoRequest,
     CMsgClientPICSProductInfoResponse,
 };
-use steam_vent::proto::steammessages_contentsystem_steamclient::{
+use steam_vent_proto::steammessages_contentsystem_steamclient::{
     CContentServerDirectory_GetCDNAuthToken_Request,
     CContentServerDirectory_GetCDNAuthToken_Response,
     CContentServerDirectory_GetManifestRequestCode_Request,
@@ -40,11 +40,11 @@ use steam_vent::proto::steammessages_contentsystem_steamclient::{
     CContentServerDirectory_GetServersForSteamPipe_Request,
     CContentServerDirectory_GetServersForSteamPipe_Response,
 };
-use steam_vent::proto::steammessages_familygroups_steamclient::{
+use steam_vent_proto::steammessages_familygroups_steamclient::{
     CFamilyGroups_GetFamilyGroupForUser_Request, CFamilyGroups_GetFamilyGroupForUser_Response,
     CFamilyGroups_GetSharedLibraryApps_Request, CFamilyGroups_GetSharedLibraryApps_Response,
 };
-use steam_vent::proto::steammessages_player_steamclient::{
+use steam_vent_proto::steammessages_player_steamclient::{
     CPlayer_GetOwnedGames_Request, CPlayer_GetOwnedGames_Response,
 };
 use steam_vent::{ConnectionError, ConnectionTrait, ServerList};
@@ -259,7 +259,7 @@ impl SteamClient {
         let mut request = CMsgClientGetAppOwnershipTicket::new();
         request.set_app_id(appid);
 
-        let response: steam_vent::proto::steammessages_clientserver::CMsgClientGetAppOwnershipTicketResponse =
+        let response: steam_vent_proto::steammessages_clientserver::CMsgClientGetAppOwnershipTicketResponse =
             connection
                 .job(request)
                 .await
@@ -527,7 +527,7 @@ impl SteamClient {
     where
         F: FnMut(&str),
     {
-        use steam_vent::proto::steammessages_auth_steamclient::{
+        use steam_vent_proto::steammessages_auth_steamclient::{
             CAuthentication_BeginAuthSessionViaQR_Request,
             CAuthentication_BeginAuthSessionViaQR_Response,
             CAuthentication_PollAuthSessionStatus_Request,

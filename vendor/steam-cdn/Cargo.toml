@@ -77,7 +77,12 @@ features = ["derive"]
 version = "0.10"
 
 [dependencies.steam-vent]
-version = "0.4"
+version = "0.5"
+
+# Since steam-vent 0.5 no longer re-exports the proto types as `steam_vent::proto`,
+# depend on the proto crate directly.
+[dependencies.steam-vent-proto]
+version = "=0.5.2"
 
 [dependencies.thiserror]
 version = "2.0"
