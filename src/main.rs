@@ -62,6 +62,11 @@ enum Command {
         /// Filter by case-insensitive substring of the game name.
         #[arg(short, long)]
         search: Option<String>,
+        /// Show an ONLINE column indicating whether each game appears to require
+        /// an online connection (inferred from Steam store categories). This
+        /// fetches PICS appinfo per game, so it is slower than a plain listing.
+        #[arg(long)]
+        online: bool,
     },
     /// Show account details for the logged-in user.
     Account,
@@ -173,7 +178,8 @@ async fn main() {
 
     if let Err(err) = run(cli).await {
         if json {
-            print_json(&serde_json::json!({ "error": format!("{err:#}") }));
+            // Single line so it stays valid in the NDJSON streams (e.g. `install`).
+            print_json_line(&serde_json::json!({ "error": format!("{err:#}") }));
         } else {
             eprintln!("Error: {err:#}");
         }
@@ -194,7 +200,11 @@ async fn run(cli: Cli) -> Result<()> {
             code,
         } => cmd_login(username, password, guard, qr, code, json).await,
         Command::Logout => cmd_logout(json).await,
-        Command::List { installed, search } => cmd_list(installed, search, json).await,
+        Command::List {
+            installed,
+            search,
+            online,
+        } => cmd_list(installed, search, online, json).await,
         Command::Account => cmd_account(json).await,
         Command::Install {
             app_id,
@@ -240,6 +250,14 @@ async fn run(cli: Cli) -> Result<()> {
 /// Print a JSON value to stdout (pretty-printed).
 fn print_json(value: &serde_json::Value) {
     match serde_json::to_string_pretty(value) {
+        Ok(s) => println!("{s}"),
+        Err(_) => println!("{{}}"),
+    }
+}
+
+/// Print a JSON value as a single compact line (for NDJSON streams).
+fn print_json_line(value: &serde_json::Value) {
+    match serde_json::to_string(value) {
         Ok(s) => println!("{s}"),
         Err(_) => println!("{{}}"),
     }
@@ -319,6 +337,7 @@ fn merge_family_shared(games: &mut Vec<LibraryGame>, shared: Vec<SharedApp>) {
             active_branch: "public".to_string(),
             is_owned: false,
             is_family_shared: true,
+            online_required: None,
         });
     }
 }
@@ -445,7 +464,12 @@ async fn cmd_logout(json: bool) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_list(installed: bool, search: Option<String>, json: bool) -> Result<()> {
+async fn cmd_list(
+    installed: bool,
+    search: Option<String>,
+    online: bool,
+    json: bool,
+) -> Result<()> {
     let mut client = restored_client().await?;
     let mut games = load_library(&mut client).await;
 
@@ -470,6 +494,26 @@ async fn cmd_list(installed: bool, search: Option<String>, json: bool) -> Result
     }
     games.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
 
+    // Resolve the "online required" status only when requested: it needs a PICS
+    // appinfo fetch per game, which is too costly to do on every `list`.
+    if online {
+        if client.is_authenticated() && !client.is_offline() {
+            tracing::info!("Resolving online-required status for {} game(s) ...", games.len());
+            for g in &mut games {
+                match client.fetch_online_required(g.app_id).await {
+                    Ok(required) => g.online_required = Some(required),
+                    Err(e) => {
+                        tracing::warn!("could not determine online-required for {}: {e:#}", g.app_id);
+                    }
+                }
+            }
+        } else {
+            tracing::warn!(
+                "--online needs an authenticated, online session; ONLINE column will be unknown"
+            );
+        }
+    }
+
     if json {
         println!("{}", serde_json::to_string_pretty(&games)?);
         return Ok(());
@@ -480,7 +524,14 @@ async fn cmd_list(installed: bool, search: Option<String>, json: bool) -> Result
         return Ok(());
     }
 
-    println!("{:>9}  {:<10}  {:<13}  NAME", "APPID", "STATUS", "LICENSE");
+    if online {
+        println!(
+            "{:>9}  {:<10}  {:<13}  {:<7}  NAME",
+            "APPID", "STATUS", "LICENSE", "ONLINE"
+        );
+    } else {
+        println!("{:>9}  {:<10}  {:<13}  NAME", "APPID", "STATUS", "LICENSE");
+    }
     for g in &games {
         let status = if g.is_installed {
             if g.update_available {
@@ -503,10 +554,22 @@ async fn cmd_list(installed: bool, search: Option<String>, json: bool) -> Result
         } else {
             String::new()
         };
-        println!(
-            "{:>9}  {:<10}  {:<13}  {}{}",
-            g.app_id, status, license, g.name, branch
-        );
+        if online {
+            let online_col = match g.online_required {
+                Some(true) => "yes",
+                Some(false) => "no",
+                None => "?",
+            };
+            println!(
+                "{:>9}  {:<10}  {:<13}  {:<7}  {}{}",
+                g.app_id, status, license, online_col, g.name, branch
+            );
+        } else {
+            println!(
+                "{:>9}  {:<10}  {:<13}  {}{}",
+                g.app_id, status, license, g.name, branch
+            );
+        }
     }
 
     let shared = games.iter().filter(|g| g.is_family_shared).count();
@@ -625,7 +688,8 @@ async fn cmd_install(
     }
 
     if json {
-        print_json(&serde_json::json!({
+        print_json_line(&serde_json::json!({
+            "event": "result",
             "app_id": app_id,
             "status": "installed",
             "dlc": is_dlc,
@@ -1143,29 +1207,40 @@ fn cmd_config_protons(json: bool) -> Result<()> {
 }
 
 /// Consume a download/verify progress stream, rendering it to the terminal.
-/// In JSON mode the live progress is suppressed; the caller prints a final result.
+/// In JSON mode each update is emitted as a compact NDJSON line (one object per
+/// line) on stdout; the caller still prints the final result object afterward.
 async fn drive_progress(
     mut rx: tokio::sync::mpsc::Receiver<DownloadProgress>,
     json: bool,
 ) -> Result<()> {
+    // De-duplicate identical consecutive JSON events (the reporter ticks on a timer,
+    // so it would otherwise repeat e.g. "0/0" lines while a manifest is being fetched).
+    let mut last: Option<(u8, u64, u64)> = None;
     while let Some(p) = rx.recv().await {
         match p.state {
             DownloadProgressState::Queued => {
-                if !json {
+                if json {
+                    emit_progress_json("queued", &p, &mut last);
+                } else {
                     println!("Queued ...");
                 }
             }
             DownloadProgressState::Downloading => {
-                if !json {
+                if json {
+                    emit_progress_json("downloading", &p, &mut last);
+                } else {
                     print_progress("Downloading", &p);
                 }
             }
             DownloadProgressState::Verifying => {
-                if !json {
+                if json {
+                    emit_progress_json("verifying", &p, &mut last);
+                } else {
                     print_progress("Verifying", &p);
                 }
             }
             DownloadProgressState::Completed => {
+                // The caller emits the terminal result object; nothing more here.
                 if !json {
                     println!("\nDone.");
                 }
@@ -1182,16 +1257,66 @@ async fn drive_progress(
     Ok(())
 }
 
-fn print_progress(phase: &str, p: &DownloadProgress) {
-    let pct = if p.total_bytes > 0 {
-        (p.bytes_downloaded as f64 / p.total_bytes as f64) * 100.0
+/// Percentage (one decimal) of `done` out of `total`, 0 when total is unknown.
+fn percent_of(done: u64, total: u64) -> f64 {
+    if total > 0 {
+        ((done as f64 / total as f64) * 1000.0).round() / 10.0
     } else {
         0.0
+    }
+}
+
+/// Emit one compact NDJSON progress event, skipping it if identical to the last.
+/// Reports both the whole-app progress (`percent`) and the current depot's progress
+/// (`depot_percent`).
+fn emit_progress_json(state: &str, p: &DownloadProgress, last: &mut Option<(u8, u64, u64)>) {
+    // Cheap discriminator for the state so we can dedupe (state, overall, depot).
+    let state_key = match state {
+        "queued" => 0u8,
+        "downloading" => 1,
+        "verifying" => 2,
+        _ => 3,
     };
-    print!(
-        "\r{phase}: {pct:5.1}%  {}/{} bytes  {}",
-        p.bytes_downloaded, p.total_bytes, p.current_file
-    );
+    let key = (state_key, p.bytes_downloaded, p.depot_bytes_downloaded);
+    if *last == Some(key) {
+        return;
+    }
+    *last = Some(key);
+
+    let value = serde_json::json!({
+        "event": "progress",
+        "state": state,
+        // Whole-app (all depots) progress.
+        "bytes_downloaded": p.bytes_downloaded,
+        "total_bytes": p.total_bytes,
+        "percent": percent_of(p.bytes_downloaded, p.total_bytes),
+        // Current depot progress.
+        "depot_id": p.depot_id,
+        "depot_bytes_downloaded": p.depot_bytes_downloaded,
+        "depot_total_bytes": p.depot_total_bytes,
+        "depot_percent": percent_of(p.depot_bytes_downloaded, p.depot_total_bytes),
+        "file": p.current_file,
+    });
+    // Compact single line so the whole --json stream is valid NDJSON.
+    if let Ok(s) = serde_json::to_string(&value) {
+        println!("{s}");
+    }
+}
+
+fn print_progress(phase: &str, p: &DownloadProgress) {
+    let overall = percent_of(p.bytes_downloaded, p.total_bytes);
+    if p.depot_id != 0 {
+        let depot = percent_of(p.depot_bytes_downloaded, p.depot_total_bytes);
+        print!(
+            "\r{phase}: {overall:5.1}% overall  {}/{} bytes  | depot {}: {depot:5.1}%   ",
+            p.bytes_downloaded, p.total_bytes, p.depot_id
+        );
+    } else {
+        print!(
+            "\r{phase}: {overall:5.1}%  {}/{} bytes  {}",
+            p.bytes_downloaded, p.total_bytes, p.current_file
+        );
+    }
     let _ = std::io::stdout().flush();
 }
 

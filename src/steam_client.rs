@@ -838,9 +838,8 @@ impl SteamClient {
             let _ = tx
                 .send(DownloadProgress {
                     state: DownloadProgressState::Queued,
-                    bytes_downloaded: 0,
-                    total_bytes: 0,
                     current_file: String::new(),
+                    ..Default::default()
                 })
                 .await;
 
@@ -865,9 +864,8 @@ impl SteamClient {
                         let _ = tx
                             .send(DownloadProgress {
                                 state: DownloadProgressState::Failed,
-                                bytes_downloaded: 0,
-                                total_bytes: 0,
                                 current_file: format!("failed requesting appinfo: {e}"),
+                                ..Default::default()
                             })
                             .await;
                         return;
@@ -879,9 +877,8 @@ impl SteamClient {
                     let _ = tx
                         .send(DownloadProgress {
                             state: DownloadProgressState::Failed,
-                            bytes_downloaded: 0,
-                            total_bytes: 0,
                             current_file: "missing appinfo payload".to_string(),
+                            ..Default::default()
                         })
                         .await;
                     return;
@@ -894,6 +891,12 @@ impl SteamClient {
 
 
             let mut selections = Vec::new();
+            // Build id of the installed content (from PICS), recorded in the appmanifest
+            // so the Steam launcher sees the install as current and doesn't re-download.
+            let mut build_id: Option<String> = None;
+            // Sum of all selected depots' max (uncompressed) sizes — the whole-app total
+            // used to report overall download progress across depots.
+            let mut grand_total_bytes: u64 = 0;
 
             let mut has_windows = false;
             if let Ok(map) = parse_pics_product_info(appinfo_vdf_bytes) {
@@ -911,6 +914,13 @@ impl SteamClient {
                                 .and_then(|o| o.get("depots"))
                         })
                     };
+
+                    // depots -> branches -> public -> buildid
+                    build_id = depots_val
+                        .and_then(|d| d.get_obj(&["branches", "public"]))
+                        .and_then(|b| b.get("buildid"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
 
                     if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
                         for (key, value) in depots.iter() {
@@ -951,6 +961,21 @@ impl SteamClient {
 
                                     if is_allowed {
                                         if let Some(m_id) = map.get(&depot_id_u64) {
+                                            // Uncompressed size for this depot. Prefer the
+                                            // per-manifest size (present even when the
+                                            // depot-level "maxsize" is absent/zero).
+                                            grand_total_bytes += value
+                                                .get_obj(&["manifests", "public"])
+                                                .and_then(|m| m.get("size"))
+                                                .and_then(|v| v.as_str())
+                                                .and_then(|s| s.parse::<u64>().ok())
+                                                .or_else(|| {
+                                                    value
+                                                        .get("maxsize")
+                                                        .and_then(|v| v.as_str())
+                                                        .and_then(|s| s.parse::<u64>().ok())
+                                                })
+                                                .unwrap_or(0);
                                             selections.push(ManifestSelection {
                                                 app_id: appid,
                                                 depot_id: d_id,
@@ -979,9 +1004,8 @@ impl SteamClient {
                 let _ = tx
                     .send(DownloadProgress {
                         state: DownloadProgressState::Failed,
-                        bytes_downloaded: 0,
-                        total_bytes: 0,
                         current_file: msg.to_string(),
+                        ..Default::default()
                     })
                     .await;
                 return;
@@ -990,9 +1014,9 @@ impl SteamClient {
             let _ = tx
                 .send(DownloadProgress {
                     state: DownloadProgressState::Downloading,
-                    bytes_downloaded: 0,
-                    total_bytes: 0,
+                    total_bytes: grand_total_bytes,
                     current_file: format!("starting download of {} depots", selections.len()),
+                    ..Default::default()
                 })
                 .await;
 
@@ -1003,9 +1027,89 @@ impl SteamClient {
                 state.app_id = appid;
                 state.app_name = game_name.clone();
                 state.downloaded_bytes = 0;
-                state.total_bytes = 0; // We'll update this once we have manifests
+                // Whole-app total (all selected depots), so progress is reported against
+                // the full install size rather than just the current depot.
+                state.total_bytes = grand_total_bytes;
                 state.status_text = format!("Initializing download for {}...", game_name);
             }
+
+            // Register the install start with Steam: write an "update required"
+            // appmanifest up front so the launcher sees the app as installing rather
+            // than missing. (Skipped for DLC, whose content lives in the base game's
+            // manifest — overwriting that here would mark the base game for re-download.)
+            if dlc_appid.is_none() {
+                if let Err(e) = SteamClient::write_appmanifest(
+                    &manifest_path,
+                    appid,
+                    &game_name,
+                    &installdir,
+                    Vec::new(),
+                    build_id.as_deref(),
+                    false,
+                ) {
+                    tracing::warn!("failed writing initial appmanifest for app {appid}: {e}");
+                } else {
+                    tracing::info!(
+                        "Registered install start with Steam for app {appid} (buildid {})",
+                        build_id.as_deref().unwrap_or("0")
+                    );
+                }
+            }
+
+            // Periodically forward the live byte counters over the channel. The
+            // download callbacks only mutate the shared state; this reporter is what
+            // turns that into the progress the CLI renders.
+            let progress_tx = tx.clone();
+            let progress_state = shared_state_clone.clone();
+            tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(std::time::Duration::from_millis(250));
+                loop {
+                    ticker.tick().await;
+                    let snapshot = match progress_state.read() {
+                        Ok(s) => Some((
+                            s.is_downloading,
+                            s.downloaded_bytes,
+                            s.total_bytes,
+                            s.status_text.clone(),
+                            s.depot_id,
+                            s.depot_downloaded_bytes,
+                            s.depot_total_bytes,
+                        )),
+                        Err(_) => None,
+                    };
+                    let Some((
+                        downloading,
+                        downloaded,
+                        total,
+                        status,
+                        depot_id,
+                        depot_downloaded,
+                        depot_total,
+                    )) = snapshot
+                    else {
+                        break;
+                    };
+                    if !downloading {
+                        break;
+                    }
+                    // Stop if the receiver is gone (terminal message already consumed).
+                    if progress_tx
+                        .send(DownloadProgress {
+                            state: DownloadProgressState::Downloading,
+                            bytes_downloaded: downloaded,
+                            total_bytes: total,
+                            current_file: status,
+                            depot_id,
+                            depot_bytes_downloaded: depot_downloaded,
+                            depot_total_bytes: depot_total,
+                        })
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            });
 
             // 2. Fetch Content Servers via Service
             tracing::info!("Fetching Content Servers for AppID: {}...", appid);
@@ -1015,9 +1119,8 @@ impl SteamClient {
                     let _ = tx
                         .send(DownloadProgress {
                             state: DownloadProgressState::Failed,
-                            bytes_downloaded: 0,
-                            total_bytes: 0,
                             current_file: format!("Failed to fetch content servers: {}", e),
+                            ..Default::default()
                         })
                         .await;
                     return;
@@ -1033,6 +1136,13 @@ impl SteamClient {
                     selection.depot_id,
                     selection.manifest_id
                 );
+                if let Ok(mut state) = shared_state_clone.write() {
+                    state.status_text = format!("Downloading depot {}", selection.depot_id);
+                    // Reset the current-depot counters so per-depot progress restarts.
+                    state.depot_id = selection.depot_id;
+                    state.depot_downloaded_bytes = 0;
+                    state.depot_total_bytes = 0;
+                }
 
                 let key = match client_clone.get_depot_key(appid, selection.depot_id).await {
                     Ok(k) => k,
@@ -1112,17 +1222,27 @@ impl SteamClient {
                 let state_for_closure = shared_state_clone.clone();
                 let on_progress = Arc::new(move |bytes: u64| {
                     if let Ok(mut state) = state_for_closure.write() {
+                        // Overall (whole app) and current-depot counters.
                         state.downloaded_bytes += bytes;
+                        state.depot_downloaded_bytes += bytes;
                     }
                 });
 
                 let state_for_manifest = shared_state_clone.clone();
                 let depot_size = Arc::new(std::sync::atomic::AtomicU64::new(0));
                 let size_clone = depot_size.clone();
+                let grand_total_fallback = grand_total_bytes;
                 let on_manifest = Arc::new(move |total_bytes: u64| {
                     size_clone.store(total_bytes, std::sync::atomic::Ordering::SeqCst);
                     if let Ok(mut state) = state_for_manifest.write() {
-                        state.total_bytes += total_bytes;
+                        // The manifest gives this depot's exact uncompressed size.
+                        state.depot_total_bytes = total_bytes;
+                        // If PICS carried no maxsize for the whole app, fall back to
+                        // accumulating per-depot totals so overall progress still has a
+                        // denominator.
+                        if grand_total_fallback == 0 {
+                            state.total_bytes += total_bytes;
+                        }
                     }
                 });
 
@@ -1186,12 +1306,11 @@ impl SteamClient {
                     let _ = tx
                         .send(DownloadProgress {
                             state: DownloadProgressState::Failed,
-                            bytes_downloaded: 0,
-                            total_bytes: 0,
                             current_file: format!(
                                 "Failed to download depot {} from all available servers",
                                 selection.depot_id
                             ),
+                            ..Default::default()
                         })
                         .await;
                     success = false;
@@ -1215,10 +1334,17 @@ impl SteamClient {
                         &game_name,
                         &installdir,
                         successful_depots,
+                        build_id.as_deref(),
+                        true,
                     )
                 };
                 if let Err(err) = manifest_result {
                     tracing::warn!("failed updating appmanifest for {}: {}", appid, err);
+                } else if dlc_appid.is_none() {
+                    tracing::info!(
+                        "Wrote appmanifest for app {appid}: fully installed, buildid {}",
+                        build_id.as_deref().unwrap_or("0")
+                    );
                 }
                 let _ = tx
                     .send(DownloadProgress {
@@ -1226,6 +1352,7 @@ impl SteamClient {
                         bytes_downloaded: 1,
                         total_bytes: 1,
                         current_file: "completed".to_string(),
+                        ..Default::default()
                     })
                     .await;
             } else {
@@ -1866,6 +1993,50 @@ impl SteamClient {
         })
     }
 
+    /// Fetch a single app's PICS appinfo and infer whether it appears to require
+    /// an online connection to play. Steam exposes no explicit flag for this, so
+    /// the answer is derived from the app's store categories — see
+    /// [`category_online_required`]. Requires an active Steam connection.
+    pub async fn fetch_online_required(&self, appid: u32) -> Result<bool> {
+        let connection = self
+            .connection
+            .as_ref()
+            .context("steam connection not initialized")?;
+
+        let mut request = CMsgClientPICSProductInfoRequest::new();
+        request
+            .apps
+            .push(cmsg_client_picsproduct_info_request::AppInfo {
+                appid: Some(appid),
+                ..Default::default()
+            });
+
+        let response: CMsgClientPICSProductInfoResponse = connection
+            .job(request)
+            .await
+            .context("failed requesting appinfo product info for online-required check")?;
+
+        let app = response
+            .apps
+            .iter()
+            .find(|entry| entry.appid() == appid)
+            .ok_or_else(|| anyhow!("missing appinfo payload for app {appid}"))?;
+
+        let raw_vdf = String::from_utf8_lossy(app.buffer()).to_string();
+        let parsed: AppInfoRoot =
+            parse_appinfo(&raw_vdf).context("failed to parse product info VDF")?;
+
+        let common = parsed
+            .appinfo
+            .as_ref()
+            .and_then(|a| a.common.as_ref())
+            .or(parsed.common.as_ref());
+
+        Ok(common
+            .map(|c| category_online_required(&c.category))
+            .unwrap_or(false))
+    }
+
     pub async fn get_product_info(&mut self, appid: u32, prefer_proton: bool) -> Result<Vec<LaunchInfo>> {
         let connection = self
             .connection
@@ -2052,13 +2223,12 @@ impl SteamClient {
             let _ = tx
                 .send(DownloadProgress {
                     state: DownloadProgressState::Queued,
-                    bytes_downloaded: 0,
-                    total_bytes: 0,
                     current_file: if verify_mode {
                         "verifying installed chunks".to_string()
                     } else {
                         "resolving latest manifest".to_string()
                     },
+                    ..Default::default()
                 })
                 .await;
 
@@ -2084,9 +2254,8 @@ impl SteamClient {
                 let _ = tx
                     .send(DownloadProgress {
                         state: DownloadProgressState::Failed,
-                        bytes_downloaded: 0,
-                        total_bytes: 0,
                         current_file: "no manifest/depot available for download".to_string(),
+                        ..Default::default()
                     })
                     .await;
                 return;
@@ -2098,9 +2267,8 @@ impl SteamClient {
                     let _ = tx
                         .send(DownloadProgress {
                             state: DownloadProgressState::Failed,
-                            bytes_downloaded: 0,
-                            total_bytes: 0,
                             current_file: format!("Failed to fetch content servers: {}", e),
+                            ..Default::default()
                         })
                         .await;
                     return;
@@ -2171,8 +2339,10 @@ impl SteamClient {
                                 DownloadProgressState::Downloading
                             },
                             bytes_downloaded: bytes,
-                            total_bytes: 0, // We don't have total file size here easily
+                            depot_id: selection_depot_id,
+                            depot_bytes_downloaded: bytes,
                             current_file: format!("Depot {}", selection_depot_id),
+                            ..Default::default()
                         });
                     });
 
@@ -2237,12 +2407,11 @@ impl SteamClient {
                     let _ = tx
                         .send(DownloadProgress {
                             state: DownloadProgressState::Failed,
-                            bytes_downloaded: 0,
-                            total_bytes: 0,
                             current_file: format!(
                                 "Failed to download/verify depot {} from all servers",
                                 selection.depot_id
                             ),
+                            ..Default::default()
                         })
                         .await;
                     success = false;
@@ -2258,10 +2427,19 @@ impl SteamClient {
 
                 let (game_name, pics_installdir) = client_clone.resolve_install_game_info(appid).await;
                 let installdir = pics_installdir.unwrap_or_else(|| sanitize_install_dir(&game_name));
+                // Record the current build so Steam sees the install as up to date.
+                let build_id =
+                    SteamClient::remote_buildid_static(&connection, appid, &active_branch).await;
 
-                if let Err(err) =
-                    SteamClient::write_appmanifest(&manifest_path, appid, &game_name, &installdir, successful_depots)
-                {
+                if let Err(err) = SteamClient::write_appmanifest(
+                    &manifest_path,
+                    appid,
+                    &game_name,
+                    &installdir,
+                    successful_depots,
+                    build_id.as_deref(),
+                    true,
+                ) {
                     tracing::warn!("failed writing appmanifest for {}: {}", appid, err);
                 }
                 let _ = tx
@@ -2274,6 +2452,7 @@ impl SteamClient {
                         } else {
                             "update completed".to_string()
                         },
+                        ..Default::default()
                     })
                     .await;
             } else {
@@ -2434,6 +2613,45 @@ impl SteamClient {
         Ok(manifests)
     }
 
+    /// Fetch the current build id for a branch from PICS, for recording in the
+    /// appmanifest so Steam treats the install as up to date. Falls back to `public`.
+    async fn remote_buildid_static(
+        connection: &Connection,
+        appid: u32,
+        branch: &str,
+    ) -> Option<String> {
+        let mut request = CMsgClientPICSProductInfoRequest::new();
+        request
+            .apps
+            .push(cmsg_client_picsproduct_info_request::AppInfo {
+                appid: Some(appid),
+                ..Default::default()
+            });
+
+        let response: CMsgClientPICSProductInfoResponse = connection.job(request).await.ok()?;
+        let app = response.apps.iter().find(|entry| entry.appid() == appid)?;
+        let vdf = find_vdf_in_pics(app.buffer()).ok()?;
+        let root_obj = vdf.as_obj()?;
+        let depots_val = if vdf.key() == "appinfo" || vdf.key() == appid.to_string() {
+            root_obj.get("depots")
+        } else {
+            root_obj.get("depots").or_else(|| {
+                root_obj
+                    .get("appinfo")
+                    .and_then(|v| v.as_obj())
+                    .and_then(|o| o.get("depots"))
+            })
+        };
+
+        let buildid = |b: &str| {
+            depots_val
+                .and_then(|d| d.get_obj(&["branches", b]))
+                .and_then(|node| node.get("buildid"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        };
+        buildid(branch).or_else(|| buildid("public"))
+    }
 
     pub async fn fetch_app_metadata(&self, appid: u32) -> Option<AppMetadata> {
         let url = format!("https://store.steampowered.com/api/appdetails?appids={appid}&filters=basic");
@@ -2567,12 +2785,23 @@ impl SteamClient {
         self.resolve_install_game_info(appid).await.0
     }
 
+    /// Write a Steam `appmanifest_<appid>.acf` that the desktop client recognises as a
+    /// complete, up-to-date install — so opening the Steam launcher does **not** treat
+    /// the game as out-of-date and re-download over the files we just wrote.
+    ///
+    /// The two fields that resolve that clash are `buildid` (Steam compares it against
+    /// the latest build in PICS; a missing/zero value reads as "update available") and
+    /// `StateFlags`. When `fully_installed` is false the manifest is written in the
+    /// "update required" state (4 → fully installed, 2 → update required) so an install
+    /// in progress is registered with Steam rather than appearing as a fresh download.
     pub fn write_appmanifest(
         path: &Path,
         appid: u32,
         game_name: &str,
         installdir: &str,
         installed_depots: Vec<(u32, u64, u64)>,
+        buildid: Option<&str>,
+        fully_installed: bool,
     ) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -2580,9 +2809,36 @@ impl SteamClient {
         }
 
         let game_name = game_name.replace('"', "");
+        let buildid = buildid.unwrap_or("0");
+        let size_on_disk: u64 = installed_depots.iter().map(|(_, _, size)| *size).sum();
+        // 4 = StateFullyInstalled, 2 = StateUpdateRequired.
+        let state_flags = if fully_installed { 4 } else { 2 };
+        let bytes_have = if fully_installed { size_on_disk } else { 0 };
+        let last_updated = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
 
         let mut content = format!(
-            "\"AppState\"\n{{\n\t\"appid\"\t\"{appid}\"\n\t\"name\"\t\"{game_name}\"\n\t\"StateFlags\"\t\"4\"\n\t\"installdir\"\t\"{installdir}\"\n"
+            "\"AppState\"\n{{\n\
+             \t\"appid\"\t\t\"{appid}\"\n\
+             \t\"Universe\"\t\t\"1\"\n\
+             \t\"name\"\t\t\"{game_name}\"\n\
+             \t\"StateFlags\"\t\t\"{state_flags}\"\n\
+             \t\"installdir\"\t\t\"{installdir}\"\n\
+             \t\"LastUpdated\"\t\t\"{last_updated}\"\n\
+             \t\"SizeOnDisk\"\t\t\"{size_on_disk}\"\n\
+             \t\"StagingSize\"\t\t\"0\"\n\
+             \t\"buildid\"\t\t\"{buildid}\"\n\
+             \t\"LastOwner\"\t\t\"0\"\n\
+             \t\"UpdateResult\"\t\t\"0\"\n\
+             \t\"BytesToDownload\"\t\t\"{size_on_disk}\"\n\
+             \t\"BytesDownloaded\"\t\t\"{bytes_have}\"\n\
+             \t\"BytesToStage\"\t\t\"{size_on_disk}\"\n\
+             \t\"BytesStaged\"\t\t\"{bytes_have}\"\n\
+             \t\"AutoUpdateBehavior\"\t\t\"0\"\n\
+             \t\"AllowOtherDownloadsWhileRunning\"\t\t\"0\"\n\
+             \t\"ScheduledAutoUpdate\"\t\t\"0\"\n"
         );
 
         if !installed_depots.is_empty() {
@@ -3245,6 +3501,32 @@ pub fn parse_appinfo(vdf: &str) -> Result<crate::models::AppInfoRoot> {
         .context("appinfo envelope was empty")
 }
 
+/// Steam store category IDs that denote *online* multiplayer (as opposed to
+/// local/LAN play). A title carrying any of these effectively needs a network
+/// connection for its core multiplayer experience.
+/// 20 = MMO, 36 = Online PvP, 38 = Online Co-op.
+const ONLINE_MULTIPLAYER_CATEGORIES: &[u32] = &[20, 36, 38];
+/// Steam store category ID for Single-player.
+const SINGLE_PLAYER_CATEGORY: u32 = 2;
+
+/// Infer whether a game requires an online connection from its PICS `common`
+/// store-category map (keyed `category_<id>`).
+///
+/// Steam has no dedicated "online required" field, so this is a heuristic: a
+/// title is treated as online-required when it advertises an online-multiplayer
+/// category (MMO / Online PvP / Online Co-op) but does *not* advertise
+/// single-player support — i.e. there is no documented way to play it offline.
+pub fn category_online_required(categories: &HashMap<String, String>) -> bool {
+    let has = |id: u32| {
+        categories
+            .get(&format!("category_{id}"))
+            .map(|v| v != "0")
+            .unwrap_or(false)
+    };
+    let online = ONLINE_MULTIPLAYER_CATEGORIES.iter().any(|&id| has(id));
+    online && !has(SINGLE_PLAYER_CATEGORY)
+}
+
 pub fn should_keep_depot(oslist: Option<&str>, target: DepotPlatform) -> bool {
     match target {
         DepotPlatform::Windows => match oslist {
@@ -3837,6 +4119,43 @@ fn extract_quoted_values(line: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
+    fn cats(pairs: &[(u32, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(id, v)| (format!("category_{id}"), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn online_required_mmo_without_single_player() {
+        // MMO (20), no single-player => requires online.
+        assert!(category_online_required(&cats(&[(20, "1"), (1, "1")])));
+    }
+
+    #[test]
+    fn online_required_online_coop_without_single_player() {
+        // Online Co-op (38) only => requires online.
+        assert!(category_online_required(&cats(&[(38, "1")])));
+    }
+
+    #[test]
+    fn not_online_required_when_single_player_present() {
+        // Online PvP (36) but also Single-player (2) => playable offline.
+        assert!(!category_online_required(&cats(&[(36, "1"), (2, "1")])));
+    }
+
+    #[test]
+    fn not_online_required_for_local_multiplayer_only() {
+        // Generic Multi-player (1) / Shared-Split-Screen (24) are not online-only.
+        assert!(!category_online_required(&cats(&[(1, "1"), (24, "1")])));
+    }
+
+    #[test]
+    fn not_online_required_when_categories_absent_or_zeroed() {
+        assert!(!category_online_required(&cats(&[])));
+        assert!(!category_online_required(&cats(&[(20, "0"), (2, "0")])));
+    }
+
     #[tokio::test]
     async fn test_legacy_path_blocks_windows_proton() {
         let client = SteamClient::new().unwrap();
@@ -3852,6 +4171,7 @@ mod tests {
             local_manifest_ids: HashMap::new(),
             is_owned: true,
             is_family_shared: false,
+            online_required: None,
         };
         let launch_info = LaunchInfo {
             app_id: 123,
