@@ -53,8 +53,6 @@ aurelia play 1245620
 | **Platforms** | Windows, Linux, macOS | Windows, Linux | Linux (first), Windows |
 | **Open source** | No | Yes | Yes (GPL-3.0) |
 
-See [docs/COMPARISON.md](docs/COMPARISON.md) for the full breakdown.
-
 ---
 
 ## Project status
@@ -75,8 +73,6 @@ sync, and Proton/Wine launching all work today.
 - [ ] Collections / categorization
 - [ ] Friends list & chat
 - [ ] Workshop management
-
-The full milestone history lives in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ---
 
