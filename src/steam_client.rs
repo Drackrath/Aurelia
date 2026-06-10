@@ -1,0 +1,3663 @@
+use crate::cloud_sync::{default_cloud_root, CloudClient};
+use crate::cm_list::get_cm_endpoints;
+use crate::config::{
+    delete_session, library_cache_path, load_launcher_config, load_library_cache, load_session,
+    save_library_cache, save_session,
+};
+use crate::depot_browser::{self, DepotInfo as BrowserDepotInfo, ManifestFileEntry};
+use crate::models::{
+    AppInfoRoot, DepotPlatform, DownloadProgress, DownloadProgressState, LibraryGame,
+    ManifestSelection, OwnedGame, SessionState, SteamGuardReq, UserProfile,
+};
+use anyhow::{anyhow, bail, Context, Result};
+use serde::Deserialize;
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::str::FromStr;
+use std::time::Instant;
+
+use steam_vent::auth::{
+    AuthConfirmationHandler, ConfirmationMethod, DeviceConfirmationHandler, FileGuardDataStore,
+    UserProvidedAuthConfirmationHandler,
+};
+use steam_vent::connection::Connection;
+use steam_vent::proto::steammessages_clientserver::CMsgClientGetAppOwnershipTicket;
+use steam_vent::proto::steammessages_clientserver_2::{
+    CMsgClientGetDepotDecryptionKey, CMsgClientGetDepotDecryptionKeyResponse,
+};
+use steam_vent::proto::steammessages_clientserver_appinfo::{
+    cmsg_client_picsproduct_info_request, CMsgClientPICSProductInfoRequest,
+    CMsgClientPICSProductInfoResponse,
+};
+use steam_vent::proto::steammessages_contentsystem_steamclient::{
+    CContentServerDirectory_GetCDNAuthToken_Request,
+    CContentServerDirectory_GetCDNAuthToken_Response,
+    CContentServerDirectory_GetManifestRequestCode_Request,
+    CContentServerDirectory_GetManifestRequestCode_Response,
+    CContentServerDirectory_GetServersForSteamPipe_Request,
+    CContentServerDirectory_GetServersForSteamPipe_Response,
+};
+use steam_vent::proto::steammessages_familygroups_steamclient::{
+    CFamilyGroups_GetFamilyGroupForUser_Request, CFamilyGroups_GetFamilyGroupForUser_Response,
+    CFamilyGroups_GetSharedLibraryApps_Request, CFamilyGroups_GetSharedLibraryApps_Response,
+};
+use steam_vent::proto::steammessages_player_steamclient::{
+    CPlayer_GetOwnedGames_Request, CPlayer_GetOwnedGames_Response,
+};
+use steam_vent::{ConnectionError, ConnectionTrait, ServerList};
+use tokio::io::{duplex, sink, AsyncWriteExt};
+use tokio::sync::mpsc::Receiver;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoginState {
+    Connected,
+    AwaitingCredentialSession,
+    AwaitingGuardConfirmation,
+    AwaitingPollResult,
+    AwaitingAccessTokenLogon,
+    Complete,
+    Offline,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaunchTarget {
+    NativeLinux,
+    WindowsProton,
+}
+
+#[derive(Debug, Clone)]
+pub struct LaunchInfo {
+    pub app_id: u32,
+    pub id: String,
+    pub description: String,
+    pub executable: String,
+    pub arguments: String,
+    pub workingdir: Option<String>,
+    pub target: LaunchTarget,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawLaunchOption {
+    pub executable: String,
+    pub arguments: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExtendedAppInfo {
+    pub name: Option<String>,
+    pub dlcs: Vec<u32>,
+    pub depots: Vec<(u32, String)>,
+    pub launch_options: Vec<RawLaunchOption>,
+    pub active_branch: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AppMetadata {
+    pub name: String,
+    pub header_image: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DepotInfo {
+    pub id: u64,
+    pub name: String,
+    pub size: u64,
+    pub file_count: u64,
+    pub config: String,
+    pub is_owned: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConfirmationPrompt {
+    pub requirement: SteamGuardReq,
+    pub details: String,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct AccountData {
+    pub steam_id: u64,
+    pub account_name: String,
+    pub country: String,      // GeoIP Country
+    pub authed_machines: u32, // Steam Guard count
+    pub flags: u32,           // Account Flags
+    pub email: String,
+    pub email_validated: bool,
+    pub vac_bans: u32,        // Num VAC bans
+    pub vac_banned_apps: Vec<u32>,
+}
+
+/// A game available to the account through Steam Family Sharing.
+#[derive(Debug, Clone)]
+pub struct SharedApp {
+    pub app_id: u32,
+    pub name: String,
+    /// SteamID64 of the family member who owns (lends) this app, if reported.
+    pub owner_steamid: Option<u64>,
+}
+
+#[derive(Clone)]
+pub struct SteamClient {
+    connection: Option<Connection>,
+    state: LoginState,
+    connected_at: Option<Instant>,
+    active_cm: Option<SocketAddr>,
+    server_list: Option<ServerList>,
+    pending_confirmations: Vec<ConfirmationPrompt>,
+}
+
+impl SteamClient {
+    pub fn new() -> Result<Self> {
+        Ok(Self {
+            connection: None,
+            state: LoginState::Connected,
+            connected_at: None,
+            active_cm: None,
+            server_list: None,
+            pending_confirmations: Vec::new(),
+        })
+    }
+
+    pub fn is_authenticated(&self) -> bool {
+        self.connection.is_some()
+    }
+
+    pub fn is_offline(&self) -> bool {
+        self.state == LoginState::Offline
+    }
+
+    pub fn connection(&self) -> Option<&Connection> {
+        self.connection.as_ref()
+    }
+
+    /// SteamID64 of the logged-in account, if connected.
+    pub fn steam_id(&self) -> Option<u64> {
+        self.connection
+            .as_ref()
+            .map(|connection| u64::from(connection.steam_id()))
+    }
+
+    pub async fn logout(&mut self) -> Result<()> {
+        self.connection = None;
+        self.state = LoginState::Connected;
+        delete_session().await?;
+        Ok(())
+    }
+
+    pub async fn get_app_ticket(&self, appid: u32) -> Result<Vec<u8>> {
+        let connection = self
+            .connection
+            .as_ref()
+            .context("steam connection not initialized")?;
+
+        let mut request = CMsgClientGetAppOwnershipTicket::new();
+        request.set_app_id(appid);
+
+        let response: steam_vent::proto::steammessages_clientserver::CMsgClientGetAppOwnershipTicketResponse =
+            connection
+                .job(request)
+                .await
+                .context("failed requesting app ownership ticket")?;
+
+        let ticket = response.ticket().to_vec();
+        if ticket.is_empty() {
+            bail!("Steam returned an empty app ownership ticket for app {appid}");
+        }
+        Ok(ticket)
+    }
+
+    pub async fn get_account_data(&self) -> AccountData {
+        let Some(connection) = self.connection.as_ref() else {
+            return AccountData::default();
+        };
+
+        let mut data = AccountData {
+            steam_id: u64::from(connection.steam_id()),
+            country: connection.ip_country_code().unwrap_or_default(),
+            ..Default::default()
+        };
+
+        // Attempt to populate from persistent session info
+        if let Ok(session) = load_session().await {
+            if let Some(name) = session.account_name {
+                data.account_name = name;
+            }
+        }
+
+        if data.account_name.is_empty() {
+            data.account_name = "Steam User".to_string();
+        }
+
+        data.email = "Hidden".to_string();
+        data.email_validated = true;
+
+        data
+    }
+
+    pub fn pending_confirmations(&self) -> &[ConfirmationPrompt] {
+        &self.pending_confirmations
+    }
+
+    pub fn clear_pending_confirmations(&mut self) {
+        self.pending_confirmations.clear();
+    }
+
+    pub fn is_auth_error_text(message: &str) -> bool {
+        let msg = message.to_ascii_lowercase();
+        msg.contains("invalid access token")
+            || msg.contains("not logged on")
+            || msg.contains("apierror(notloggedon)")
+            || msg.contains("expired")
+            || msg.contains("session")
+    }
+
+    pub async fn connect(&mut self) -> Result<()> {
+        match self.resolve_server_list().await {
+            Ok(server_list) => {
+                self.active_cm = Some(server_list.pick());
+                self.connected_at = Some(Instant::now());
+                self.state = LoginState::Connected;
+                Ok(())
+            }
+            Err(err) => {
+                if self.try_enter_offline_mode().await? {
+                    tracing::warn!("Steam unavailable; entering offline mode");
+                    return Ok(());
+                }
+                Err(err)
+            }
+        }
+    }
+
+    async fn resolve_server_list(&mut self) -> Result<ServerList> {
+        if let Some(existing) = &self.server_list {
+            return Ok(existing.clone());
+        }
+
+        match ServerList::discover().await {
+            Ok(list) => {
+                self.server_list = Some(list.clone());
+                Ok(list)
+            }
+            Err(_) => {
+                let tcp_servers = get_cm_endpoints().await;
+                if tcp_servers.is_empty() {
+                    bail!("failed to discover Steam CM servers and no fallback endpoints were available")
+                }
+
+                let ws_servers = tcp_servers
+                    .iter()
+                    .map(|entry| format!("{}:{}", entry.ip(), entry.port()))
+                    .collect();
+
+                let list = ServerList::new(tcp_servers, ws_servers)
+                    .context("failed constructing fallback server list")?;
+                self.server_list = Some(list.clone());
+                Ok(list)
+            }
+        }
+    }
+
+    async fn try_enter_offline_mode(&mut self) -> Result<bool> {
+        let cache_path = library_cache_path()?;
+        if cache_path.exists() {
+            self.state = LoginState::Offline;
+            self.connection = None;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    pub fn invalidate_session(&mut self) {
+        self.connection = None;
+        self.state = LoginState::Connected;
+    }
+
+    pub fn connected_seconds(&self) -> Option<u64> {
+        self.connected_at.map(|v| v.elapsed().as_secs())
+    }
+
+    pub fn active_cm(&self) -> Option<SocketAddr> {
+        self.active_cm
+    }
+
+    pub async fn restore_session(&mut self) -> Result<SessionState> {
+        let persisted = load_session().await?;
+        let account_name = persisted
+            .account_name
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| anyhow!("no persisted account_name found"))?;
+        let refresh_token = persisted
+            .refresh_token
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| anyhow!("no persisted refresh_token found"))?;
+
+        self.connect().await?;
+        if self.is_offline() {
+            bail!("offline mode: using cached library");
+        }
+        self.state = LoginState::AwaitingAccessTokenLogon;
+
+        let server_list = self.resolve_server_list().await?;
+        let connection = Connection::access(&server_list, &account_name, &refresh_token)
+            .await
+            .context("refresh token login failed")?;
+
+        self.connection = Some(connection);
+        let session = self
+            .session_from_connection(account_name)
+            .context("refresh token login succeeded but no token was available for persistence")?;
+        save_session(&session).await?;
+        self.state = LoginState::Complete;
+        self.pending_confirmations.clear();
+        Ok(session)
+    }
+
+    pub async fn login(
+        &mut self,
+        account_name: String,
+        password: String,
+        guard_code: Option<String>,
+    ) -> Result<SessionState> {
+        self.connect().await?;
+        if self.is_offline() {
+            bail!("offline mode: using cached library");
+        }
+
+        self.state = LoginState::AwaitingCredentialSession;
+        let server_list = self.resolve_server_list().await?;
+
+        self.state = LoginState::AwaitingGuardConfirmation;
+        self.state = LoginState::AwaitingPollResult;
+        self.state = LoginState::AwaitingAccessTokenLogon;
+
+        let login_result = if let Some(code) = guard_code.filter(|v| !v.trim().is_empty()) {
+            let (mut writer, reader) = duplex(64);
+            writer
+                .write_all(format!("{}\n", code.trim()).as_bytes())
+                .await
+                .context("failed to prepare guard code input")?;
+            drop(writer);
+
+            let handler = UserProvidedAuthConfirmationHandler::new(reader, sink())
+                .or(DeviceConfirmationHandler);
+
+            Connection::login(
+                &server_list,
+                &account_name,
+                &password,
+                FileGuardDataStore::user_cache(),
+                handler,
+            )
+            .await
+        } else {
+            Connection::login(
+                &server_list,
+                &account_name,
+                &password,
+                FileGuardDataStore::user_cache(),
+                DeviceConfirmationHandler,
+            )
+            .await
+        };
+
+        let connection = match login_result {
+            Ok(connection) => connection,
+            Err(ConnectionError::UnsupportedConfirmationAction(methods)) => {
+                self.pending_confirmations =
+                    methods.iter().map(map_confirmation).collect::<Vec<_>>();
+                bail!("Steam Guard confirmation required")
+            }
+            Err(other) => return Err(anyhow!(other)).context("steam-vent login flow failed"),
+        };
+
+        self.connection = Some(connection);
+        let session = self
+            .session_from_connection(account_name)
+            .context("login succeeded but no token was available for persistence")?;
+        save_session(&session).await?;
+        self.state = LoginState::Complete;
+        self.pending_confirmations.clear();
+        Ok(session)
+    }
+
+    fn session_from_connection(&self, account_name: String) -> Option<SessionState> {
+        let connection = self.connection.as_ref()?;
+        let steam_id = u64::from(connection.steam_id());
+        Some(SessionState {
+            account_name: Some(account_name),
+            steam_id: Some(steam_id),
+            refresh_token: connection.access_token().map(ToString::to_string),
+            client_instance_id: None,
+        })
+    }
+
+    pub async fn fetch_branches(&self, appid: u32) -> Result<Vec<String>> {
+        let connection = self
+            .connection
+            .as_ref()
+            .context("steam connection not initialized")?;
+
+        let mut request = CMsgClientPICSProductInfoRequest::new();
+        request
+            .apps
+            .push(cmsg_client_picsproduct_info_request::AppInfo {
+                appid: Some(appid),
+                ..Default::default()
+            });
+
+        let response: CMsgClientPICSProductInfoResponse = connection
+            .job(request)
+            .await
+            .context("failed requesting appinfo product info for branches")?;
+
+        let app = response
+            .apps
+            .iter()
+            .find(|entry| entry.appid() == appid)
+            .ok_or_else(|| anyhow!("missing app info payload for app {appid}"))?;
+
+        let appinfo_vdf = String::from_utf8_lossy(app.buffer()).to_string();
+        let parsed: AppInfoRoot =
+            parse_appinfo(&appinfo_vdf).context("failed parsing appinfo VDF")?;
+
+        let branches = parsed
+            .appinfo
+            .map(|node| node.branches)
+            .unwrap_or(parsed.branches);
+
+        let mut names: Vec<String> = branches
+            .into_iter()
+            .filter(|(_, node)| node.pwdrequired.is_none()) // Ignore private
+            .map(|(name, _)| name)
+            .collect();
+
+        if !names.contains(&"public".to_string()) {
+            names.push("public".to_string());
+        }
+
+        names.sort();
+        Ok(names)
+    }
+
+    pub async fn get_available_platforms(
+        &mut self,
+        appid: u32,
+    ) -> Result<(Vec<DepotPlatform>, Vec<u8>)> {
+        let connection = self
+            .connection
+            .as_ref()
+            .context("steam connection not initialized")?;
+
+        let mut request = CMsgClientPICSProductInfoRequest::new();
+        request
+            .apps
+            .push(cmsg_client_picsproduct_info_request::AppInfo {
+                appid: Some(appid),
+                ..Default::default()
+            });
+
+        let response: CMsgClientPICSProductInfoResponse = connection
+            .job(request)
+            .await
+            .context("failed requesting appinfo product info")?;
+
+        let app = response
+            .apps
+            .iter()
+            .find(|entry| entry.appid() == appid)
+            .ok_or_else(|| anyhow!("missing app info payload for app {appid}"))?;
+
+        let buffer = app.buffer().to_vec();
+        let appinfo_vdf_text = String::from_utf8_lossy(&buffer);
+
+        let mut has_linux = false;
+        let mut has_windows = false;
+
+        let vdf_res = steam_vdf_parser::parse_binary(&buffer)
+            .or_else(|_| steam_vdf_parser::parse_text(&appinfo_vdf_text).map(|v| v.into_owned()));
+
+        if let Ok(vdf) = vdf_res {
+            let root_obj = vdf.as_obj().unwrap();
+            let depots_val = if vdf.key() == "appinfo" || vdf.key() == appid.to_string() {
+                root_obj.get("depots")
+            } else {
+                root_obj.get("depots").or_else(|| {
+                    root_obj
+                        .values()
+                        .next()
+                        .and_then(|v| v.as_obj())
+                        .and_then(|o| o.get("depots"))
+                })
+            };
+
+            if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
+                for value in depots.values() {
+                    let oslist = value
+                        .get_obj(&["config"])
+                        .and_then(|c| c.get("oslist"))
+                        .and_then(|o| o.as_str());
+
+                    if let Some(os) = oslist {
+                        let os = os.to_lowercase();
+                        if os.contains("linux") {
+                            has_linux = true;
+                        }
+                        if os.contains("windows") {
+                            has_windows = true;
+                        }
+                    }
+                }
+            }
+        } else {
+            tracing::warn!("get_available_platforms: VDF parse failed for {appid}, using fallback discovery");
+            return Ok((vec![DepotPlatform::Windows, DepotPlatform::Linux], buffer));
+        }
+
+        let mut platforms = Vec::new();
+        if has_windows {
+            platforms.push(DepotPlatform::Windows);
+        }
+        if has_linux {
+            platforms.push(DepotPlatform::Linux);
+        }
+
+        if platforms.is_empty() {
+            platforms.push(DepotPlatform::Windows);
+        }
+
+        Ok((platforms, buffer))
+    }
+
+    pub async fn install_game(
+        &self,
+        appid: u32,
+        platform: DepotPlatform,
+        cached_vdf: Option<Vec<u8>>,
+        filter_depots: Option<Vec<u64>>,
+        shared_state: Arc<std::sync::RwLock<crate::models::DownloadState>>,
+    ) -> Result<Receiver<DownloadProgress>> {
+        let connection = self
+            .connection
+            .as_ref()
+            .cloned()
+            .context("steam connection not initialized")?;
+
+        let cfg = load_launcher_config().await?;
+        let library_root = cfg.steam_library_path.clone();
+        let (game_name, pics_installdir) = self.resolve_install_game_info(appid).await;
+        let installdir = pics_installdir.unwrap_or_else(|| sanitize_install_dir(&game_name));
+
+        // If this app is a DLC, its content must land in the base game's install
+        // directory and be registered in the base game's appmanifest (so the game
+        // sees the DLC as installed/enabled) rather than getting its own manifest.
+        let dlc_parent = self.resolve_dlc_parent(appid).await;
+        let dlc_appid = dlc_parent.map(|_| appid);
+
+        let (install_dir, manifest_path) = if let Some(base_appid) = dlc_parent {
+            let base_manifest = self.appmanifest_path(base_appid).await?;
+            if !base_manifest.exists() {
+                bail!(
+                    "cannot install DLC {appid}: its base game (app {base_appid}) is not installed — install it first"
+                );
+            }
+            let base_raw = std::fs::read_to_string(&base_manifest)
+                .with_context(|| format!("failed reading {}", base_manifest.display()))?;
+            let base_installdir = parse_installdir_from_acf(&base_raw).ok_or_else(|| {
+                anyhow!("could not determine base game install dir for app {base_appid}")
+            })?;
+            let steamapps = base_manifest
+                .parent()
+                .ok_or_else(|| anyhow!("invalid base manifest path for app {base_appid}"))?;
+            let dir = steamapps.join("common").join(&base_installdir);
+            tracing::info!(
+                "DLC {appid} -> installing into base game {base_appid} at {}",
+                dir.display()
+            );
+            (dir, base_manifest)
+        } else {
+            let dir = Path::new(&library_root)
+                .join("steamapps")
+                .join("common")
+                .join(&installdir);
+            let mp = Path::new(&library_root)
+                .join("steamapps")
+                .join(format!("appmanifest_{appid}.acf"));
+            (dir, mp)
+        };
+
+        std::fs::create_dir_all(&install_dir)
+            .with_context(|| format!("failed creating {}", install_dir.display()))?;
+
+        let (tx, rx) = tokio::sync::mpsc::channel(128);
+        let client_clone = self.clone();
+        let shared_state_clone = shared_state.clone();
+
+        tokio::task::spawn(async move {
+            let _ = tx
+                .send(DownloadProgress {
+                    state: DownloadProgressState::Queued,
+                    bytes_downloaded: 0,
+                    total_bytes: 0,
+                    current_file: String::new(),
+                })
+                .await;
+
+
+            let appinfo_vdf_bytes_owned;
+            let appinfo_vdf_bytes = if let Some(cached) = cached_vdf {
+                appinfo_vdf_bytes_owned = cached;
+                &appinfo_vdf_bytes_owned
+            } else {
+                let mut request = CMsgClientPICSProductInfoRequest::new();
+                request
+                    .apps
+                    .push(cmsg_client_picsproduct_info_request::AppInfo {
+                        appid: Some(appid),
+                        ..Default::default()
+                    });
+
+                let response: CMsgClientPICSProductInfoResponse = match connection.job(request).await
+                {
+                    Ok(res) => res,
+                    Err(e) => {
+                        let _ = tx
+                            .send(DownloadProgress {
+                                state: DownloadProgressState::Failed,
+                                bytes_downloaded: 0,
+                                total_bytes: 0,
+                                current_file: format!("failed requesting appinfo: {e}"),
+                            })
+                            .await;
+                        return;
+                    }
+                };
+
+                let app = response.apps.iter().find(|entry| entry.appid() == appid);
+                let Some(app) = app else {
+                    let _ = tx
+                        .send(DownloadProgress {
+                            state: DownloadProgressState::Failed,
+                            bytes_downloaded: 0,
+                            total_bytes: 0,
+                            current_file: "missing appinfo payload".to_string(),
+                        })
+                        .await;
+                    return;
+                };
+                appinfo_vdf_bytes_owned = app.buffer().to_vec();
+                &appinfo_vdf_bytes_owned
+            };
+
+            let appinfo_vdf_text = String::from_utf8_lossy(appinfo_vdf_bytes).to_string();
+
+
+            let mut selections = Vec::new();
+
+            let mut has_windows = false;
+            if let Ok(map) = parse_pics_product_info(appinfo_vdf_bytes) {
+                // To keep filtering, we re-parse or re-use the find_vdf logic.
+                // We'll re-parse here to stay strictly compliant with Task 2's request to call parse_pics_product_info.
+                if let Ok(vdf) = find_vdf_in_pics(appinfo_vdf_bytes) {
+                    let root_obj = vdf.as_obj().unwrap();
+                    let depots_val = if vdf.key() == "appinfo" || vdf.key() == appid.to_string() {
+                        root_obj.get("depots")
+                    } else {
+                        root_obj.get("depots").or_else(|| {
+                            root_obj
+                                .get("appinfo")
+                                .and_then(|v| v.as_obj())
+                                .and_then(|o| o.get("depots"))
+                        })
+                    };
+
+                    if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
+                        for (key, value) in depots.iter() {
+                            if let Ok(d_id) = key.parse::<u32>() {
+                                let oslist = value
+                                    .get_obj(&["config"])
+                                    .and_then(|c| c.get("oslist"))
+                                    .and_then(|o| o.as_str());
+
+                                if oslist
+                                    .map(|os| os.to_lowercase().contains("windows"))
+                                    .unwrap_or(false)
+                                {
+                                    has_windows = true;
+                                }
+
+                                let mut match_os = should_keep_depot(oslist, platform);
+
+                                if match_os {
+                                    // 1. LANGUAGE CHECK
+                                    let lang = value
+                                        .get_obj(&["config"])
+                                        .and_then(|c| c.get("language"))
+                                        .and_then(|l| l.as_str());
+                                    if let Some(lang) = lang {
+                                        if lang != "english" && !lang.is_empty() {
+                                            match_os = false;
+                                        }
+                                    }
+                                }
+
+                                if match_os {
+                                    let depot_id_u64 = d_id as u64;
+                                    let is_allowed = match &filter_depots {
+                                        Some(list) => list.contains(&depot_id_u64),
+                                        None => true,
+                                    };
+
+                                    if is_allowed {
+                                        if let Some(m_id) = map.get(&depot_id_u64) {
+                                            selections.push(ManifestSelection {
+                                                app_id: appid,
+                                                depot_id: d_id,
+                                                manifest_id: *m_id,
+                                                appinfo_vdf: appinfo_vdf_text.clone(),
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                println!("CRITICAL: VDF parse failed for {appid}");
+            }
+
+            if selections.is_empty() {
+
+                let msg = if has_windows && matches!(platform, DepotPlatform::Linux) {
+                    "No native Linux depots found. This game may only support Windows (Proton)."
+                } else {
+                    "No matching depots found for the selected platform."
+                };
+
+                let _ = tx
+                    .send(DownloadProgress {
+                        state: DownloadProgressState::Failed,
+                        bytes_downloaded: 0,
+                        total_bytes: 0,
+                        current_file: msg.to_string(),
+                    })
+                    .await;
+                return;
+            }
+
+            let _ = tx
+                .send(DownloadProgress {
+                    state: DownloadProgressState::Downloading,
+                    bytes_downloaded: 0,
+                    total_bytes: 0,
+                    current_file: format!("starting download of {} depots", selections.len()),
+                })
+                .await;
+
+            // Update shared state for the start of the download
+            if let Ok(mut state) = shared_state_clone.write() {
+                state.is_downloading = true;
+                state.is_paused = false;
+                state.app_id = appid;
+                state.app_name = game_name.clone();
+                state.downloaded_bytes = 0;
+                state.total_bytes = 0; // We'll update this once we have manifests
+                state.status_text = format!("Initializing download for {}...", game_name);
+            }
+
+            // 2. Fetch Content Servers via Service
+            tracing::info!("Fetching Content Servers for AppID: {}...", appid);
+            let hosts = match client_clone.get_content_servers(connection.cell_id()).await {
+                Ok(h) => h,
+                Err(e) => {
+                    let _ = tx
+                        .send(DownloadProgress {
+                            state: DownloadProgressState::Failed,
+                            bytes_downloaded: 0,
+                            total_bytes: 0,
+                            current_file: format!("Failed to fetch content servers: {}", e),
+                        })
+                        .await;
+                    return;
+                }
+            };
+
+            // 3. Download Loop
+            let mut success = true;
+            let mut successful_depots = Vec::new();
+            for selection in selections {
+                tracing::info!(
+                    "Starting download for Depot {} (GID: {})...",
+                    selection.depot_id,
+                    selection.manifest_id
+                );
+
+                let key = match client_clone.get_depot_key(appid, selection.depot_id).await {
+                    Ok(k) => k,
+                    Err(e) => {
+                        tracing::warn!(
+                            "Skipping Depot {} (No Key/Not Owned): {}",
+                            selection.depot_id,
+                            e
+                        );
+                        continue;
+                    }
+                };
+
+                let manifest_code = match client_clone
+                    .get_manifest_request_code(appid, selection.depot_id, selection.manifest_id)
+                    .await
+                {
+                    Ok(code) => Some(code),
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to get manifest request code for depot {}: {}",
+                            selection.depot_id,
+                            e
+                        );
+                        None
+                    }
+                };
+
+                let mut depot_success = false;
+                for host in &hosts {
+                    let token = match client_clone
+                        .get_cdn_auth_token(appid, selection.depot_id, host)
+                        .await
+                    {
+                        Ok(t) => Some(t),
+                        Err(e) => {
+                            tracing::warn!("Failed to get auth token for host {}: {}", host, e);
+                            None
+                        }
+                    };
+
+                    let (host_name, port) = if let Some(pos) = host.find(':') {
+                        (
+                            &host[..pos],
+                            host[pos + 1..].parse::<u16>().unwrap_or(80),
+                        )
+                    } else {
+                        (host.as_str(), 80)
+                    };
+
+                    let cdn_server = steam_cdn::web_api::content_service::CDNServer {
+                        r#type: "CDN".to_string(),
+                        https: port == 443,
+                        host: host_name.to_string(),
+                        vhost: host_name.to_string(),
+                        port,
+                        cell_id: connection.cell_id(),
+                        load: 0,
+                        weighted_load: 0,
+                        auth_token: token,
+                    };
+
+                    let cdn_client = steam_cdn::CDNClient::with_server(
+                        Arc::new(connection.clone()),
+                        cdn_server,
+                    );
+
+                let state_for_closure = shared_state_clone.clone();
+                let on_progress = Arc::new(move |bytes: u64| {
+                    if let Ok(mut state) = state_for_closure.write() {
+                        state.downloaded_bytes += bytes;
+                    }
+                });
+
+                let state_for_manifest = shared_state_clone.clone();
+                let depot_size = Arc::new(std::sync::atomic::AtomicU64::new(0));
+                let size_clone = depot_size.clone();
+                let on_manifest = Arc::new(move |total_bytes: u64| {
+                    size_clone.store(total_bytes, std::sync::atomic::Ordering::SeqCst);
+                    if let Ok(mut state) = state_for_manifest.write() {
+                        state.total_bytes += total_bytes;
+                    }
+                });
+
+                let abort_signal = shared_state_clone
+                    .read()
+                    .ok()
+                    .map(|s| s.abort_signal.clone());
+
+                    match cdn_client
+                        .download_depot(
+                            appid,
+                            selection.depot_id,
+                            selection.manifest_id,
+                            &key,
+                            &install_dir,
+                            manifest_code,
+                            false, // verify_mode: false
+                            abort_signal,
+                            Some(on_progress),
+                            Some(on_manifest.clone()),
+                        )
+                        .await
+                    {
+                        Ok(_) => {
+                            let aborted = shared_state_clone.read()
+                                .map(|s| s.abort_signal.load(std::sync::atomic::Ordering::Relaxed))
+                                .unwrap_or(false);
+                            if aborted {
+                                break;
+                            }
+
+                            tracing::info!(
+                                "Depot {} download complete from {}!",
+                                selection.depot_id,
+                                host
+                            );
+                            depot_success = true;
+                            successful_depots.push((
+                                selection.depot_id,
+                                selection.manifest_id,
+                                depot_size.load(std::sync::atomic::Ordering::SeqCst),
+                            ));
+                            break;
+                        }
+                        Err(e) => {
+                            tracing::error!("CDN Error from {}: {}", host, e);
+                        }
+                    }
+                }
+
+                if !depot_success {
+                    let aborted = shared_state_clone.read()
+                        .map(|s| s.abort_signal.load(std::sync::atomic::Ordering::Relaxed))
+                        .unwrap_or(false);
+
+                    if aborted {
+                        success = false;
+                        break;
+                    }
+
+                    let _ = tx
+                        .send(DownloadProgress {
+                            state: DownloadProgressState::Failed,
+                            bytes_downloaded: 0,
+                            total_bytes: 0,
+                            current_file: format!(
+                                "Failed to download depot {} from all available servers",
+                                selection.depot_id
+                            ),
+                        })
+                        .await;
+                    success = false;
+                    break;
+                }
+            }
+
+            if success {
+                if let Ok(mut state) = shared_state_clone.write() {
+                    state.is_downloading = false;
+                    state.status_text = "Download complete".to_string();
+                }
+
+                let manifest_result = if let Some(dlc) = dlc_appid {
+                    // Register the DLC's depots into the base game's manifest (enable it).
+                    SteamClient::enable_dlc_in_appmanifest(&manifest_path, dlc, &successful_depots)
+                } else {
+                    SteamClient::write_appmanifest(
+                        &manifest_path,
+                        appid,
+                        &game_name,
+                        &installdir,
+                        successful_depots,
+                    )
+                };
+                if let Err(err) = manifest_result {
+                    tracing::warn!("failed updating appmanifest for {}: {}", appid, err);
+                }
+                let _ = tx
+                    .send(DownloadProgress {
+                        state: DownloadProgressState::Completed,
+                        bytes_downloaded: 1,
+                        total_bytes: 1,
+                        current_file: "completed".to_string(),
+                    })
+                    .await;
+            } else {
+                if let Ok(mut state) = shared_state_clone.write() {
+                    state.is_downloading = false;
+                    state.status_text = "Download failed".to_string();
+                }
+            }
+        });
+
+        Ok(rx)
+    }
+
+    pub async fn update_app_branch(&self, appid: u32, branch: &str) -> Result<()> {
+        let manifest_path = self.appmanifest_path(appid).await?;
+        if !manifest_path.exists() {
+            bail!("appmanifest not found for app {appid}");
+        }
+
+        let raw = std::fs::read_to_string(&manifest_path)
+            .with_context(|| format!("failed reading {}", manifest_path.display()))?;
+
+        let rewritten = rewrite_app_branch(&raw, branch);
+        std::fs::write(&manifest_path, rewritten)
+            .with_context(|| format!("failed writing {}", manifest_path.display()))?;
+
+        Ok(())
+    }
+
+    pub async fn uninstall_game(&self, appid: u32, delete_prefix: bool) -> Result<()> {
+        let cfg = load_launcher_config().await?;
+        let steamapps = PathBuf::from(cfg.steam_library_path).join("steamapps");
+        let appmanifest = steamapps.join(format!("appmanifest_{appid}.acf"));
+
+        let install_dir = if appmanifest.exists() {
+            let raw = std::fs::read_to_string(&appmanifest)
+                .with_context(|| format!("failed reading {}", appmanifest.display()))?;
+            parse_installdir_from_acf(&raw)
+                .map(|dir| steamapps.join("common").join(dir))
+                .unwrap_or_else(|| steamapps.join("common").join(appid.to_string()))
+        } else {
+            steamapps.join("common").join(appid.to_string())
+        };
+
+        if install_dir.exists() {
+            std::fs::remove_dir_all(&install_dir)
+                .with_context(|| format!("failed deleting {}", install_dir.display()))?;
+        }
+
+        if appmanifest.exists() {
+            std::fs::remove_file(&appmanifest)
+                .with_context(|| format!("failed deleting {}", appmanifest.display()))?;
+        }
+
+        if delete_prefix {
+            let compat = steamapps.join("compatdata").join(appid.to_string());
+            if compat.exists() {
+                std::fs::remove_dir_all(&compat)
+                    .with_context(|| format!("failed deleting {}", compat.display()))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn get_content_servers(&self, cell_id: u32) -> Result<Vec<String>> {
+        let connection = self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))?;
+        let mut request = CContentServerDirectory_GetServersForSteamPipe_Request::new();
+        request.set_cell_id(cell_id);
+        request.set_max_servers(20);
+
+        let response: CContentServerDirectory_GetServersForSteamPipe_Response = connection
+            .service_method(request)
+            .await
+            .context("failed calling ContentServerDirectory.GetServersForSteamPipe")?;
+
+        let mut hosts = Vec::new();
+        for server in &response.servers {
+            if server.type_() == "SteamCache" || server.type_() == "CDN" {
+                let host = server.host().to_string();
+                hosts.push(host);
+            }
+        }
+
+        if hosts.is_empty() {
+            println!("ERROR: Service returned 0 valid CDN servers!");
+        }
+
+        Ok(hosts)
+    }
+
+    pub async fn get_manifest_request_code(
+        &self,
+        app_id: u32,
+        depot_id: u32,
+        manifest_id: u64,
+    ) -> Result<u64> {
+        let connection = self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))?;
+        let mut request = CContentServerDirectory_GetManifestRequestCode_Request::new();
+        request.set_app_id(app_id);
+        request.set_depot_id(depot_id);
+        request.set_manifest_id(manifest_id);
+
+        let response: CContentServerDirectory_GetManifestRequestCode_Response = connection
+            .service_method(request)
+            .await
+            .context("failed calling ContentServerDirectory.GetManifestRequestCode")?;
+
+        Ok(response.manifest_request_code())
+    }
+
+    pub async fn get_cdn_auth_token(
+        &self,
+        app_id: u32,
+        depot_id: u32,
+        host_name: &str,
+    ) -> Result<String> {
+        let connection = self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))?;
+        let mut request = CContentServerDirectory_GetCDNAuthToken_Request::new();
+        request.set_app_id(app_id);
+        request.set_depot_id(depot_id);
+        request.set_host_name(host_name.to_string());
+
+        let response: CContentServerDirectory_GetCDNAuthToken_Response = connection
+            .service_method(request)
+            .await
+            .context("failed calling ContentServerDirectory.GetCDNAuthToken")?;
+
+        if response.token().is_empty() {
+            return Err(anyhow!("Empty Auth Token returned"));
+        }
+
+        Ok(response.token().to_string())
+    }
+
+    pub async fn get_depot_list(&self, app_id: u32) -> Result<Vec<DepotInfo>> {
+        let connection = self
+            .connection
+            .as_ref()
+            .context("steam connection not initialized")?;
+
+        let mut request = CMsgClientPICSProductInfoRequest::new();
+        request
+            .apps
+            .push(cmsg_client_picsproduct_info_request::AppInfo {
+                appid: Some(app_id),
+                ..Default::default()
+            });
+
+        let response: CMsgClientPICSProductInfoResponse = connection
+            .job(request)
+            .await
+            .context("failed requesting appinfo product info for depot list")?;
+
+        let app = response
+            .apps
+            .iter()
+            .find(|entry| entry.appid() == app_id)
+            .ok_or_else(|| anyhow!("missing appinfo payload for app {app_id}"))?;
+
+        let mut out = Vec::new();
+        if let Ok(vdf) = find_vdf_in_pics(app.buffer()) {
+            let root_obj = vdf.as_obj().context("root is not an object")?;
+            let depots_val = if vdf.key() == "appinfo" || vdf.key() == app_id.to_string() {
+                root_obj.get("depots")
+            } else {
+                root_obj.get("depots").or_else(|| {
+                    root_obj
+                        .get("appinfo")
+                        .and_then(|v| v.as_obj())
+                        .and_then(|o| o.get("depots"))
+                })
+            };
+
+            if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
+                for (key, value) in depots.iter() {
+                    if let Ok(d_id) = key.parse::<u64>() {
+                        let name = value
+                            .as_obj()
+                            .and_then(|o| o.get("name"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(&format!("Depot {d_id}"))
+                            .to_string();
+
+                        let size = value
+                            .as_obj()
+                            .and_then(|o| o.get("maxsize"))
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| s.parse::<u64>().ok())
+                            .unwrap_or(0);
+
+                        let mut config_parts = Vec::new();
+                        if let Some(config) = value.as_obj().and_then(|o| o.get("config")).and_then(|v| v.as_obj()) {
+                            if let Some(os) = config.get("oslist").and_then(|v| v.as_str()) {
+                                config_parts.push(format!("os: {}", os));
+                            }
+                            if let Some(lang) = config.get("language").and_then(|v| v.as_str()) {
+                                config_parts.push(format!("lang: {}", lang));
+                            }
+                        }
+
+                        out.push(DepotInfo {
+                            id: d_id,
+                            name,
+                            size,
+                            file_count: 0, // Not easily available in PICS VDF without manifest
+                            config: config_parts.join(", "),
+                            is_owned: None,
+                        });
+                    }
+                }
+            }
+        }
+
+        out.sort_by_key(|d| d.id);
+        Ok(out)
+    }
+
+    pub async fn get_depot_key(&self, app_id: u32, depot_id: u32) -> Result<Vec<u8>> {
+        let connection = self
+            .connection
+            .as_ref()
+            .context("steam connection not initialized")?;
+        let mut request = CMsgClientGetDepotDecryptionKey::new();
+        request.set_depot_id(depot_id);
+        request.set_app_id(app_id);
+
+        let response: CMsgClientGetDepotDecryptionKeyResponse = connection.job(request).await?;
+        if response.eresult() != 1 {
+            bail!(
+                "failed to get depot key for depot {depot_id}: eresult {}",
+                response.eresult()
+            );
+        }
+
+        Ok(response.depot_encryption_key().to_vec())
+    }
+
+    pub async fn verify_depot_ownership(&self, app_id: u32, depot_ids: Vec<u64>) -> HashMap<u64, bool> {
+        tracing::info!("Verifying ownership for {} depots...", depot_ids.len());
+        let mut results = HashMap::new();
+
+        let connection = match self.connection.as_ref() {
+            Some(c) => c,
+            None => {
+                for id in depot_ids { results.insert(id, false); }
+                return results;
+            }
+        };
+
+        // 1. Ensure we have an App Ticket (Warm up session)
+        let _ = self.get_app_ticket(app_id).await;
+
+        for depot_id in depot_ids {
+            let mut request = CMsgClientGetDepotDecryptionKey::new();
+            request.set_depot_id(depot_id as u32);
+            request.set_app_id(app_id);
+
+            match connection.job(request).await {
+                Ok(response) => {
+                    let response: CMsgClientGetDepotDecryptionKeyResponse = response;
+                    if response.eresult() == 1 { // EResult::OK
+                        results.insert(depot_id, true);
+                    } else {
+                        results.insert(depot_id, false);
+                    }
+                }
+                Err(_) => {
+                    results.insert(depot_id, false);
+                }
+            }
+        }
+        results
+    }
+
+    pub async fn fetch_depots(&self, appid: u32) -> Result<Vec<BrowserDepotInfo>> {
+        let connection = self
+            .connection
+            .as_ref()
+            .context("steam connection not initialized")?;
+        depot_browser::fetch_depots(connection, appid).await
+    }
+
+    pub async fn fetch_manifest_files(
+        &self,
+        appid: u32,
+        depot_id: u32,
+        manifest_ref: &str,
+    ) -> Result<Vec<ManifestFileEntry>> {
+        let connection = self
+            .connection
+            .as_ref()
+            .context("steam connection not initialized")?;
+        depot_browser::fetch_manifest_files(connection, appid, depot_id, manifest_ref).await
+    }
+
+    pub fn download_single_file(
+        &self,
+        appid: u32,
+        depot_id: u32,
+        manifest_ref: &str,
+        file_path: &str,
+        output_dir: &Path,
+    ) -> Result<()> {
+        let connection = self
+            .connection
+            .as_ref()
+            .context("steam connection not initialized")?;
+        depot_browser::download_single_file(
+            connection,
+            appid,
+            depot_id,
+            manifest_ref,
+            file_path,
+            output_dir,
+        )
+    }
+
+    pub async fn fetch_owned_games(&mut self) -> Result<Vec<OwnedGame>> {
+        let connection = self
+            .connection
+            .as_ref()
+            .context("steam connection not initialized")?;
+
+        let request = CPlayer_GetOwnedGames_Request {
+            steamid: Some(u64::from(connection.steam_id())),
+            include_appinfo: Some(true),
+            include_played_free_games: Some(true),
+            ..Default::default()
+        };
+
+        let response: CPlayer_GetOwnedGames_Response = connection
+            .service_method(request)
+            .await
+            .context("failed calling Player.GetOwnedGames")?;
+
+        let mut owned = Vec::new();
+        for game in response.games {
+            owned.push(OwnedGame {
+                app_id: game.appid() as u32,
+                name: if game.name().is_empty() {
+                    format!("App {}", game.appid())
+                } else {
+                    game.name().to_string()
+                },
+                playtime_forever_minutes: game.playtime_forever() as u32,
+                local_manifest_ids: HashMap::new(),
+                update_available: false,
+            });
+        }
+
+        save_library_cache(&owned).await.ok();
+        Ok(owned)
+    }
+
+    /// Fetch games available to this account through Steam Family Sharing that the
+    /// account does **not** itself own. Returns an empty list if the account is not
+    /// part of a family group. These may or may not be installed locally.
+    pub async fn fetch_family_shared_apps(&self) -> Result<Vec<SharedApp>> {
+        let connection = self
+            .connection
+            .as_ref()
+            .context("steam connection not initialized")?;
+        let my_steamid = u64::from(connection.steam_id());
+
+        // 1. Resolve the family group this account belongs to.
+        let mut group_req = CFamilyGroups_GetFamilyGroupForUser_Request::new();
+        group_req.set_steamid(my_steamid);
+        group_req.set_include_family_group_response(true);
+
+        let group_resp: CFamilyGroups_GetFamilyGroupForUser_Response = connection
+            .service_method(group_req)
+            .await
+            .context("failed calling FamilyGroups.GetFamilyGroupForUser")?;
+
+        let family_groupid = group_resp.family_groupid();
+        if family_groupid == 0 {
+            // Account is not in a family group; nothing is shared with it.
+            return Ok(Vec::new());
+        }
+
+        // 2. List apps shared with us by other family members (exclude our own).
+        let mut apps_req = CFamilyGroups_GetSharedLibraryApps_Request::new();
+        apps_req.set_family_groupid(family_groupid);
+        apps_req.set_steamid(my_steamid);
+        apps_req.set_include_own(false);
+        apps_req.set_include_excluded(false);
+        apps_req.set_include_non_games(false);
+        apps_req.set_max_apps(10_000);
+        apps_req.set_language("english".to_string());
+
+        let apps_resp: CFamilyGroups_GetSharedLibraryApps_Response = connection
+            .service_method(apps_req)
+            .await
+            .context("failed calling FamilyGroups.GetSharedLibraryApps")?;
+
+        let mut shared = Vec::new();
+        for app in apps_resp.apps {
+            let app_id = app.appid();
+            shared.push(SharedApp {
+                app_id,
+                name: if app.name().is_empty() {
+                    format!("App {app_id}")
+                } else {
+                    app.name().to_string()
+                },
+                owner_steamid: app.owner_steamids.first().copied(),
+            });
+        }
+        Ok(shared)
+    }
+
+    pub async fn refresh_owned_games(&mut self, _session: &SessionState) -> Result<Vec<OwnedGame>> {
+        self.fetch_owned_games().await
+    }
+
+    pub async fn load_cached_owned_games(&self) -> Result<Vec<OwnedGame>> {
+        load_library_cache().await
+    }
+
+    pub async fn check_for_updates(&self, games: &mut [LibraryGame]) -> Result<()> {
+        for game in games.iter_mut() {
+            game.update_available = false;
+            game.local_manifest_ids.clear();
+
+            if !game.is_installed {
+                continue;
+            }
+
+            let (local, branch) = self.local_manifest_info(game)?;
+            game.local_manifest_ids = local.clone();
+            game.active_branch = branch;
+
+            if self.is_offline() || self.connection.is_none() {
+                continue;
+            }
+
+            let remote = self
+                .remote_manifest_ids(game.app_id, &game.active_branch)
+                .await
+                .unwrap_or_default();
+            if remote.is_empty() {
+                continue;
+            }
+
+            game.update_available = remote.iter().any(|(depot, remote_manifest)| {
+                local.get(depot).copied().unwrap_or_default() != *remote_manifest
+            });
+        }
+
+        Ok(())
+    }
+
+    fn local_manifest_info(&self, game: &LibraryGame) -> Result<(HashMap<u64, u64>, String)> {
+        let install_path = match &game.install_path {
+            Some(path) => PathBuf::from(path),
+            None => return Ok((HashMap::new(), "public".to_string())),
+        };
+
+        let steamapps = match install_path.parent().and_then(|p| p.parent()) {
+            Some(path) => path.to_path_buf(),
+            None => return Ok((HashMap::new(), "public".to_string())),
+        };
+
+        let manifest_path = steamapps.join(format!("appmanifest_{}.acf", game.app_id));
+        if !manifest_path.exists() {
+            return Ok((HashMap::new(), "public".to_string()));
+        }
+
+        let raw = std::fs::read_to_string(&manifest_path)
+            .with_context(|| format!("failed reading {}", manifest_path.display()))?;
+        let manifests = parse_installed_depots_from_acf(&raw);
+        let branch = parse_active_branch_from_acf(&raw);
+        Ok((manifests, branch))
+    }
+
+    async fn remote_manifest_ids(&self, appid: u32, branch: &str) -> Result<HashMap<u64, u64>> {
+        let connection = self
+            .connection
+            .as_ref()
+            .context("steam connection not initialized")?;
+        SteamClient::remote_manifest_ids_static(connection, appid, branch).await
+    }
+
+    pub async fn get_user_profile(&self, current_library_len: usize) -> Result<UserProfile> {
+        let persisted = load_session().await.unwrap_or_default();
+        let account_name = persisted
+            .account_name
+            .unwrap_or_else(|| "Unknown User".to_string());
+
+        if self.is_offline() {
+            let cached_games = load_library_cache().await.unwrap_or_default();
+            return Ok(UserProfile {
+                steam_id: persisted.steam_id.unwrap_or_default(),
+                account_name,
+                game_count: cached_games.len(),
+                is_online: false,
+            });
+        }
+
+        let steam_id = self
+            .connection
+            .as_ref()
+            .map(|connection| u64::from(connection.steam_id()))
+            .or(persisted.steam_id)
+            .unwrap_or_default();
+
+        Ok(UserProfile {
+            steam_id,
+            account_name,
+            game_count: current_library_len,
+            is_online: true,
+        })
+    }
+
+    pub async fn get_extended_app_info(&self, appid: u32) -> Result<ExtendedAppInfo> {
+        let connection = self
+            .connection
+            .as_ref()
+            .context("steam connection not initialized")?;
+
+        let mut request = CMsgClientPICSProductInfoRequest::new();
+        request
+            .apps
+            .push(cmsg_client_picsproduct_info_request::AppInfo {
+                appid: Some(appid),
+                ..Default::default()
+            });
+
+        let response: CMsgClientPICSProductInfoResponse = connection
+            .job(request)
+            .await
+            .context("failed requesting appinfo product info for extended metadata")?;
+
+        let app = response
+            .apps
+            .iter()
+            .find(|entry| entry.appid() == appid)
+            .ok_or_else(|| anyhow!("missing appinfo payload for app {appid}"))?;
+
+        let raw_vdf = String::from_utf8_lossy(app.buffer()).to_string();
+        let parsed: AppInfoRoot =
+            parse_appinfo(&raw_vdf).context("failed to parse product info VDF")?;
+
+        let common = parsed
+            .appinfo
+            .as_ref()
+            .and_then(|a| a.common.as_ref())
+            .or(parsed.common.as_ref());
+
+        let name = common.and_then(|c| c.name.clone());
+
+        let dlcs: Vec<u32> = common
+            .map(|c| {
+                c.dlc
+                    .keys()
+                    .filter_map(|k| k.parse::<u32>().ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let depots_map = parsed
+            .appinfo
+            .as_ref()
+            .map(|a| &a.depots)
+            .unwrap_or(&parsed.depots);
+        let mut depots = Vec::new();
+        for (id_str, node) in depots_map {
+            let is_digit = id_str.chars().all(|c| c.is_ascii_digit());
+            if is_digit {
+                let id = id_str.parse::<u32>().unwrap_or(0);
+                let name = node
+                    ._other
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unknown Depot")
+                    .to_string();
+                depots.push((id, name));
+            }
+        }
+
+        let config = parsed
+            .appinfo
+            .as_ref()
+            .and_then(|a| a.config.as_ref())
+            .or(parsed.config.as_ref());
+
+        let mut launch_options = Vec::new();
+        if let Some(config) = config {
+            for entry in config.launch.values() {
+                launch_options.push(RawLaunchOption {
+                    executable: entry.executable.clone().unwrap_or_default(),
+                    arguments: entry.arguments.clone().unwrap_or_default(),
+                });
+            }
+        }
+
+        let manifest_path = self.appmanifest_path(appid).await?;
+        let active_branch = if manifest_path.exists() {
+            let raw = std::fs::read_to_string(&manifest_path).unwrap_or_default();
+            parse_active_branch_from_acf(&raw)
+        } else {
+            "public".to_string()
+        };
+
+        Ok(ExtendedAppInfo {
+            name,
+            dlcs,
+            depots,
+            launch_options,
+            active_branch,
+        })
+    }
+
+    pub async fn get_product_info(&mut self, appid: u32, prefer_proton: bool) -> Result<Vec<LaunchInfo>> {
+        let connection = self
+            .connection
+            .as_ref()
+            .context("steam connection not initialized")?;
+
+        let mut request = CMsgClientPICSProductInfoRequest::new();
+        request
+            .apps
+            .push(cmsg_client_picsproduct_info_request::AppInfo {
+                appid: Some(appid),
+                ..Default::default()
+            });
+
+        let response: CMsgClientPICSProductInfoResponse = connection
+            .job(request)
+            .await
+            .context("failed requesting appinfo product info for launch metadata")?;
+
+        let app = response
+            .apps
+            .iter()
+            .find(|entry| entry.appid() == appid)
+            .ok_or_else(|| anyhow!("missing appinfo payload for app {appid}"))?;
+
+        let raw_vdf = String::from_utf8_lossy(app.buffer()).to_string();
+        if raw_vdf.trim().is_empty() {
+            bail!("empty appinfo payload returned for app {appid}")
+        }
+
+        let launch_infos = parse_launch_info_from_vdf(appid, &raw_vdf, prefer_proton)
+            .context("failed to parse launch metadata from PICS appinfo")?;
+
+        Ok(launch_infos)
+    }
+
+    pub async fn play_game(
+        &mut self,
+        app: &LibraryGame,
+        proton_path: Option<&str>,
+        user_config: Option<&crate::models::UserAppConfig>,
+        force_windows: bool,
+    ) -> Result<LaunchInfo> {
+        let prefer_proton = force_windows || proton_path.is_some();
+        let launch_options = self.get_product_info(app.app_id, prefer_proton).await?;
+        // When forcing a Windows launch, prefer a Windows executable entry.
+        let launch_info = if force_windows {
+            launch_options
+                .iter()
+                .find(|o| o.target == LaunchTarget::WindowsProton)
+                .or_else(|| launch_options.first())
+                .cloned()
+        } else {
+            launch_options.first().cloned()
+        }
+        .ok_or_else(|| anyhow!("no launch options"))?;
+
+        let launcher_config = load_launcher_config().await.unwrap_or_default();
+
+        // Proton/Wine only exists on Linux. On Windows, a Windows game runs natively, so
+        // run its executable directly instead of routing through the Proton pipeline.
+        let native_windows = force_windows
+            || (cfg!(target_os = "windows") && launch_info.target == LaunchTarget::WindowsProton);
+
+        let chosen_proton_path = if native_windows {
+            None
+        } else {
+            match launch_info.target {
+                LaunchTarget::NativeLinux => None,
+                LaunchTarget::WindowsProton => {
+                    proton_path.or(Some(launcher_config.proton_version.as_str()))
+                }
+            }
+        };
+
+        let cloud_enabled = launcher_config.enable_cloud_sync && !self.is_offline();
+        let mut cloud_client = None;
+        let mut local_root = None;
+
+        if cloud_enabled {
+            let client = CloudClient::new(
+                self.connection
+                    .as_ref()
+                    .cloned()
+                    .context("steam connection not initialized")?,
+            );
+            let root = default_cloud_root(client.steam_id(), app.app_id)?;
+            tracing::info!(appid = app.app_id, path = %root.display(), "Syncing Cloud...");
+            let _ = client.sync_down(app.app_id, &root).await;
+            cloud_client = Some(client);
+            local_root = Some(root);
+        }
+
+        let mut child = if native_windows {
+            self.spawn_windows_native(app, &launch_info, user_config).await?
+        } else {
+            self.spawn_game_process(app, &launch_info, chosen_proton_path, &launcher_config, user_config).await?
+        };
+        child
+            .wait()
+            .context("failed waiting for game process exit")?;
+
+        if cloud_enabled {
+            if let (Some(client), Some(root)) = (cloud_client.as_ref(), local_root.as_ref()) {
+                client.sync_up(app.app_id, root).await?;
+                tracing::info!(appid = app.app_id, "Upload Complete");
+            }
+        }
+
+        Ok(launch_info)
+    }
+
+    pub async fn launch_game(
+        &self,
+        app: &LibraryGame,
+        launch_info: &LaunchInfo,
+        proton_path: Option<&str>,
+        user_config: Option<&crate::models::UserAppConfig>,
+    ) -> Result<()> {
+        let launcher_config = load_launcher_config().await.unwrap_or_default();
+        self.spawn_game_process(app, launch_info, proton_path, &launcher_config, user_config).await?;
+        Ok(())
+    }
+
+    pub async fn update_game(
+        &self,
+        appid: u32,
+        shared_state: Arc<std::sync::RwLock<crate::models::DownloadState>>,
+    ) -> Result<Receiver<DownloadProgress>> {
+        self.start_manifest_download(appid, false, shared_state)
+            .await
+    }
+
+    pub async fn verify_game(
+        &self,
+        appid: u32,
+        shared_state: Arc<std::sync::RwLock<crate::models::DownloadState>>,
+    ) -> Result<Receiver<DownloadProgress>> {
+        self.start_manifest_download(appid, true, shared_state)
+            .await
+    }
+
+    async fn start_manifest_download(
+        &self,
+        appid: u32,
+        verify_mode: bool,
+        shared_state: Arc<std::sync::RwLock<crate::models::DownloadState>>,
+    ) -> Result<Receiver<DownloadProgress>> {
+        let connection = self
+            .connection
+            .as_ref()
+            .cloned()
+            .context("steam connection not initialized")?;
+
+        let install_root = self.install_root_for_app(appid).await?;
+        let manifest_path = self.appmanifest_path(appid).await?;
+        let (tx, rx) = tokio::sync::mpsc::channel(128);
+
+        let (local_manifests, active_branch) = self
+            .local_manifest_info_for_appid(appid)
+            .await
+            .unwrap_or_else(|_| (HashMap::new(), "public".to_string()));
+
+        let client_clone = self.clone();
+        let shared_state_clone = shared_state.clone();
+        let game_name = self.resolve_install_game_name(appid).await;
+        tokio::task::spawn(async move {
+            if let Ok(mut state) = shared_state_clone.write() {
+                state.is_downloading = true;
+                state.is_paused = false;
+                state.app_id = appid;
+                state.app_name = game_name.clone();
+                state.downloaded_bytes = 0;
+                state.status_text = format!("Preparing operation for {}...", game_name);
+            }
+
+            let _ = tx
+                .send(DownloadProgress {
+                    state: DownloadProgressState::Queued,
+                    bytes_downloaded: 0,
+                    total_bytes: 0,
+                    current_file: if verify_mode {
+                        "verifying installed chunks".to_string()
+                    } else {
+                        "resolving latest manifest".to_string()
+                    },
+                })
+                .await;
+
+            let remote_manifests = if verify_mode {
+                local_manifests.clone()
+            } else {
+                SteamClient::remote_manifest_ids_static(&connection, appid, &active_branch)
+                    .await
+                    .unwrap_or_default()
+            };
+
+            let mut selections = Vec::new();
+            for (depot_id, manifest_id) in &remote_manifests {
+                selections.push(ManifestSelection {
+                    app_id: appid,
+                    depot_id: *depot_id as u32,
+                    manifest_id: *manifest_id,
+                    appinfo_vdf: String::new(),
+                });
+            }
+
+            if selections.is_empty() {
+                let _ = tx
+                    .send(DownloadProgress {
+                        state: DownloadProgressState::Failed,
+                        bytes_downloaded: 0,
+                        total_bytes: 0,
+                        current_file: "no manifest/depot available for download".to_string(),
+                    })
+                    .await;
+                return;
+            };
+
+            let hosts = match client_clone.get_content_servers(connection.cell_id()).await {
+                Ok(h) => h,
+                Err(e) => {
+                    let _ = tx
+                        .send(DownloadProgress {
+                            state: DownloadProgressState::Failed,
+                            bytes_downloaded: 0,
+                            total_bytes: 0,
+                            current_file: format!("Failed to fetch content servers: {}", e),
+                        })
+                        .await;
+                    return;
+                }
+            };
+
+            let mut success = true;
+            let mut successful_depots = Vec::new();
+
+            for selection in selections {
+                let key: Vec<u8> = match client_clone.get_depot_key(appid, selection.depot_id).await {
+                    Ok(k) => k,
+                    Err(e) => {
+                        tracing::warn!(
+                            "Skipping Depot {} (No Key/Not Owned): {}",
+                            selection.depot_id,
+                            e
+                        );
+                        continue;
+                    }
+                };
+
+                let manifest_code: Option<u64> = client_clone
+                    .get_manifest_request_code(appid, selection.depot_id, selection.manifest_id)
+                    .await
+                    .ok();
+
+                let mut depot_success = false;
+                for host in &hosts {
+                    let token: Option<String> = client_clone
+                        .get_cdn_auth_token(appid, selection.depot_id, host)
+                        .await
+                        .ok();
+
+                    let (host_name, port) = if let Some(pos) = host.find(':') {
+                        (
+                            &host[..pos],
+                            host[pos + 1..].parse::<u16>().unwrap_or(80),
+                        )
+                    } else {
+                        (host.as_str(), 80)
+                    };
+
+                    let cdn_server = steam_cdn::web_api::content_service::CDNServer {
+                        r#type: "CDN".to_string(),
+                        https: port == 443,
+                        host: host_name.to_string(),
+                        vhost: host_name.to_string(),
+                        port,
+                        cell_id: connection.cell_id(),
+                        load: 0,
+                        weighted_load: 0,
+                        auth_token: token,
+                    };
+
+                    let cdn_client = steam_cdn::CDNClient::with_server(
+                        Arc::new(connection.clone()),
+                        cdn_server,
+                    );
+
+                    let tx_clone = tx.clone();
+                    let selection_depot_id = selection.depot_id;
+                    let on_progress = Arc::new(move |bytes: u64| {
+                        let _ = tx_clone.try_send(DownloadProgress {
+                            state: if verify_mode {
+                                DownloadProgressState::Verifying
+                            } else {
+                                DownloadProgressState::Downloading
+                            },
+                            bytes_downloaded: bytes,
+                            total_bytes: 0, // We don't have total file size here easily
+                            current_file: format!("Depot {}", selection_depot_id),
+                        });
+                    });
+
+                    let depot_size = Arc::new(std::sync::atomic::AtomicU64::new(0));
+                    let size_clone = depot_size.clone();
+                    let on_manifest = Arc::new(move |total_bytes: u64| {
+                        size_clone.store(total_bytes, std::sync::atomic::Ordering::SeqCst);
+                    });
+
+                    let abort_signal = shared_state_clone
+                        .read()
+                        .ok()
+                        .map(|s| s.abort_signal.clone());
+
+                    match cdn_client
+                        .download_depot(
+                            appid,
+                            selection.depot_id,
+                            selection.manifest_id,
+                            &key,
+                            &install_root,
+                            manifest_code,
+                            verify_mode,
+                            abort_signal,
+                            Some(on_progress),
+                            Some(on_manifest),
+                        )
+                        .await
+                    {
+                        Ok(_) => {
+                            let aborted = shared_state_clone.read()
+                                .map(|s| s.abort_signal.load(std::sync::atomic::Ordering::Relaxed))
+                                .unwrap_or(false);
+                            if aborted {
+                                break;
+                            }
+
+                            depot_success = true;
+                            successful_depots.push((
+                                selection.depot_id,
+                                selection.manifest_id,
+                                depot_size.load(std::sync::atomic::Ordering::SeqCst),
+                            ));
+                            break;
+                        }
+                        Err(e) => {
+                            tracing::error!("CDN Error from {}: {}", host, e);
+                        }
+                    }
+                }
+
+                if !depot_success {
+                    let aborted = shared_state_clone.read()
+                        .map(|s| s.abort_signal.load(std::sync::atomic::Ordering::Relaxed))
+                        .unwrap_or(false);
+
+                    if aborted {
+                        success = false;
+                        break;
+                    }
+
+                    let _ = tx
+                        .send(DownloadProgress {
+                            state: DownloadProgressState::Failed,
+                            bytes_downloaded: 0,
+                            total_bytes: 0,
+                            current_file: format!(
+                                "Failed to download/verify depot {} from all servers",
+                                selection.depot_id
+                            ),
+                        })
+                        .await;
+                    success = false;
+                    break;
+                }
+            }
+
+            if success {
+                if let Ok(mut state) = shared_state_clone.write() {
+                    state.is_downloading = false;
+                    state.status_text = "Operation complete".to_string();
+                }
+
+                let (game_name, pics_installdir) = client_clone.resolve_install_game_info(appid).await;
+                let installdir = pics_installdir.unwrap_or_else(|| sanitize_install_dir(&game_name));
+
+                if let Err(err) =
+                    SteamClient::write_appmanifest(&manifest_path, appid, &game_name, &installdir, successful_depots)
+                {
+                    tracing::warn!("failed writing appmanifest for {}: {}", appid, err);
+                }
+                let _ = tx
+                    .send(DownloadProgress {
+                        state: DownloadProgressState::Completed,
+                        bytes_downloaded: 1,
+                        total_bytes: 1,
+                        current_file: if verify_mode {
+                            "verify completed".to_string()
+                        } else {
+                            "update completed".to_string()
+                        },
+                    })
+                    .await;
+            } else {
+                if let Ok(mut state) = shared_state_clone.write() {
+                    state.is_downloading = false;
+                    state.status_text = "Operation failed or paused".to_string();
+                }
+            }
+        });
+
+        Ok(rx)
+    }
+
+    async fn appmanifest_path(&self, appid: u32) -> Result<PathBuf> {
+        let file = format!("appmanifest_{appid}.acf");
+
+        // Search every known Steam library (incl. other drives) for the manifest.
+        for root in crate::library::all_library_roots().await {
+            let candidate = root.join("steamapps").join(&file);
+            if candidate.exists() {
+                return Ok(candidate);
+            }
+        }
+
+        // Fall back to the configured library root even if the manifest is absent,
+        // preserving the previous behaviour for callers that tolerate a missing file.
+        let cfg = load_launcher_config().await?;
+        Ok(PathBuf::from(cfg.steam_library_path)
+            .join("steamapps")
+            .join(file))
+    }
+
+    async fn local_manifest_info_for_appid(&self, appid: u32) -> Result<(HashMap<u64, u64>, String)> {
+        let manifest_path = self.appmanifest_path(appid).await?;
+        if !manifest_path.exists() {
+            return Ok((HashMap::new(), "public".to_string()));
+        }
+        let raw = std::fs::read_to_string(&manifest_path)
+            .with_context(|| format!("failed reading {}", manifest_path.display()))?;
+        let manifests = parse_installed_depots_from_acf(&raw);
+        let branch = parse_active_branch_from_acf(&raw);
+        Ok((manifests, branch))
+    }
+
+    async fn install_root_for_app(&self, appid: u32) -> Result<PathBuf> {
+        let manifest_path = self.appmanifest_path(appid).await?;
+        let steamapps = manifest_path
+            .parent()
+            .ok_or_else(|| anyhow!("invalid steamapps path for app {appid}"))?
+            .to_path_buf();
+
+        if manifest_path.exists() {
+            let raw = std::fs::read_to_string(&manifest_path)
+                .with_context(|| format!("failed reading {}", manifest_path.display()))?;
+            if let Some(installdir) = parse_installdir_from_acf(&raw) {
+                let p = steamapps.join("common").join(&installdir);
+                if p.exists() {
+                    return Ok(p);
+                }
+
+                // Fallback: search for app id markers if the specified installdir doesn't exist
+                if let Some(fallback) = self.probe_install_dir_by_appid(&steamapps, appid) {
+                    tracing::info!("Found fallback install dir for app {appid}: {:?}", fallback);
+                    return Ok(fallback);
+                }
+
+                // Even if it doesn't exist, we return the path it *should* be at
+                return Ok(p);
+            }
+        }
+
+        // Final fallback if no manifest or installdir
+        Ok(PathBuf::from(load_launcher_config().await?.steam_library_path)
+            .join("steamapps")
+            .join("common")
+            .join(appid.to_string()))
+    }
+
+    fn probe_install_dir_by_appid(&self, steamapps: &Path, appid: u32) -> Option<PathBuf> {
+        let common = steamapps.join("common");
+        if !common.exists() {
+            return None;
+        }
+
+        let appid_str = appid.to_string();
+
+        if let Ok(entries) = std::fs::read_dir(common) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    // Check for steam_appid.txt
+                    let appid_txt = path.join("steam_appid.txt");
+                    if appid_txt.exists() {
+                        if let Ok(content) = std::fs::read_to_string(appid_txt) {
+                            if content.trim() == appid_str {
+                                return Some(path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    async fn remote_manifest_ids_static(
+        connection: &Connection,
+        appid: u32,
+        branch: &str,
+    ) -> Result<HashMap<u64, u64>> {
+        let mut request = CMsgClientPICSProductInfoRequest::new();
+        request
+            .apps
+            .push(cmsg_client_picsproduct_info_request::AppInfo {
+                appid: Some(appid),
+                ..Default::default()
+            });
+
+        let response: CMsgClientPICSProductInfoResponse = connection
+            .job(request)
+            .await
+            .context("failed requesting appinfo product info for update metadata")?;
+
+        let app = response
+            .apps
+            .iter()
+            .find(|entry| entry.appid() == appid)
+            .ok_or_else(|| anyhow!("missing appinfo payload for app {appid}"))?;
+
+        let mut manifests = HashMap::new();
+        if let Ok(vdf) = find_vdf_in_pics(app.buffer()) {
+            let root_obj = vdf.as_obj().unwrap();
+            let depots_val = if vdf.key() == "appinfo" || vdf.key() == appid.to_string() {
+                root_obj.get("depots")
+            } else {
+                root_obj.get("depots").or_else(|| {
+                    root_obj
+                        .get("appinfo")
+                        .and_then(|v| v.as_obj())
+                        .and_then(|o| o.get("depots"))
+                })
+            };
+
+            if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
+                for (key, value) in depots.iter() {
+                    if let Ok(d_id) = key.parse::<u64>() {
+                        if let Some(m_id) = extract_manifest_id_robust(value, branch) {
+                            manifests.insert(d_id, m_id);
+                        } else if branch != "public" {
+                            if let Some(m_id) = extract_manifest_id_robust(value, "public") {
+                                manifests.insert(d_id, m_id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(manifests)
+    }
+
+
+    pub async fn fetch_app_metadata(&self, appid: u32) -> Option<AppMetadata> {
+        let url = format!("https://store.steampowered.com/api/appdetails?appids={appid}&filters=basic");
+        let resp = reqwest::get(url).await.ok()?;
+        let json: serde_json::Value = resp.json().await.ok()?;
+        let data = json.get(appid.to_string())?.get("data")?;
+
+        let name = data.get("name")?.as_str()?.to_string();
+        let header_image = data
+            .get("header_image")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        Some(AppMetadata { name, header_image })
+    }
+
+    /// If `appid` is a DLC, return the base game's appid it depends on.
+    /// Returns `None` for base games (or if the relationship can't be determined).
+    /// Tries the authoritative PICS appinfo first, then the storefront as a fallback
+    /// (some DLC don't carry the parent reference in their PICS appinfo).
+    pub async fn resolve_dlc_parent(&self, appid: u32) -> Option<u32> {
+        if let Some(base) = self.dlc_parent_from_pics(appid).await {
+            return Some(base);
+        }
+        let http = reqwest::Client::builder()
+            .user_agent("aurelia/0.1")
+            .build()
+            .ok()?;
+        crate::store::fetch_dlc_parent(&http, appid).await
+    }
+
+    async fn dlc_parent_from_pics(&self, appid: u32) -> Option<u32> {
+        let connection = self.connection.as_ref()?;
+
+        let mut request = CMsgClientPICSProductInfoRequest::new();
+        request
+            .apps
+            .push(cmsg_client_picsproduct_info_request::AppInfo {
+                appid: Some(appid),
+                ..Default::default()
+            });
+
+        let response: CMsgClientPICSProductInfoResponse = connection.job(request).await.ok()?;
+        let app = response.apps.iter().find(|e| e.appid() == appid)?;
+        let raw_vdf = String::from_utf8(app.buffer().to_vec()).ok()?;
+        let parsed = parse_appinfo(&raw_vdf).ok()?;
+
+        let common = parsed
+            .appinfo
+            .as_ref()
+            .and_then(|a| a.common.as_ref())
+            .or(parsed.common.as_ref());
+
+        let is_dlc = common
+            .and_then(|c| c.app_type.as_deref())
+            .map(|t| t.eq_ignore_ascii_case("dlc"))
+            .unwrap_or(false);
+        if !is_dlc {
+            return None;
+        }
+
+        let extended = parsed
+            .appinfo
+            .as_ref()
+            .and_then(|a| a.extended.as_ref())
+            .or(parsed.extended.as_ref());
+
+        extended
+            .and_then(|e| e.dependantonapp.as_deref())
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .or_else(|| {
+                common
+                    .and_then(|c| c.parent.as_deref())
+                    .and_then(|s| s.trim().parse::<u32>().ok())
+            })
+            .filter(|&base| base != 0 && base != appid)
+    }
+
+    pub async fn resolve_install_game_info(&self, appid: u32) -> (String, Option<String>) {
+        let mut display_name = format!("App {appid}");
+        let mut installdir = None;
+
+        // Try to get info from PICS first as it's authoritative
+        let mut request = CMsgClientPICSProductInfoRequest::new();
+        request
+            .apps
+            .push(cmsg_client_picsproduct_info_request::AppInfo {
+                appid: Some(appid),
+                ..Default::default()
+            });
+
+        if let Some(conn) = self.connection.as_ref() {
+            let res: Result<CMsgClientPICSProductInfoResponse, _> = conn.job(request).await;
+            if let Ok(response) = res {
+                if let Some(app) = response.apps.iter().find(|entry| entry.appid() == appid) {
+                    if let Ok(raw_vdf) = String::from_utf8(app.buffer().to_vec()) {
+                        if let Ok(parsed) = parse_appinfo(&raw_vdf) {
+                            let common = parsed
+                                .appinfo
+                                .as_ref()
+                                .and_then(|a| a.common.as_ref())
+                                .or(parsed.common.as_ref());
+                            if let Some(common) = common {
+                                if let Some(name) = &common.name {
+                                    display_name = name.clone();
+                                }
+                                if let Some(dir) = &common.installdir {
+                                    installdir = Some(dir.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if installdir.is_none() || display_name.starts_with("App ") {
+            if let Ok(games) = load_library_cache().await {
+                if let Some(game) = games.iter().find(|g| g.app_id == appid) {
+                    if display_name.starts_with("App ") && !game.name.is_empty() && !game.name.starts_with("App ") {
+                        display_name = game.name.clone();
+                    }
+                }
+            }
+        }
+
+        (display_name, installdir)
+    }
+
+    async fn resolve_install_game_name(&self, appid: u32) -> String {
+        self.resolve_install_game_info(appid).await.0
+    }
+
+    pub fn write_appmanifest(
+        path: &Path,
+        appid: u32,
+        game_name: &str,
+        installdir: &str,
+        installed_depots: Vec<(u32, u64, u64)>,
+    ) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed creating {}", parent.display()))?;
+        }
+
+        let game_name = game_name.replace('"', "");
+
+        let mut content = format!(
+            "\"AppState\"\n{{\n\t\"appid\"\t\"{appid}\"\n\t\"name\"\t\"{game_name}\"\n\t\"StateFlags\"\t\"4\"\n\t\"installdir\"\t\"{installdir}\"\n"
+        );
+
+        if !installed_depots.is_empty() {
+            content.push_str("\t\"InstalledDepots\"\n\t{\n");
+            for (depot_id, manifest_id, size) in installed_depots {
+                content.push_str(&format!(
+                    "\t\t\"{depot_id}\"\n\t\t{{\n\t\t\t\"manifest\"\t\t\"{manifest_id}\"\n\t\t\t\"size\"\t\t\"{size}\"\n\t\t}}\n"
+                ));
+            }
+            content.push_str("\t}\n");
+        }
+
+        content.push_str("}\n");
+
+        std::fs::write(path, content)
+            .with_context(|| format!("failed writing {}", path.display()))?;
+        Ok(())
+    }
+
+    /// Mark a DLC as installed and enabled in the base game's appmanifest:
+    ///
+    /// 1. Add the DLC's downloaded depots to `InstalledDepots`, tagged with `dlcappid`
+    ///    (how Steam records DLC content as present).
+    /// 2. Remove the DLC's appid from every `DisabledDLC` list (how Steam records the
+    ///    DLC as enabled vs. disabled).
+    ///
+    /// Existing depot entries are left untouched, so re-installs are idempotent.
+    pub fn enable_dlc_in_appmanifest(
+        base_manifest: &Path,
+        dlc_appid: u32,
+        depots: &[(u32, u64, u64)],
+    ) -> Result<()> {
+        let mut content = std::fs::read_to_string(base_manifest)
+            .with_context(|| format!("failed reading {}", base_manifest.display()))?;
+        let mut changed = false;
+
+        // 1. Ensure the DLC's depots are recorded with their dlcappid.
+        let mut entries = String::new();
+        for (depot_id, manifest_id, size) in depots {
+            if content.contains(&format!("\"{depot_id}\"")) {
+                continue; // already recorded
+            }
+            entries.push_str(&format!(
+                "\t\t\"{depot_id}\"\n\t\t{{\n\t\t\t\"manifest\"\t\t\"{manifest_id}\"\n\t\t\t\"size\"\t\t\"{size}\"\n\t\t\t\"dlcappid\"\t\t\"{dlc_appid}\"\n\t\t}}\n"
+            ));
+        }
+        if !entries.is_empty() {
+            if let Some(pos) = content.find("\"InstalledDepots\"") {
+                let rel = content[pos..].find('{').ok_or_else(|| {
+                    anyhow!("malformed InstalledDepots block in {}", base_manifest.display())
+                })?;
+                let insert_at = pos + rel + 1;
+                content.insert_str(insert_at, &format!("\n{entries}"));
+            } else {
+                let last = content
+                    .rfind('}')
+                    .ok_or_else(|| anyhow!("malformed appmanifest {}", base_manifest.display()))?;
+                content.insert_str(last, &format!("\t\"InstalledDepots\"\n\t{{\n{entries}\t}}\n"));
+            }
+            changed = true;
+        }
+
+        // 2. Remove the DLC appid from any "DisabledDLC" lists (enable it).
+        let dlc_str = dlc_appid.to_string();
+        let re = regex::Regex::new(r#""DisabledDLC"(\s*)"([^"]*)""#)
+            .expect("valid DisabledDLC regex");
+        let updated = re.replace_all(&content, |caps: &regex::Captures| {
+            let kept: Vec<&str> = caps[2]
+                .split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty() && *s != dlc_str)
+                .collect();
+            format!("\"DisabledDLC\"{}\"{}\"", &caps[1], kept.join(","))
+        });
+        if updated != content {
+            content = updated.into_owned();
+            changed = true;
+        }
+
+        if changed {
+            std::fs::write(base_manifest, &content)
+                .with_context(|| format!("failed writing {}", base_manifest.display()))?;
+            tracing::info!("Enabled DLC {dlc_appid} in {}", base_manifest.display());
+        } else {
+            tracing::info!("DLC {dlc_appid} already enabled in {}", base_manifest.display());
+        }
+        Ok(())
+    }
+
+    /// Enable or disable an owned DLC by editing the base game's appmanifest
+    /// `DisabledDLC` lists. Returns the base game's appid.
+    ///
+    /// Note: the running Steam client is authoritative for DLC enable/disable and may
+    /// rewrite this state on launch; this edits the on-disk manifest only.
+    pub async fn set_dlc_enabled(&self, dlc_appid: u32, enabled: bool) -> Result<u32> {
+        let base_appid = self.resolve_dlc_parent(dlc_appid).await.ok_or_else(|| {
+            anyhow!("app {dlc_appid} is not a DLC, or its base game could not be determined")
+        })?;
+
+        let manifest = self.appmanifest_path(base_appid).await?;
+        if !manifest.exists() {
+            bail!("base game (app {base_appid}) for DLC {dlc_appid} is not installed");
+        }
+
+        let content = std::fs::read_to_string(&manifest)
+            .with_context(|| format!("failed reading {}", manifest.display()))?;
+        let updated = apply_dlc_disabled(&content, dlc_appid, !enabled);
+        if updated != content {
+            std::fs::write(&manifest, &updated)
+                .with_context(|| format!("failed writing {}", manifest.display()))?;
+        }
+        tracing::info!(
+            "{} DLC {dlc_appid} in {}",
+            if enabled { "Enabled" } else { "Disabled" },
+            manifest.display()
+        );
+        Ok(base_appid)
+    }
+
+    /// Whether the desktop Steam client appears to be running.
+    ///
+    /// The running client caches each game's appmanifest at startup, so changes we
+    /// make on disk (e.g. enabling a DLC) aren't visible to games until Steam
+    /// re-reads them — which it does on restart.
+    #[cfg(target_os = "windows")]
+    pub fn steam_is_running() -> bool {
+        read_steam_registry("SteamPID")
+            .and_then(|v| {
+                let v = v.trim();
+                v.strip_prefix("0x")
+                    .and_then(|h| u32::from_str_radix(h, 16).ok())
+                    .or_else(|| v.parse::<u32>().ok())
+            })
+            .map(|pid| pid != 0)
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub fn steam_is_running() -> bool {
+        false
+    }
+
+    /// Ask the desktop Steam client to shut down, and wait for it to fully exit.
+    /// Windows only. Editing appmanifests is only reliable while Steam is stopped,
+    /// because Steam flushes its in-memory app state to disk on exit.
+    #[cfg(target_os = "windows")]
+    pub fn shutdown_steam() -> Result<()> {
+        if !SteamClient::steam_is_running() {
+            return Ok(());
+        }
+        let exe = steam_exe_path().context("could not locate steam.exe to stop Steam")?;
+        Command::new(&exe)
+            .arg("-shutdown")
+            .spawn()
+            .context("failed to signal Steam shutdown")?;
+        for _ in 0..60 {
+            if !SteamClient::steam_is_running() {
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        bail!("Steam did not shut down within 30s")
+    }
+
+    /// Start the desktop Steam client. Windows only.
+    #[cfg(target_os = "windows")]
+    pub fn start_steam() -> Result<()> {
+        let exe = steam_exe_path().context("could not locate steam.exe to start Steam")?;
+        Command::new(&exe)
+            .spawn()
+            .context("failed to start Steam")?;
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub fn shutdown_steam() -> Result<()> {
+        bail!("automatic Steam control is only supported on Windows")
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub fn start_steam() -> Result<()> {
+        bail!("automatic Steam control is only supported on Windows")
+    }
+
+    pub fn kill_steam_in_prefix(wineprefix: &Path) {
+        #[cfg(unix)]
+        {
+            let prefix_str = wineprefix.to_string_lossy().to_string();
+            let Ok(proc_dir) = std::fs::read_dir("/proc") else {
+                return;
+            };
+
+            for entry in proc_dir.flatten() {
+                let pid_path = entry.path();
+                let Some(pid_str) = pid_path.file_name().and_then(|n| n.to_str()) else {
+                    continue;
+                };
+                if !pid_str.chars().all(|c| c.is_ascii_digit()) {
+                    continue;
+                }
+
+                let cmdline = match std::fs::read(pid_path.join("cmdline")) {
+                    Ok(b) => String::from_utf8_lossy(&b).replace('\0', " "),
+                    Err(_) => continue,
+                };
+                // Kill steam.exe and steamwebhelper.exe processes in this prefix
+                if !cmdline.to_lowercase().contains("steam.exe")
+                    && !cmdline.to_lowercase().contains("steamwebhelper.exe")
+                {
+                    continue;
+                }
+
+                let environ = match std::fs::read(pid_path.join("environ")) {
+                    Ok(b) => String::from_utf8_lossy(&b).into_owned(),
+                    Err(_) => continue,
+                };
+                if !environ.contains(&prefix_str) {
+                    continue;
+                }
+
+                if let Ok(pid) = pid_str.parse::<i32>() {
+                    unsafe {
+                        libc::kill(pid, libc::SIGTERM);
+                    }
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = wineprefix;
+        }
+    }
+
+    /// Scans /proc to find a wine process running steam.exe inside the given WINEPREFIX.
+    pub fn is_steam_running_in_prefix(wineprefix: &Path) -> bool {
+        #[cfg(unix)]
+        {
+            let prefix_str = wineprefix.to_string_lossy().to_string();
+
+            let Ok(proc_dir) = std::fs::read_dir("/proc") else {
+                return false;
+            };
+
+            for entry in proc_dir.flatten() {
+                let pid_path = entry.path();
+
+                // Only look at numeric PID directories
+                if !pid_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n.chars().all(|c| c.is_ascii_digit()))
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+
+                // Must have steam.exe in cmdline
+                let cmdline = match std::fs::read(pid_path.join("cmdline")) {
+                    Ok(b) => b,
+                    Err(_) => continue,
+                };
+                let cmdline_str = String::from_utf8_lossy(&cmdline).replace('\0', " ");
+                if !cmdline_str.to_lowercase().contains("steam.exe") {
+                    continue;
+                }
+
+                // Must have our WINEPREFIX in its environment
+                let environ = match std::fs::read(pid_path.join("environ")) {
+                    Ok(b) => b,
+                    Err(_) => continue,
+                };
+                let environ_str = String::from_utf8_lossy(&environ);
+                if environ_str.contains(&prefix_str) {
+                    return true;
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = wineprefix;
+        }
+
+        false
+    }
+
+    /// Writes a steam.cfg into the Steam directory that minimises UI on startup.
+    pub fn write_headless_steam_cfg(steam_dir: &Path) {
+        let cfg_path = steam_dir.join("steam.cfg");
+        // Only write if not already present to avoid overwriting user config
+        if cfg_path.exists() {
+            return;
+        }
+        let content = "\
+BootStrapperForceSelfUpdate=disable
+SteamDefaultDialog=Friends
+NoSavePersonalInfo=1
+";
+        let _ = std::fs::write(&cfg_path, content);
+    }
+
+    /// The single canonical entry point for launching a game process.
+    /// This function orchestrates the launch via a staged pipeline and the appropriate runner.
+    /// Bypassing this for production launches is strictly forbidden.
+    /// Launch a Windows game's executable directly, with no Proton/Wine layer.
+    /// Used on Windows hosts (and when `--windows` is forced), where the game's
+    /// native `.exe` runs without a compatibility layer.
+    pub(crate) async fn spawn_windows_native(
+        &self,
+        app: &LibraryGame,
+        launch_info: &LaunchInfo,
+        user_config: Option<&crate::models::UserAppConfig>,
+    ) -> Result<std::process::Child> {
+        let install_dir = if let Some(p) = &app.install_path {
+            let p = PathBuf::from(p);
+            if p.exists() {
+                p
+            } else {
+                self.install_root_for_app(app.app_id).await?
+            }
+        } else {
+            self.install_root_for_app(app.app_id).await?
+        };
+
+        // Steam VDF stores Windows paths with backslashes; normalize for the host separator.
+        let exe_relative = launch_info.executable.replace('\\', "/");
+        let executable = install_dir.join(&exe_relative);
+        let mut args = split_args(&launch_info.arguments);
+
+        if let Some(config) = user_config {
+            if !config.launch_options.trim().is_empty() {
+                args.extend(split_args(&config.launch_options));
+            }
+        }
+
+        let game_working_dir: PathBuf = launch_info
+            .workingdir
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .map(|wd| install_dir.join(wd.replace('\\', "/")))
+            .or_else(|| executable.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| install_dir.clone());
+
+        // Standard Steam identity fallback so the game can resolve its app id.
+        let app_id_path = game_working_dir.join("steam_appid.txt");
+        std::fs::write(&app_id_path, app.app_id.to_string()).unwrap_or_default();
+
+        let mut cmd = Command::new(&executable);
+        cmd.args(&args);
+        cmd.current_dir(&game_working_dir);
+        cmd.env("SteamAppId", app.app_id.to_string());
+
+        if let Some(config) = user_config {
+            for (key, val) in &config.env_variables {
+                cmd.env(key, val);
+            }
+        }
+
+        tracing::info!(
+            "Launching game (Native Windows): {:?} with args {:?}",
+            executable,
+            args
+        );
+        cmd.spawn()
+            .with_context(|| format!("failed to spawn windows game {}", executable.display()))
+    }
+
+    pub(crate) async fn spawn_game_process(
+        &self,
+        app: &LibraryGame,
+        launch_info: &LaunchInfo,
+        proton_path: Option<&str>,
+        launcher_config: &crate::config::LauncherConfig,
+        user_config: Option<&crate::models::UserAppConfig>,
+    ) -> Result<std::process::Child> {
+        use crate::launch::pipeline::{LaunchPipeline, PipelineContext};
+        use crate::infra::logging::{LaunchSession, EventLogger};
+
+        let mut ctx = PipelineContext::new(app.app_id);
+        ctx.app = Some(app.clone());
+        ctx.launch_info = Some(launch_info.clone());
+        ctx.launcher_config = Some(launcher_config.clone());
+        ctx.user_config = user_config.cloned();
+        ctx.proton_path = proton_path.map(|s| s.to_string());
+
+        if let Ok(config_dir) = crate::config::config_dir() {
+            let session = LaunchSession::new(&config_dir.join("logs"));
+            if let Ok(logger) = EventLogger::new(&session) {
+                ctx.session = Some(session);
+                ctx.logger = Some(logger);
+            }
+        }
+
+        let pipeline = LaunchPipeline::with_default_stages();
+        pipeline.run(&mut ctx).await
+            .map_err(|e| anyhow!(e))?;
+
+        ctx.child.ok_or_else(|| anyhow!("Pipeline finished without spawning a process"))
+    }
+
+    /// Internal legacy ad-hoc launch path.
+    /// TODO: Remove once NativeRunner is implemented. (Ref: issue #1)
+    pub async fn internal_legacy_launch_adhoc(
+        &self,
+        app: &LibraryGame,
+        launch_info: &LaunchInfo,
+        _proton_path: Option<&str>,
+        _launcher_config: &crate::config::LauncherConfig,
+        user_config: Option<&crate::models::UserAppConfig>,
+    ) -> Result<std::process::Child> {
+        let install_dir = if let Some(p) = &app.install_path {
+            let p = PathBuf::from(p);
+            if p.exists() {
+                p
+            } else {
+                self.install_root_for_app(app.app_id).await?
+            }
+        } else {
+            self.install_root_for_app(app.app_id).await?
+        };
+
+        // Steam VDF stores Windows paths with backslashes; normalize for Linux
+        let exe_relative = launch_info.executable.replace('\\', "/");
+        let executable = install_dir.join(&exe_relative);
+        let mut args = split_args(&launch_info.arguments);
+
+        if let Some(config) = user_config {
+            if !config.launch_options.trim().is_empty() {
+                let custom_args = split_args(&config.launch_options);
+                args.extend(custom_args);
+            }
+        }
+
+        // Standard Steam identity fallback: steam_appid.txt
+        let app_id_str = app.app_id.to_string();
+        // Resolve working directory:
+        // 1. Use VDF-specified workingdir if present (normalized from backslashes)
+        // 2. Fall back to executable's parent
+        // 3. Fall back to install_dir
+        let game_working_dir: PathBuf = launch_info.workingdir
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .map(|wd| install_dir.join(wd.replace('\\', "/")))
+            .or_else(|| executable.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| install_dir.clone());
+
+        match launch_info.target {
+            LaunchTarget::NativeLinux => {
+                let app_id_path = game_working_dir.join("steam_appid.txt");
+                std::fs::write(&app_id_path, &app_id_str).unwrap_or_default();
+
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Ok(metadata) = std::fs::metadata(&executable) {
+                        let mut perms = metadata.permissions();
+                        perms.set_mode(0o755);
+                        let _ = std::fs::set_permissions(&executable, perms);
+                    }
+                }
+
+                let mut cmd = Command::new(&executable);
+                cmd.args(&args);
+                cmd.current_dir(&install_dir);
+
+                let bin_dir = executable.parent().unwrap_or_else(|| Path::new("."));
+                let existing_ld = std::env::var("LD_LIBRARY_PATH").unwrap_or_default();
+                let existing_path = std::env::var("PATH").unwrap_or_default();
+
+                cmd.env("LD_LIBRARY_PATH", format!("{}:{}", bin_dir.display(), existing_ld));
+                cmd.env("PATH", format!("{}:{}", bin_dir.display(), existing_path));
+                cmd.env("SteamAppId", app.app_id.to_string());
+
+                if let Some(config) = user_config {
+                    for (key, val) in &config.env_variables {
+                        cmd.env(key, val);
+                    }
+                }
+
+                tracing::info!("Launching game (Native): {:?} with args {:?}", executable, args);
+                cmd.spawn().context("failed to spawn native linux game")
+            }
+            LaunchTarget::WindowsProton => {
+                bail!("WindowsProton targets must be launched via the Pipeline and Runner abstraction. Ad-hoc bypass is prohibited.");
+            }
+        }
+    }
+}
+
+pub fn sanitize_install_dir(name: &str) -> String {
+    let sanitized: String = name
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            #[cfg(target_os = "windows")]
+            ':' => '_',
+            _ => c,
+        })
+        .collect();
+    sanitized.trim().to_string()
+}
+
+/// Steam wraps the entire VDF in a top-level key that is the numeric app ID.
+/// This wrapper accepts that outer key transparently.
+#[derive(Debug, serde::Deserialize)]
+pub struct AppInfoEnvelope(pub HashMap<String, crate::models::AppInfoRoot>);
+
+impl AppInfoEnvelope {
+    /// Extract the inner AppInfoRoot regardless of the outer key name.
+    pub fn into_inner(self) -> Option<crate::models::AppInfoRoot> {
+        self.0.into_values().next()
+    }
+}
+
+/// Read a value from `HKCU\Software\Valve\Steam` via `reg query` (Windows).
+#[cfg(target_os = "windows")]
+fn read_steam_registry(value: &str) -> Option<String> {
+    let output = Command::new("reg")
+        .args(["query", r"HKCU\Software\Valve\Steam", "/v", value])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with(value) {
+            // Line looks like: `SteamExe    REG_SZ    c:/program files (x86)/steam/steam.exe`
+            if let Some(pos) = line.find("REG_") {
+                let mut parts = line[pos..].splitn(2, char::is_whitespace);
+                let _ty = parts.next();
+                if let Some(data) = parts.next() {
+                    return Some(data.trim().to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Resolve the path to `steam.exe` (Windows).
+#[cfg(target_os = "windows")]
+fn steam_exe_path() -> Option<PathBuf> {
+    if let Some(raw) = read_steam_registry("SteamExe") {
+        let path = PathBuf::from(raw.replace('/', "\\"));
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    let fallback = PathBuf::from(r"C:\Program Files (x86)\Steam\steam.exe");
+    fallback.exists().then_some(fallback)
+}
+
+/// Add or remove a DLC appid from every `DisabledDLC` list in an appmanifest's text.
+/// When `disabled` is true and no `DisabledDLC` key exists, one is inserted into the
+/// `UserConfig` and `MountedConfig` blocks.
+fn apply_dlc_disabled(content: &str, dlc_appid: u32, disabled: bool) -> String {
+    let dlc = dlc_appid.to_string();
+    let re = regex::Regex::new(r#""DisabledDLC"(\s*)"([^"]*)""#).expect("valid regex");
+
+    if re.is_match(content) {
+        return re
+            .replace_all(content, |caps: &regex::Captures| {
+                let mut list: Vec<String> = caps[2]
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty() && *s != dlc)
+                    .collect();
+                if disabled {
+                    list.push(dlc.clone());
+                }
+                format!("\"DisabledDLC\"{}\"{}\"", &caps[1], list.join(","))
+            })
+            .into_owned();
+    }
+
+    if disabled {
+        // No DisabledDLC key yet — add one to the per-user config blocks.
+        let mut out = content.to_string();
+        for block in ["MountedConfig", "UserConfig"] {
+            if let Some(pos) = out.find(&format!("\"{block}\"")) {
+                if let Some(rel) = out[pos..].find('{') {
+                    let at = pos + rel + 1;
+                    out.insert_str(at, &format!("\n\t\t\"DisabledDLC\"\t\t\"{dlc}\""));
+                }
+            }
+        }
+        return out;
+    }
+
+    content.to_string()
+}
+
+pub fn parse_appinfo(vdf: &str) -> Result<crate::models::AppInfoRoot> {
+    // Try direct parse first (in case steam-vent already strips the wrapper)
+    if let Ok(parsed) = keyvalues_serde::from_str::<crate::models::AppInfoRoot>(vdf) {
+        return Ok(parsed);
+    }
+    // Fall back to envelope parse
+    let envelope: AppInfoEnvelope =
+        keyvalues_serde::from_str(vdf).context("failed parsing appinfo VDF (envelope)")?;
+    envelope
+        .into_inner()
+        .context("appinfo envelope was empty")
+}
+
+pub fn should_keep_depot(oslist: Option<&str>, target: DepotPlatform) -> bool {
+    match target {
+        DepotPlatform::Windows => match oslist {
+            Some(os) => {
+                let os = os.to_lowercase();
+                if os.contains("windows") {
+                    return true;
+                }
+                if os.contains("linux") || os.contains("macos") {
+                    return false;
+                }
+                true
+            }
+            None => true,
+        },
+        DepotPlatform::Linux => match oslist {
+            Some(os) => {
+                let os = os.to_lowercase();
+                if os.contains("linux") {
+                    return true;
+                }
+                if os.contains("windows") || os.contains("macos") {
+                    return false;
+                }
+                true
+            }
+            None => true,
+        },
+    }
+}
+
+fn map_confirmation(method: &ConfirmationMethod) -> ConfirmationPrompt {
+    let details = method.confirmation_details().to_string();
+    let requirement = match method.confirmation_type() {
+        "email" => SteamGuardReq::EmailCode {
+            domain_hint: details.clone(),
+        },
+        "device code" => SteamGuardReq::DeviceCode,
+        "device confirmation" => SteamGuardReq::DeviceConfirmation,
+        _ => SteamGuardReq::DeviceConfirmation,
+    };
+
+    ConfirmationPrompt {
+        requirement,
+        details,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ProductInfoEnvelopeWrapper(pub HashMap<String, ProductInfoEnvelope>);
+
+impl ProductInfoEnvelopeWrapper {
+    pub fn into_inner(self) -> Option<ProductInfoEnvelope> {
+        self.0.into_values().next()
+    }
+}
+
+fn parse_product_info_envelope(vdf: &str) -> Result<ProductInfoEnvelope> {
+    if let Ok(parsed) = keyvalues_serde::from_str::<ProductInfoEnvelope>(vdf) {
+        return Ok(parsed);
+    }
+    let wrapper: ProductInfoEnvelopeWrapper = keyvalues_serde::from_str(vdf)
+        .context("failed parsing product info VDF (wrapper)")?;
+    wrapper
+        .into_inner()
+        .context("product info envelope was empty")
+}
+
+fn parse_launch_info_from_vdf(
+    appid: u32,
+    raw_vdf: &str,
+    _prefer_proton: bool,
+) -> Result<Vec<LaunchInfo>> {
+    let parsed: ProductInfoEnvelope =
+        parse_product_info_envelope(raw_vdf).context("failed to parse product info VDF")?;
+
+    let config = parsed
+        .appinfo
+        .as_ref()
+        .and_then(|appinfo| appinfo.config.as_ref())
+        .or(parsed.config.as_ref())
+        .ok_or_else(|| anyhow!("missing config section in product info for app {appid}"))?;
+
+    if config.launch.is_empty() {
+        bail!("no launch entries found for app {appid}")
+    }
+
+    let mut options = Vec::new();
+    for (id, entry) in &config.launch {
+        let exe = entry.executable.as_deref().unwrap_or("");
+        let os_list = entry.config.as_ref().and_then(|c| c.oslist.as_deref());
+        let description = entry.description.as_deref().unwrap_or("Game");
+
+        // HEURISTIC: DETERMINE TARGET
+        let target = if let Some(os) = os_list {
+            if os.contains("linux") {
+                LaunchTarget::NativeLinux
+            } else if os.contains("windows") {
+                LaunchTarget::WindowsProton
+            } else if os.contains("macos") {
+                continue;
+            } // Skip Mac on non-Mac
+            else {
+                LaunchTarget::WindowsProton
+            } // Default to Windows
+        } else {
+            // No OS specified? Check Extension.
+            if exe.ends_with(".exe") || exe.ends_with(".bat") {
+                LaunchTarget::WindowsProton
+            } else if exe.contains("linux") || exe.ends_with(".sh") {
+                LaunchTarget::NativeLinux
+            } else {
+                // Default behavior
+                #[cfg(target_os = "linux")]
+                {
+                    LaunchTarget::NativeLinux
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    LaunchTarget::WindowsProton
+                }
+                #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+                {
+                    LaunchTarget::WindowsProton
+                }
+            }
+        };
+
+        options.push(LaunchInfo {
+            app_id: appid,
+            id: id.clone(),
+            description: if description == "Game" && !exe.is_empty() {
+                exe.to_string()
+            } else {
+                description.to_string()
+            },
+            executable: exe.to_string(),
+            arguments: entry.arguments.clone().unwrap_or_default(),
+            workingdir: entry.workingdir.clone(),
+            target,
+        });
+    }
+
+    if options.is_empty() {
+        bail!("no suitable launch option found for app {appid}");
+    }
+
+    // Sort options: prefer key "0", then by id
+    options.sort_by(|a, b| {
+        if a.id == "0" {
+            return std::cmp::Ordering::Less;
+        }
+        if b.id == "0" {
+            return std::cmp::Ordering::Greater;
+        }
+        a.id.cmp(&b.id)
+    });
+
+    Ok(options)
+}
+
+pub fn find_vdf_in_pics(buffer: &[u8]) -> Result<steam_vdf_parser::Vdf<'static>> {
+    let is_text = buffer
+        .first()
+        .map(|&b| b == 0x22 || b == 0x7B)
+        .unwrap_or(false);
+
+    if is_text {
+        let text = String::from_utf8_lossy(buffer);
+        return steam_vdf_parser::parse_text(&text)
+            .map(|v| v.into_owned())
+            .map_err(|e| anyhow!("Text VDF parse error: {}", e));
+    }
+
+    if let Ok(vdf) = steam_vdf_parser::parse_binary(buffer) {
+        return Ok(vdf.into_owned());
+    }
+
+    for offset in 1..std::cmp::min(128, buffer.len()) {
+        if let Ok(vdf) = steam_vdf_parser::parse_binary(&buffer[offset..]) {
+            tracing::info!("Success! Found VDF at offset {}", offset);
+            return Ok(vdf.into_owned());
+        }
+    }
+
+    bail!("Failed to locate valid VDF (Text or Binary) in PICS buffer")
+}
+
+pub fn parse_pics_product_info(buffer: &[u8]) -> Result<HashMap<u64, u64>> {
+    let is_text = buffer
+        .first()
+        .map(|&b| b == 0x22 || b == 0x7B)
+        .unwrap_or(false);
+
+    if is_text {
+        parse_text_vdf(buffer)
+    } else {
+        parse_binary_vdf_with_offset(buffer)
+    }
+}
+
+fn parse_text_vdf(data: &[u8]) -> Result<HashMap<u64, u64>> {
+    let text = String::from_utf8_lossy(data);
+    let mut depot_map = HashMap::new();
+
+    match steam_vdf_parser::parse_text(&text) {
+        Ok(vdf) => {
+            let root_obj = vdf.as_obj().unwrap();
+            let depots_val = root_obj.get("depots").or_else(|| {
+                root_obj
+                    .get("appinfo")
+                    .and_then(|v| v.as_obj())
+                    .and_then(|o| o.get("depots"))
+            });
+
+            if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
+                for (key, value) in depots.iter() {
+                    if let Ok(depot_id) = key.parse::<u64>() {
+                        // Language check for library-parsed VDF
+                        let lang = value
+                            .get_obj(&["config"])
+                            .and_then(|c| c.get("language"))
+                            .and_then(|l| l.as_str());
+                        if let Some(lang) = lang {
+                            if lang != "english" && !lang.is_empty() {
+                                continue;
+                            }
+                        }
+
+                        if let Some(m_id) = extract_manifest_id_robust(value, "public") {
+                            depot_map.insert(depot_id, m_id);
+                        }
+                    }
+                }
+            }
+        }
+        Err(_) => {}
+    }
+
+    if depot_map.is_empty() {
+        let mut current_depot = 0;
+        let mut inside_depots = false;
+        let mut inside_manifests = false;
+        let mut inside_public = false;
+        let mut depot_langs = HashMap::new();
+
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.contains("\"depots\"") {
+                inside_depots = true;
+                continue;
+            }
+            if !inside_depots {
+                continue;
+            }
+
+            if trimmed == "}" {
+                if inside_public {
+                    inside_public = false;
+                } else if inside_manifests {
+                    inside_manifests = false;
+                }
+                continue;
+            }
+
+            if trimmed.starts_with("\"manifests\"") {
+                inside_manifests = true;
+                continue;
+            }
+            if inside_manifests && trimmed.starts_with("\"public\"") {
+                inside_public = true;
+                continue;
+            }
+
+            let parts = extract_quoted_values(trimmed);
+            if parts.len() == 1 {
+                if let Ok(id) = parts[0].parse::<u64>() {
+                    current_depot = id;
+                    inside_manifests = false;
+                    inside_public = false;
+                }
+            } else if parts.len() >= 2 && current_depot > 0 {
+                let key = parts[0].to_lowercase();
+                if inside_public && key == "gid" {
+                    if let Ok(gid) = parts[1].parse::<u64>() {
+                        if gid > 0 {
+                            depot_map.insert(current_depot, gid);
+                        }
+                    }
+                } else if key == "language" {
+                    depot_langs.insert(current_depot, parts[1].to_lowercase());
+                } else if !inside_manifests && (key == "manifest" || key == "gid") {
+                    // Fallback for flat structure
+                    if let Ok(gid) = parts[1].parse::<u64>() {
+                        if gid > 0 {
+                            depot_map.insert(current_depot, gid);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Apply Language Filter to manual scan results
+        depot_map.retain(|id, _| {
+            if let Some(lang) = depot_langs.get(id) {
+                if lang != "english" && !lang.is_empty() {
+                    return false;
+                }
+            }
+            true
+        });
+    }
+
+    if depot_map.is_empty() {
+        bail!("Text scan found no depots");
+    }
+
+    Ok(depot_map)
+}
+
+fn parse_binary_vdf_with_offset(data: &[u8]) -> Result<HashMap<u64, u64>> {
+    if let Ok(vdf) = find_vdf_in_pics(data) {
+        let mut depot_map = HashMap::new();
+        let root_obj = vdf.as_obj().context("root is not an object")?;
+        let depots_val = root_obj.get("depots").or_else(|| {
+            root_obj
+                .get("appinfo")
+                .and_then(|v| v.as_obj())
+                .and_then(|o| o.get("depots"))
+        });
+
+        if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
+            for (key, value) in depots.iter() {
+                if let Ok(depot_id) = key.parse::<u64>() {
+                    // Language check for binary-parsed VDF
+                    let lang = value
+                        .get_obj(&["config"])
+                        .and_then(|c| c.get("language"))
+                        .and_then(|l| l.as_str());
+                    if let Some(lang) = lang {
+                        if lang != "english" && !lang.is_empty() {
+                            continue;
+                        }
+                    }
+
+                    if let Some(m_id) = extract_manifest_id_robust(value, "public") {
+                        depot_map.insert(depot_id, m_id);
+                    }
+                }
+            }
+        }
+
+        if !depot_map.is_empty() {
+            return Ok(depot_map);
+        }
+    }
+    bail!("Failed to locate valid Binary VDF in PICS buffer")
+}
+
+pub fn parse_depots_robust(data: &[u8]) -> Result<HashMap<u64, u64>> {
+    parse_pics_product_info(data)
+}
+
+fn extract_manifest_id_robust(value: &steam_vdf_parser::Value, branch: &str) -> Option<u64> {
+    if let Some(obj) = value.as_obj() {
+        // Deep search for branch manifest
+        if let Some(manifests) = obj.get("manifests").and_then(|v| v.as_obj()) {
+            if let Some(branch_entry) = manifests.get(branch) {
+                // It can be a direct string or a gid object
+                if let Some(gid_str) = branch_entry.as_str() {
+                    if let Ok(gid) = gid_str.parse::<u64>() {
+                        return Some(gid);
+                    }
+                }
+                if let Some(gid_val) = branch_entry.as_u64() {
+                    return Some(gid_val);
+                }
+                if let Some(branch_obj) = branch_entry.as_obj() {
+                    if let Some(gid) = branch_obj.get("gid") {
+                        if let Some(s) = gid.as_str() {
+                            return s.parse().ok();
+                        }
+                        return gid.as_u64();
+                    }
+                }
+            }
+        }
+
+        // Direct gid
+        if let Some(gid_entry) = obj.get("gid") {
+            if let Some(gid_str) = gid_entry.as_str() {
+                return gid_str.parse::<u64>().ok();
+            }
+            if let Some(gid_val) = gid_entry.as_u64() {
+                return Some(gid_val);
+            }
+        }
+    }
+
+    None
+}
+
+#[derive(Debug, Deserialize)]
+struct ProductInfoEnvelope {
+    #[serde(default)]
+    appinfo: Option<ProductInfoAppInfo>,
+    #[serde(default)]
+    config: Option<ProductInfoConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProductInfoAppInfo {
+    #[serde(default)]
+    config: Option<ProductInfoConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProductInfoConfig {
+    #[serde(default)]
+    launch: HashMap<String, ProductLaunchEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProductLaunchEntry {
+    #[serde(default)]
+    pub executable: Option<String>,
+    #[serde(default)]
+    pub arguments: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub workingdir: Option<String>,
+    #[serde(default)]
+    pub config: Option<ProductLaunchConfigInner>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProductLaunchConfigInner {
+    #[serde(default)]
+    oslist: Option<String>,
+}
+
+fn parse_installdir_from_acf(raw: &str) -> Option<String> {
+    for line in raw.lines() {
+        let quoted = extract_quoted_values(line.trim());
+        if quoted.len() >= 2 && quoted[0] == "installdir" {
+            return Some(quoted[1].clone());
+        }
+    }
+    None
+}
+fn parse_installed_depots_from_acf(raw: &str) -> HashMap<u64, u64> {
+    let mut manifests = HashMap::new();
+    let mut in_installed_depots = false;
+    let mut current_depot: Option<u64> = None;
+
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.contains("\"InstalledDepots\"") {
+            in_installed_depots = true;
+            continue;
+        }
+
+        if !in_installed_depots {
+            continue;
+        }
+
+        if trimmed == "}" {
+            if current_depot.is_some() {
+                current_depot = None;
+                continue;
+            }
+            break;
+        }
+
+        let quoted = extract_quoted_values(trimmed);
+        if quoted.len() == 1 {
+            if let Ok(depot_id) = u64::from_str(&quoted[0]) {
+                current_depot = Some(depot_id);
+            }
+        } else if quoted.len() >= 2 && quoted[0] == "manifest" && current_depot.is_some() {
+            if let Ok(manifest) = u64::from_str(&quoted[1]) {
+                manifests.insert(current_depot.unwrap_or_default(), manifest);
+            }
+        }
+    }
+
+    manifests
+}
+
+fn parse_active_branch_from_acf(raw: &str) -> String {
+    let mut in_user_config = false;
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        let parts = extract_quoted_values(trimmed);
+
+        if parts.len() == 1 && parts[0].eq_ignore_ascii_case("userconfig") {
+            in_user_config = true;
+            continue;
+        }
+
+        if trimmed == "{" || trimmed == "}" {
+            if trimmed == "}" && in_user_config {
+                in_user_config = false;
+            }
+            continue;
+        }
+
+        if parts.len() >= 2 && in_user_config && parts[0].eq_ignore_ascii_case("betakey") {
+            if !parts[1].trim().is_empty() {
+                return parts[1].to_string();
+            }
+        }
+    }
+    "public".to_string()
+}
+
+
+fn rewrite_app_branch(raw: &str, branch: &str) -> String {
+    let mut out = Vec::new();
+    let mut in_user_config = false;
+    let mut branch_updated = false;
+
+    for line in raw.lines() {
+        let trimmed = line.trim();
+
+        if trimmed.eq_ignore_ascii_case("\"UserConfig\"") {
+            in_user_config = true;
+            out.push(line.to_string());
+            continue;
+        }
+
+        if in_user_config && trimmed == "{" {
+            out.push(line.to_string());
+            continue;
+        }
+
+        if in_user_config && trimmed == "}" {
+            if !branch_updated {
+                out.push(format!("\t\t\"BetaKey\"\t\t\"{branch}\""));
+            }
+            in_user_config = false;
+            out.push(line.to_string());
+            continue;
+        }
+
+        if in_user_config {
+            let quoted = extract_quoted_values(trimmed);
+            if !quoted.is_empty() && quoted[0].eq_ignore_ascii_case("betakey") {
+                let indent = line
+                    .chars()
+                    .take_while(|ch| ch.is_whitespace())
+                    .collect::<String>();
+                out.push(format!("{indent}\"BetaKey\"\t\t\"{branch}\""));
+                branch_updated = true;
+                continue;
+            }
+        }
+
+        out.push(line.to_string());
+    }
+
+    // If UserConfig was never found, we might need to add it, but for simplicity
+    // we assume it exists in a valid Steam manifest.
+
+    out.join("\n")
+}
+
+fn extract_quoted_values(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut in_quote = false;
+    let mut current = String::new();
+    for ch in line.chars() {
+        if ch == '"' {
+            if in_quote {
+                out.push(current.clone());
+                current.clear();
+            }
+            in_quote = !in_quote;
+            continue;
+        }
+        if in_quote {
+            current.push(ch);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_legacy_path_blocks_windows_proton() {
+        let client = SteamClient::new().unwrap();
+        let app = LibraryGame {
+            app_id: 123,
+            name: "Test Game".to_string(),
+            install_path: Some("/tmp/test_game".to_string()),
+            is_installed: true,
+            playtime_forever_minutes: Some(0),
+            active_branch: "public".to_string(),
+            update_available: false,
+            update_queued: false,
+            local_manifest_ids: HashMap::new(),
+            is_owned: true,
+            is_family_shared: false,
+        };
+        let launch_info = LaunchInfo {
+            app_id: 123,
+            id: "0".to_string(),
+            description: "Test".to_string(),
+            executable: "test.exe".to_string(),
+            arguments: "".to_string(),
+            workingdir: None,
+            target: LaunchTarget::WindowsProton,
+        };
+        let config = crate::config::LauncherConfig::default();
+
+        let result = client.internal_legacy_launch_adhoc(&app, &launch_info, None, &config, None).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Ad-hoc bypass is prohibited"));
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_integration_scaffolding() {
+        // Passing no app causes ResolveGame to fail early.
+        let mut ctx = crate::launch::pipeline::PipelineContext::new(999999);
+        let pipeline = crate::launch::pipeline::LaunchPipeline::with_default_stages();
+
+        let result = pipeline.run(&mut ctx).await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.stage_name, "ResolveGame");
+        assert!(err.inner.to_string().contains("App context missing"));
+    }
+
+    #[test]
+    fn parses_linux_launch_section_from_vdf() {
+        let raw = r#""appinfo"
+{
+  "appid" "10"
+  "config"
+  {
+    "launch"
+    {
+      "0"
+      {
+        "executable" "linux/game.sh"
+        "arguments" "-foo -bar"
+        "oslist" "linux"
+      }
+    }
+  }
+}"#;
+
+        let launch_options = parse_launch_info_from_vdf(10, raw, false).expect("parse launch info");
+        let launch = &launch_options[0];
+        assert_eq!(launch.target, LaunchTarget::NativeLinux);
+        assert_eq!(launch.executable, "linux/game.sh");
+        assert_eq!(launch.arguments, "-foo -bar");
+    }
+}
+
+fn split_args(args: &str) -> Vec<String> {
+    args.split_whitespace().map(ToString::to_string).collect()
+}
+
+
+impl SteamClient {
+    pub fn find_mangohud_lib() -> Option<PathBuf> {
+        // Common install locations across distros
+        let candidates = [
+            "/usr/lib/mangohud/libMangoHud.so",
+            "/usr/lib/mangohud/libMangoHud_dlsym.so",
+            "/usr/lib/x86_64-linux-gnu/mangohud/libMangoHud.so",
+            "/usr/lib64/mangohud/libMangoHud.so",
+            "/usr/local/lib/mangohud/libMangoHud.so",
+            "/usr/local/lib/x86_64-linux-gnu/mangohud/libMangoHud.so",
+        ];
+
+        for path in candidates {
+            let p = PathBuf::from(path);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+
+        // Try ldconfig as fallback
+        if let Ok(output) = std::process::Command::new("ldconfig")
+            .args(["-p"])
+            .output()
+        {
+            let text = String::from_utf8_lossy(&output.stdout);
+            for line in text.lines() {
+                if line.contains("libMangoHud") {
+                    if let Some(path) = line.split("=>").nth(1) {
+                        let p = PathBuf::from(path.trim());
+                        if p.exists() {
+                            return Some(p);
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+}
