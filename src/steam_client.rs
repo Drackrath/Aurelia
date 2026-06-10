@@ -1045,6 +1045,15 @@ impl SteamClient {
                         continue;
                     }
                 };
+                // A valid depot key is exactly 32 bytes; a short/all-zero key would
+                // decrypt chunks to garbage (the chunk path then fails the zip parse
+                // with "Could not find EOCD").
+                tracing::debug!(
+                    "Depot {} key: {} bytes, all_zero={}",
+                    selection.depot_id,
+                    key.len(),
+                    key.iter().all(|&b| b == 0)
+                );
 
                 let manifest_code = match client_clone
                     .get_manifest_request_code(appid, selection.depot_id, selection.manifest_id)
@@ -1325,7 +1334,19 @@ impl SteamClient {
             .await
             .context("failed calling ContentServerDirectory.GetManifestRequestCode")?;
 
-        Ok(response.manifest_request_code())
+        let code = response.manifest_request_code();
+        // A 0 code means the service-method response came back empty/default — worth
+        // surfacing because the subsequent CDN manifest fetch will then fail.
+        if code == 0 {
+            tracing::warn!(
+                "GetManifestRequestCode returned 0 (empty response) for app {app_id} depot {depot_id} manifest {manifest_id}"
+            );
+        } else {
+            tracing::debug!(
+                "GetManifestRequestCode for app {app_id} depot {depot_id} manifest {manifest_id} = {code}"
+            );
+        }
+        Ok(code)
     }
 
     pub async fn get_cdn_auth_token(
@@ -1346,9 +1367,20 @@ impl SteamClient {
             .context("failed calling ContentServerDirectory.GetCDNAuthToken")?;
 
         if response.token().is_empty() {
+            // An empty token with the expiration field still set is a normal Steam
+            // response (many SteamPipe CDNs don't require a per-host token), so this is
+            // only a debug-level note, not an anomaly.
+            tracing::debug!(
+                "GetCDNAuthToken returned an empty token for app {app_id} depot {depot_id} host {host_name} (has_expiration={})",
+                response.has_expiration_time()
+            );
             return Err(anyhow!("Empty Auth Token returned"));
         }
 
+        tracing::debug!(
+            "GetCDNAuthToken for app {app_id} depot {depot_id} host {host_name}: token len {}",
+            response.token().len()
+        );
         Ok(response.token().to_string())
     }
 
@@ -1938,8 +1970,15 @@ impl SteamClient {
 
         if cloud_enabled {
             if let (Some(client), Some(root)) = (cloud_client.as_ref(), local_root.as_ref()) {
-                client.sync_up(app.app_id, root).await?;
-                tracing::info!(appid = app.app_id, "Upload Complete");
+                // The game has already run and exited, so a cloud-upload failure must not
+                // be surfaced as a launch failure. Log it and continue (this mirrors the
+                // best-effort sync_down before launch).
+                match client.sync_up(app.app_id, root).await {
+                    Ok(()) => tracing::info!(appid = app.app_id, "Upload Complete"),
+                    Err(e) => {
+                        tracing::warn!(appid = app.app_id, "Cloud upload failed (continuing): {e:#}")
+                    }
+                }
             }
         }
 

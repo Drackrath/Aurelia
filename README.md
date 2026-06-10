@@ -193,7 +193,7 @@ vendored, modified `steam-cdn` and the `zip` crate.
 
 ### Credits
 
-- [steam-vent](https://github.com/n00b67/steam-vent) — Steam protocol implementation
+- [steam-vent](https://codeberg.org/steam-vent/steam-vent) — Steam protocol implementation
 
 ---
 

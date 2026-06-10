@@ -59,6 +59,10 @@ version = "0.2"
 version = "0.3"
 features = ["raw_decoder"]
 
+# Pure-Rust Zstandard decoder for Steam's newer "VSZ" chunk container.
+[dependencies.ruzstd]
+version = "0.7"
+
 [dependencies.protobuf]
 version = "3.5"
 

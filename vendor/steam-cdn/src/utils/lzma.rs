@@ -13,8 +13,45 @@ const VZ_VERSION: char = 'a';
 const VZ_HEADER_LENGTH: usize = 7;
 const VZ_FOOTER_LENGTH: usize = 10;
 
+// Steam's newer Zstandard chunk container. Layout mirrors VZ:
+//   header: "VSZ" + version 'a' + crc32(4) = 8 bytes
+//   body:   a single raw Zstandard frame (self-delimiting; carries its own size)
+//   footer: trailing fields ending in the "zsv" magic
+const VSZ_HEADER: [u8; 3] = [b'V', b'S', b'Z'];
+const VSZ_VERSION: u8 = b'a';
+const VSZ_HEADER_LENGTH: usize = 8;
+const VSZ_FOOTER_MAGIC: [u8; 3] = [b'z', b's', b'v'];
+const VSZ_FOOTER_LENGTH: usize = 11;
+
 pub fn is_vz(data: &[u8]) -> bool {
     data.len() >= 2 && u16::from_le_bytes([data[0], data[1]]) == VZ_HEADER
+}
+
+pub fn is_vsz(data: &[u8]) -> bool {
+    data.len() >= 4 && data[0..3] == VSZ_HEADER && data[3] == VSZ_VERSION
+}
+
+/// Decompress a Steam "VSZ" (Zstandard) chunk container.
+pub fn decompress_vsz(data: &[u8]) -> Result<Vec<u8>, Error> {
+    if !is_vsz(data) {
+        return Err(Error::Decompress("expecting VSZ header".to_string()));
+    }
+    if data.len() < VSZ_HEADER_LENGTH + VSZ_FOOTER_LENGTH {
+        return Err(Error::Eof("VSZ chunk too small".to_string()));
+    }
+    if data[data.len() - 3..] != VSZ_FOOTER_MAGIC {
+        return Err(Error::Decompress("expecting zsv at end of stream".to_string()));
+    }
+
+    // The Zstandard frame sits between the fixed header and footer. It is
+    // self-delimiting and carries its own content size, so ruzstd stops at the end of
+    // the frame; the trailing footer bytes are simply not consumed.
+    let frame = &data[VSZ_HEADER_LENGTH..data.len() - VSZ_FOOTER_LENGTH];
+    let mut decoder = ruzstd::StreamingDecoder::new(std::io::Cursor::new(frame))
+        .map_err(|e| Error::Decompress(format!("zstd frame: {e}")))?;
+    let mut out = Vec::new();
+    std::io::Read::read_to_end(&mut decoder, &mut out)?;
+    Ok(out)
 }
 
 pub async fn decompress(data: &[u8]) -> Result<Vec<u8>, Error> {

@@ -14,8 +14,13 @@ pub async fn decrypt_and_decompress(data: &mut [u8], key: [u8; 32]) -> Result<Ve
 
     let decrypted = aes256::decrypt_cbc_with_iv_extraction(data, key)?;
     if lzma::is_vz(&decrypted) {
+        // Legacy LZMA container.
         Ok(lzma::decompress(&decrypted).await?)
+    } else if lzma::is_vsz(&decrypted) {
+        // Newer Zstandard container.
+        Ok(lzma::decompress_vsz(&decrypted)?)
     } else {
+        // Otherwise the payload is a single-entry zip.
         let cursor = Cursor::new(decrypted);
         let mut buffer = Vec::new();
         ZipArchive::new(cursor)?
