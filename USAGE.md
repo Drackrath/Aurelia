@@ -186,6 +186,39 @@ aurelia info 690830
 aurelia info 690830 --json
 ```
 
+### `dlc`
+
+List a game's DLC together with its ownership and install state. Requires login
+(ownership is checked against your account).
+
+```
+aurelia dlc <APP_ID> [--json]
+```
+
+| Option | Description |
+| --- | --- |
+| `--json` | Emit JSON instead of formatted text. |
+
+A focused alternative to `info` when you only want the DLC list. The DLC ids and
+names come from the Steam storefront API (capped at 50 entries); each entry is then
+annotated with:
+
+- **owned** — your account holds a license for the DLC (an app ownership ticket is
+  issued).
+- **installed** — the DLC's content is present on disk (its depots are recorded in
+  the base game's appmanifest).
+- **disabled** — the DLC is listed in the base game's `DisabledDLC`, so Steam treats
+  it as turned off.
+
+In the text view the `STATUS` column collapses installed/disabled into
+`not-installed`, `disabled`, or `enabled`. The base game must be installed for the
+install/enable state to be meaningful; otherwise every DLC reads as `not-installed`.
+
+```bash
+aurelia dlc 690830
+aurelia dlc 690830 --json
+```
+
 ### `image`
 
 Download a game's cover/header artwork from the Steam CDN to the local image cache.

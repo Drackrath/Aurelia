@@ -6,12 +6,12 @@ use crate::config::{
 };
 use crate::depot_browser::{self, DepotInfo as BrowserDepotInfo, ManifestFileEntry};
 use crate::models::{
-    AppInfoRoot, DepotPlatform, DownloadProgress, DownloadProgressState, LibraryGame,
+    AppInfoRoot, DepotPlatform, DlcState, DownloadProgress, DownloadProgressState, LibraryGame,
     ManifestSelection, OwnedGame, SessionState, SteamGuardReq, UserProfile,
 };
 use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::path::{Path, PathBuf};
@@ -2463,6 +2463,39 @@ impl SteamClient {
         Ok(base_appid)
     }
 
+    /// Resolve the ownership / install / enable status of each DLC of a base game.
+    ///
+    /// `owned` comes from the account (an app ownership ticket is issued only for
+    /// licensed apps). `installed` and `disabled` are read from the base game's
+    /// appmanifest — if the base game isn't installed, both are `false` for every DLC.
+    pub async fn dlc_states(&self, base_appid: u32, dlc_ids: &[u32]) -> Result<Vec<DlcState>> {
+        // Local install/enable state lives in the base game's appmanifest.
+        let (installed, disabled) = match self.appmanifest_path(base_appid).await {
+            Ok(path) if path.exists() => {
+                let content = std::fs::read_to_string(&path)
+                    .with_context(|| format!("failed reading {}", path.display()))?;
+                (
+                    parse_installed_dlc_appids(&content),
+                    parse_disabled_dlc_appids(&content),
+                )
+            }
+            _ => (HashSet::new(), HashSet::new()),
+        };
+
+        let mut out = Vec::with_capacity(dlc_ids.len());
+        for &dlc_id in dlc_ids {
+            // An ownership ticket is only issued for apps the account is licensed for.
+            let owned = self.get_app_ticket(dlc_id).await.is_ok();
+            out.push(DlcState {
+                app_id: dlc_id,
+                owned,
+                installed: installed.contains(&dlc_id),
+                disabled: disabled.contains(&dlc_id),
+            });
+        }
+        Ok(out)
+    }
+
     /// Whether the desktop Steam client appears to be running.
     ///
     /// The running client caches each game's appmanifest at startup, so changes we
@@ -2900,6 +2933,29 @@ fn steam_exe_path() -> Option<PathBuf> {
 /// Add or remove a DLC appid from every `DisabledDLC` list in an appmanifest's text.
 /// When `disabled` is true and no `DisabledDLC` key exists, one is inserted into the
 /// `UserConfig` and `MountedConfig` blocks.
+/// Collect the DLC appids whose content is recorded as installed in an appmanifest.
+/// Steam tags each DLC depot under `InstalledDepots` with a `"dlcappid" "<id>"` line.
+fn parse_installed_dlc_appids(content: &str) -> HashSet<u32> {
+    let re = regex::Regex::new(r#""dlcappid"\s*"(\d+)""#).expect("valid dlcappid regex");
+    re.captures_iter(content)
+        .filter_map(|caps| caps[1].parse::<u32>().ok())
+        .collect()
+}
+
+/// Collect the DLC appids listed in an appmanifest's `DisabledDLC` value(s).
+/// The value is a comma-separated list of appids; multiple blocks may each carry one.
+fn parse_disabled_dlc_appids(content: &str) -> HashSet<u32> {
+    let re = regex::Regex::new(r#""DisabledDLC"\s*"([^"]*)""#).expect("valid DisabledDLC regex");
+    re.captures_iter(content)
+        .flat_map(|caps| {
+            caps[1]
+                .split(',')
+                .filter_map(|s| s.trim().parse::<u32>().ok())
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
 fn apply_dlc_disabled(content: &str, dlc_appid: u32, disabled: bool) -> String {
     let dlc = dlc_appid.to_string();
     let re = regex::Regex::new(r#""DisabledDLC"(\s*)"([^"]*)""#).expect("valid regex");
@@ -3587,6 +3643,59 @@ mod tests {
         let err = result.unwrap_err();
         assert_eq!(err.stage_name, "ResolveGame");
         assert!(err.inner.to_string().contains("App context missing"));
+    }
+
+    #[test]
+    fn parses_installed_and_disabled_dlc_from_appmanifest() {
+        // Base game with two DLC depots installed (tagged with dlcappid) and one of
+        // those DLC explicitly disabled.
+        let manifest = r#""AppState"
+{
+	"appid"		"1000"
+	"InstalledDepots"
+	{
+		"1001"
+		{
+			"manifest"	"123"
+			"size"		"456"
+			"dlcappid"	"2001"
+		}
+		"1002"
+		{
+			"manifest"	"789"
+			"size"		"12"
+			"dlcappid"	"2002"
+		}
+	}
+	"UserConfig"
+	{
+		"DisabledDLC"		"2002"
+	}
+}
+"#;
+
+        let installed = parse_installed_dlc_appids(manifest);
+        assert!(installed.contains(&2001));
+        assert!(installed.contains(&2002));
+        assert_eq!(installed.len(), 2);
+
+        let disabled = parse_disabled_dlc_appids(manifest);
+        assert_eq!(disabled, HashSet::from([2002]));
+    }
+
+    #[test]
+    fn parses_comma_separated_disabled_dlc_list() {
+        let manifest = r#""AppState"
+{
+	"MountedConfig"
+	{
+		"DisabledDLC"		"3001,3002, 3003"
+	}
+}
+"#;
+        let disabled = parse_disabled_dlc_appids(manifest);
+        assert_eq!(disabled, HashSet::from([3001, 3002, 3003]));
+        assert!(parse_installed_dlc_appids(manifest).is_empty());
     }
 
     #[test]

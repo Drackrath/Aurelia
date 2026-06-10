@@ -218,6 +218,20 @@ pub struct GameLibrary {
     pub games: Vec<LibraryGame>,
 }
 
+/// Per-DLC status for a base game, combining account ownership with the local
+/// install/enable state recorded in the base game's appmanifest.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DlcState {
+    pub app_id: u32,
+    /// The account holds a license for this DLC (an app ownership ticket was issued).
+    pub owned: bool,
+    /// The DLC's content is present on disk (its depots are recorded in the base
+    /// game's appmanifest, tagged with this DLC's appid).
+    pub installed: bool,
+    /// The DLC is listed in the base game's `DisabledDLC`, so Steam treats it as off.
+    pub disabled: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LibraryFilter {
     All,

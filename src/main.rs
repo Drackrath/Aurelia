@@ -106,6 +106,8 @@ enum Command {
     SetBranch { app_id: u32, branch: String },
     /// Show detailed information about a game (description, tags, categories, DLC).
     Info { app_id: u32 },
+    /// List a game's DLC (app id and name only).
+    Dlc { app_id: u32 },
     /// List depots for a game.
     Depots { app_id: u32 },
     /// Download a game's cover/header artwork to the local image cache.
@@ -206,6 +208,7 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Branches { app_id } => cmd_branches(app_id, json).await,
         Command::SetBranch { app_id, branch } => cmd_set_branch(app_id, branch, json).await,
         Command::Info { app_id } => cmd_info(app_id, json).await,
+        Command::Dlc { app_id } => cmd_dlc(app_id, json).await,
         Command::Depots { app_id } => cmd_depots(app_id, json).await,
         Command::Image {
             app_id,
@@ -755,21 +758,7 @@ async fn cmd_info(app_id: u32, json: bool) -> Result<()> {
 
     let tags = aurelia::store::fetch_tags(&client, app_id).await;
 
-    // Resolve DLC names concurrently (bounded to keep the store API happy).
-    let mut dlc: Vec<(u32, Option<String>)> = Vec::new();
-    if !details.dlc.is_empty() {
-        let mut set = tokio::task::JoinSet::new();
-        for &dlc_id in details.dlc.iter().take(50) {
-            let c = client.clone();
-            set.spawn(async move { (dlc_id, aurelia::store::fetch_app_name(&c, dlc_id).await) });
-        }
-        while let Some(res) = set.join_next().await {
-            if let Ok(pair) = res {
-                dlc.push(pair);
-            }
-        }
-        dlc.sort_by_key(|(id, _)| *id);
-    }
+    let dlc = resolve_dlc_names(&client, &details.dlc).await;
 
     if json {
         let value = serde_json::json!({
@@ -869,6 +858,96 @@ async fn cmd_info(app_id: u32, json: bool) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Resolve DLC names concurrently (bounded to keep the store API happy),
+/// returning `(app_id, name)` pairs sorted by app id.
+async fn resolve_dlc_names(
+    client: &reqwest::Client,
+    dlc_ids: &[u32],
+) -> Vec<(u32, Option<String>)> {
+    let mut dlc: Vec<(u32, Option<String>)> = Vec::new();
+    if dlc_ids.is_empty() {
+        return dlc;
+    }
+    let mut set = tokio::task::JoinSet::new();
+    for &dlc_id in dlc_ids.iter().take(50) {
+        let c = client.clone();
+        set.spawn(async move { (dlc_id, aurelia::store::fetch_app_name(&c, dlc_id).await) });
+    }
+    while let Some(res) = set.join_next().await {
+        if let Ok(pair) = res {
+            dlc.push(pair);
+        }
+    }
+    dlc.sort_by_key(|(id, _)| *id);
+    dlc
+}
+
+async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
+    // Ownership status requires an authenticated connection; installed/disabled status
+    // is read from the local appmanifest.
+    let steam = authed_client().await?;
+
+    let http = reqwest::Client::builder()
+        .user_agent("aurelia/0.1")
+        .build()
+        .context("failed to build HTTP client")?;
+
+    let details = aurelia::store::fetch_app_details(&http, app_id)
+        .await?
+        .with_context(|| format!("no store information available for app {app_id}"))?;
+
+    let dlc = resolve_dlc_names(&http, &details.dlc).await;
+    let dlc_ids: Vec<u32> = dlc.iter().map(|(id, _)| *id).collect();
+    let states = steam
+        .dlc_states(app_id, &dlc_ids)
+        .await
+        .with_context(|| format!("failed to resolve DLC status for app {app_id}"))?;
+    let state_by_id: std::collections::HashMap<u32, &aurelia::models::DlcState> =
+        states.iter().map(|s| (s.app_id, s)).collect();
+
+    if json {
+        let value = serde_json::json!({
+            "app_id": app_id,
+            "dlc": dlc.iter().map(|(id, name)| {
+                let s = state_by_id.get(id);
+                serde_json::json!({
+                    "app_id": id,
+                    "name": name,
+                    "owned": s.map(|s| s.owned),
+                    "installed": s.map(|s| s.installed),
+                    "disabled": s.map(|s| s.disabled),
+                })
+            }).collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string_pretty(&value)?);
+        return Ok(());
+    }
+
+    if dlc.is_empty() {
+        println!("No DLC for app {app_id}.");
+        return Ok(());
+    }
+    println!("{:>9}  {:<5}  {:<13}  NAME", "APPID", "OWNED", "STATUS");
+    for (id, name) in &dlc {
+        let name = name.clone().unwrap_or_else(|| "(name unavailable)".to_string());
+        let s = state_by_id.get(id);
+        let owned = match s.map(|s| s.owned) {
+            Some(true) => "yes",
+            Some(false) => "no",
+            None => "?",
+        };
+        // Installed/disabled describe the local content state of an owned DLC.
+        let status = match s {
+            Some(s) if !s.installed => "not-installed",
+            Some(s) if s.disabled => "disabled",
+            Some(_) => "enabled",
+            None => "?",
+        };
+        println!("{id:>9}  {owned:<5}  {status:<13}  {name}");
+    }
     Ok(())
 }
 
