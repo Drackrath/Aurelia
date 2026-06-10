@@ -20,6 +20,7 @@ mod tests {
                 active_branch: "public".to_string(),
                 is_owned: true,
                 is_family_shared: false,
+                online_required: None,
             },
             launch_info: LaunchInfo {
                 app_id: 123,
@@ -92,6 +93,7 @@ mod tests {
             local_manifest_ids: HashMap::new(),
             is_owned: true,
             is_family_shared: false,
+            online_required: None,
         };
 
         let mut config = LauncherConfig::default();

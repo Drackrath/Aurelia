@@ -211,6 +211,13 @@ pub struct LibraryGame {
     /// (i.e. borrowed through Steam Family Sharing).
     #[serde(default)]
     pub is_family_shared: bool,
+    /// Whether the game appears to require an online connection to play, inferred
+    /// from its PICS store categories (online multiplayer with no single-player
+    /// support). `None` means it hasn't been determined yet — this is only
+    /// populated on demand (e.g. `aurelia list --online`) because it requires a
+    /// per-app PICS fetch. See [`crate::steam_client::category_online_required`].
+    #[serde(default)]
+    pub online_required: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -266,8 +273,9 @@ pub enum SteamGuardReq {
     DeviceConfirmation,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DownloadProgressState {
+    #[default]
     Queued,
     Downloading,
     Verifying,
@@ -275,12 +283,20 @@ pub enum DownloadProgressState {
     Failed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DownloadProgress {
     pub state: DownloadProgressState,
+    /// Bytes downloaded across the whole app (all depots).
     pub bytes_downloaded: u64,
+    /// Total bytes for the whole app (all selected depots).
     pub total_bytes: u64,
     pub current_file: String,
+    /// The depot currently being downloaded (0 when not applicable).
+    pub depot_id: u32,
+    /// Bytes downloaded for the current depot only.
+    pub depot_bytes_downloaded: u64,
+    /// Total bytes for the current depot only.
+    pub depot_total_bytes: u64,
 }
 
 #[derive(Clone)]
@@ -289,9 +305,17 @@ pub struct DownloadState {
     pub is_paused: bool,
     pub app_id: u32,
     pub app_name: String,
+    /// Total bytes for the whole app (all selected depots).
     pub total_bytes: u64,
+    /// Bytes downloaded across the whole app (all depots).
     pub downloaded_bytes: u64,
     pub status_text: String,
+    /// Depot currently being downloaded.
+    pub depot_id: u32,
+    /// Total bytes for the current depot.
+    pub depot_total_bytes: u64,
+    /// Bytes downloaded for the current depot.
+    pub depot_downloaded_bytes: u64,
     pub abort_signal: Arc<AtomicBool>,
 }
 
@@ -305,6 +329,9 @@ impl Default for DownloadState {
             total_bytes: 0,
             downloaded_bytes: 0,
             status_text: String::new(),
+            depot_id: 0,
+            depot_total_bytes: 0,
+            depot_downloaded_bytes: 0,
             abort_signal: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -379,6 +406,12 @@ pub struct CommonNode {
     /// For some DLC, the base game's appid.
     #[serde(default)]
     pub parent: Option<String>,
+    /// Store category flags, keyed `category_<id>` with value `"1"`. Steam has no
+    /// dedicated "online required" field, so we infer it from these (online
+    /// multiplayer categories combined with the absence of single-player). See
+    /// [`crate::steam_client::category_online_required`].
+    #[serde(default)]
+    pub category: HashMap<String, String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
