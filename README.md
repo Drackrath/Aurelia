@@ -2,18 +2,19 @@
 
 # Aurelia
 
-**A fast, lightweight, command-line Steam launcher and client written in Rust.**
+**A fast, lightweight, command-line Steam launcher and library manager written in Rust.**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPL%203.0-blue.svg)](LICENSE)
 [![Built with Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
 [![Status: Alpha](https://img.shields.io/badge/status-active%20alpha-yellow.svg)](#project-status)
 
 <br clear="left" />
 
-Aurelia is a pure command-line Steam client — no CEF, no WebViews, no GUI. It talks to
-Steam's real network protocols through [`steam-vent`](https://github.com/n00b67/steam-vent),
-so you can log in, manage your library, install and update games, sync Steam Cloud saves,
-and launch titles (natively or through Proton/Wine) entirely from a terminal or a script.
+Aurelia is a pure command-line Steam launcher and library manager — no CEF, no WebViews,
+no GUI. It talks to Steam's real network protocols through
+[`steam-vent`](https://github.com/n00b67/steam-vent), so you can log in, manage your
+library, install and update games, sync Steam Cloud saves, and launch titles (natively or
+through Proton/Wine) entirely from a terminal or a script.
 
 It is the modern successor to **OpenSteamClient**, rebuilt in Rust for a smaller footprint,
 memory safety, and a scriptable, headless-friendly workflow.
@@ -30,14 +31,14 @@ aurelia play 1245620
 ## Why Aurelia?
 
 - **No web technology.** No Electron, CEF, or embedded browser — idle memory stays under
-  ~50 MB instead of the official client's hundreds.
+  ~50 MB instead of the official Steam app's hundreds.
 - **Fast and scriptable.** A pure Rust CLI: instant startup, easy to automate, and every
   command speaks `--json` for machine-readable output.
 - **Linux first.** 64-bit clean, with first-class Proton/Wine management — and it runs on
   Windows too.
 - **Deep Steam integration.** PICS metadata, the content CDN, Steam Cloud, app ownership
   tickets, depot browsing, and DLC management — built on open, documented protocols.
-- **Open source.** MIT licensed, with no dependency on opaque 32-bit legacy Steam binaries.
+- **Open source.** GPL-3.0 licensed, with no dependency on opaque 32-bit legacy Steam binaries.
 
 ### How it compares
 
@@ -50,7 +51,7 @@ aurelia play 1245620
 | **Authentication** | Full | Core | Full (tokens, mobile app, Guard) |
 | **Steam integration** | Native | Partial | Deep (PICS, CDN, Cloud, tickets) |
 | **Platforms** | Windows, Linux, macOS | Windows, Linux | Linux (first), Windows |
-| **Open source** | No | Yes | Yes (MIT) |
+| **Open source** | No | Yes | Yes (GPL-3.0) |
 
 See [docs/COMPARISON.md](docs/COMPARISON.md) for the full breakdown.
 
@@ -58,7 +59,7 @@ See [docs/COMPARISON.md](docs/COMPARISON.md) for the full breakdown.
 
 ## Project status
 
-Aurelia is in **active alpha**. The core client is highly functional: authentication,
+Aurelia is in **active alpha**. The core is highly functional: authentication,
 library management, installs/updates, integrity verification, DLC handling, Steam Cloud
 sync, and Proton/Wine launching all work today.
 
