@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str::FromStr;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use steam_vent::auth::{
     AuthConfirmationHandler, ConfirmationMethod, DeviceConfirmationHandler, FileGuardDataStore,
@@ -50,6 +50,70 @@ use steam_vent::proto::steammessages_player_steamclient::{
 use steam_vent::{ConnectionError, ConnectionTrait, ServerList};
 use tokio::io::{duplex, sink, AsyncWriteExt};
 use tokio::sync::mpsc::Receiver;
+
+/// How long to wait for a single Steam CM connection/refresh-token logon before
+/// giving up on that server. The initial WebSocket handshake has no timeout of
+/// its own, so an unresponsive CM would otherwise block the command forever.
+const CM_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How many CM servers to try before failing. `ServerList::pick_ws` rotates
+/// round-robin, so each attempt hits a different server.
+const CM_CONNECT_ATTEMPTS: usize = 3;
+
+/// Authenticate with a stored refresh token, with a per-attempt timeout and
+/// automatic failover to the next CM server.
+///
+/// `Connection::access` connects to a single WebSocket CM server and performs
+/// the refresh-token logon, but it never times out — a stalled CM leaves the
+/// whole command hanging (the reported symptom). Each call re-picks a server
+/// round-robin, so on timeout/error we simply retry, advancing to the next one.
+async fn access_with_retry(
+    server_list: &ServerList,
+    account: &str,
+    refresh_token: &str,
+) -> Result<Connection> {
+    let mut last_err: Option<anyhow::Error> = None;
+
+    for attempt in 1..=CM_CONNECT_ATTEMPTS {
+        tracing::debug!(
+            attempt,
+            attempts = CM_CONNECT_ATTEMPTS,
+            "Authenticating with stored refresh token ..."
+        );
+        match tokio::time::timeout(
+            CM_CONNECT_TIMEOUT,
+            Connection::access(server_list, account, refresh_token),
+        )
+        .await
+        {
+            Ok(Ok(connection)) => {
+                tracing::debug!("Refresh-token authentication succeeded");
+                return Ok(connection);
+            }
+            Ok(Err(err)) => {
+                tracing::warn!(
+                    "CM connect attempt {attempt}/{CM_CONNECT_ATTEMPTS} failed: {err}"
+                );
+                last_err = Some(anyhow::Error::new(err));
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "CM connect attempt {attempt}/{CM_CONNECT_ATTEMPTS} timed out after {}s; \
+                     trying next server",
+                    CM_CONNECT_TIMEOUT.as_secs()
+                );
+                last_err = Some(anyhow!(
+                    "Steam CM connection timed out after {}s",
+                    CM_CONNECT_TIMEOUT.as_secs()
+                ));
+            }
+        }
+    }
+
+    Err(last_err
+        .unwrap_or_else(|| anyhow!("failed to connect to any Steam CM server")))
+    .context("refresh token login failed")
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LoginState {
@@ -254,6 +318,7 @@ impl SteamClient {
     }
 
     pub async fn connect(&mut self) -> Result<()> {
+        tracing::debug!("Connecting to Steam: resolving CM server list ...");
         match self.resolve_server_list().await {
             Ok(server_list) => {
                 self.active_cm = Some(server_list.pick());
@@ -276,12 +341,15 @@ impl SteamClient {
             return Ok(existing.clone());
         }
 
+        tracing::debug!("Discovering Steam CM servers ...");
         match ServerList::discover().await {
             Ok(list) => {
+                tracing::debug!("Discovered Steam CM server list");
                 self.server_list = Some(list.clone());
                 Ok(list)
             }
             Err(_) => {
+                tracing::debug!("CM discovery failed; falling back to bootstrap endpoints");
                 let tcp_servers = get_cm_endpoints().await;
                 if tcp_servers.is_empty() {
                     bail!("failed to discover Steam CM servers and no fallback endpoints were available")
@@ -343,9 +411,7 @@ impl SteamClient {
         self.state = LoginState::AwaitingAccessTokenLogon;
 
         let server_list = self.resolve_server_list().await?;
-        let connection = Connection::access(&server_list, &account_name, &refresh_token)
-            .await
-            .context("refresh token login failed")?;
+        let connection = access_with_retry(&server_list, &account_name, &refresh_token).await?;
 
         self.connection = Some(connection);
         let session = self
@@ -357,11 +423,19 @@ impl SteamClient {
         Ok(session)
     }
 
+    /// Log in with account credentials.
+    ///
+    /// * `guard_code` — a Steam Guard code supplied up front (non-interactive).
+    /// * `interactive_pin` — when `true` and no `guard_code` is given, Steam Guard
+    ///   codes are read **interactively from stdin** (the `login --pin` flow). The
+    ///   prompt appears only once Steam has begun the auth session, so email codes
+    ///   (which Steam sends at that point) work correctly.
     pub async fn login(
         &mut self,
         account_name: String,
         password: String,
         guard_code: Option<String>,
+        interactive_pin: bool,
     ) -> Result<SessionState> {
         self.connect().await?;
         if self.is_offline() {
@@ -385,6 +459,24 @@ impl SteamClient {
 
             let handler = UserProvidedAuthConfirmationHandler::new(reader, sink())
                 .or(DeviceConfirmationHandler);
+
+            Connection::login(
+                &server_list,
+                &account_name,
+                &password,
+                FileGuardDataStore::user_cache(),
+                handler,
+            )
+            .await
+        } else if interactive_pin {
+            // Read the Steam Guard code from stdin when Steam asks for it; fall back
+            // to mobile-app approval if the account only allows that.
+            tracing::info!(
+                "Login method awaited: Steam Guard code — enter it when prompted below"
+            );
+            let handler =
+                UserProvidedAuthConfirmationHandler::new(tokio::io::stdin(), tokio::io::stderr())
+                    .or(DeviceConfirmationHandler);
 
             Connection::login(
                 &server_list,
@@ -423,6 +515,111 @@ impl SteamClient {
         self.state = LoginState::Complete;
         self.pending_confirmations.clear();
         Ok(session)
+    }
+
+    /// Log in by having the user scan a QR code with the Steam Mobile app.
+    ///
+    /// Drives Steam's `Authentication.BeginAuthSessionViaQR` / `PollAuthSessionStatus`
+    /// flow over an anonymous connection (these are unauthenticated service methods).
+    /// `on_challenge` is invoked with the challenge URL to display — initially and
+    /// again whenever Steam rotates the code — so the caller can render the QR.
+    pub async fn login_qr<F>(&mut self, mut on_challenge: F) -> Result<SessionState>
+    where
+        F: FnMut(&str),
+    {
+        use steam_vent::proto::steammessages_auth_steamclient::{
+            CAuthentication_BeginAuthSessionViaQR_Request,
+            CAuthentication_BeginAuthSessionViaQR_Response,
+            CAuthentication_PollAuthSessionStatus_Request,
+            CAuthentication_PollAuthSessionStatus_Response, EAuthTokenPlatformType,
+        };
+
+        self.connect().await?;
+        if self.is_offline() {
+            bail!("offline mode: cannot start QR login");
+        }
+        let server_list = self.resolve_server_list().await?;
+
+        // The QR begin/poll calls don't require a logged-in session, so route them
+        // over an anonymous connection.
+        let anon = Connection::anonymous(&server_list)
+            .await
+            .map_err(|e| anyhow!(e))
+            .context("failed to open anonymous Steam connection for QR login")?;
+
+        let mut begin = CAuthentication_BeginAuthSessionViaQR_Request::new();
+        begin.set_device_friendly_name("Aurelia CLI".to_string());
+        begin.set_platform_type(EAuthTokenPlatformType::k_EAuthTokenPlatformType_SteamClient);
+        begin.set_website_id("Client".to_string());
+
+        let begin_resp: CAuthentication_BeginAuthSessionViaQR_Response = anon
+            .service_method(begin)
+            .await
+            .map_err(|e| anyhow!(e))
+            .context("Authentication.BeginAuthSessionViaQR failed")?;
+
+        let client_id = begin_resp.client_id();
+        let request_id = begin_resp.request_id().to_vec();
+        // Steam suggests a poll interval; clamp to a sane floor.
+        let poll_interval = Duration::from_secs_f32(begin_resp.interval().max(2.0));
+        let mut challenge_url = begin_resp.challenge_url().to_string();
+
+        on_challenge(&challenge_url);
+        tracing::info!("Login method awaited: QR code — scan it with the Steam Mobile app");
+
+        let deadline = Instant::now() + Duration::from_secs(180);
+        loop {
+            if Instant::now() >= deadline {
+                bail!("QR login timed out after 3 minutes without approval");
+            }
+            tokio::time::sleep(poll_interval).await;
+
+            let mut poll = CAuthentication_PollAuthSessionStatus_Request::new();
+            poll.set_client_id(client_id);
+            poll.set_request_id(request_id.clone());
+
+            let resp: CAuthentication_PollAuthSessionStatus_Response =
+                match tokio::time::timeout(CM_CONNECT_TIMEOUT, anon.service_method(poll)).await {
+                    Ok(Ok(resp)) => resp,
+                    Ok(Err(e)) => {
+                        return Err(anyhow!(e))
+                            .context("Authentication.PollAuthSessionStatus failed");
+                    }
+                    Err(_) => {
+                        tracing::warn!("QR status poll timed out; retrying ...");
+                        continue;
+                    }
+                };
+
+            // Steam periodically rotates the QR; re-render only on an actual change.
+            if resp.has_new_challenge_url() && resp.new_challenge_url() != challenge_url {
+                challenge_url = resp.new_challenge_url().to_string();
+                on_challenge(&challenge_url);
+            }
+
+            let refresh_token = resp.refresh_token();
+            if !refresh_token.is_empty() {
+                let account_name = resp.account_name().to_string();
+                tracing::info!(account = %account_name, "QR login approved");
+
+                // Exchange the issued refresh token for a live connection.
+                let connection =
+                    access_with_retry(&server_list, &account_name, refresh_token).await?;
+                let steam_id = Some(u64::from(connection.steam_id()));
+                self.connection = Some(connection);
+
+                let session = SessionState {
+                    account_name: Some(account_name),
+                    steam_id,
+                    refresh_token: Some(refresh_token.to_string()),
+                    client_instance_id: None,
+                };
+                save_session(&session).await?;
+                self.state = LoginState::Complete;
+                self.pending_confirmations.clear();
+                return Ok(session);
+            }
+        }
     }
 
     fn session_from_connection(&self, account_name: String) -> Option<SessionState> {
@@ -1351,10 +1548,12 @@ impl SteamClient {
             ..Default::default()
         };
 
+        tracing::debug!("Calling Player.GetOwnedGames ...");
         let response: CPlayer_GetOwnedGames_Response = connection
             .service_method(request)
             .await
             .context("failed calling Player.GetOwnedGames")?;
+        tracing::debug!("Player.GetOwnedGames returned {} games", response.games.len());
 
         let mut owned = Vec::new();
         for game in response.games {
@@ -1390,6 +1589,7 @@ impl SteamClient {
         group_req.set_steamid(my_steamid);
         group_req.set_include_family_group_response(true);
 
+        tracing::debug!("Calling FamilyGroups.GetFamilyGroupForUser ...");
         let group_resp: CFamilyGroups_GetFamilyGroupForUser_Response = connection
             .service_method(group_req)
             .await

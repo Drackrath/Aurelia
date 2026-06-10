@@ -3,6 +3,7 @@ pub mod cm_list;
 pub mod config;
 pub mod depot_browser;
 pub mod library;
+pub mod local_library;
 pub mod models;
 pub mod launch;
 pub mod steam_client;

@@ -23,6 +23,11 @@ struct Cli {
     /// Emit output (and errors) as JSON. Works with every command.
     #[arg(long, global = true)]
     json: bool,
+    /// Increase log verbosity (repeatable: -v, -vv, -vvv). Unmutes the Steam
+    /// networking stack so a stalled command shows where it is stuck.
+    /// `RUST_LOG` / `AURELIA_LOG` override this.
+    #[arg(short, long, global = true, action = clap::ArgAction::Count)]
+    verbose: u8,
 }
 
 #[derive(Subcommand)]
@@ -38,6 +43,14 @@ enum Command {
         /// Steam Guard code (email or mobile authenticator), if known up front.
         #[arg(short, long)]
         guard: Option<String>,
+        /// Log in by scanning a QR code with the Steam Mobile app (no
+        /// username/password needed). Renders the QR in the terminal.
+        #[arg(long, conflicts_with_all = ["username", "password", "guard", "code"])]
+        qr: bool,
+        /// Enter the Steam Guard code interactively when prompted, instead of
+        /// approving the login in the Steam Mobile app. (Alias: --pin)
+        #[arg(long, visible_alias = "pin", conflicts_with = "guard")]
+        code: bool,
     },
     /// Clear the stored session.
     Logout,
@@ -152,11 +165,11 @@ impl From<PlatformArg> for DepotPlatform {
 
 #[tokio::main]
 async fn main() {
-    // Send tracing/diagnostics to stderr so stdout stays clean for --json output.
-    tracing_subscriber::fmt().with_writer(std::io::stderr).init();
-
     let cli = Cli::parse();
     let json = cli.json;
+
+    // Send tracing/diagnostics to stderr so stdout stays clean for --json output.
+    aurelia::infra::logging::init_cli_logging(cli.verbose);
 
     if let Err(err) = run(cli).await {
         if json {
@@ -177,7 +190,9 @@ async fn run(cli: Cli) -> Result<()> {
             username,
             password,
             guard,
-        } => cmd_login(username, password, guard, json).await,
+            qr,
+            code,
+        } => cmd_login(username, password, guard, qr, code, json).await,
         Command::Logout => cmd_logout(json).await,
         Command::List { installed, search } => cmd_list(installed, search, json).await,
         Command::Account => cmd_account(json).await,
@@ -235,10 +250,10 @@ async fn restored_client() -> Result<SteamClient> {
     let mut client = SteamClient::new()?;
     let saved = load_session().await.unwrap_or_default();
     if saved.refresh_token.is_some() && saved.account_name.is_some() {
-        if client.restore_session().await.is_ok() {
-            tracing::info!("Restored Steam session from refresh token");
-        } else {
-            tracing::warn!("Stored refresh token failed; run `aurelia login`");
+        tracing::info!("Restoring Steam session (connecting to Steam) ...");
+        match client.restore_session().await {
+            Ok(_) => tracing::info!("Restored Steam session from refresh token"),
+            Err(e) => tracing::warn!("Stored refresh token failed ({e:#}); run `aurelia login`"),
         }
     }
     Ok(client)
@@ -257,9 +272,25 @@ async fn authed_client() -> Result<SteamClient> {
 async fn load_library(client: &mut SteamClient) -> Vec<LibraryGame> {
     let cached = load_library_cache().await.unwrap_or_default();
     let owned = if client.is_authenticated() {
-        client.fetch_owned_games().await.unwrap_or(cached)
-    } else {
+        tracing::info!("Fetching owned games from Steam ...");
+        match client.fetch_owned_games().await {
+            Ok(games) => {
+                tracing::info!("Fetched {} owned games", games.len());
+                games
+            }
+            Err(e) => {
+                tracing::warn!("Could not fetch owned games ({e:#}); using cached library");
+                cached
+            }
+        }
+    } else if !cached.is_empty() {
         cached
+    } else {
+        // Not logged in to Aurelia (and nothing cached). The Steam client is
+        // almost always already signed in on Linux and keeps the whole library
+        // on disk, so fall back to reading its caches. This makes `list` show
+        // the full library instead of only locally-installed games.
+        aurelia::local_library::discover_local_owned_games().await
     };
     let installed = scan_installed_app_info().await.unwrap_or_default();
     build_game_library(owned, installed, client.steam_id()).games
@@ -304,8 +335,14 @@ async fn cmd_login(
     username: Option<String>,
     password: Option<String>,
     guard: Option<String>,
+    qr: bool,
+    code: bool,
     json: bool,
 ) -> Result<()> {
+    if qr {
+        return cmd_login_qr(json).await;
+    }
+
     let username = match username {
         Some(u) => u,
         None => prompt_line("Steam username: ")?,
@@ -318,8 +355,11 @@ async fn cmd_login(
     };
 
     let mut client = SteamClient::new()?;
+    // `--code` (alias `--pin`) reads the Steam Guard code interactively from stdin
+    // (handled inside `login`); otherwise we wait for mobile-app approval and only
+    // prompt for a code on the retry path below.
     let attempt = client
-        .login(username.clone(), password.clone(), guard.clone())
+        .login(username.clone(), password.clone(), guard.clone(), code)
         .await;
 
     match attempt {
@@ -336,9 +376,10 @@ async fn cmd_login(
                 });
 
             if needs_code {
+                tracing::info!("Login method awaited: Steam Guard code");
                 let code = prompt_line("Steam Guard code: ")?;
                 client
-                    .login(username, password, Some(code))
+                    .login(username, password, Some(code), false)
                     .await
                     .context("login failed after providing Steam Guard code")?;
                 report_login_success(&account, json);
@@ -348,12 +389,41 @@ async fn cmd_login(
                 .iter()
                 .any(|p| matches!(p.requirement, aurelia::models::SteamGuardReq::DeviceConfirmation))
             {
+                tracing::info!("Login method awaited: Steam Mobile app approval");
                 bail!("approve this login in the Steam Mobile app, then run `aurelia login` again")
             } else {
                 Err(err).context("login failed")
             }
         }
     }
+}
+
+/// Log in by scanning a QR code with the Steam Mobile app.
+async fn cmd_login_qr(json: bool) -> Result<()> {
+    let mut client = SteamClient::new()?;
+    let session = client
+        .login_qr(render_login_qr)
+        .await
+        .context("QR login failed")?;
+    let account = session.account_name.clone().unwrap_or_default();
+    report_login_success(&account, json);
+    Ok(())
+}
+
+/// Render a Steam login challenge URL as a scannable QR code on stderr, with the
+/// raw URL as a fallback. Diagnostics go to stderr so stdout stays clean.
+fn render_login_qr(url: &str) {
+    match qrcode::QrCode::new(url.as_bytes()) {
+        Ok(code) => {
+            let rendered = code
+                .render::<qrcode::render::unicode::Dense1x2>()
+                .quiet_zone(true)
+                .build();
+            eprintln!("\nScan this QR code with the Steam Mobile app:\n{rendered}");
+        }
+        Err(e) => eprintln!("\n(could not render QR code: {e})"),
+    }
+    eprintln!("Or open this link in the Steam Mobile app:\n  {url}\n");
 }
 
 fn report_login_success(account: &str, json: bool) {
@@ -382,9 +452,13 @@ async fn cmd_list(installed: bool, search: Option<String>, json: bool) -> Result
     // Include Family-Shared games that aren't installed (and which we don't own),
     // such as titles only available through a family member's library.
     if client.is_authenticated() {
+        tracing::info!("Fetching Family Sharing library from Steam ...");
         match client.fetch_family_shared_apps().await {
-            Ok(shared) => merge_family_shared(&mut games, shared),
-            Err(e) => tracing::warn!("could not fetch family shared apps: {e}"),
+            Ok(shared) => {
+                tracing::info!("Fetched {} Family-Shared apps", shared.len());
+                merge_family_shared(&mut games, shared);
+            }
+            Err(e) => tracing::warn!("could not fetch family shared apps: {e:#}"),
         }
     }
 

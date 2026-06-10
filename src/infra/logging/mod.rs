@@ -1,8 +1,10 @@
+pub mod cli;
 pub mod session;
 pub mod event_log;
 pub mod wine_capture;
 pub mod debug_utils;
 
+pub use cli::*;
 pub use session::*;
 pub use event_log::*;
 pub use wine_capture::*;

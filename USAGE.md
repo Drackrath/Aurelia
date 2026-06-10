@@ -48,6 +48,14 @@ of a specific command. `--version` prints the build version.
   stdout, and any error is printed as `{ "error": "..." }` with a non-zero exit code.
   Diagnostics and progress are written to stderr, so stdout stays clean for piping into
   tools like `jq`.
+- **`-v, --verbose`:** A global, repeatable flag that increases log verbosity. Logs are
+  written to stderr. At the default level Aurelia prints high-level progress (connecting,
+  fetching owned games, …) while the chatty Steam networking stack is quieted; `-v`, `-vv`
+  and `-vvv` progressively unmute it. This is the way to diagnose a command that appears to
+  **hang**: the last line printed shows exactly which step is stuck (typically a Steam CM
+  connection or RPC). `RUST_LOG`/`AURELIA_LOG` (standard `tracing` env-filter syntax, e.g.
+  `RUST_LOG=steam_vent=trace`) override the flag entirely. See
+  [docs/logging.md](docs/logging.md).
 - **Session:** After `login`, a refresh token is stored so subsequent commands reuse the
   session automatically. Commands that need Steam (`account`, `install`, `play`, …) will
   error with `not logged in — run \`aurelia login\` first` if no valid session exists.
@@ -68,30 +76,43 @@ of a specific command. `--version` prints the build version.
 Authenticate with Steam and persist the session.
 
 ```
-aurelia login [-u <USERNAME>] [-p <PASSWORD>] [-g <GUARD_CODE>]
+aurelia login [-u <USERNAME>] [-p <PASSWORD>] [-g <GUARD_CODE>] [--code] [--qr]
 ```
 
 | Option | Description |
 | --- | --- |
 | `-u, --username <USERNAME>` | Steam account name. Prompted if omitted. |
 | `-p, --password <PASSWORD>` | Account password. Prompted securely if omitted. |
-| `-g, --guard <GUARD_CODE>` | Steam Guard code (email or mobile authenticator). |
+| `-g, --guard <GUARD_CODE>` | Steam Guard code (email or mobile authenticator), supplied up front. |
+| `--code` (alias `--pin`) | Enter the Steam Guard code **interactively** when prompted, instead of approving in the Steam Mobile app. Conflicts with `-g`. |
+| `--qr` | Log in by **scanning a QR code** with the Steam Mobile app — no username/password needed. Conflicts with the credential options. |
 
-Behavior:
+There are three ways to authenticate:
 
-- If `--username`/`--password` are omitted you are prompted interactively (the password
-  prompt is hidden). The password may also be supplied via the `AURELIA_PASSWORD`
-  environment variable.
-- If Steam requires a **Steam Guard code** and none was provided, you are prompted for it
-  and the login is retried.
-- If Steam requires **mobile app approval**, approve the login in the Steam Mobile app and
-  run `aurelia login` again.
+1. **Password + Steam Guard.** Provide `-u`/`-p` (or be prompted). Then, depending on your
+   account: pass `-g <CODE>` up front, use `--code`/`--pin` to type the code when prompted,
+   or (the default) approve the login in your Steam Mobile app.
+2. **`--code` / `--pin`.** Forces interactive Steam Guard **code** entry: after you submit
+   credentials, Steam asks for the code (email or authenticator) and you type it in.
+3. **`--qr`.** Renders a QR code in the terminal (with a `https://s.team/…` link as a
+   fallback). Scan it with the Steam Mobile app to approve; no password is entered.
+
+A single log line — shown even without `-v` — reports which method is being awaited, e.g.
+`Login method awaited: QR code — scan it with the Steam Mobile app` or
+`Login method awaited: Steam Guard code`. The password may also be supplied via the
+`AURELIA_PASSWORD` environment variable.
 
 ```bash
-# Interactive (recommended)
+# Interactive password login (recommended)
 aurelia login
 
-# Non-interactive
+# Type the Steam Guard code interactively instead of approving in the app
+aurelia login --code            # or: aurelia login --pin
+
+# Scan a QR code with the Steam Mobile app (no password)
+aurelia login --qr
+
+# Fully non-interactive
 aurelia login -u myname -p 'secret' -g ABCDE
 AURELIA_PASSWORD='secret' aurelia login -u myname
 ```
@@ -146,6 +167,14 @@ aurelia list --installed
 aurelia list --search elden
 aurelia list --json > library.json
 ```
+
+**Without an Aurelia session** (you haven't run `aurelia login`, or you're offline),
+`list` falls back to the locally signed-in Steam client's own caches and still shows your
+full library — every game is reported as `owned` with `STATUS` `-` unless installed. This
+requires only that the Steam client itself is signed in; no network access is used. Running
+`aurelia login` re-enables the strictly richer network path (live ownership, update status,
+and not-installed Family-Shared titles). See
+[docs/linux-library-discovery.md](docs/linux-library-discovery.md) for details.
 
 ### `account`
 

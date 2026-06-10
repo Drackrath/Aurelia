@@ -164,6 +164,7 @@ dependencies = [
  "keyvalues-serde",
  "libc",
  "prost",
+ "qrcode",
  "rand 0.8.5",
  "regex",
  "reqwest 0.12.28",
@@ -1825,6 +1826,12 @@ checksum = "f0766e3675a627c327e4b3964582594b0e8741305d628a98a5de75a1d15f99b9"
 dependencies = [
  "thiserror 1.0.69",
 ]
+
+[[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
 
 [[package]]
 name = "quinn"

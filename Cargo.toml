@@ -34,6 +34,7 @@ aes = "0.8"
 steam-cdn = "1.0.0"
 libc = "0.2"
 regex = "1"
+qrcode = { version = "0.14", default-features = false } # Terminal QR rendering for `login --qr`
 
 [patch.crates-io]
 steam-cdn = { path = "vendor/steam-cdn" }
