@@ -2022,19 +2022,38 @@ impl SteamClient {
             .find(|entry| entry.appid() == appid)
             .ok_or_else(|| anyhow!("missing appinfo payload for app {appid}"))?;
 
-        let raw_vdf = String::from_utf8_lossy(app.buffer()).to_string();
-        let parsed: AppInfoRoot =
-            parse_appinfo(&raw_vdf).context("failed to parse product info VDF")?;
+        // PICS product-info buffers are usually *binary* VDF (text only for some
+        // apps), so go through `find_vdf_in_pics` rather than the text-only
+        // `parse_appinfo`. The category map lives at `<root>/common/category`,
+        // where the root key is either "appinfo" or the numeric appid.
+        let vdf = find_vdf_in_pics(app.buffer()).context("failed to parse product info VDF")?;
+        let root_obj = vdf.as_obj().context("PICS root is not an object")?;
+        let common = if vdf.key() == "appinfo" || vdf.key() == appid.to_string() {
+            root_obj.get("common")
+        } else {
+            root_obj.get("common").or_else(|| {
+                root_obj
+                    .values()
+                    .next()
+                    .and_then(|v| v.as_obj())
+                    .and_then(|o| o.get("common"))
+            })
+        };
 
-        let common = parsed
-            .appinfo
-            .as_ref()
-            .and_then(|a| a.common.as_ref())
-            .or(parsed.common.as_ref());
+        let mut categories = HashMap::new();
+        if let Some(cat_obj) = common
+            .and_then(|c| c.as_obj())
+            .and_then(|o| o.get("category"))
+            .and_then(|v| v.as_obj())
+        {
+            for (key, value) in cat_obj.iter() {
+                if let Some(v) = value.as_str() {
+                    categories.insert(key.to_string(), v.to_string());
+                }
+            }
+        }
 
-        Ok(common
-            .map(|c| category_online_required(&c.category))
-            .unwrap_or(false))
+        Ok(category_online_required(&categories))
     }
 
     pub async fn get_product_info(&mut self, appid: u32, prefer_proton: bool) -> Result<Vec<LaunchInfo>> {
