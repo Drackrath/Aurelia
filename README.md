@@ -12,7 +12,7 @@
 
 Aurelia is a pure command-line Steam launcher and library manager — no CEF, no WebViews,
 no GUI. It talks to Steam's real network protocols through
-[`steam-vent`](https://github.com/n00b67/steam-vent), so you can log in, manage your
+[`steam-vent`](https://codeberg.org/steam-vent/steam-vent), so you can log in, manage your
 library, install and update games, sync Steam Cloud saves, and launch titles (natively or
 through Proton/Wine) entirely from a terminal or a script.
 
