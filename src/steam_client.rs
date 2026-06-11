@@ -190,6 +190,26 @@ pub struct StoreAppInfo {
     pub discount_pct: i32,
     pub platforms: Vec<String>,
     pub review_summary: Option<String>,
+    /// Artwork URLs (header/cover/hero/background/logo).
+    pub assets: StoreAppAssets,
+}
+
+/// Artwork URLs for a store app. Built from the StoreBrowse `assets` block when
+/// present, falling back to Steam's conventional per-appid CDN paths so a caller
+/// (e.g. Heroic) always has usable URLs instead of guessing them itself.
+#[derive(Debug, Clone, Default)]
+pub struct StoreAppAssets {
+    /// Wide store header / capsule (`header.jpg`).
+    pub header: Option<String>,
+    /// Portrait library cover (`library_600x900`).
+    pub capsule: Option<String>,
+    /// Wide library hero background.
+    pub hero: Option<String>,
+    /// Store-page background.
+    pub background: Option<String>,
+    /// Transparent game logo (`logo.png`). Not in StoreBrowse — always the
+    /// conventional CDN URL.
+    pub logo: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -2507,6 +2527,7 @@ impl SteamClient {
         data.set_include_reviews(true);
         data.set_include_all_purchase_options(true);
         data.set_include_full_description(true);
+        data.set_include_assets(true);
 
         let mut context = StoreBrowseContext::new();
         context.set_language("english".to_string());
@@ -4209,6 +4230,51 @@ fn store_item_to_app_info(item: &StoreItem) -> StoreAppInfo {
         discount_pct,
         platforms,
         review_summary,
+        assets: store_assets(item),
+    }
+}
+
+/// Resolve a `StoreItem`'s artwork URLs. Each is built from the StoreBrowse
+/// `assets` block (`asset_url_format` with the asset filename substituted for
+/// `${FILENAME}`) when available, otherwise from Steam's conventional per-appid
+/// CDN paths so the caller always gets a usable URL.
+fn store_assets(item: &StoreItem) -> StoreAppAssets {
+    let appid = item.appid();
+    let assets = item.assets.as_ref();
+    let fmt = assets.map(|a| a.asset_url_format()).unwrap_or("");
+
+    let from_fmt = |filename: &str| -> Option<String> {
+        if filename.is_empty() || fmt.is_empty() {
+            return None;
+        }
+        let path = fmt.replace("${FILENAME}", filename);
+        if path.starts_with("http") {
+            Some(path)
+        } else {
+            Some(format!(
+                "https://shared.cloudflare.steamstatic.com/store_item_assets/{path}"
+            ))
+        }
+    };
+    let cdn = |file: &str| format!("https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/{file}");
+    let pick = |native: Option<String>, fallback: &str| native.or_else(|| Some(cdn(fallback)));
+
+    StoreAppAssets {
+        header: pick(assets.and_then(|a| from_fmt(a.header())), "header.jpg"),
+        capsule: pick(
+            assets.and_then(|a| from_fmt(a.library_capsule_2x())),
+            "library_600x900_2x.jpg",
+        ),
+        hero: pick(
+            assets.and_then(|a| from_fmt(a.library_hero_2x())),
+            "library_hero.jpg",
+        ),
+        background: pick(
+            assets.and_then(|a| from_fmt(a.page_background())),
+            "page_bg_generated_v6b.jpg",
+        ),
+        // StoreBrowse has no logo field; use the conventional CDN URL.
+        logo: Some(cdn("logo.png")),
     }
 }
 

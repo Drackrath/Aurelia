@@ -1280,6 +1280,13 @@ async fn cmd_info(app_id: u32, extended: bool, json: bool) -> Result<()> {
             "discount_pct": details.discount_pct,
             "platforms": details.platforms,
             "reviews": details.review_summary,
+            "assets": {
+                "header": details.assets.header,
+                "capsule": details.assets.capsule,
+                "hero": details.assets.hero,
+                "background": details.assets.background,
+                "logo": details.assets.logo,
+            },
             "dlc": dlc.iter().map(|(id, name)| serde_json::json!({"app_id": id, "name": name})).collect::<Vec<_>>(),
         });
         if let Some((web, tags)) = &extended_info {
@@ -1374,6 +1381,27 @@ async fn cmd_info(app_id: u32, extended: bool, json: bool) -> Result<()> {
             for line in &web.requirements_recommended {
                 println!("  {line}");
             }
+        }
+    }
+
+    // --- Artwork ---
+    let a = &details.assets;
+    if a.header.is_some() || a.capsule.is_some() || a.background.is_some() {
+        println!("\nArtwork:");
+        if let Some(u) = &a.header {
+            println!("  header    : {u}");
+        }
+        if let Some(u) = &a.capsule {
+            println!("  capsule   : {u}");
+        }
+        if let Some(u) = &a.hero {
+            println!("  hero      : {u}");
+        }
+        if let Some(u) = &a.background {
+            println!("  background: {u}");
+        }
+        if let Some(u) = &a.logo {
+            println!("  logo      : {u}");
         }
     }
 
