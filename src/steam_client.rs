@@ -1685,6 +1685,221 @@ impl SteamClient {
         Ok(rx)
     }
 
+    /// Whether a game is installed *and* its files are present on disk. Returns
+    /// `(available, install_path)` — mirrors Heroic's `isGameAvailable`.
+    pub async fn is_game_available(&self, appid: u32) -> (bool, Option<String>) {
+        let Ok(manifest) = self.appmanifest_path(appid).await else {
+            return (false, None);
+        };
+        if !manifest.exists() {
+            return (false, None);
+        }
+        match self.install_root_for_app(appid).await {
+            Ok(path) => {
+                let exists = path.exists();
+                (exists, Some(path.to_string_lossy().to_string()))
+            }
+            Err(_) => (false, None),
+        }
+    }
+
+    /// Relink an install to a different Steam library **without copying files** —
+    /// the game's files must already be present at the destination (e.g. the user
+    /// moved them by hand). Relocates the `appmanifest` and updates
+    /// `libraryfolders.vdf`; the game files and Proton prefix are never touched.
+    /// Steam should not be running. Returns the destination install directory.
+    pub async fn relink_install(&self, appid: u32, dest_library: PathBuf) -> Result<PathBuf> {
+        let src_manifest = self.appmanifest_path(appid).await?;
+        if !src_manifest.exists() {
+            bail!("app {appid} is not registered (no appmanifest to relink)");
+        }
+        let src_steamapps = src_manifest
+            .parent()
+            .ok_or_else(|| anyhow!("invalid manifest path for app {appid}"))?
+            .to_path_buf();
+        let src_lib_root = src_steamapps
+            .parent()
+            .ok_or_else(|| anyhow!("invalid library path for app {appid}"))?
+            .to_path_buf();
+
+        let raw = std::fs::read_to_string(&src_manifest)
+            .with_context(|| format!("failed reading {}", src_manifest.display()))?;
+        let installdir = parse_installdir_from_acf(&raw)
+            .ok_or_else(|| anyhow!("appmanifest for {appid} has no installdir"))?;
+
+        let dest_steamapps = dest_library.join("steamapps");
+        if !dest_steamapps.exists() {
+            bail!(
+                "{} is not a Steam library folder (no steamapps/)",
+                dest_library.display()
+            );
+        }
+        if dest_steamapps == src_steamapps {
+            bail!("app {appid} is already linked to {}", dest_library.display());
+        }
+        let dest_common = dest_steamapps.join("common").join(&installdir);
+        if !dest_common.exists() {
+            bail!(
+                "game files not found at {} — relink only updates Steam's records; use \
+                 `move` to copy the files there first",
+                dest_common.display()
+            );
+        }
+        let dest_manifest = dest_steamapps.join(format!("appmanifest_{appid}.acf"));
+
+        // Move only the manifest (files are already in place).
+        std::fs::copy(&src_manifest, &dest_manifest)
+            .with_context(|| format!("failed writing {}", dest_manifest.display()))?;
+        std::fs::remove_file(&src_manifest)
+            .with_context(|| format!("failed removing {}", src_manifest.display()))?;
+
+        update_libraryfolders_for(&src_lib_root, &dest_library, appid, &dest_common).await;
+        Ok(dest_common)
+    }
+
+    /// Import an on-disk install that Steam doesn't know about: write an
+    /// `appmanifest_<appid>.acf` for the existing files in `library` and register
+    /// it in `libraryfolders.vdf`. Depot manifests and the build id come from PICS
+    /// so Steam sees the game as installed and up to date. Steam should not be
+    /// running. Returns the install directory.
+    pub async fn import_install(
+        &self,
+        appid: u32,
+        library: PathBuf,
+        platform: DepotPlatform,
+    ) -> Result<PathBuf> {
+        let connection = self
+            .connection
+            .as_ref()
+            .context("steam connection not initialized")?;
+
+        let mut request = CMsgClientPICSProductInfoRequest::new();
+        request
+            .apps
+            .push(cmsg_client_picsproduct_info_request::AppInfo {
+                appid: Some(appid),
+                ..Default::default()
+            });
+        let response: CMsgClientPICSProductInfoResponse = connection
+            .job(request)
+            .await
+            .context("failed requesting appinfo product info for import")?;
+        let app = response
+            .apps
+            .iter()
+            .find(|e| e.appid() == appid)
+            .ok_or_else(|| anyhow!("missing appinfo payload for app {appid}"))?;
+
+        let vdf = find_vdf_in_pics(app.buffer()).context("failed to parse product info VDF")?;
+        let root_obj = vdf.as_obj().context("root is not an object")?;
+        let app_obj = if vdf.key() == "appinfo" || vdf.key() == appid.to_string() {
+            root_obj
+        } else {
+            root_obj
+                .get("appinfo")
+                .and_then(|v| v.as_obj())
+                .unwrap_or(root_obj)
+        };
+
+        let common = app_obj.get("common").and_then(|v| v.as_obj());
+        let name = common
+            .and_then(|c| c.get("name"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("App {appid}"));
+        let installdir = common
+            .and_then(|c| c.get("installdir"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow!("PICS appinfo for {appid} has no installdir; cannot import"))?;
+
+        let depots_obj = app_obj.get("depots").and_then(|v| v.as_obj());
+        let buildid = depots_obj
+            .and_then(|d| d.get("branches"))
+            .and_then(|v| v.as_obj())
+            .and_then(|b| b.get("public"))
+            .and_then(|v| v.as_obj())
+            .and_then(|p| p.get("buildid"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        // Platform-matched, non-DLC depots with a public manifest → InstalledDepots.
+        let mut installed_depots: Vec<(u32, u64, u64)> = Vec::new();
+        if let Some(depots) = depots_obj {
+            for (key, value) in depots.iter() {
+                let Ok(depot_id) = key.parse::<u32>() else {
+                    continue;
+                };
+                let Some(obj) = value.as_obj() else { continue };
+                if obj.get("dlcappid").is_some() {
+                    continue;
+                }
+                let oslist = obj
+                    .get("config")
+                    .and_then(|v| v.as_obj())
+                    .and_then(|c| c.get("oslist"))
+                    .and_then(|v| v.as_str());
+                if !should_keep_depot(oslist, platform) {
+                    continue;
+                }
+                let Some(public) = obj
+                    .get("manifests")
+                    .and_then(|v| v.as_obj())
+                    .and_then(|m| m.get("public"))
+                    .and_then(|v| v.as_obj())
+                else {
+                    continue;
+                };
+                if let Some(mid) = public
+                    .get("gid")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.parse::<u64>().ok())
+                {
+                    let size = public
+                        .get("size")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| s.parse::<u64>().ok())
+                        .unwrap_or(0);
+                    installed_depots.push((depot_id, mid, size));
+                }
+            }
+        }
+
+        let steamapps = library.join("steamapps");
+        if !steamapps.exists() {
+            bail!(
+                "{} is not a Steam library folder (no steamapps/)",
+                library.display()
+            );
+        }
+        let common_dir = steamapps.join("common").join(&installdir);
+        if !common_dir.exists() {
+            bail!(
+                "game files not found at {} — `import` registers existing files; use \
+                 `install` to download the game",
+                common_dir.display()
+            );
+        }
+        let manifest = steamapps.join(format!("appmanifest_{appid}.acf"));
+        if manifest.exists() {
+            bail!("app {appid} is already registered at {}", manifest.display());
+        }
+
+        Self::write_appmanifest(
+            &manifest,
+            appid,
+            &name,
+            &installdir,
+            installed_depots,
+            buildid.as_deref(),
+            true,
+        )?;
+
+        // Register in libraryfolders.vdf (add to this library; nothing to remove).
+        update_libraryfolders_for(&library, &library, appid, &common_dir).await;
+        Ok(common_dir)
+    }
+
     pub async fn get_content_servers(&self, cell_id: u32) -> Result<Vec<String>> {
         let connection = self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))?;
         let mut request = CContentServerDirectory_GetServersForSteamPipe_Request::new();
@@ -4355,6 +4570,32 @@ pub fn category_online_required(categories: &HashMap<String, String>) -> bool {
     };
     let online = ONLINE_MULTIPLAYER_CATEGORIES.iter().any(|&id| has(id));
     online && !has(SINGLE_PLAYER_CATEGORY)
+}
+
+/// Best-effort: relocate app `appid`'s entry from `from_lib` to `to_lib` in
+/// `libraryfolders.vdf` (or just add it when `from_lib == to_lib`, e.g. for an
+/// import). Logs and continues on any problem — Steam reconciles the index from
+/// the appmanifests on its next launch.
+async fn update_libraryfolders_for(from_lib: &Path, to_lib: &Path, appid: u32, install_dir: &Path) {
+    let roots = crate::library::all_library_roots().await;
+    let Some(vdf_path) = crate::relocate::find_libraryfolders_vdf(&roots) else {
+        return;
+    };
+    let Ok(text) = std::fs::read_to_string(&vdf_path) else {
+        tracing::warn!("could not read libraryfolders.vdf");
+        return;
+    };
+    let size = crate::relocate::dir_size(install_dir);
+    match crate::relocate::update_libraryfolders_apps(&text, appid, from_lib, to_lib, size) {
+        Some(updated) => {
+            if let Err(e) = std::fs::write(&vdf_path, updated) {
+                tracing::warn!("could not write libraryfolders.vdf: {e}");
+            }
+        }
+        None => tracing::warn!(
+            "could not locate the library entry in libraryfolders.vdf; Steam will reconcile on next launch"
+        ),
+    }
 }
 
 pub fn should_keep_depot(oslist: Option<&str>, target: DepotPlatform) -> bool {

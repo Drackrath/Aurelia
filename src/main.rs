@@ -105,6 +105,30 @@ enum Command {
         #[arg(long)]
         restart_steam: bool,
     },
+    /// Relink an install to a different Steam library **without copying** — the
+    /// files must already be at the destination (e.g. you moved them by hand).
+    Relink {
+        app_id: u32,
+        /// Destination Steam library root (containing `steamapps/`).
+        library: PathBuf,
+        /// Stop Steam for the duration and restart it afterward.
+        #[arg(long)]
+        restart_steam: bool,
+    },
+    /// Register an existing on-disk install with Steam (writes its appmanifest).
+    Import {
+        app_id: u32,
+        /// Steam library root whose `steamapps/common/<installdir>` holds the files.
+        library: PathBuf,
+        /// Depot platform whose files are present. Defaults to the current OS.
+        #[arg(short, long)]
+        platform: Option<PlatformArg>,
+        /// Stop Steam for the duration and restart it afterward.
+        #[arg(long)]
+        restart_steam: bool,
+    },
+    /// Report whether a game is installed and its files are present on disk.
+    Available { app_id: u32 },
     /// Verify the integrity of an installed game.
     Verify { app_id: u32 },
     /// Download the latest manifest for an installed game.
@@ -277,6 +301,18 @@ async fn run(cli: Cli) -> Result<()> {
             library,
             restart_steam,
         } => cmd_move(app_id, library, restart_steam, json).await,
+        Command::Relink {
+            app_id,
+            library,
+            restart_steam,
+        } => cmd_relink(app_id, library, restart_steam, json).await,
+        Command::Import {
+            app_id,
+            library,
+            platform,
+            restart_steam,
+        } => cmd_import(app_id, library, platform, restart_steam, json).await,
+        Command::Available { app_id } => cmd_available(app_id, json).await,
         Command::Verify { app_id } => cmd_verify(app_id, json).await,
         Command::Update { app_id } => cmd_update(app_id, json).await,
         Command::Play {
@@ -967,38 +1003,14 @@ async fn cmd_move(
     let client = authed_client().await?;
 
     // Steam rewrites appmanifests and libraryfolders.vdf on exit, so it must not be
-    // running while we move things. Stop it (and restart later) only with the
-    // explicit flag; otherwise refuse rather than risk a clobbered move.
-    let steam_running = SteamClient::steam_is_running();
-    let manage_steam = restart_steam && steam_running;
-    if steam_running && !restart_steam {
-        bail!(
-            "Steam is running. Close it first, or re-run with --restart-steam to have \
-             Aurelia stop and restart it around the move."
-        );
-    }
-    if manage_steam {
-        if !json {
-            println!("Stopping Steam ...");
-        }
-        SteamClient::shutdown_steam()?;
-    }
-
+    // running while we move things.
+    let managed = steam_guard_stop(restart_steam, json)?;
     let rx = client
         .move_install(app_id, library.clone())
         .await
         .with_context(|| format!("failed to start moving app {app_id}"))?;
     let outcome = drive_progress(rx, json).await;
-
-    let mut steam_restarted = false;
-    if manage_steam {
-        if !json {
-            println!("Starting Steam ...");
-        }
-        SteamClient::start_steam()?;
-        steam_restarted = true;
-    }
-
+    steam_guard_restart(managed, json)?;
     outcome.with_context(|| format!("failed to move app {app_id}"))?;
 
     if json {
@@ -1006,10 +1018,124 @@ async fn cmd_move(
             "app_id": app_id,
             "status": "moved",
             "library": library.to_string_lossy(),
-            "steam_restarted": steam_restarted,
+            "steam_restarted": managed,
         }));
     } else {
         println!("Moved app {app_id} to {}.", library.display());
+    }
+    Ok(())
+}
+
+/// Steam edits to appmanifests / `libraryfolders.vdf` are clobbered if Steam is
+/// running (it rewrites them on exit). If Steam is up, either stop it (when
+/// `restart_steam`) — returning `true` so the caller restarts it afterward — or
+/// refuse. Returns whether Steam was stopped.
+fn steam_guard_stop(restart_steam: bool, json: bool) -> Result<bool> {
+    let running = SteamClient::steam_is_running();
+    if running && !restart_steam {
+        bail!(
+            "Steam is running. Close it first, or re-run with --restart-steam to have \
+             Aurelia stop and restart it around the change."
+        );
+    }
+    if running {
+        if !json {
+            println!("Stopping Steam ...");
+        }
+        SteamClient::shutdown_steam()?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+/// Restart Steam if [`steam_guard_stop`] stopped it.
+fn steam_guard_restart(managed: bool, json: bool) -> Result<()> {
+    if managed {
+        if !json {
+            println!("Starting Steam ...");
+        }
+        SteamClient::start_steam()?;
+    }
+    Ok(())
+}
+
+async fn cmd_relink(
+    app_id: u32,
+    library: PathBuf,
+    restart_steam: bool,
+    json: bool,
+) -> Result<()> {
+    let client = authed_client().await?;
+    let managed = steam_guard_stop(restart_steam, json)?;
+    let result = client.relink_install(app_id, library.clone()).await;
+    steam_guard_restart(managed, json)?;
+    let path = result.with_context(|| format!("failed to relink app {app_id}"))?;
+
+    if json {
+        print_json(&serde_json::json!({
+            "app_id": app_id,
+            "status": "relinked",
+            "library": library.to_string_lossy(),
+            "install_path": path.to_string_lossy(),
+            "steam_restarted": managed,
+        }));
+    } else {
+        println!("Relinked app {app_id} to {}.", library.display());
+    }
+    Ok(())
+}
+
+async fn cmd_import(
+    app_id: u32,
+    library: PathBuf,
+    platform: Option<PlatformArg>,
+    restart_steam: bool,
+    json: bool,
+) -> Result<()> {
+    let client = authed_client().await?;
+    // Default to the OS we're running on for the depot/platform match.
+    let platform: DepotPlatform = platform.map(Into::into).unwrap_or(if cfg!(target_os = "windows") {
+        DepotPlatform::Windows
+    } else {
+        DepotPlatform::Linux
+    });
+
+    let managed = steam_guard_stop(restart_steam, json)?;
+    let result = client.import_install(app_id, library.clone(), platform).await;
+    steam_guard_restart(managed, json)?;
+    let path = result.with_context(|| format!("failed to import app {app_id}"))?;
+
+    if json {
+        print_json(&serde_json::json!({
+            "app_id": app_id,
+            "status": "imported",
+            "library": library.to_string_lossy(),
+            "install_path": path.to_string_lossy(),
+            "steam_restarted": managed,
+        }));
+    } else {
+        println!("Imported app {app_id} from {}.", path.display());
+    }
+    Ok(())
+}
+
+async fn cmd_available(app_id: u32, json: bool) -> Result<()> {
+    let client = restored_client().await?;
+    let (available, install_path) = client.is_game_available(app_id).await;
+    if json {
+        print_json(&serde_json::json!({
+            "app_id": app_id,
+            "available": available,
+            "install_path": install_path,
+        }));
+    } else {
+        println!(
+            "App {app_id}: {}",
+            if available { "available" } else { "not available" }
+        );
+        if let Some(p) = install_path {
+            println!("  path: {p}");
+        }
     }
     Ok(())
 }
