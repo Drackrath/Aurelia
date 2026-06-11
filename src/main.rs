@@ -88,6 +88,19 @@ enum Command {
         #[arg(long)]
         delete_prefix: bool,
     },
+    /// Move an installed game to a different Steam library folder, updating
+    /// Steam's data so the client recognises the new install path.
+    Move {
+        app_id: u32,
+        /// Destination Steam library folder (its root, containing `steamapps/`),
+        /// e.g. `D:\SteamLibrary`. Must already be a Steam library.
+        library: PathBuf,
+        /// Stop Steam for the duration of the move and restart it afterward.
+        /// Steam overwrites its data files on exit, so moving while it runs is
+        /// unsafe; without this, the move refuses to run while Steam is open.
+        #[arg(long)]
+        restart_steam: bool,
+    },
     /// Verify the integrity of an installed game.
     Verify { app_id: u32 },
     /// Download the latest manifest for an installed game.
@@ -227,6 +240,11 @@ async fn run(cli: Cli) -> Result<()> {
             app_id,
             delete_prefix,
         } => cmd_uninstall(app_id, delete_prefix, json).await,
+        Command::Move {
+            app_id,
+            library,
+            restart_steam,
+        } => cmd_move(app_id, library, restart_steam, json).await,
         Command::Verify { app_id } => cmd_verify(app_id, json).await,
         Command::Update { app_id } => cmd_update(app_id, json).await,
         Command::Play {
@@ -730,6 +748,62 @@ async fn cmd_uninstall(app_id: u32, delete_prefix: bool, json: bool) -> Result<(
         }));
     } else {
         println!("Uninstalled app {app_id}.");
+    }
+    Ok(())
+}
+
+async fn cmd_move(
+    app_id: u32,
+    library: PathBuf,
+    restart_steam: bool,
+    json: bool,
+) -> Result<()> {
+    let client = authed_client().await?;
+
+    // Steam rewrites appmanifests and libraryfolders.vdf on exit, so it must not be
+    // running while we move things. Stop it (and restart later) only with the
+    // explicit flag; otherwise refuse rather than risk a clobbered move.
+    let steam_running = SteamClient::steam_is_running();
+    let manage_steam = restart_steam && steam_running;
+    if steam_running && !restart_steam {
+        bail!(
+            "Steam is running. Close it first, or re-run with --restart-steam to have \
+             Aurelia stop and restart it around the move."
+        );
+    }
+    if manage_steam {
+        if !json {
+            println!("Stopping Steam ...");
+        }
+        SteamClient::shutdown_steam()?;
+    }
+
+    let rx = client
+        .move_install(app_id, library.clone())
+        .await
+        .with_context(|| format!("failed to start moving app {app_id}"))?;
+    let outcome = drive_progress(rx, json).await;
+
+    let mut steam_restarted = false;
+    if manage_steam {
+        if !json {
+            println!("Starting Steam ...");
+        }
+        SteamClient::start_steam()?;
+        steam_restarted = true;
+    }
+
+    outcome.with_context(|| format!("failed to move app {app_id}"))?;
+
+    if json {
+        print_json(&serde_json::json!({
+            "app_id": app_id,
+            "status": "moved",
+            "library": library.to_string_lossy(),
+            "steam_restarted": steam_restarted,
+        }));
+    } else {
+        println!("Moved app {app_id} to {}.", library.display());
     }
     Ok(())
 }
@@ -1348,6 +1422,13 @@ async fn drive_progress(
                     print_progress("Verifying", &p);
                 }
             }
+            DownloadProgressState::Moving => {
+                if json {
+                    emit_progress_json("moving", &p, &mut last);
+                } else {
+                    print_progress("Moving", &p);
+                }
+            }
             DownloadProgressState::Completed => {
                 // The caller emits the terminal result object; nothing more here.
                 if !json {
@@ -1384,7 +1465,8 @@ fn emit_progress_json(state: &str, p: &DownloadProgress, last: &mut Option<(u8, 
         "queued" => 0u8,
         "downloading" => 1,
         "verifying" => 2,
-        _ => 3,
+        "moving" => 3,
+        _ => 4,
     };
     let key = (state_key, p.bytes_downloaded, p.depot_bytes_downloaded);
     if *last == Some(key) {

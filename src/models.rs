@@ -279,6 +279,8 @@ pub enum DownloadProgressState {
     Queued,
     Downloading,
     Verifying,
+    /// Relocating an installed game's files between library folders.
+    Moving,
     Completed,
     Failed,
 }

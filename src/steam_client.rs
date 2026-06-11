@@ -1452,6 +1452,181 @@ impl SteamClient {
         Ok(())
     }
 
+    /// Move an installed game to a different Steam library folder.
+    ///
+    /// Relocates the game files (`steamapps/common/<installdir>`), the Proton
+    /// prefix (`steamapps/compatdata/<appid>`, if present) and the
+    /// `appmanifest_<appid>.acf`, then updates `libraryfolders.vdf`'s `apps` index
+    /// so the Steam client recognises the game at its new path instead of
+    /// reporting it as missing. Returns a progress stream (`Moving` events).
+    ///
+    /// Steam should not be running during the move — it overwrites these files on
+    /// exit. The source is only deleted after a successful copy, so an interrupted
+    /// move never loses the original install.
+    pub async fn move_install(
+        &self,
+        appid: u32,
+        dest_library: PathBuf,
+    ) -> Result<Receiver<DownloadProgress>> {
+        use crate::relocate;
+
+        // --- Resolve the source layout from the appmanifest ---
+        let src_manifest = self.appmanifest_path(appid).await?;
+        if !src_manifest.exists() {
+            bail!("app {appid} is not installed (no appmanifest found)");
+        }
+        let src_steamapps = src_manifest
+            .parent()
+            .ok_or_else(|| anyhow!("invalid manifest path for app {appid}"))?
+            .to_path_buf();
+        let src_lib_root = src_steamapps
+            .parent()
+            .ok_or_else(|| anyhow!("invalid library path for app {appid}"))?
+            .to_path_buf();
+
+        let raw = std::fs::read_to_string(&src_manifest)
+            .with_context(|| format!("failed reading {}", src_manifest.display()))?;
+        let installdir = parse_installdir_from_acf(&raw)
+            .ok_or_else(|| anyhow!("appmanifest for {appid} has no installdir"))?;
+
+        let src_common = src_steamapps.join("common").join(&installdir);
+        if !src_common.exists() {
+            bail!("install directory not found: {}", src_common.display());
+        }
+
+        // --- Resolve and validate the destination library ---
+        let dest_steamapps = dest_library.join("steamapps");
+        if !dest_steamapps.exists() {
+            bail!(
+                "{} is not a Steam library folder (no steamapps/). Add the drive in \
+                 Steam \u{2192} Settings \u{2192} Storage first.",
+                dest_library.display()
+            );
+        }
+        if dest_steamapps == src_steamapps {
+            bail!("app {appid} is already in {}", dest_library.display());
+        }
+
+        let dest_common = dest_steamapps.join("common").join(&installdir);
+        if dest_common.exists() {
+            bail!("destination already exists: {}", dest_common.display());
+        }
+        let dest_manifest = dest_steamapps.join(format!("appmanifest_{appid}.acf"));
+
+        // Proton prefix, if this game has one.
+        let src_compat = src_steamapps.join("compatdata").join(appid.to_string());
+        let src_compat = src_compat.exists().then_some(src_compat);
+        let dest_compat = src_compat
+            .as_ref()
+            .map(|_| dest_steamapps.join("compatdata").join(appid.to_string()));
+
+        // Locate the (single) libraryfolders.vdf and warn if the destination isn't
+        // a registered library — Steam won't scan an unregistered folder.
+        let roots = crate::library::all_library_roots().await;
+        if !roots.iter().any(|r| r.join("steamapps") == dest_steamapps) {
+            tracing::warn!(
+                "{} is not a registered Steam library; Steam may not show the game until \
+                 the folder is added in Settings \u{2192} Storage",
+                dest_library.display()
+            );
+        }
+        let libraryfolders = relocate::find_libraryfolders_vdf(&roots);
+
+        let (tx, rx) = tokio::sync::mpsc::channel(64);
+
+        tokio::task::spawn_blocking(move || {
+            let result = (|| -> Result<()> {
+                let _ = tx.blocking_send(DownloadProgress {
+                    state: DownloadProgressState::Queued,
+                    current_file: "sizing".to_string(),
+                    ..Default::default()
+                });
+
+                let common_bytes = relocate::dir_size(&src_common);
+                let compat_bytes = src_compat.as_ref().map(|p| relocate::dir_size(p)).unwrap_or(0);
+                let total = common_bytes + compat_bytes;
+
+                // Game files.
+                relocate::move_dir_with_progress(&src_common, &dest_common, common_bytes, |copied, file| {
+                    let _ = tx.blocking_send(DownloadProgress {
+                        state: DownloadProgressState::Moving,
+                        bytes_downloaded: copied,
+                        total_bytes: total,
+                        current_file: file.to_string(),
+                        ..Default::default()
+                    });
+                })
+                .with_context(|| format!("failed moving game files to {}", dest_common.display()))?;
+
+                // Proton prefix.
+                if let (Some(sc), Some(dc)) = (&src_compat, &dest_compat) {
+                    relocate::move_dir_with_progress(sc, dc, compat_bytes, |copied, file| {
+                        let _ = tx.blocking_send(DownloadProgress {
+                            state: DownloadProgressState::Moving,
+                            bytes_downloaded: common_bytes + copied,
+                            total_bytes: total,
+                            current_file: file.to_string(),
+                            ..Default::default()
+                        });
+                    })
+                    .with_context(|| format!("failed moving Proton prefix to {}", dc.display()))?;
+                }
+
+                // appmanifest: copy to the new library, then remove the original so
+                // Steam sees the game in exactly one place.
+                std::fs::copy(&src_manifest, &dest_manifest)
+                    .with_context(|| format!("failed writing {}", dest_manifest.display()))?;
+                std::fs::remove_file(&src_manifest)
+                    .with_context(|| format!("failed removing {}", src_manifest.display()))?;
+
+                // libraryfolders.vdf apps index (best-effort; Steam reconciles from
+                // the appmanifests on next launch if this can't be edited cleanly).
+                if let Some(vdf_path) = &libraryfolders {
+                    match std::fs::read_to_string(vdf_path) {
+                        Ok(text) => {
+                            match relocate::update_libraryfolders_apps(
+                                &text, appid, &src_lib_root, &dest_library, common_bytes,
+                            ) {
+                                Some(updated) => {
+                                    if let Err(e) = std::fs::write(vdf_path, updated) {
+                                        tracing::warn!(
+                                            "moved game but could not write libraryfolders.vdf: {e}"
+                                        );
+                                    }
+                                }
+                                None => tracing::warn!(
+                                    "could not locate library entries in libraryfolders.vdf; \
+                                     Steam will reconcile the index on next launch"
+                                ),
+                            }
+                        }
+                        Err(e) => tracing::warn!("could not read libraryfolders.vdf: {e}"),
+                    }
+                }
+
+                Ok(())
+            })();
+
+            match result {
+                Ok(()) => {
+                    let _ = tx.blocking_send(DownloadProgress {
+                        state: DownloadProgressState::Completed,
+                        ..Default::default()
+                    });
+                }
+                Err(e) => {
+                    let _ = tx.blocking_send(DownloadProgress {
+                        state: DownloadProgressState::Failed,
+                        current_file: format!("{e:#}"),
+                        ..Default::default()
+                    });
+                }
+            }
+        });
+
+        Ok(rx)
+    }
+
     pub async fn get_content_servers(&self, cell_id: u32) -> Result<Vec<String>> {
         let connection = self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))?;
         let mut request = CContentServerDirectory_GetServersForSteamPipe_Request::new();
