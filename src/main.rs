@@ -172,6 +172,11 @@ enum Command {
         #[command(subcommand)]
         command: ConfigCommand,
     },
+    /// Manage Steam Cloud saves for a game.
+    Cloud {
+        #[command(subcommand)]
+        command: CloudCommand,
+    },
 }
 
 #[derive(Subcommand)]
@@ -180,6 +185,26 @@ enum ConfigCommand {
     Show,
     /// List detected Proton/Wine runtimes.
     Protons,
+}
+
+#[derive(Subcommand)]
+enum CloudCommand {
+    /// Sync a game's Steam Cloud saves with the local save directory. With
+    /// neither flag it syncs down then up; `--down`/`--up` restrict the direction.
+    Sync {
+        app_id: u32,
+        /// Only upload local saves to Steam.
+        #[arg(long, conflicts_with = "down")]
+        up: bool,
+        /// Only download saves from Steam.
+        #[arg(long, conflicts_with = "up")]
+        down: bool,
+        /// Local save directory. Defaults to Aurelia's managed cloud root.
+        #[arg(long)]
+        path: Option<PathBuf>,
+    },
+    /// List a game's Steam Cloud files (name, size, modified time).
+    List { app_id: u32 },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -279,6 +304,15 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Config { command } => match command {
             ConfigCommand::Show => cmd_config_show(json).await,
             ConfigCommand::Protons => cmd_config_protons(json),
+        },
+        Command::Cloud { command } => match command {
+            CloudCommand::Sync {
+                app_id,
+                up,
+                down,
+                path,
+            } => cmd_cloud_sync(app_id, up, down, path, json).await,
+            CloudCommand::List { app_id } => cmd_cloud_list(app_id, json).await,
         },
     }
 }
@@ -1556,6 +1590,120 @@ fn cmd_config_protons(json: bool) -> Result<()> {
         }
     }
     Ok(())
+}
+
+async fn cmd_cloud_sync(
+    app_id: u32,
+    up: bool,
+    down: bool,
+    path: Option<PathBuf>,
+    json: bool,
+) -> Result<()> {
+    let client = authed_client().await?;
+    let cloud = client.cloud_client()?;
+
+    let root = match path {
+        Some(p) => p,
+        None => aurelia::cloud_sync::default_cloud_root(cloud.steam_id(), app_id)
+            .context("could not resolve the local cloud save directory")?,
+    };
+    std::fs::create_dir_all(&root)
+        .with_context(|| format!("failed creating save directory {}", root.display()))?;
+
+    // No flag = full sync (down then up); `--down`/`--up` restrict the direction.
+    let mut downloaded = false;
+    let mut uploaded = false;
+    if !up {
+        cloud
+            .sync_down(app_id, &root)
+            .await
+            .with_context(|| format!("cloud sync-down failed for app {app_id}"))?;
+        downloaded = true;
+    }
+    if !down {
+        cloud
+            .sync_up(app_id, &root)
+            .await
+            .with_context(|| format!("cloud sync-up failed for app {app_id}"))?;
+        uploaded = true;
+    }
+
+    let direction = if up {
+        "up"
+    } else if down {
+        "down"
+    } else {
+        "both"
+    };
+    if json {
+        print_json(&serde_json::json!({
+            "app_id": app_id,
+            "direction": direction,
+            "path": root.to_string_lossy(),
+            "downloaded": downloaded,
+            "uploaded": uploaded,
+        }));
+    } else {
+        println!("Synced Cloud saves for app {app_id} ({direction}) at {}.", root.display());
+    }
+    Ok(())
+}
+
+async fn cmd_cloud_list(app_id: u32, json: bool) -> Result<()> {
+    let client = authed_client().await?;
+    let cloud = client.cloud_client()?;
+    let mut files = cloud
+        .get_file_list(app_id)
+        .await
+        .with_context(|| format!("failed listing Cloud files for app {app_id}"))?;
+    files.sort_by(|a, b| a.filename.cmp(&b.filename));
+
+    if json {
+        let arr: Vec<_> = files
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "filename": f.filename,
+                    "size": f.size,
+                    "timestamp": f.timestamp,
+                    "sha_hash": f.sha_hash,
+                })
+            })
+            .collect();
+        print_json(&serde_json::json!({ "app_id": app_id, "files": arr }));
+        return Ok(());
+    }
+
+    if files.is_empty() {
+        println!("No Steam Cloud files for app {app_id}.");
+        return Ok(());
+    }
+    println!("{:>12}  {:<19}  NAME", "SIZE", "MODIFIED");
+    let mut total = 0u64;
+    for f in &files {
+        total += f.size;
+        println!(
+            "{:>12}  {:<19}  {}",
+            human_bytes(f.size),
+            format_unix_timestamp(f.timestamp),
+            f.filename
+        );
+    }
+    println!("\n{} file(s), {}.", files.len(), human_bytes(total));
+    Ok(())
+}
+
+/// Format a Unix timestamp (seconds) as `YYYY-MM-DD HH:MM:SS` (UTC).
+fn format_unix_timestamp(secs: u64) -> String {
+    let tod = secs % 86_400;
+    let (h, m, s) = (tod / 3600, (tod % 3600) / 60, tod % 60);
+    format!(
+        "{} {:02}:{:02}:{:02}",
+        aurelia::steam_client::unix_to_ymd(secs as i64),
+        h,
+        m,
+        s
+    )
 }
 
 /// Consume a download/verify progress stream, rendering it to the terminal.

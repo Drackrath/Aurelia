@@ -280,6 +280,16 @@ impl SteamClient {
         self.connection.as_ref()
     }
 
+    /// Build a Steam Cloud client over the current connection (for save sync).
+    pub fn cloud_client(&self) -> Result<crate::cloud_sync::CloudClient> {
+        let connection = self
+            .connection
+            .as_ref()
+            .cloned()
+            .context("steam connection not initialized")?;
+        Ok(crate::cloud_sync::CloudClient::new(connection))
+    }
+
     /// SteamID64 of the logged-in account, if connected.
     pub fn steam_id(&self) -> Option<u64> {
         self.connection
@@ -4131,7 +4141,7 @@ fn store_app_type_label(t: EStoreAppType) -> String {
 
 /// Convert a Unix timestamp (seconds, UTC) to a `YYYY-MM-DD` date string using
 /// Howard Hinnant's days-from-civil algorithm. Avoids pulling in a date crate.
-fn unix_to_ymd(secs: i64) -> String {
+pub fn unix_to_ymd(secs: i64) -> String {
     let days = secs.div_euclid(86_400);
     // Shift epoch to 0000-03-01 so leap days fall at the end of the era.
     let z = days + 719_468;
