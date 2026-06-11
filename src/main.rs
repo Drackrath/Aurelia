@@ -1399,34 +1399,30 @@ async fn drive_progress(
     // De-duplicate identical consecutive JSON events (the reporter ticks on a timer,
     // so it would otherwise repeat e.g. "0/0" lines while a manifest is being fetched).
     let mut last: Option<(u8, u64, u64)> = None;
+    let mut rate = RateTracker::new();
     while let Some(p) = rx.recv().await {
         match p.state {
             DownloadProgressState::Queued => {
+                rate.reset();
                 if json {
-                    emit_progress_json("queued", &p, &mut last);
+                    emit_progress_json("queued", &p, 0.0, None, &mut last);
                 } else {
                     println!("Queued ...");
                 }
             }
-            DownloadProgressState::Downloading => {
+            DownloadProgressState::Downloading
+            | DownloadProgressState::Verifying
+            | DownloadProgressState::Moving => {
+                let (state, label) = match p.state {
+                    DownloadProgressState::Verifying => ("verifying", "Verifying"),
+                    DownloadProgressState::Moving => ("moving", "Moving"),
+                    _ => ("downloading", "Downloading"),
+                };
+                let (speed, eta) = rate.sample(p.bytes_downloaded, p.total_bytes);
                 if json {
-                    emit_progress_json("downloading", &p, &mut last);
+                    emit_progress_json(state, &p, speed, eta, &mut last);
                 } else {
-                    print_progress("Downloading", &p);
-                }
-            }
-            DownloadProgressState::Verifying => {
-                if json {
-                    emit_progress_json("verifying", &p, &mut last);
-                } else {
-                    print_progress("Verifying", &p);
-                }
-            }
-            DownloadProgressState::Moving => {
-                if json {
-                    emit_progress_json("moving", &p, &mut last);
-                } else {
-                    print_progress("Moving", &p);
+                    print_progress(label, &p, speed, eta);
                 }
             }
             DownloadProgressState::Completed => {
@@ -1457,9 +1453,16 @@ fn percent_of(done: u64, total: u64) -> f64 {
 }
 
 /// Emit one compact NDJSON progress event, skipping it if identical to the last.
-/// Reports both the whole-app progress (`percent`) and the current depot's progress
-/// (`depot_percent`).
-fn emit_progress_json(state: &str, p: &DownloadProgress, last: &mut Option<(u8, u64, u64)>) {
+/// Reports the whole-app progress (`percent`), the current depot's progress
+/// (`depot_percent`), and the transfer rate (`speed_bps`, bytes/sec) and
+/// `eta_seconds` (null when not yet estimable).
+fn emit_progress_json(
+    state: &str,
+    p: &DownloadProgress,
+    speed_bps: f64,
+    eta_seconds: Option<u64>,
+    last: &mut Option<(u8, u64, u64)>,
+) {
     // Cheap discriminator for the state so we can dedupe (state, overall, depot).
     let state_key = match state {
         "queued" => 0u8,
@@ -1486,6 +1489,9 @@ fn emit_progress_json(state: &str, p: &DownloadProgress, last: &mut Option<(u8, 
         "depot_bytes_downloaded": p.depot_bytes_downloaded,
         "depot_total_bytes": p.depot_total_bytes,
         "depot_percent": percent_of(p.depot_bytes_downloaded, p.depot_total_bytes),
+        // Rate / time remaining (for a download-manager progress bar).
+        "speed_bps": speed_bps.round() as u64,
+        "eta_seconds": eta_seconds,
         "file": p.current_file,
     });
     // Compact single line so the whole --json stream is valid NDJSON.
@@ -1494,21 +1500,90 @@ fn emit_progress_json(state: &str, p: &DownloadProgress, last: &mut Option<(u8, 
     }
 }
 
-fn print_progress(phase: &str, p: &DownloadProgress) {
+fn print_progress(phase: &str, p: &DownloadProgress, speed_bps: f64, eta_seconds: Option<u64>) {
     let overall = percent_of(p.bytes_downloaded, p.total_bytes);
+    let rate = format_rate(speed_bps, eta_seconds);
     if p.depot_id != 0 {
         let depot = percent_of(p.depot_bytes_downloaded, p.depot_total_bytes);
         print!(
-            "\r{phase}: {overall:5.1}% overall  {}/{} bytes  | depot {}: {depot:5.1}%   ",
+            "\r{phase}: {overall:5.1}% overall  {}/{} bytes  | depot {}: {depot:5.1}%{rate}   ",
             p.bytes_downloaded, p.total_bytes, p.depot_id
         );
     } else {
         print!(
-            "\r{phase}: {overall:5.1}%  {}/{} bytes  {}",
+            "\r{phase}: {overall:5.1}%  {}/{} bytes{rate}  {}   ",
             p.bytes_downloaded, p.total_bytes, p.current_file
         );
     }
     let _ = std::io::stdout().flush();
+}
+
+/// Tracks the transfer rate across successive progress samples, deriving a lightly
+/// smoothed speed (bytes/sec) and an ETA. Used by `drive_progress` so every
+/// long-running op (download/verify/move) reports speed and time remaining.
+struct RateTracker {
+    last: Option<(std::time::Instant, u64)>,
+    speed_bps: f64,
+}
+
+impl RateTracker {
+    fn new() -> Self {
+        Self { last: None, speed_bps: 0.0 }
+    }
+
+    fn reset(&mut self) {
+        self.last = None;
+        self.speed_bps = 0.0;
+    }
+
+    /// Feed the latest cumulative `bytes` (out of `total`); returns
+    /// `(speed_bps, eta_seconds)`. Samples closer together than 100 ms are folded
+    /// into the next interval to keep the estimate stable.
+    fn sample(&mut self, bytes: u64, total: u64) -> (f64, Option<u64>) {
+        let now = std::time::Instant::now();
+        match self.last {
+            Some((t0, b0)) => {
+                let dt = now.duration_since(t0).as_secs_f64();
+                if dt >= 0.10 && bytes >= b0 {
+                    let inst = (bytes - b0) as f64 / dt;
+                    // Exponential moving average to damp jitter.
+                    self.speed_bps = if self.speed_bps <= 0.0 {
+                        inst
+                    } else {
+                        0.6 * self.speed_bps + 0.4 * inst
+                    };
+                    self.last = Some((now, bytes));
+                }
+            }
+            None => self.last = Some((now, bytes)),
+        }
+        let eta = if self.speed_bps > 1.0 && total > bytes {
+            Some(((total - bytes) as f64 / self.speed_bps).round() as u64)
+        } else {
+            None
+        };
+        (self.speed_bps, eta)
+    }
+}
+
+/// Human-readable ` 12.34 MiB/s  ETA 00:01:23` suffix (empty when no rate yet).
+fn format_rate(speed_bps: f64, eta_seconds: Option<u64>) -> String {
+    if speed_bps <= 0.0 {
+        return String::new();
+    }
+    let mib = speed_bps / (1024.0 * 1024.0);
+    match eta_seconds {
+        Some(s) => format!("  {mib:6.2} MiB/s  ETA {}", format_eta(s)),
+        None => format!("  {mib:6.2} MiB/s"),
+    }
+}
+
+/// Format a seconds count as `HH:MM:SS`.
+fn format_eta(secs: u64) -> String {
+    let h = secs / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    format!("{h:02}:{m:02}:{s:02}")
 }
 
 /// Word-wrap text to a maximum line width, preserving existing line breaks.
@@ -1577,4 +1652,40 @@ fn scan_proton_runtimes() -> (Vec<String>, Vec<String>) {
     custom.sort();
     custom.dedup();
     (steam, custom)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn eta_formats_hms() {
+        assert_eq!(format_eta(0), "00:00:00");
+        assert_eq!(format_eta(83), "00:01:23");
+        assert_eq!(format_eta(3661), "01:01:01");
+    }
+
+    #[test]
+    fn rate_tracker_estimates_speed_and_eta() {
+        let mut r = RateTracker::new();
+        // First sample only primes the tracker (no prior point).
+        let (s0, e0) = r.sample(0, 1000);
+        assert_eq!(s0, 0.0);
+        assert!(e0.is_none());
+        // Force a measurable interval, then feed more bytes.
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        let (s1, e1) = r.sample(200, 1000);
+        assert!(s1 > 0.0, "speed should be positive after progress");
+        assert!(e1.is_some(), "eta should be estimable once moving");
+    }
+
+    #[test]
+    fn rate_tracker_resets() {
+        let mut r = RateTracker::new();
+        let _ = r.sample(100, 1000);
+        r.reset();
+        let (s, e) = r.sample(0, 1000);
+        assert_eq!(s, 0.0);
+        assert!(e.is_none());
+    }
 }
