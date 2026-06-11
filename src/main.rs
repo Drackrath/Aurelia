@@ -581,11 +581,47 @@ async fn cmd_login_qr(json: bool) -> Result<()> {
     Ok(())
 }
 
+/// How long to wait for a single Steam login attempt before giving up. The login
+/// call blocks inside steam-vent while it waits for a Steam Guard code or for the
+/// user to approve the login in the Steam Mobile app; this bounds that wait so a
+/// `--json` driver never hangs indefinitely.
+const LOGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Run one `login` attempt with [`LOGIN_TIMEOUT`]. On timeout, returns a clear
+/// error (so a `--json` driver gets `{ "error": ... }` rather than hanging).
+async fn login_with_timeout(
+    client: &mut SteamClient,
+    username: &str,
+    password: &str,
+    guard: Option<String>,
+) -> Result<aurelia::models::SessionState> {
+    match tokio::time::timeout(
+        LOGIN_TIMEOUT,
+        client.login(username.to_string(), password.to_string(), guard, false),
+    )
+    .await
+    {
+        Ok(login_result) => login_result,
+        Err(_) => bail!(
+            "login timed out after {}s waiting for a Steam Guard code or Steam Mobile app approval",
+            LOGIN_TIMEOUT.as_secs()
+        ),
+    }
+}
+
 /// Non-interactive password login for `--json` drivers (e.g. Heroic). Credentials
-/// come from flags or `AURELIA_PASSWORD`; if Steam requires a Guard code, emit
-/// `{event:"guard_required",type:"email"|"device"}` and read the code (one line)
-/// from stdin, then retry. Device-confirmation (mobile-app approval) accounts are
-/// reported via `{event:"guard_required",type:"device_confirmation"}`.
+/// come from flags or `AURELIA_PASSWORD`. To keep the driver informed (and never
+/// silent), it emits:
+/// - `{event:"awaiting_confirmation"}` right away — the login may block while
+///   Steam waits for the Guard code or Mobile-app approval, so the driver should
+///   prompt the user to approve on their device;
+/// - `{event:"guard_required",type:"email"|"device"}` if a typed Guard code is
+///   needed and none was supplied (the code is then read as one line from stdin);
+/// - `{event:"guard_required",type:"device_confirmation"}` for mobile-approval
+///   accounts;
+/// - finally `{logged_in:true,...}` or `{error:...}`.
+///
+/// Each login attempt is bounded by [`LOGIN_TIMEOUT`].
 async fn cmd_login_json(
     username: Option<String>,
     password: Option<String>,
@@ -599,10 +635,17 @@ async fn cmd_login_json(
     let account = username.clone();
 
     let mut client = SteamClient::new()?;
-    match client
-        .login(username.clone(), password.clone(), guard.clone(), false)
-        .await
-    {
+
+    // The login call below blocks inside steam-vent while it waits for the Guard
+    // code / mobile confirmation. Emit this first so the driver can immediately
+    // tell the user to approve the login (otherwise it sees no output until the
+    // attempt completes or times out).
+    print_json_line(&serde_json::json!({
+        "event": "awaiting_confirmation",
+        "message": "Signing in — if prompted, approve this login in your Steam Mobile app."
+    }));
+
+    match login_with_timeout(&mut client, &username, &password, guard.clone()).await {
         Ok(_) => {
             report_login_success(&account, true);
             Ok(())
@@ -624,8 +667,7 @@ async fn cmd_login_json(
                 let code = read_stdin_line()
                     .await
                     .context("failed reading Steam Guard code from stdin")?;
-                client
-                    .login(username, password, Some(code), false)
+                login_with_timeout(&mut client, &username, &password, Some(code))
                     .await
                     .context("login failed after providing Steam Guard code")?;
                 report_login_success(&account, true);
