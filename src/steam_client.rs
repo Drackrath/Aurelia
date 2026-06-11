@@ -3939,11 +3939,16 @@ impl SteamClient {
         bail!("Steam did not shut down within 30s")
     }
 
-    /// Start the desktop Steam client. Windows only.
+    /// Start the desktop Steam client (Windows only).
+    ///
+    /// Launched with `-silent` so it starts minimized to the system tray rather
+    /// than popping its window to the foreground — Aurelia only restarts Steam to
+    /// have it re-read state (e.g. after a DLC/move change), not to bring it up.
     #[cfg(target_os = "windows")]
     pub fn start_steam() -> Result<()> {
         let exe = steam_exe_path().context("could not locate steam.exe to start Steam")?;
         Command::new(&exe)
+            .arg("-silent")
             .spawn()
             .context("failed to start Steam")?;
         Ok(())
