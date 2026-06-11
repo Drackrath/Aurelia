@@ -16,6 +16,22 @@ impl SteamClient {
         })
     }
 
+    /// Build a client that **reuses an already-authenticated [`Connection`]** — no
+    /// CM connect, no logon. This is how the daemon serves commands: it holds one
+    /// live session and hands each request a cheap clone-backed client over the same
+    /// connection (steam-vent multiplexes jobs and keeps the session alive), so the
+    /// per-invocation re-logon that triggers Steam's rate limits never happens.
+    pub fn from_shared(connection: Connection) -> Self {
+        Self {
+            connection: Some(connection),
+            state: LoginState::Complete,
+            connected_at: Some(Instant::now()),
+            active_cm: None,
+            server_list: None,
+            pending_confirmations: Vec::new(),
+        }
+    }
+
     pub fn is_authenticated(&self) -> bool {
         self.connection.is_some()
     }

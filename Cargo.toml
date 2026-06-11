@@ -21,7 +21,7 @@ serde_json = "1"
 steam-vdf-parser = "0.1.1" # Needed for raw binary PICS VDF parsing (not supported by keyvalues-serde or steam-vent yet)
 steam-vent = "0.5"
 steam-vent-proto = "=0.5.2" # proto is no longer re-exported as steam_vent::proto since 0.5; depend on it directly
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "time"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "time", "net", "io-util", "sync", "io-std", "process"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 walkdir = "2"
@@ -36,6 +36,11 @@ steam-cdn = "1.0.0"
 libc = "0.2"
 regex = "1"
 qrcode = { version = "0.14", default-features = false } # Terminal QR rendering for `login --qr`
+
+[target.'cfg(windows)'.dependencies]
+# Used to stop the detached daemon from inheriting the spawning process's stdio
+# handles (otherwise a parent like Heroic never sees EOF and hangs).
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Console"] }
 
 [patch.crates-io]
 steam-cdn = { path = "vendor/steam-cdn" }

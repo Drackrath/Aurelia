@@ -15,6 +15,10 @@ use aurelia::models::{
 };
 use aurelia::steam_client::{SharedApp, SteamClient, StoreAppInfo};
 
+#[macro_use]
+mod output;
+mod daemon;
+
 /// Aurelia — a command-line Steam launcher (auth, library, install, launch).
 #[derive(Parser)]
 #[command(name = "aurelia", version, about, long_about = None)]
@@ -52,6 +56,14 @@ enum Command {
         /// approving the login in the Steam Mobile app. (Alias: --pin)
         #[arg(long, visible_alias = "pin", conflicts_with = "guard")]
         code: bool,
+        /// Report the current session health (authenticated? which account?) without
+        /// logging in. Reflects the daemon's shared session when one is in use.
+        #[arg(long, conflicts_with_all = ["username", "password", "guard", "qr", "code", "reconnect"])]
+        health: bool,
+        /// Tear down and re-establish the daemon's shared session from the stored
+        /// token — use after the live connection dropped. Requires a running daemon.
+        #[arg(long, conflicts_with_all = ["username", "password", "guard", "qr", "code", "health"])]
+        reconnect: bool,
     },
     /// Clear the stored session.
     Logout,
@@ -221,6 +233,15 @@ enum Command {
         #[command(subcommand)]
         command: CloudCommand,
     },
+    /// Run the background session daemon: log in to Steam **once** and serve every
+    /// other `aurelia` command over a local socket, so repeated commands never
+    /// re-authenticate (avoiding Steam's logon rate limits). Start one per session
+    /// (e.g. at Heroic startup); other invocations auto-connect to it.
+    Daemon {
+        /// Override the socket/pipe path (also settable via `AURELIA_DAEMON_SOCKET`).
+        #[arg(long)]
+        socket: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -288,19 +309,82 @@ fn main() {
 
 async fn async_main() {
     let cli = Cli::parse();
-    let json = cli.json;
 
     // Send tracing/diagnostics to stderr so stdout stays clean for --json output.
     aurelia::infra::logging::init_cli_logging(cli.verbose);
 
-    if let Err(err) = run(cli).await {
-        if json {
-            // Single line so it stays valid in the NDJSON streams (e.g. `install`).
-            print_json_line(&serde_json::json!({ "error": format!("{err:#}") }));
-        } else {
-            eprintln!("Error: {err:#}");
+    // `aurelia daemon`: become the shared-session server. Never forwards.
+    if let Command::Daemon { socket } = &cli.command {
+        if let Some(path) = socket {
+            // SAFETY: single-threaded at this point (set before any worker spawns).
+            unsafe { std::env::set_var("AURELIA_DAEMON_SOCKET", path) };
         }
-        std::process::exit(1);
+        if let Err(e) = daemon::run_server().await {
+            cli_eprintln!("daemon error: {e:#}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    // Thin client: forward this command to a running daemon (auto-spawning one if
+    // needed) so it runs against the single shared Steam session. If no daemon is
+    // available, fall through and run locally. `AURELIA_NO_DAEMON` opts out.
+    if std::env::var_os("AURELIA_NO_DAEMON").is_none() {
+        match daemon::client::try_forward().await {
+            // Exit the process directly rather than returning: the stdin-forwarding
+            // task reads `tokio::io::stdin()` on a blocking thread that never
+            // finishes for an interactive (no-EOF) stdin, which would otherwise stall
+            // the runtime's shutdown and hang exit.
+            Ok(Some(code)) => std::process::exit(code),
+            Ok(None) => {}
+            Err(e) => tracing::warn!("daemon forwarding failed ({e:#}); running locally"),
+        }
+    }
+
+    let code = run_and_report(cli).await;
+    std::process::exit(code);
+}
+
+/// Parse `argv` and run the resulting command, reporting any error the same way the
+/// CLI does. Returns the process exit code. This is the daemon's entry point for a
+/// forwarded command (see [`daemon`]); `argv[0]` is the program name.
+pub(crate) async fn run_argv(argv: Vec<String>) -> i32 {
+    match Cli::try_parse_from(&argv) {
+        Ok(cli) => run_and_report(cli).await,
+        Err(e) => {
+            use clap::error::ErrorKind;
+            let rendered = e.render().to_string();
+            match e.kind() {
+                // --help / --version are "errors" that print to stdout, exit 0.
+                ErrorKind::DisplayHelp
+                | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+                | ErrorKind::DisplayVersion => {
+                    cli_print!("{rendered}");
+                    0
+                }
+                _ => {
+                    cli_eprint!("{rendered}");
+                    2
+                }
+            }
+        }
+    }
+}
+
+/// Run a parsed command and print any error (JSON or plain), returning the exit code.
+async fn run_and_report(cli: Cli) -> i32 {
+    let json = cli.json;
+    match run(cli).await {
+        Ok(()) => 0,
+        Err(err) => {
+            if json {
+                // Single line so it stays valid in the NDJSON streams (e.g. `install`).
+                print_json_line(&serde_json::json!({ "error": format!("{err:#}") }));
+            } else {
+                cli_eprintln!("Error: {err:#}");
+            }
+            1
+        }
     }
 }
 
@@ -315,7 +399,9 @@ async fn run(cli: Cli) -> Result<()> {
             guard,
             qr,
             code,
-        } => cmd_login(username, password, guard, qr, code, json).await,
+            health,
+            reconnect,
+        } => cmd_login(username, password, guard, qr, code, health, reconnect, json).await,
         Command::Logout => cmd_logout(json).await,
         Command::List {
             installed,
@@ -395,27 +481,35 @@ async fn run(cli: Cli) -> Result<()> {
             } => cmd_cloud_sync(app_id, up, down, path, json).await,
             CloudCommand::List { app_id } => cmd_cloud_list(app_id, json).await,
         },
+        // Intercepted in `async_main`; a forwarded `daemon` command never reaches here.
+        Command::Daemon { .. } => bail!("`aurelia daemon` cannot be run as a forwarded command"),
     }
 }
 
 /// Print a JSON value to stdout (pretty-printed).
 fn print_json(value: &serde_json::Value) {
     match serde_json::to_string_pretty(value) {
-        Ok(s) => println!("{s}"),
-        Err(_) => println!("{{}}"),
+        Ok(s) => cli_println!("{s}"),
+        Err(_) => cli_println!("{{}}"),
     }
 }
 
 /// Print a JSON value as a single compact line (for NDJSON streams).
 fn print_json_line(value: &serde_json::Value) {
     match serde_json::to_string(value) {
-        Ok(s) => println!("{s}"),
-        Err(_) => println!("{{}}"),
+        Ok(s) => cli_println!("{s}"),
+        Err(_) => cli_println!("{{}}"),
     }
 }
 
 /// Build a client and restore a persisted session if one exists.
+///
+/// Inside the daemon this returns a cheap client backed by the **single shared
+/// connection** (no logon); only a standalone run actually re-authenticates here.
 async fn restored_client() -> Result<SteamClient> {
+    if daemon::in_daemon() {
+        return Ok(daemon::shared_restored_client().await);
+    }
     let mut client = SteamClient::new()?;
     let saved = load_session().await.unwrap_or_default();
     if saved.refresh_token.is_some() && saved.account_name.is_some() {
@@ -504,14 +598,23 @@ async fn find_game(client: &mut SteamClient, app_id: u32) -> Result<LibraryGame>
         .with_context(|| format!("app {app_id} is not in your library"))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn cmd_login(
     username: Option<String>,
     password: Option<String>,
     guard: Option<String>,
     qr: bool,
     code: bool,
+    health: bool,
+    reconnect: bool,
     json: bool,
 ) -> Result<()> {
+    if health {
+        return cmd_login_health(json).await;
+    }
+    if reconnect {
+        return cmd_login_reconnect(json).await;
+    }
     if qr {
         return cmd_login_qr(json).await;
     }
@@ -709,16 +812,13 @@ fn emit_qr_challenge_json(url: &str) {
 }
 
 /// Read a single line from stdin (used to receive a Guard code from a `--json`
-/// driver). Returns the trimmed contents.
+/// driver). Returns the trimmed contents. Routes through [`output::read_line`] so
+/// that, inside the daemon, it reads the forwarding client's stdin.
 async fn read_stdin_line() -> Result<String> {
-    use tokio::io::AsyncBufReadExt;
-    let mut line = String::new();
-    let mut reader = tokio::io::BufReader::new(tokio::io::stdin());
-    reader
-        .read_line(&mut line)
+    output::read_line()
         .await
-        .context("failed reading stdin")?;
-    Ok(line.trim().to_string())
+        .context("failed reading stdin")
+        .map(|s| s.trim().to_string())
 }
 
 /// Render a Steam login challenge URL as a scannable QR code on stderr, with the
@@ -730,18 +830,18 @@ fn render_login_qr(url: &str) {
                 .render::<qrcode::render::unicode::Dense1x2>()
                 .quiet_zone(true)
                 .build();
-            eprintln!("\nScan this QR code with the Steam Mobile app:\n{rendered}");
+            cli_eprintln!("\nScan this QR code with the Steam Mobile app:\n{rendered}");
         }
-        Err(e) => eprintln!("\n(could not render QR code: {e})"),
+        Err(e) => cli_eprintln!("\n(could not render QR code: {e})"),
     }
-    eprintln!("Or open this link in the Steam Mobile app:\n  {url}\n");
+    cli_eprintln!("Or open this link in the Steam Mobile app:\n  {url}\n");
 }
 
 fn report_login_success(account: &str, json: bool) {
     if json {
         print_json(&serde_json::json!({ "logged_in": true, "account": account }));
     } else {
-        println!("Login successful.");
+        cli_println!("Login successful.");
     }
 }
 
@@ -751,9 +851,69 @@ async fn cmd_logout(json: bool) -> Result<()> {
     if json {
         print_json(&serde_json::json!({ "logged_out": true }));
     } else {
-        println!("Logged out.");
+        cli_println!("Logged out.");
     }
     Ok(())
+}
+
+/// `login --health`: report whether a session is authenticated, without logging in.
+/// When a daemon is in use this reflects its shared session (no new logon); standalone
+/// it does a one-off live restore check.
+async fn cmd_login_health(json: bool) -> Result<()> {
+    let via_daemon = daemon::in_daemon();
+    let status = if via_daemon {
+        daemon::session_status().await
+    } else {
+        let client = restored_client().await?;
+        daemon::SessionStatus {
+            authenticated: client.is_authenticated(),
+            account: load_session().await.ok().and_then(|s| s.account_name),
+            steam_id: client.steam_id(),
+        }
+    };
+    report_session_status(&status, via_daemon, json);
+    Ok(())
+}
+
+/// `login --reconnect`: tear down and re-establish the daemon's shared session from
+/// the stored token (for use after the live connection dropped).
+async fn cmd_login_reconnect(json: bool) -> Result<()> {
+    if !daemon::in_daemon() {
+        bail!(
+            "--reconnect needs the session daemon, but this command is running standalone \
+             (AURELIA_NO_DAEMON is set, or the daemon is unreachable). Start `aurelia daemon` first."
+        );
+    }
+    let status = daemon::force_reconnect().await;
+    report_session_status(&status, true, json);
+    Ok(())
+}
+
+/// Print a [`daemon::SessionStatus`] for `--health`/`--reconnect`.
+fn report_session_status(status: &daemon::SessionStatus, via_daemon: bool, json: bool) {
+    if json {
+        print_json(&serde_json::json!({
+            "logged_in": status.authenticated,
+            "account": status.account,
+            "steam_id": status.steam_id,
+            "daemon": via_daemon,
+        }));
+    } else {
+        cli_println!(
+            "Session : {}",
+            if status.authenticated { "authenticated" } else { "not logged in" }
+        );
+        if let Some(account) = &status.account {
+            cli_println!("Account : {account}");
+        }
+        if let Some(steam_id) = status.steam_id {
+            cli_println!("SteamID : {steam_id}");
+        }
+        cli_println!(
+            "Daemon  : {}",
+            if via_daemon { "yes (shared session)" } else { "no (standalone)" }
+        );
+    }
 }
 
 async fn cmd_list(
@@ -807,22 +967,22 @@ async fn cmd_list(
     }
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&games)?);
+        cli_println!("{}", serde_json::to_string_pretty(&games)?);
         return Ok(());
     }
 
     if games.is_empty() {
-        println!("No games match.");
+        cli_println!("No games match.");
         return Ok(());
     }
 
     if online {
-        println!(
+        cli_println!(
             "{:>9}  {:<10}  {:<13}  {:<7}  NAME",
             "APPID", "STATUS", "LICENSE", "ONLINE"
         );
     } else {
-        println!("{:>9}  {:<10}  {:<13}  NAME", "APPID", "STATUS", "LICENSE");
+        cli_println!("{:>9}  {:<10}  {:<13}  NAME", "APPID", "STATUS", "LICENSE");
     }
     for g in &games {
         let status = if g.is_installed {
@@ -852,12 +1012,12 @@ async fn cmd_list(
                 Some(false) => "no",
                 None => "?",
             };
-            println!(
+            cli_println!(
                 "{:>9}  {:<10}  {:<13}  {:<7}  {}{}",
                 g.app_id, status, license, online_col, g.name, branch
             );
         } else {
-            println!(
+            cli_println!(
                 "{:>9}  {:<10}  {:<13}  {}{}",
                 g.app_id, status, license, g.name, branch
             );
@@ -866,13 +1026,13 @@ async fn cmd_list(
 
     let shared = games.iter().filter(|g| g.is_family_shared).count();
     if shared > 0 {
-        println!(
+        cli_println!(
             "\n{} game(s), {} via Family Sharing (not licensed to this account).",
             games.len(),
             shared
         );
     } else {
-        println!("\n{} game(s).", games.len());
+        cli_println!("\n{} game(s).", games.len());
     }
     Ok(())
 }
@@ -893,14 +1053,14 @@ async fn cmd_account(json: bool) -> Result<()> {
             "vac_bans": data.vac_bans,
             "vac_banned_apps": data.vac_banned_apps,
         });
-        println!("{}", serde_json::to_string_pretty(&value)?);
+        cli_println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(());
     }
 
-    println!("Account : {}", data.account_name);
-    println!("SteamID : {}", data.steam_id);
-    println!("Country : {}", data.country);
-    println!(
+    cli_println!("Account : {}", data.account_name);
+    cli_println!("SteamID : {}", data.steam_id);
+    cli_println!("Country : {}", data.country);
+    cli_println!(
         "Email   : {} ({})",
         data.email,
         if data.email_validated {
@@ -909,8 +1069,8 @@ async fn cmd_account(json: bool) -> Result<()> {
             "unvalidated"
         }
     );
-    println!("Devices : {}", data.authed_machines);
-    println!("VAC bans: {}", data.vac_bans);
+    cli_println!("Devices : {}", data.authed_machines);
+    cli_println!("VAC bans: {}", data.vac_bans);
     Ok(())
 }
 
@@ -937,7 +1097,7 @@ async fn cmd_install(
     let manage_steam = restart_steam && is_dlc && SteamClient::steam_is_running();
     if manage_steam {
         if !json {
-            println!("Stopping Steam ...");
+            cli_println!("Stopping Steam ...");
         }
         SteamClient::shutdown_steam()?;
     }
@@ -954,7 +1114,7 @@ async fn cmd_install(
                 .copied()
                 .unwrap_or(DepotPlatform::Windows);
             if !json {
-                println!("Auto-selected platform: {chosen:?}");
+                cli_println!("Auto-selected platform: {chosen:?}");
             }
             (chosen, Some(buffer))
         }
@@ -970,7 +1130,7 @@ async fn cmd_install(
     let mut steam_restarted = false;
     if manage_steam {
         if !json {
-            println!("Starting Steam ...");
+            cli_println!("Starting Steam ...");
         }
         SteamClient::start_steam()?;
         steam_restarted = true;
@@ -980,10 +1140,10 @@ async fn cmd_install(
     // re-reads the appmanifest (which it does at startup).
     let steam_restart_required = is_dlc && !manage_steam && SteamClient::steam_is_running();
     if steam_restart_required && !json {
-        eprintln!();
-        eprintln!("Note: the DLC content is installed, but a running Steam client reads DLC state");
-        eprintln!("      only at startup. Restart Steam (or re-run with --restart-steam) for it to");
-        eprintln!("      be recognized in-game.");
+        cli_eprintln!();
+        cli_eprintln!("Note: the DLC content is installed, but a running Steam client reads DLC state");
+        cli_eprintln!("      only at startup. Restart Steam (or re-run with --restart-steam) for it to");
+        cli_eprintln!("      be recognized in-game.");
     }
 
     if json {
@@ -1033,10 +1193,10 @@ async fn cmd_install_dry_run(
             "depot_count": est.depot_count,
         }));
     } else {
-        println!("Install estimate for app {app_id} ({platform_str}):");
-        println!("  Download size: {}", human_bytes(est.download_size));
-        println!("  Disk size    : {}", human_bytes(est.disk_size));
-        println!("  Depots       : {}", est.depot_count);
+        cli_println!("Install estimate for app {app_id} ({platform_str}):");
+        cli_println!("  Download size: {}", human_bytes(est.download_size));
+        cli_println!("  Disk size    : {}", human_bytes(est.disk_size));
+        cli_println!("  Depots       : {}", est.depot_count);
     }
     Ok(())
 }
@@ -1073,7 +1233,7 @@ async fn cmd_uninstall(app_id: u32, delete_prefix: bool, json: bool) -> Result<(
             "deleted_prefix": delete_prefix,
         }));
     } else {
-        println!("Uninstalled app {app_id}.");
+        cli_println!("Uninstalled app {app_id}.");
     }
     Ok(())
 }
@@ -1105,7 +1265,7 @@ async fn cmd_move(
             "steam_restarted": managed,
         }));
     } else {
-        println!("Moved app {app_id} to {}.", library.display());
+        cli_println!("Moved app {app_id} to {}.", library.display());
     }
     Ok(())
 }
@@ -1124,7 +1284,7 @@ fn steam_guard_stop(restart_steam: bool, json: bool) -> Result<bool> {
     }
     if running {
         if !json {
-            println!("Stopping Steam ...");
+            cli_println!("Stopping Steam ...");
         }
         SteamClient::shutdown_steam()?;
         return Ok(true);
@@ -1136,7 +1296,7 @@ fn steam_guard_stop(restart_steam: bool, json: bool) -> Result<bool> {
 fn steam_guard_restart(managed: bool, json: bool) -> Result<()> {
     if managed {
         if !json {
-            println!("Starting Steam ...");
+            cli_println!("Starting Steam ...");
         }
         SteamClient::start_steam()?;
     }
@@ -1164,7 +1324,7 @@ async fn cmd_relink(
             "steam_restarted": managed,
         }));
     } else {
-        println!("Relinked app {app_id} to {}.", library.display());
+        cli_println!("Relinked app {app_id} to {}.", library.display());
     }
     Ok(())
 }
@@ -1198,7 +1358,7 @@ async fn cmd_import(
             "steam_restarted": managed,
         }));
     } else {
-        println!("Imported app {app_id} from {}.", path.display());
+        cli_println!("Imported app {app_id} from {}.", path.display());
     }
     Ok(())
 }
@@ -1218,12 +1378,12 @@ async fn cmd_available(app_id: u32, json: bool) -> Result<()> {
             "install_path": install_path,
         }));
     } else {
-        println!(
+        cli_println!(
             "App {app_id}: {}",
             if available { "available" } else { "not available" }
         );
         if let Some(p) = install_path {
-            println!("  path: {p}");
+            cli_println!("  path: {p}");
         }
     }
     Ok(())
@@ -1286,7 +1446,7 @@ async fn cmd_play(app_id: u32, proton: Option<String>, windows: bool, json: bool
     let user_config = user_configs.get(&app_id);
 
     if !json {
-        println!("Launching {} ...", game.name);
+        cli_println!("Launching {} ...", game.name);
     }
     client
         .play_game(&game, proton_path.as_deref(), user_config, force_windows)
@@ -1299,7 +1459,7 @@ async fn cmd_play(app_id: u32, proton: Option<String>, windows: bool, json: bool
             "status": "finished",
         }));
     } else {
-        println!("Finished playing {}.", game.name);
+        cli_println!("Finished playing {}.", game.name);
     }
     Ok(())
 }
@@ -1317,11 +1477,11 @@ async fn cmd_stop(app_id: Option<u32>, json: bool) -> Result<()> {
             return Ok(());
         }
         if running.is_empty() {
-            println!("No games are running (none launched via `aurelia play`).");
+            cli_println!("No games are running (none launched via `aurelia play`).");
         } else {
-            println!("{:>9}  {:>8}  NAME", "APPID", "PID");
+            cli_println!("{:>9}  {:>8}  NAME", "APPID", "PID");
             for g in &running {
-                println!("{:>9}  {:>8}  {}", g.app_id, g.pid, g.name);
+                cli_println!("{:>9}  {:>8}  {}", g.app_id, g.pid, g.name);
             }
         }
         return Ok(());
@@ -1336,7 +1496,7 @@ async fn cmd_stop(app_id: Option<u32>, json: bool) -> Result<()> {
             "status": "stopped",
         }));
     } else {
-        println!("Stopped {} (app {}).", stopped.name, stopped.app_id);
+        cli_println!("Stopped {} (app {}).", stopped.name, stopped.app_id);
     }
     Ok(())
 }
@@ -1349,7 +1509,7 @@ async fn cmd_set_dlc(app_id: u32, enable: bool, restart_steam: bool, json: bool)
     let manage_steam = restart_steam && SteamClient::steam_is_running();
     if manage_steam {
         if !json {
-            println!("Stopping Steam ...");
+            cli_println!("Stopping Steam ...");
         }
         SteamClient::shutdown_steam()?;
     }
@@ -1367,7 +1527,7 @@ async fn cmd_set_dlc(app_id: u32, enable: bool, restart_steam: bool, json: bool)
     let mut steam_restarted = false;
     if manage_steam {
         if !json {
-            println!("Starting Steam ...");
+            cli_println!("Starting Steam ...");
         }
         SteamClient::start_steam()?;
         steam_restarted = true;
@@ -1387,13 +1547,13 @@ async fn cmd_set_dlc(app_id: u32, enable: bool, restart_steam: bool, json: bool)
         return Ok(());
     }
 
-    println!("DLC {app_id} {action} for base game {base}.");
+    cli_println!("DLC {app_id} {action} for base game {base}.");
     if enable {
-        println!("(Toggles the flag only — run `aurelia install {app_id}` if the content isn't downloaded.)");
+        cli_println!("(Toggles the flag only — run `aurelia install {app_id}` if the content isn't downloaded.)");
     }
     if restart_required {
-        eprintln!("Note: Steam is running and reads DLC state only at startup, so this won't apply");
-        eprintln!("      until you restart Steam (or re-run with --restart-steam).");
+        cli_eprintln!("Note: Steam is running and reads DLC state only at startup, so this won't apply");
+        cli_eprintln!("      until you restart Steam (or re-run with --restart-steam).");
     }
     Ok(())
 }
@@ -1409,10 +1569,10 @@ async fn cmd_branches(app_id: u32, json: bool) -> Result<()> {
         return Ok(());
     }
     if branches.is_empty() {
-        println!("No branches reported.");
+        cli_println!("No branches reported.");
     } else {
         for b in branches {
-            println!("{b}");
+            cli_println!("{b}");
         }
     }
     Ok(())
@@ -1427,7 +1587,7 @@ async fn cmd_set_branch(app_id: u32, branch: String, json: bool) -> Result<()> {
     if json {
         print_json(&serde_json::json!({ "app_id": app_id, "branch": branch, "status": "set" }));
     } else {
-        println!("App {app_id} set to branch '{branch}'. Run `aurelia update {app_id}` to apply.");
+        cli_println!("App {app_id} set to branch '{branch}'. Run `aurelia update {app_id}` to apply.");
     }
     Ok(())
 }
@@ -1539,11 +1699,11 @@ async fn cmd_info(app_ids: Vec<u32>, extended: bool, no_cache: bool, json: bool)
         // several ids produce an array.
         if single {
             match items.into_iter().next() {
-                Some(v) => println!("{}", serde_json::to_string_pretty(&v)?),
+                Some(v) => cli_println!("{}", serde_json::to_string_pretty(&v)?),
                 None => bail!("no store information available for app {}", app_ids[0]),
             }
         } else {
-            println!("{}", serde_json::to_string_pretty(&serde_json::Value::Array(items))?);
+            cli_println!("{}", serde_json::to_string_pretty(&serde_json::Value::Array(items))?);
         }
         return Ok(());
     }
@@ -1554,7 +1714,7 @@ async fn cmd_info(app_ids: Vec<u32>, extended: bool, no_cache: bool, json: bool)
             continue;
         };
         if !first {
-            println!("\n{}", "─".repeat(60));
+            cli_println!("\n{}", "─".repeat(60));
         }
         first = false;
         print_info_human(details, dlc, extended_by_id.get(id));
@@ -1619,22 +1779,22 @@ fn print_info_human(
 ) {
     // --- Header ---
     let ea = if details.is_early_access { " [Early Access]" } else { "" };
-    println!("{}  (app {}){ea}", details.name, details.app_id);
+    cli_println!("{}  (app {}){ea}", details.name, details.app_id);
     if !details.app_type.is_empty() {
-        println!("Type       : {}", details.app_type);
+        cli_println!("Type       : {}", details.app_type);
     }
     if !details.developers.is_empty() {
-        println!("Developers : {}", details.developers.join(", "));
+        cli_println!("Developers : {}", details.developers.join(", "));
     }
     if !details.publishers.is_empty() {
-        println!("Publishers : {}", details.publishers.join(", "));
+        cli_println!("Publishers : {}", details.publishers.join(", "));
     }
     if !details.franchises.is_empty() {
-        println!("Franchises : {}", details.franchises.join(", "));
+        cli_println!("Franchises : {}", details.franchises.join(", "));
     }
     if let Some(date) = &details.release_date {
         let suffix = if details.coming_soon { " (coming soon)" } else { "" };
-        println!("Released   : {date}{suffix}");
+        cli_println!("Released   : {date}{suffix}");
     }
     if let Some(price) = &details.price {
         let discount = if details.discount_pct > 0 {
@@ -1642,55 +1802,55 @@ fn print_info_human(
         } else {
             String::new()
         };
-        println!("Price      : {price}{discount}");
+        cli_println!("Price      : {price}{discount}");
     }
     if !details.platforms.is_empty() {
-        println!("Platforms  : {}", details.platforms.join(", "));
+        cli_println!("Platforms  : {}", details.platforms.join(", "));
     }
     if let Some(reviews) = &details.review_summary {
-        println!("Reviews    : {reviews}");
+        cli_println!("Reviews    : {reviews}");
     }
     if let Some((web, _)) = extended_info {
         if let Some(score) = web.metacritic {
-            println!("Metacritic : {score}");
+            cli_println!("Metacritic : {score}");
         }
         if let Some(site) = &web.website {
-            println!("Website    : {site}");
+            cli_println!("Website    : {site}");
         }
     }
 
     // --- Description ---
     if !details.short_description.is_empty() {
-        println!("\nDescription:");
+        cli_println!("\nDescription:");
         for line in wrap_text(&details.short_description, 88) {
-            println!("  {line}");
+            cli_println!("  {line}");
         }
     }
 
     // --- Extended: tags / genres / categories / requirements ---
     if let Some((web, tags)) = extended_info {
         if !tags.is_empty() {
-            println!(
+            cli_println!(
                 "\nTags      : {}",
                 tags.iter().take(20).cloned().collect::<Vec<_>>().join(", ")
             );
         }
         if !web.genres.is_empty() {
-            println!("Genres    : {}", web.genres.join(", "));
+            cli_println!("Genres    : {}", web.genres.join(", "));
         }
         if !web.categories.is_empty() {
-            println!("Categories: {}", web.categories.join(", "));
+            cli_println!("Categories: {}", web.categories.join(", "));
         }
         if !web.requirements_minimum.is_empty() {
-            println!("\nMinimum requirements:");
+            cli_println!("\nMinimum requirements:");
             for line in &web.requirements_minimum {
-                println!("  {line}");
+                cli_println!("  {line}");
             }
         }
         if !web.requirements_recommended.is_empty() {
-            println!("\nRecommended requirements:");
+            cli_println!("\nRecommended requirements:");
             for line in &web.requirements_recommended {
-                println!("  {line}");
+                cli_println!("  {line}");
             }
         }
     }
@@ -1698,30 +1858,30 @@ fn print_info_human(
     // --- Artwork ---
     let a = &details.assets;
     if a.header.is_some() || a.capsule.is_some() || a.background.is_some() {
-        println!("\nArtwork:");
+        cli_println!("\nArtwork:");
         if let Some(u) = &a.header {
-            println!("  header    : {u}");
+            cli_println!("  header    : {u}");
         }
         if let Some(u) = &a.capsule {
-            println!("  capsule   : {u}");
+            cli_println!("  capsule   : {u}");
         }
         if let Some(u) = &a.hero {
-            println!("  hero      : {u}");
+            cli_println!("  hero      : {u}");
         }
         if let Some(u) = &a.background {
-            println!("  background: {u}");
+            cli_println!("  background: {u}");
         }
         if let Some(u) = &a.logo {
-            println!("  logo      : {u}");
+            cli_println!("  logo      : {u}");
         }
     }
 
     // --- DLC ---
     if !dlc.is_empty() {
-        println!("\nDLC ({}):", dlc.len());
+        cli_println!("\nDLC ({}):", dlc.len());
         for (id, name) in dlc {
             let name = name.clone().unwrap_or_else(|| "(name unavailable)".to_string());
-            println!("  {id:>9}  {name}");
+            cli_println!("  {id:>9}  {name}");
         }
     }
 }
@@ -1786,15 +1946,15 @@ async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
                 })
             }).collect::<Vec<_>>(),
         });
-        println!("{}", serde_json::to_string_pretty(&value)?);
+        cli_println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(());
     }
 
     if dlc.is_empty() {
-        println!("No DLC for app {app_id}.");
+        cli_println!("No DLC for app {app_id}.");
         return Ok(());
     }
-    println!("{:>9}  {:<5}  {:<13}  NAME", "APPID", "OWNED", "STATUS");
+    cli_println!("{:>9}  {:<5}  {:<13}  NAME", "APPID", "OWNED", "STATUS");
     for (id, name) in &dlc {
         let name = name.clone().unwrap_or_else(|| "(name unavailable)".to_string());
         let s = state_by_id.get(id);
@@ -1810,7 +1970,7 @@ async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
             Some(_) => "enabled",
             None => "?",
         };
-        println!("{id:>9}  {owned:<5}  {status:<13}  {name}");
+        cli_println!("{id:>9}  {owned:<5}  {status:<13}  {name}");
     }
     Ok(())
 }
@@ -1852,10 +2012,10 @@ async fn cmd_achievements(app_id: u32, lang: String, json: bool) -> Result<()> {
     }
 
     if achievements.is_empty() {
-        println!("No achievements for app {app_id}.");
+        cli_println!("No achievements for app {app_id}.");
         return Ok(());
     }
-    println!("{:<2}  {:>6}  {:<19}  NAME", "", "RARITY", "UNLOCKED");
+    cli_println!("{:<2}  {:>6}  {:<19}  NAME", "", "RARITY", "UNLOCKED");
     for a in &achievements {
         let mark = if a.unlocked { "✓" } else { " " };
         let when = a
@@ -1867,9 +2027,9 @@ async fn cmd_achievements(app_id: u32, lang: String, json: bool) -> Result<()> {
         } else {
             a.name.clone()
         };
-        println!("{mark:<2}  {:>5.1}%  {when:<19}  {name}", a.global_percent);
+        cli_println!("{mark:<2}  {:>5.1}%  {when:<19}  {name}", a.global_percent);
     }
-    println!("\n{unlocked}/{} unlocked.", achievements.len());
+    cli_println!("\n{unlocked}/{} unlocked.", achievements.len());
     Ok(())
 }
 
@@ -1899,12 +2059,12 @@ async fn cmd_depots(app_id: u32, json: bool) -> Result<()> {
     }
 
     if depots.is_empty() {
-        println!("No depots reported.");
+        cli_println!("No depots reported.");
         return Ok(());
     }
-    println!("{:>12}  {:>14}  NAME", "DEPOT", "SIZE(bytes)");
+    cli_println!("{:>12}  {:>14}  NAME", "DEPOT", "SIZE(bytes)");
     for d in &depots {
-        println!("{:>12}  {:>14}  {}", d.id, d.size, d.name);
+        cli_println!("{:>12}  {:>14}  {}", d.id, d.size, d.name);
     }
     Ok(())
 }
@@ -1937,10 +2097,10 @@ async fn cmd_launch_options(app_id: u32, json: bool) -> Result<()> {
     }
 
     if options.is_empty() {
-        println!("No launch options for app {app_id}.");
+        cli_println!("No launch options for app {app_id}.");
         return Ok(());
     }
-    println!("{:>3}  {:<10}  NAME / COMMAND", "ID", "OS");
+    cli_println!("{:>3}  {:<10}  NAME / COMMAND", "ID", "OS");
     for o in &options {
         let os = if o.oslist.is_empty() { "any" } else { &o.oslist };
         let desc = if o.description.is_empty() {
@@ -1948,11 +2108,11 @@ async fn cmd_launch_options(app_id: u32, json: bool) -> Result<()> {
         } else {
             &o.description
         };
-        println!("{:>3}  {:<10}  {}", o.id, os, desc);
+        cli_println!("{:>3}  {:<10}  {}", o.id, os, desc);
         let cmd = format!("{} {}", o.executable, o.arguments);
         let cmd = cmd.trim();
         if !cmd.is_empty() {
-            println!("       {cmd}");
+            cli_println!("       {cmd}");
         }
     }
     Ok(())
@@ -2008,7 +2168,7 @@ async fn cmd_image(app_id: u32, output: Option<PathBuf>, force: bool, json: bool
             "path": final_path.display().to_string(),
         }));
     } else {
-        println!("{}", final_path.display());
+        cli_println!("{}", final_path.display());
     }
     Ok(())
 }
@@ -2016,7 +2176,7 @@ async fn cmd_image(app_id: u32, output: Option<PathBuf>, force: bool, json: bool
 async fn cmd_config_show(_json: bool) -> Result<()> {
     // The launcher configuration is structured data; it always renders as JSON.
     let config = load_launcher_config().await.unwrap_or_default();
-    println!("{}", serde_json::to_string_pretty(&config)?);
+    cli_println!("{}", serde_json::to_string_pretty(&config)?);
     Ok(())
 }
 
@@ -2026,14 +2186,14 @@ fn cmd_config_protons(json: bool) -> Result<()> {
         print_json(&serde_json::json!({ "steam": steam, "custom": custom }));
         return Ok(());
     }
-    println!("Steam runtimes:");
+    cli_println!("Steam runtimes:");
     for s in &steam {
-        println!("  {s}");
+        cli_println!("  {s}");
     }
     if !custom.is_empty() {
-        println!("Custom (compatibilitytools.d):");
+        cli_println!("Custom (compatibilitytools.d):");
         for c in &custom {
-            println!("  {c}");
+            cli_println!("  {c}");
         }
     }
     Ok(())
@@ -2091,7 +2251,7 @@ async fn cmd_cloud_sync(
             "uploaded": uploaded,
         }));
     } else {
-        println!("Synced Cloud saves for app {app_id} ({direction}) at {}.", root.display());
+        cli_println!("Synced Cloud saves for app {app_id} ({direction}) at {}.", root.display());
     }
     Ok(())
 }
@@ -2122,21 +2282,21 @@ async fn cmd_cloud_list(app_id: u32, json: bool) -> Result<()> {
     }
 
     if files.is_empty() {
-        println!("No Steam Cloud files for app {app_id}.");
+        cli_println!("No Steam Cloud files for app {app_id}.");
         return Ok(());
     }
-    println!("{:>12}  {:<19}  NAME", "SIZE", "MODIFIED");
+    cli_println!("{:>12}  {:<19}  NAME", "SIZE", "MODIFIED");
     let mut total = 0u64;
     for f in &files {
         total += f.size;
-        println!(
+        cli_println!(
             "{:>12}  {:<19}  {}",
             human_bytes(f.size),
             format_unix_timestamp(f.timestamp),
             f.filename
         );
     }
-    println!("\n{} file(s), {}.", files.len(), human_bytes(total));
+    cli_println!("\n{} file(s), {}.", files.len(), human_bytes(total));
     Ok(())
 }
 
@@ -2171,7 +2331,7 @@ async fn drive_progress(
                 if json {
                     emit_progress_json("queued", &p, 0.0, None, &mut last);
                 } else {
-                    println!("Queued ...");
+                    cli_println!("Queued ...");
                 }
             }
             DownloadProgressState::Downloading
@@ -2192,13 +2352,13 @@ async fn drive_progress(
             DownloadProgressState::Completed => {
                 // The caller emits the terminal result object; nothing more here.
                 if !json {
-                    println!("\nDone.");
+                    cli_println!("\nDone.");
                 }
                 return Ok(());
             }
             DownloadProgressState::Failed => {
                 if !json {
-                    println!();
+                    cli_println!();
                 }
                 bail!("operation failed: {}", p.current_file);
             }
@@ -2260,7 +2420,7 @@ fn emit_progress_json(
     });
     // Compact single line so the whole --json stream is valid NDJSON.
     if let Ok(s) = serde_json::to_string(&value) {
-        println!("{s}");
+        cli_println!("{s}");
     }
 }
 
@@ -2269,12 +2429,12 @@ fn print_progress(phase: &str, p: &DownloadProgress, speed_bps: f64, eta_seconds
     let rate = format_rate(speed_bps, eta_seconds);
     if p.depot_id != 0 {
         let depot = percent_of(p.depot_bytes_downloaded, p.depot_total_bytes);
-        print!(
+        cli_print!(
             "\r{phase}: {overall:5.1}% overall  {}/{} bytes  | depot {}: {depot:5.1}%{rate}   ",
             p.bytes_downloaded, p.total_bytes, p.depot_id
         );
     } else {
-        print!(
+        cli_print!(
             "\r{phase}: {overall:5.1}%  {}/{} bytes{rate}  {}   ",
             p.bytes_downloaded, p.total_bytes, p.current_file
         );
@@ -2373,7 +2533,7 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
 
 fn prompt_line(prompt: &str) -> Result<String> {
     // Write the prompt to stderr so stdout stays clean (important for --json).
-    eprint!("{prompt}");
+    cli_eprint!("{prompt}");
     std::io::stderr().flush().ok();
     let mut input = String::new();
     std::io::stdin()

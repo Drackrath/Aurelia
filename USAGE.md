@@ -45,6 +45,8 @@ of a specific command. `--version` prints the build version.
 - [Configuration](#configuration)
   - [`config show`](#config-show)
   - [`config protons`](#config-protons)
+- [Session daemon](#session-daemon)
+  - [`daemon`](#daemon)
 - [Files & locations](#files--locations)
 - [Exit codes & logging](#exit-codes--logging)
 
@@ -86,6 +88,8 @@ Authenticate with Steam and persist the session.
 
 ```
 aurelia login [-u <USERNAME>] [-p <PASSWORD>] [-g <GUARD_CODE>] [--code] [--qr]
+aurelia login --health      # report session status (no login)
+aurelia login --reconnect   # rebuild the daemon's shared session
 ```
 
 | Option | Description |
@@ -95,6 +99,8 @@ aurelia login [-u <USERNAME>] [-p <PASSWORD>] [-g <GUARD_CODE>] [--code] [--qr]
 | `-g, --guard <GUARD_CODE>` | Steam Guard code (email or mobile authenticator), supplied up front. |
 | `--code` (alias `--pin`) | Enter the Steam Guard code **interactively** when prompted, instead of approving in the Steam Mobile app. Conflicts with `-g`. |
 | `--qr` | Log in by **scanning a QR code** with the Steam Mobile app — no username/password needed. Conflicts with the credential options. |
+| `--health` | Report current session status **without logging in** (see below). Conflicts with all login options. |
+| `--reconnect` | Rebuild the [daemon's](#daemon) shared session from the stored token. Conflicts with all login options. |
 
 There are three ways to authenticate:
 
@@ -124,6 +130,29 @@ aurelia login --qr
 # Fully non-interactive
 aurelia login -u myname -p 'secret' -g ABCDE
 AURELIA_PASSWORD='secret' aurelia login -u myname
+```
+
+#### Session health & reconnect
+
+These two flags inspect or refresh the **session** rather than logging in, and are aimed at a
+front-end that drives the [`daemon`](#daemon):
+
+- **`aurelia login --health`** reports whether a session is currently authenticated, without
+  performing a login. When a daemon is in use it reads the daemon's **shared session state**
+  (no new logon); standalone it does a one-off live restore check. Output (`--json`):
+  `{ "logged_in", "account", "steam_id", "daemon" }` — `daemon` indicating whether the answer
+  came from the shared daemon session. A poller can use this to decide whether `login` is
+  needed.
+- **`aurelia login --reconnect`** tears down the daemon's shared session and re-establishes it
+  from the stored token — use it if the live connection dropped (e.g. after a network blip)
+  and commands start failing with auth errors. It returns the same status object as
+  `--health`. Without a running daemon it errors (there is no shared session to rebuild; start
+  `aurelia daemon` first, or just re-run the failing command standalone).
+
+```bash
+aurelia login --health             # human-readable status
+aurelia login --health --json      # {"logged_in":true,"account":"me","steam_id":...,"daemon":true}
+aurelia login --reconnect --json   # rebuild the shared session, then report status
 ```
 
 #### Non-interactive `--json` login (for tooling)
@@ -779,6 +808,56 @@ List detected Proton/Wine runtimes — both Steam-managed runtimes and custom on
 ```bash
 aurelia config protons
 ```
+
+---
+
+## Session daemon
+
+### `daemon`
+
+Run a background process that logs in to Steam **once** and serves every other `aurelia`
+command over a local socket — so a whole session's worth of commands shares **one** Steam
+connection instead of re-authenticating on each call.
+
+```
+aurelia daemon [--socket <PATH>]
+```
+
+| Option | Description |
+| --- | --- |
+| `--socket <PATH>` | Override the socket/pipe path (also settable via `AURELIA_DAEMON_SOCKET`). |
+
+**Why:** Aurelia is otherwise a per-invocation CLI — each command opens a fresh Steam CM
+connection and re-authenticates with the stored refresh token. Steam throttles repeated
+logons aggressively (surfacing as `RateLimitExceeded`, or even a transient
+`invalid credentials` lockout), which a front-end that polls Aurelia (e.g. Heroic) trips
+easily. The daemon collapses that to a **single logon per daemon lifetime**.
+
+**How it works:**
+
+- **One server.** Start `aurelia daemon` once (e.g. at Heroic startup). It restores the
+  saved session in the background and listens on a per-user endpoint — a Unix domain socket
+  (`$XDG_RUNTIME_DIR/aurelia-<uid>.sock`) on Linux/macOS, or a named pipe
+  (`\\.\pipe\aurelia-<user>`) on Windows.
+- **Transparent forwarding.** Every other `aurelia <cmd>` automatically connects to the
+  daemon and runs there against the shared session, relaying stdin, stdout, stderr and the
+  exit code — so the command behaves exactly as if run directly. If no daemon is running, an
+  invocation **auto-spawns** one and then connects.
+- **Opt out.** Set `AURELIA_NO_DAEMON=1` to force a command to run standalone (its own
+  one-off logon), bypassing the daemon entirely.
+- **Login/logout** performed through the daemon update its shared session in place, so
+  subsequent commands immediately use the new (or cleared) credentials.
+
+```bash
+aurelia daemon                       # start the shared-session server (run once)
+aurelia daemon --socket /tmp/a.sock  # custom endpoint
+aurelia info 730 --json              # auto-connects to the daemon (or spawns one)
+AURELIA_NO_DAEMON=1 aurelia info 730 # bypass the daemon, run standalone
+```
+
+The daemon keeps its session alive with Steam's connection heartbeat. If the saved token is
+invalid or absent, commands needing auth still return a clean `not logged in` error — run
+`aurelia login` (which the daemon picks up) to establish the shared session.
 
 ---
 
