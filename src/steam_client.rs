@@ -208,6 +208,16 @@ pub struct DepotInfo {
     pub is_owned: Option<bool>,
 }
 
+/// A pre-install size estimate for a game on a given platform, derived purely
+/// from PICS appinfo (no manifest/CDN fetch). `download_size` is the compressed
+/// bytes transferred; `disk_size` is the installed (uncompressed) footprint.
+#[derive(Debug, Clone, Default)]
+pub struct InstallSizeEstimate {
+    pub download_size: u64,
+    pub disk_size: u64,
+    pub depot_count: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct ConfirmationPrompt {
     pub requirement: SteamGuardReq,
@@ -1801,6 +1811,113 @@ impl SteamClient {
 
         out.sort_by_key(|d| d.id);
         Ok(out)
+    }
+
+    /// Estimate the download and on-disk size of installing `app_id` on `platform`,
+    /// without fetching any manifests. Reads each depot's `manifests.public.size`
+    /// (disk) and `manifests.public.download` (compressed) from PICS appinfo and
+    /// sums the depots that match the target platform — mirroring the install
+    /// pipeline's [`should_keep_depot`] selection. DLC depots (`dlcappid`) are
+    /// excluded, so this estimates the base game; DLC sizing isn't covered.
+    pub async fn estimate_install_size(
+        &self,
+        app_id: u32,
+        platform: DepotPlatform,
+    ) -> Result<InstallSizeEstimate> {
+        let connection = self
+            .connection
+            .as_ref()
+            .context("steam connection not initialized")?;
+
+        let mut request = CMsgClientPICSProductInfoRequest::new();
+        request
+            .apps
+            .push(cmsg_client_picsproduct_info_request::AppInfo {
+                appid: Some(app_id),
+                ..Default::default()
+            });
+
+        let response: CMsgClientPICSProductInfoResponse = connection
+            .job(request)
+            .await
+            .context("failed requesting appinfo product info for size estimate")?;
+
+        let app = response
+            .apps
+            .iter()
+            .find(|entry| entry.appid() == app_id)
+            .ok_or_else(|| anyhow!("missing appinfo payload for app {app_id}"))?;
+
+        let mut est = InstallSizeEstimate::default();
+        let vdf = find_vdf_in_pics(app.buffer()).context("failed to parse product info VDF")?;
+        let root_obj = vdf.as_obj().context("root is not an object")?;
+        let depots_val = if vdf.key() == "appinfo" || vdf.key() == app_id.to_string() {
+            root_obj.get("depots")
+        } else {
+            root_obj.get("depots").or_else(|| {
+                root_obj
+                    .get("appinfo")
+                    .and_then(|v| v.as_obj())
+                    .and_then(|o| o.get("depots"))
+            })
+        };
+
+        if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
+            for (key, value) in depots.iter() {
+                // Only numeric keys are depots (skip `branches`, `overflowstorage`, …).
+                if key.parse::<u64>().is_err() {
+                    continue;
+                }
+                let Some(obj) = value.as_obj() else { continue };
+
+                // Exclude DLC content depots (estimate is for the base game).
+                if obj.get("dlcappid").is_some() {
+                    continue;
+                }
+
+                // Platform filter, matching the install pipeline.
+                let oslist = obj
+                    .get("config")
+                    .and_then(|v| v.as_obj())
+                    .and_then(|c| c.get("oslist"))
+                    .and_then(|v| v.as_str());
+                if !should_keep_depot(oslist, platform) {
+                    continue;
+                }
+
+                let public = obj
+                    .get("manifests")
+                    .and_then(|v| v.as_obj())
+                    .and_then(|m| m.get("public"))
+                    .and_then(|v| v.as_obj());
+
+                let disk = public
+                    .and_then(|p| p.get("size"))
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .or_else(|| {
+                        obj.get("maxsize")
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| s.parse::<u64>().ok())
+                    })
+                    .unwrap_or(0);
+                // Steam's `download` is the compressed transfer size; fall back to the
+                // uncompressed size when a depot doesn't advertise it.
+                let download = public
+                    .and_then(|p| p.get("download"))
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(disk);
+
+                if disk > 0 || download > 0 {
+                    est.disk_size += disk;
+                    est.download_size += download;
+                    est.depot_count += 1;
+                }
+            }
+        }
+
+        Ok(est)
     }
 
     pub async fn get_depot_key(&self, app_id: u32, depot_id: u32) -> Result<Vec<u8>> {

@@ -80,6 +80,10 @@ enum Command {
         /// client picks up the change (Windows). Without this it only warns.
         #[arg(long)]
         restart_steam: bool,
+        /// Don't install — just report the estimated download and on-disk size
+        /// (from PICS, no files fetched). Pair with `--json` for tooling.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Uninstall a game.
     Uninstall {
@@ -235,7 +239,8 @@ async fn run(cli: Cli) -> Result<()> {
             app_id,
             platform,
             restart_steam,
-        } => cmd_install(app_id, platform, restart_steam, json).await,
+            dry_run,
+        } => cmd_install(app_id, platform, restart_steam, dry_run, json).await,
         Command::Uninstall {
             app_id,
             delete_prefix,
@@ -756,9 +761,16 @@ async fn cmd_install(
     app_id: u32,
     platform: Option<PlatformArg>,
     restart_steam: bool,
+    dry_run: bool,
     json: bool,
 ) -> Result<()> {
     let mut client = authed_client().await?;
+
+    // `--dry-run` reports the size estimate and stops — it never touches Steam or
+    // downloads anything.
+    if dry_run {
+        return cmd_install_dry_run(&mut client, app_id, platform, json).await;
+    }
 
     // Note whether this is a DLC so we can refresh Steam's view afterward.
     let is_dlc = client.resolve_dlc_parent(app_id).await.is_some();
@@ -828,6 +840,67 @@ async fn cmd_install(
         }));
     }
     Ok(())
+}
+
+/// Report the estimated download/disk size for installing `app_id` without
+/// installing anything (mirrors Nile's `install --info --json`).
+async fn cmd_install_dry_run(
+    client: &mut SteamClient,
+    app_id: u32,
+    platform: Option<PlatformArg>,
+    json: bool,
+) -> Result<()> {
+    let platform: DepotPlatform = match platform {
+        Some(p) => p.into(),
+        None => {
+            let (platforms, _) = client
+                .get_available_platforms(app_id)
+                .await
+                .context("failed to detect available platforms")?;
+            platforms.first().copied().unwrap_or(DepotPlatform::Windows)
+        }
+    };
+
+    let est = client
+        .estimate_install_size(app_id, platform)
+        .await
+        .with_context(|| format!("failed to estimate install size for app {app_id}"))?;
+
+    let platform_str = format!("{platform:?}").to_lowercase();
+    if json {
+        print_json(&serde_json::json!({
+            "app_id": app_id,
+            "platform": platform_str,
+            "download_size": est.download_size,
+            "disk_size": est.disk_size,
+            "depot_count": est.depot_count,
+        }));
+    } else {
+        println!("Install estimate for app {app_id} ({platform_str}):");
+        println!("  Download size: {}", human_bytes(est.download_size));
+        println!("  Disk size    : {}", human_bytes(est.disk_size));
+        println!("  Depots       : {}", est.depot_count);
+    }
+    Ok(())
+}
+
+/// Format a byte count as a human-readable size (binary units).
+fn human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 6] = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
+    if bytes == 0 {
+        return "0 B".to_string();
+    }
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.2} {}", UNITS[unit])
+    }
 }
 
 async fn cmd_uninstall(app_id: u32, delete_prefix: bool, json: bool) -> Result<()> {
@@ -1753,6 +1826,15 @@ fn scan_proton_runtimes() -> (Vec<String>, Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn human_bytes_scales_units() {
+        assert_eq!(human_bytes(0), "0 B");
+        assert_eq!(human_bytes(512), "512 B");
+        assert_eq!(human_bytes(1024), "1.00 KiB");
+        assert_eq!(human_bytes(1536), "1.50 KiB");
+        assert_eq!(human_bytes(5 * 1024 * 1024 * 1024), "5.00 GiB");
+    }
 
     #[test]
     fn eta_formats_hms() {
