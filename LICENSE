@@ -1,6 +1,10 @@
 Commits up to 065782bcb1b45e2eb985933163a1986ce29a8521 are licensed under the
 MIT License. All subsequent commits are licensed under the terms below:
 
+Commits up to 94e513e67b7bf50d1386b93009b7db5da8e9562a are derived from the
+project work of SteamFlow (https://github.com/weter11/SteamFlow), up to and
+including its commit c0222b75ea7d6be536f91b7819d7679d7ffbf68a.
+
 Copyright (c) 2026 Drackrath
 
   GNU GENERAL PUBLIC LICENSE

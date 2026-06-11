@@ -27,6 +27,9 @@ of a specific command. `--version` prints the build version.
   - [`verify`](#verify)
   - [`uninstall`](#uninstall)
   - [`move`](#move)
+  - [`relink`](#relink)
+  - [`import`](#import)
+  - [`available`](#available)
   - [`enable` / `disable`](#enable--disable)
 - [Launching](#launching)
   - [`play`](#play)
@@ -34,6 +37,10 @@ of a specific command. `--version` prints the build version.
   - [`branches`](#branches)
   - [`set-branch`](#set-branch)
   - [`depots`](#depots)
+  - [`launch-options`](#launch-options)
+- [Steam Cloud](#steam-cloud)
+  - [`cloud sync`](#cloud-sync)
+  - [`cloud list`](#cloud-list)
 - [Configuration](#configuration)
   - [`config show`](#config-show)
   - [`config protons`](#config-protons)
@@ -240,10 +247,14 @@ aurelia info <APP_ID> [--extended] [--json]
 
 By default `info` shows what the `StoreBrowse` protocol provides directly: type,
 developers, publishers, franchises, release date (and Early-Access/coming-soon state),
-price and discount, platforms, the Steam **review summary**, the short description, and the
-list of **DLC** with names resolved. The DLC ids come from PICS appinfo and their names from
-a single batched `StoreBrowse` lookup — all over the CM connection, with no per-DLC web
-calls.
+price and discount, platforms, the Steam **review summary**, the short description,
+**artwork URLs** (header/capsule/hero/background/logo), and the list of **DLC** with names
+resolved. The DLC ids come from PICS appinfo and their names from a single batched
+`StoreBrowse` lookup — all over the CM connection, with no per-DLC web calls.
+
+The `--json` output includes an `assets` object with `header`, `capsule` (portrait cover),
+`hero`, `background` and `logo` URLs, derived from the StoreBrowse asset block (falling back
+to Steam's conventional CDN paths) so a front-end doesn't have to guess them.
 
 A handful of fields have **no CM-protocol source**, so they are shown only with
 **`--extended`**, which fetches them from the public HTTPS storefront (Steam storefront API
@@ -329,16 +340,28 @@ These commands require an active session.
 Download and install a game.
 
 ```
-aurelia install <APP_ID> [-p <windows|linux>]
+aurelia install <APP_ID> [-p <windows|linux>] [--dry-run]
 ```
 
 | Option | Description |
 | --- | --- |
 | `-p, --platform <windows\|linux>` | Depot platform to install. Auto-detected if omitted. |
+| `--dry-run` | Don't install — just report the estimated download and on-disk size. |
 
 If `--platform` is omitted, the available platforms are detected and the first one is
 chosen (printed as `Auto-selected platform: ...`). Progress is streamed to the terminal;
 the command exits non-zero if the download fails.
+
+With `--dry-run`, nothing is downloaded; Aurelia prints the estimated **download size**
+(compressed transfer) and **disk size** (installed footprint) for the target platform,
+derived from PICS depot metadata. With `--json` it emits
+`{ "app_id", "platform", "download_size", "disk_size", "depot_count" }` (sizes in bytes) —
+useful for an install dialog. The estimate covers the base game (DLC depots are excluded).
+
+```bash
+aurelia install 1245620 --dry-run
+aurelia install 1245620 --dry-run --json
+```
 
 **DLC:** If the app id is a DLC, its content is installed into the **base game's**
 directory and registered in the base game's `appmanifest` — its depots are added with the
@@ -420,6 +443,73 @@ Settings → Storage first); Aurelia warns if it isn't.
 ```bash
 aurelia move 1245620 D:\SteamLibrary
 aurelia move 1245620 /mnt/games/SteamLibrary --restart-steam
+```
+
+### `relink`
+
+Point Steam at an install that already lives in a different library — **without copying any
+files**. Use this when you moved a game's folder yourself (Aurelia only updates Steam's
+records); use [`move`](#move) when the files still need to be copied.
+
+```
+aurelia relink <APP_ID> <LIBRARY> [--restart-steam]
+```
+
+| Option | Description |
+| --- | --- |
+| `<LIBRARY>` | Destination Steam library root. Its `steamapps/common/<installdir>` must already contain the game's files. |
+| `--restart-steam` | Stop Steam for the operation and restart it afterward. |
+
+It moves the `appmanifest_<appid>.acf` to the destination library and updates
+`libraryfolders.vdf`; the game files and Proton prefix are left untouched. Fails if the files
+aren't present at the destination. Like `move`, it refuses to run while Steam is open unless
+`--restart-steam` is given.
+
+```bash
+aurelia relink 1245620 D:\SteamLibrary --restart-steam
+```
+
+### `import`
+
+Register an existing on-disk install that Steam doesn't know about — Aurelia writes its
+`appmanifest_<appid>.acf` (depot manifests and build id taken from PICS, so Steam sees it as
+installed and up to date) and adds it to `libraryfolders.vdf`.
+
+```
+aurelia import <APP_ID> <LIBRARY> [-p <windows|linux>] [--restart-steam]
+```
+
+| Option | Description |
+| --- | --- |
+| `<LIBRARY>` | Steam library root whose `steamapps/common/<installdir>` holds the files. |
+| `-p, --platform <windows\|linux>` | Depot platform whose files are present. Defaults to the current OS. |
+| `--restart-steam` | Stop Steam for the operation and restart it afterward. |
+
+The install directory name comes from PICS, so Aurelia knows where to look under
+`steamapps/common`. Fails if the files aren't there (use [`install`](#install) to download) or
+if an appmanifest already exists (use [`relink`](#relink) to relocate it).
+
+```bash
+aurelia import 1245620 D:\SteamLibrary
+aurelia import 1245620 ~/.steam/steam --platform linux --restart-steam
+```
+
+### `available`
+
+Report whether a game is installed **and** its files are present on disk (mirrors what a
+front-end needs to decide if a title can be launched).
+
+```
+aurelia available <APP_ID> [--json]
+```
+
+Checks that an `appmanifest` exists and that the resolved install directory is present. The
+`--json` output is `{ "app_id", "available", "install_path" }` (`install_path` is `null` when
+nothing is registered).
+
+```bash
+aurelia available 1245620
+aurelia available 1245620 --json
 ```
 
 ### `enable` / `disable`
@@ -517,6 +607,74 @@ List the depots for a game (depot id, size in bytes, and name).
 
 ```bash
 aurelia depots 1245620
+```
+
+### `launch-options`
+
+List a game's launch options — the executables/arguments Steam can start it with, read from
+the PICS `config/launch` table.
+
+```
+aurelia launch-options <APP_ID> [--json]
+```
+
+Each entry has an `id` (`"0"` is the default), a `description`, an `executable` and
+`arguments`, an optional `working_dir`, and platform constraints `oslist`
+(`windows`/`linux`/`macos`, empty = any) and `osarch` (`32`/`64`). The `--json` output is
+`{ "app_id", "launch_options": [ { id, description, executable, arguments, working_dir,
+oslist, osarch, type } ] }`.
+
+```bash
+aurelia launch-options 1245620
+aurelia launch-options 1245620 --json
+```
+
+---
+
+## Steam Cloud
+
+These commands require an active session.
+
+### `cloud sync`
+
+Synchronise a game's Steam Cloud saves with the local save directory.
+
+```
+aurelia cloud sync <APP_ID> [--up | --down] [--path <DIR>] [--json]
+```
+
+| Option | Description |
+| --- | --- |
+| `--up` | Only upload local saves to Steam. Conflicts with `--down`. |
+| `--down` | Only download saves from Steam. Conflicts with `--up`. |
+| `--path <DIR>` | Local save directory. Defaults to Aurelia's managed cloud root for the account/app. |
+| `--json` | Emit a JSON result instead of text. |
+
+With **neither** flag it performs a full sync — **down then up** — matching what `play` does
+around a launch. `--down` or `--up` restrict it to one direction. The `--json` result is
+`{ "app_id", "direction": "both"|"down"|"up", "path", "downloaded", "uploaded" }`.
+
+```bash
+aurelia cloud sync 1245620                 # download then upload
+aurelia cloud sync 1245620 --down          # pull saves from Steam only
+aurelia cloud sync 1245620 --up --path ./saves
+aurelia cloud sync 1245620 --json
+```
+
+### `cloud list`
+
+List a game's Steam Cloud files with size and last-modified time.
+
+```
+aurelia cloud list <APP_ID> [--json]
+```
+
+The `--json` output is `{ "app_id", "files": [{ "filename", "size", "timestamp", "sha_hash" }] }`
+(`size` in bytes, `timestamp` a Unix time).
+
+```bash
+aurelia cloud list 1245620
+aurelia cloud list 1245620 --json
 ```
 
 ---
