@@ -13,6 +13,7 @@ directories = "5"
 rpassword = "7"
 keyvalues-serde = "0.2" # Used for text VDF deserialization into structs
 prost = "0.13"
+protobuf = "3.5" # rust-protobuf runtime; matches steam-vent-proto's MessageField/EnumOrUnknown so we can build StoreBrowse requests
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
 serde = { version = "1", features = ["derive"] }

@@ -164,6 +164,7 @@ dependencies = [
  "keyvalues-serde",
  "libc",
  "prost",
+ "protobuf",
  "qrcode",
  "rand 0.8.5",
  "regex",

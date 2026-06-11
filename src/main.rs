@@ -103,6 +103,11 @@ enum Command {
         #[arg(short, long)]
         windows: bool,
     },
+    /// Stop a running game previously launched with `aurelia play`.
+    Stop {
+        /// App id to stop. Omit to list the games Aurelia is tracking as running.
+        app_id: Option<u32>,
+    },
     /// Enable an installed DLC for its base game.
     Enable {
         app_id: u32,
@@ -222,6 +227,7 @@ async fn run(cli: Cli) -> Result<()> {
             proton,
             windows,
         } => cmd_play(app_id, proton, windows, json).await,
+        Command::Stop { app_id } => cmd_stop(app_id, json).await,
         Command::Enable {
             app_id,
             restart_steam,
@@ -319,6 +325,9 @@ async fn load_library(client: &mut SteamClient) -> Vec<LibraryGame> {
 /// yet present are added as non-installed family-shared entries.
 fn merge_family_shared(games: &mut Vec<LibraryGame>, shared: Vec<SharedApp>) {
     for app in shared {
+        if aurelia::library::is_ignored_steam_app(app.app_id, &app.name) {
+            continue;
+        }
         if let Some(existing) = games.iter_mut().find(|g| g.app_id == app.app_id) {
             if !existing.is_owned {
                 existing.is_family_shared = true;
@@ -793,6 +802,43 @@ async fn cmd_play(app_id: u32, proton: Option<String>, windows: bool, json: bool
     Ok(())
 }
 
+async fn cmd_stop(app_id: Option<u32>, json: bool) -> Result<()> {
+    // No app id: report what Aurelia currently tracks as running.
+    let Some(app_id) = app_id else {
+        let running = aurelia::running::list();
+        if json {
+            let arr: Vec<_> = running
+                .iter()
+                .map(|g| serde_json::json!({ "app_id": g.app_id, "name": g.name, "pid": g.pid }))
+                .collect();
+            print_json(&serde_json::json!({ "running": arr }));
+            return Ok(());
+        }
+        if running.is_empty() {
+            println!("No games are running (none launched via `aurelia play`).");
+        } else {
+            println!("{:>9}  {:>8}  NAME", "APPID", "PID");
+            for g in &running {
+                println!("{:>9}  {:>8}  {}", g.app_id, g.pid, g.name);
+            }
+        }
+        return Ok(());
+    };
+
+    let stopped = SteamClient::stop_game(app_id)
+        .with_context(|| format!("failed to stop app {app_id}"))?;
+    if json {
+        print_json(&serde_json::json!({
+            "app_id": stopped.app_id,
+            "name": stopped.name,
+            "status": "stopped",
+        }));
+    } else {
+        println!("Stopped {} (app {}).", stopped.name, stopped.app_id);
+    }
+    Ok(())
+}
+
 async fn cmd_set_dlc(app_id: u32, enable: bool, restart_steam: bool, json: bool) -> Result<()> {
     let client = restored_client().await?;
 
@@ -885,18 +931,26 @@ async fn cmd_set_branch(app_id: u32, branch: String, json: bool) -> Result<()> {
 }
 
 async fn cmd_info(app_id: u32, json: bool) -> Result<()> {
-    let client = reqwest::Client::builder()
-        .user_agent("aurelia/0.1")
-        .build()
-        .context("failed to build HTTP client")?;
+    // Metadata now comes from the StoreBrowse service over the Steam CM
+    // connection (no HTTPS storefront API), so an authenticated session is needed.
+    let client = authed_client().await?;
 
-    let details = aurelia::store::fetch_app_details(&client, app_id)
+    let details = client
+        .fetch_store_apps(&[app_id])
         .await?
+        .into_iter()
+        .find(|i| i.app_id == app_id)
         .with_context(|| format!("no store information available for app {app_id}"))?;
 
-    let tags = aurelia::store::fetch_tags(&client, app_id).await;
-
-    let dlc = resolve_dlc_names(&client, &details.dlc).await;
+    // The DLC id list isn't part of StoreBrowse's per-item data; read it from PICS
+    // appinfo (`common.dlc`), then resolve the DLC names in a single batched
+    // StoreBrowse call.
+    let dlc_ids = client
+        .get_extended_app_info(app_id)
+        .await
+        .map(|e| e.dlcs)
+        .unwrap_or_default();
+    let dlc = resolve_dlc_names_via_store(&client, &dlc_ids).await;
 
     if json {
         let value = serde_json::json!({
@@ -904,22 +958,18 @@ async fn cmd_info(app_id: u32, json: bool) -> Result<()> {
             "name": details.name,
             "type": details.app_type,
             "is_free": details.is_free,
+            "early_access": details.is_early_access,
             "description": details.short_description,
+            "full_description": details.full_description,
             "developers": details.developers,
             "publishers": details.publishers,
+            "franchises": details.franchises,
             "release_date": details.release_date,
             "coming_soon": details.coming_soon,
             "price": details.price,
+            "discount_pct": details.discount_pct,
             "platforms": details.platforms,
-            "tags": tags,
-            "genres": details.genres,
-            "categories": details.categories,
-            "metacritic": details.metacritic,
-            "website": details.website,
-            "requirements": {
-                "minimum": details.requirements_minimum,
-                "recommended": details.requirements_recommended,
-            },
+            "reviews": details.review_summary,
             "dlc": dlc.iter().map(|(id, name)| serde_json::json!({"app_id": id, "name": name})).collect::<Vec<_>>(),
         });
         println!("{}", serde_json::to_string_pretty(&value)?);
@@ -927,7 +977,8 @@ async fn cmd_info(app_id: u32, json: bool) -> Result<()> {
     }
 
     // --- Header ---
-    println!("{}  (app {})", details.name, details.app_id);
+    let ea = if details.is_early_access { " [Early Access]" } else { "" };
+    println!("{}  (app {}){ea}", details.name, details.app_id);
     if !details.app_type.is_empty() {
         println!("Type       : {}", details.app_type);
     }
@@ -937,52 +988,32 @@ async fn cmd_info(app_id: u32, json: bool) -> Result<()> {
     if !details.publishers.is_empty() {
         println!("Publishers : {}", details.publishers.join(", "));
     }
+    if !details.franchises.is_empty() {
+        println!("Franchises : {}", details.franchises.join(", "));
+    }
     if let Some(date) = &details.release_date {
         let suffix = if details.coming_soon { " (coming soon)" } else { "" };
         println!("Released   : {date}{suffix}");
     }
     if let Some(price) = &details.price {
-        println!("Price      : {price}");
+        let discount = if details.discount_pct > 0 {
+            format!(" (-{}%)", details.discount_pct)
+        } else {
+            String::new()
+        };
+        println!("Price      : {price}{discount}");
     }
     if !details.platforms.is_empty() {
         println!("Platforms  : {}", details.platforms.join(", "));
     }
-    if let Some(score) = details.metacritic {
-        println!("Metacritic : {score}");
-    }
-    if let Some(site) = &details.website {
-        println!("Website    : {site}");
+    if let Some(reviews) = &details.review_summary {
+        println!("Reviews    : {reviews}");
     }
 
     // --- Description ---
     if !details.short_description.is_empty() {
         println!("\nDescription:");
         for line in wrap_text(&details.short_description, 88) {
-            println!("  {line}");
-        }
-    }
-
-    // --- Tags / Genres / Categories ---
-    if !tags.is_empty() {
-        println!("\nTags      : {}", tags.iter().take(20).cloned().collect::<Vec<_>>().join(", "));
-    }
-    if !details.genres.is_empty() {
-        println!("Genres    : {}", details.genres.join(", "));
-    }
-    if !details.categories.is_empty() {
-        println!("Categories: {}", details.categories.join(", "));
-    }
-
-    // --- Hardware requirements ---
-    if !details.requirements_minimum.is_empty() {
-        println!("\nMinimum requirements:");
-        for line in &details.requirements_minimum {
-            println!("  {line}");
-        }
-    }
-    if !details.requirements_recommended.is_empty() {
-        println!("\nRecommended requirements:");
-        for line in &details.requirements_recommended {
             println!("  {line}");
         }
     }
@@ -999,26 +1030,28 @@ async fn cmd_info(app_id: u32, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Resolve DLC names concurrently (bounded to keep the store API happy),
-/// returning `(app_id, name)` pairs sorted by app id.
-async fn resolve_dlc_names(
-    client: &reqwest::Client,
+/// Resolve DLC names via a single batched `StoreBrowse.GetItems` call (over the
+/// Steam CM connection — no storefront API), returning `(app_id, name)` pairs
+/// sorted by app id. A `None` name means the store didn't return that id.
+async fn resolve_dlc_names_via_store(
+    client: &SteamClient,
     dlc_ids: &[u32],
 ) -> Vec<(u32, Option<String>)> {
-    let mut dlc: Vec<(u32, Option<String>)> = Vec::new();
     if dlc_ids.is_empty() {
-        return dlc;
+        return Vec::new();
     }
-    let mut set = tokio::task::JoinSet::new();
-    for &dlc_id in dlc_ids.iter().take(50) {
-        let c = client.clone();
-        set.spawn(async move { (dlc_id, aurelia::store::fetch_app_name(&c, dlc_id).await) });
-    }
-    while let Some(res) = set.join_next().await {
-        if let Ok(pair) = res {
-            dlc.push(pair);
-        }
-    }
+    let name_by_id: std::collections::HashMap<u32, String> = client
+        .fetch_store_apps(dlc_ids)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|i| (i.app_id, i.name))
+        .collect();
+
+    let mut dlc: Vec<(u32, Option<String>)> = dlc_ids
+        .iter()
+        .map(|&id| (id, name_by_id.get(&id).cloned().filter(|s| !s.is_empty())))
+        .collect();
     dlc.sort_by_key(|(id, _)| *id);
     dlc
 }
@@ -1028,17 +1061,14 @@ async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
     // is read from the local appmanifest.
     let steam = authed_client().await?;
 
-    let http = reqwest::Client::builder()
-        .user_agent("aurelia/0.1")
-        .build()
-        .context("failed to build HTTP client")?;
-
-    let details = aurelia::store::fetch_app_details(&http, app_id)
-        .await?
-        .with_context(|| format!("no store information available for app {app_id}"))?;
-
-    let dlc = resolve_dlc_names(&http, &details.dlc).await;
-    let dlc_ids: Vec<u32> = dlc.iter().map(|(id, _)| *id).collect();
+    // DLC ids come from PICS appinfo (`common.dlc`); names from a batched
+    // StoreBrowse call — both over the Steam CM connection, no storefront API.
+    let dlc_ids: Vec<u32> = steam
+        .get_extended_app_info(app_id)
+        .await
+        .map(|e| e.dlcs)
+        .unwrap_or_default();
+    let dlc = resolve_dlc_names_via_store(&steam, &dlc_ids).await;
     let states = steam
         .dlc_states(app_id, &dlc_ids)
         .await

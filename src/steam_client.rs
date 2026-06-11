@@ -47,6 +47,11 @@ use steam_vent_proto::steammessages_familygroups_steamclient::{
 use steam_vent_proto::steammessages_player_steamclient::{
     CPlayer_GetOwnedGames_Request, CPlayer_GetOwnedGames_Response,
 };
+use steam_vent_proto::steammessages_storebrowse_steamclient::{
+    CStoreBrowse_GetItems_Request, CStoreBrowse_GetItems_Response, EStoreAppType,
+    StoreBrowseContext, StoreBrowseItemDataRequest, StoreItem, StoreItemID,
+};
+use protobuf::MessageField;
 use steam_vent::{ConnectionError, ConnectionTrait, ServerList};
 use tokio::io::{duplex, sink, AsyncWriteExt};
 use tokio::sync::mpsc::Receiver;
@@ -156,6 +161,35 @@ pub struct ExtendedAppInfo {
     pub depots: Vec<(u32, String)>,
     pub launch_options: Vec<RawLaunchOption>,
     pub active_branch: String,
+}
+
+/// Human-facing store metadata for an app, sourced from the `StoreBrowse.GetItems`
+/// service method over the Steam CM connection (no HTTPS storefront API). This is
+/// the protocol-native replacement for the fields Aurelia previously scraped from
+/// `store.steampowered.com/api/appdetails`.
+///
+/// Note: a few storefront-only fields have no equivalent in this protocol and are
+/// intentionally absent — system requirements, Metacritic score, and
+/// name-resolved store tags/genres/categories (StoreBrowse returns only numeric
+/// ids for those, which would need a separate localized tag dictionary).
+#[derive(Debug, Clone, Default)]
+pub struct StoreAppInfo {
+    pub app_id: u32,
+    pub name: String,
+    pub app_type: String,
+    pub is_free: bool,
+    pub is_early_access: bool,
+    pub short_description: String,
+    pub full_description: String,
+    pub developers: Vec<String>,
+    pub publishers: Vec<String>,
+    pub franchises: Vec<String>,
+    pub release_date: Option<String>,
+    pub coming_soon: bool,
+    pub price: Option<String>,
+    pub discount_pct: i32,
+    pub platforms: Vec<String>,
+    pub review_summary: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -2056,6 +2090,53 @@ impl SteamClient {
         Ok(category_online_required(&categories))
     }
 
+    /// Fetch human-facing store metadata for one or more apps via the
+    /// `StoreBrowse.GetItems` service method (over the CM connection — no HTTPS
+    /// storefront API). Returns one [`StoreAppInfo`] per app the store knows
+    /// about; unknown/region-locked ids are simply omitted. Requires a connection.
+    pub async fn fetch_store_apps(&self, app_ids: &[u32]) -> Result<Vec<StoreAppInfo>> {
+        if app_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let connection = self
+            .connection
+            .as_ref()
+            .context("steam connection not initialized")?;
+
+        let mut data = StoreBrowseItemDataRequest::new();
+        data.set_include_basic_info(true);
+        data.set_include_release(true);
+        data.set_include_platforms(true);
+        data.set_include_reviews(true);
+        data.set_include_all_purchase_options(true);
+        data.set_include_full_description(true);
+
+        let mut context = StoreBrowseContext::new();
+        context.set_language("english".to_string());
+        context.set_country_code("US".to_string());
+
+        let mut request = CStoreBrowse_GetItems_Request::new();
+        request.context = MessageField::some(context);
+        request.data_request = MessageField::some(data);
+        for &id in app_ids {
+            let mut item_id = StoreItemID::new();
+            item_id.set_appid(id);
+            request.ids.push(item_id);
+        }
+
+        let response: CStoreBrowse_GetItems_Response = connection
+            .service_method(request)
+            .await
+            .context("failed calling StoreBrowse.GetItems")?;
+
+        Ok(response
+            .store_items
+            .iter()
+            .filter(|item| item.appid() != 0)
+            .map(store_item_to_app_info)
+            .collect())
+    }
+
     pub async fn get_product_info(&mut self, appid: u32, prefer_proton: bool) -> Result<Vec<LaunchInfo>> {
         let connection = self
             .connection
@@ -2154,9 +2235,31 @@ impl SteamClient {
         } else {
             self.spawn_game_process(app, &launch_info, chosen_proton_path, &launcher_config, user_config).await?
         };
-        child
-            .wait()
-            .context("failed waiting for game process exit")?;
+
+        // Record the launch so a separate `aurelia stop <app_id>` invocation can
+        // find and terminate the process while we block on `wait()` below.
+        let wineprefix = if native_windows {
+            None
+        } else {
+            let user_configs = crate::config::load_user_configs().await.unwrap_or_default();
+            let pfx = crate::utils::steam_wineprefix_for_game(&launcher_config, app.app_id, &user_configs);
+            // Only record a per-game (compatdata) prefix — sweeping the shared
+            // master prefix on stop would also kill the Steam client inside it.
+            pfx.to_string_lossy().contains("compatdata").then_some(pfx)
+        };
+        let record = crate::running::RunningGame {
+            app_id: app.app_id,
+            name: app.name.clone(),
+            pid: child.id(),
+            wineprefix,
+        };
+        if let Err(e) = crate::running::record_launch(&record) {
+            tracing::warn!(appid = app.app_id, "could not record running game: {e:#}");
+        }
+
+        let wait_result = child.wait().context("failed waiting for game process exit");
+        crate::running::clear(app.app_id);
+        wait_result?;
 
         if cloud_enabled {
             if let (Some(client), Some(root)) = (cloud_client.as_ref(), local_root.as_ref()) {
@@ -2689,17 +2792,36 @@ impl SteamClient {
 
     /// If `appid` is a DLC, return the base game's appid it depends on.
     /// Returns `None` for base games (or if the relationship can't be determined).
-    /// Tries the authoritative PICS appinfo first, then the storefront as a fallback
-    /// (some DLC don't carry the parent reference in their PICS appinfo).
+    /// Tries the authoritative PICS appinfo first, then the StoreBrowse service as
+    /// a fallback (some DLC don't carry the parent reference in their PICS appinfo).
+    /// Both sources go over the Steam CM connection — no storefront API.
     pub async fn resolve_dlc_parent(&self, appid: u32) -> Option<u32> {
         if let Some(base) = self.dlc_parent_from_pics(appid).await {
             return Some(base);
         }
-        let http = reqwest::Client::builder()
-            .user_agent("aurelia/0.1")
-            .build()
-            .ok()?;
-        crate::store::fetch_dlc_parent(&http, appid).await
+        self.dlc_parent_from_store(appid).await
+    }
+
+    /// DLC → base-game lookup via `StoreBrowse.GetItems` (`related_items.parent_appid`).
+    async fn dlc_parent_from_store(&self, appid: u32) -> Option<u32> {
+        let connection = self.connection.as_ref()?;
+
+        let mut context = StoreBrowseContext::new();
+        context.set_language("english".to_string());
+        context.set_country_code("US".to_string());
+
+        let mut request = CStoreBrowse_GetItems_Request::new();
+        request.context = MessageField::some(context);
+        let mut item_id = StoreItemID::new();
+        item_id.set_appid(appid);
+        request.ids.push(item_id);
+
+        let response: CStoreBrowse_GetItems_Response = connection.service_method(request).await.ok()?;
+        let item = response.store_items.iter().find(|i| i.appid() == appid)?;
+        item.related_items
+            .as_ref()
+            .map(|r| r.parent_appid())
+            .filter(|&base| base != 0 && base != appid)
     }
 
     async fn dlc_parent_from_pics(&self, appid: u32) -> Option<u32> {
@@ -3075,6 +3197,67 @@ impl SteamClient {
         bail!("automatic Steam control is only supported on Windows")
     }
 
+    /// Stop a game previously launched by `aurelia play`. Looks up the launch
+    /// record Aurelia wrote (PID, and for a per-game Proton/Wine launch the
+    /// WINEPREFIX) and terminates the process tree, then clears the record.
+    ///
+    /// Returns the resolved record on success. Fails if Aurelia has no record of
+    /// the game running — e.g. it was started directly through Steam rather than
+    /// `aurelia play`.
+    pub fn stop_game(app_id: u32) -> Result<crate::running::RunningGame> {
+        let record = crate::running::load(app_id).ok_or_else(|| {
+            anyhow!("app {app_id} is not running (no launch was recorded by Aurelia)")
+        })?;
+
+        // A Proton/Wine game runs as wine processes inside its WINEPREFIX; killing
+        // the recorded runner PID alone can leave them behind. Sweep the per-game
+        // prefix too when we recorded one (never the shared master prefix).
+        #[cfg(unix)]
+        if let Some(prefix) = record.wineprefix.as_deref() {
+            Self::kill_wine_processes_in_prefix(prefix);
+        }
+
+        kill_process_tree(record.pid);
+        crate::running::clear(app_id);
+        Ok(record)
+    }
+
+    /// Terminate every wine process running inside `wineprefix` (identified by the
+    /// prefix path appearing in the process environment). Used to stop a
+    /// Proton/Wine game whose processes outlive the runner we spawned. Only call
+    /// this for a per-game prefix — the shared master prefix also hosts Steam.
+    #[cfg(unix)]
+    pub fn kill_wine_processes_in_prefix(wineprefix: &Path) {
+        let prefix_str = wineprefix.to_string_lossy().to_string();
+        let Ok(proc_dir) = std::fs::read_dir("/proc") else {
+            return;
+        };
+
+        for entry in proc_dir.flatten() {
+            let pid_path = entry.path();
+            let Some(pid_str) = pid_path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if !pid_str.chars().all(|c| c.is_ascii_digit()) {
+                continue;
+            }
+
+            let environ = match std::fs::read(pid_path.join("environ")) {
+                Ok(b) => String::from_utf8_lossy(&b).into_owned(),
+                Err(_) => continue,
+            };
+            if !environ.contains(&prefix_str) {
+                continue;
+            }
+
+            if let Ok(pid) = pid_str.parse::<i32>() {
+                unsafe {
+                    libc::kill(pid, libc::SIGTERM);
+                }
+            }
+        }
+    }
+
     pub fn kill_steam_in_prefix(wineprefix: &Path) {
         #[cfg(unix)]
         {
@@ -3379,6 +3562,31 @@ NoSavePersonalInfo=1
     }
 }
 
+/// Terminate the process with `pid` and any children it spawned.
+///
+/// On Windows the launched process is often a thin launcher that re-spawns the
+/// real game, so we kill the whole tree with `taskkill /T`. On Unix we send
+/// `SIGTERM` then `SIGKILL` to give the game a chance to exit cleanly first.
+fn kill_process_tree(pid: u32) {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .output();
+    }
+
+    #[cfg(unix)]
+    {
+        unsafe {
+            libc::kill(pid as i32, libc::SIGTERM);
+        }
+        std::thread::sleep(Duration::from_millis(500));
+        unsafe {
+            libc::kill(pid as i32, libc::SIGKILL);
+        }
+    }
+}
+
 pub fn sanitize_install_dir(name: &str) -> String {
     let sanitized: String = name
         .chars()
@@ -3505,6 +3713,146 @@ fn apply_dlc_disabled(content: &str, dlc_appid: u32, disabled: bool) -> String {
     }
 
     content.to_string()
+}
+
+/// Collect the non-empty display names from a list of `CreatorHomeLink`s
+/// (developers / publishers / franchises in a `StoreItem.basic_info`).
+fn creator_names(
+    creators: &[steam_vent_proto::steammessages_storebrowse_steamclient::store_item::basic_info::CreatorHomeLink],
+) -> Vec<String> {
+    creators
+        .iter()
+        .map(|c| c.name().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Map a `StoreBrowse` `StoreItem` protobuf into our display-oriented
+/// [`StoreAppInfo`]. Defensive throughout: every nested message is optional, so
+/// missing data yields empty fields rather than failing.
+fn store_item_to_app_info(item: &StoreItem) -> StoreAppInfo {
+    let basic = item.basic_info.as_ref();
+
+    let release = item.release.as_ref();
+    let release_date = release.and_then(|r| {
+        let custom = r.custom_release_date_message();
+        if !custom.is_empty() {
+            Some(custom.to_string())
+        } else if r.steam_release_date() > 0 {
+            Some(unix_to_ymd(r.steam_release_date() as i64))
+        } else {
+            None
+        }
+    });
+
+    let platforms = item
+        .platforms
+        .as_ref()
+        .map(|p| {
+            let mut v = Vec::new();
+            if p.windows() {
+                v.push("Windows".to_string());
+            }
+            if p.mac() {
+                v.push("macOS".to_string());
+            }
+            if p.steamos_linux() {
+                v.push("Linux".to_string());
+            }
+            v
+        })
+        .unwrap_or_default();
+
+    let (price, discount_pct) = match item.best_purchase_option.as_ref() {
+        _ if item.is_free() => (Some("Free".to_string()), 0),
+        Some(p) if !p.formatted_final_price().is_empty() => {
+            (Some(p.formatted_final_price().to_string()), p.discount_pct())
+        }
+        _ => (None, 0),
+    };
+
+    let review_summary = item
+        .reviews
+        .as_ref()
+        .and_then(|r| r.summary_filtered.as_ref())
+        .and_then(|s| {
+            let label = s.review_score_label();
+            if label.is_empty() {
+                None
+            } else {
+                Some(format!(
+                    "{} ({}% positive, {} reviews)",
+                    label,
+                    s.percent_positive(),
+                    s.review_count()
+                ))
+            }
+        });
+
+    StoreAppInfo {
+        app_id: item.appid(),
+        name: item.name().to_string(),
+        app_type: store_app_type_label(item.type_()),
+        is_free: item.is_free(),
+        is_early_access: item.is_early_access(),
+        short_description: basic.map(|b| b.short_description().to_string()).unwrap_or_default(),
+        full_description: crate::store::strip_html(item.full_description()),
+        developers: basic
+            .map(|b| creator_names(&b.developers))
+            .unwrap_or_default(),
+        publishers: basic
+            .map(|b| creator_names(&b.publishers))
+            .unwrap_or_default(),
+        franchises: basic
+            .map(|b| creator_names(&b.franchises))
+            .unwrap_or_default(),
+        release_date,
+        coming_soon: release.map(|r| r.is_coming_soon()).unwrap_or(false),
+        price,
+        discount_pct,
+        platforms,
+        review_summary,
+    }
+}
+
+/// Human-readable label for a `StoreBrowse` app type.
+fn store_app_type_label(t: EStoreAppType) -> String {
+    match t {
+        EStoreAppType::k_EStoreAppType_Game => "Game",
+        EStoreAppType::k_EStoreAppType_Demo => "Demo",
+        EStoreAppType::k_EStoreAppType_Mod => "Mod",
+        EStoreAppType::k_EStoreAppType_Movie => "Movie",
+        EStoreAppType::k_EStoreAppType_DLC => "DLC",
+        EStoreAppType::k_EStoreAppType_Guide => "Guide",
+        EStoreAppType::k_EStoreAppType_Software => "Software",
+        EStoreAppType::k_EStoreAppType_Video => "Video",
+        EStoreAppType::k_EStoreAppType_Series => "Series",
+        EStoreAppType::k_EStoreAppType_Episode => "Episode",
+        EStoreAppType::k_EStoreAppType_Hardware => "Hardware",
+        EStoreAppType::k_EStoreAppType_Music => "Soundtrack",
+        EStoreAppType::k_EStoreAppType_Beta => "Beta",
+        EStoreAppType::k_EStoreAppType_Tool => "Tool",
+        EStoreAppType::k_EStoreAppType_Advertising => "Advertising",
+    }
+    .to_string()
+}
+
+/// Convert a Unix timestamp (seconds, UTC) to a `YYYY-MM-DD` date string using
+/// Howard Hinnant's days-from-civil algorithm. Avoids pulling in a date crate.
+fn unix_to_ymd(secs: i64) -> String {
+    let days = secs.div_euclid(86_400);
+    // Shift epoch to 0000-03-01 so leap days fall at the end of the era.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let day = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let month = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let year = if month <= 2 { year + 1 } else { year };
+    format!("{year:04}-{month:02}-{day:02}")
 }
 
 pub fn parse_appinfo(vdf: &str) -> Result<crate::models::AppInfoRoot> {
@@ -4173,6 +4521,22 @@ mod tests {
     fn not_online_required_when_categories_absent_or_zeroed() {
         assert!(!category_online_required(&cats(&[])));
         assert!(!category_online_required(&cats(&[(20, "0"), (2, "0")])));
+    }
+
+    #[test]
+    fn unix_to_ymd_known_dates() {
+        assert_eq!(unix_to_ymd(0), "1970-01-01");
+        assert_eq!(unix_to_ymd(1_700_000_000), "2023-11-14"); // 2023-11-14T22:13:20Z
+        assert_eq!(unix_to_ymd(1_009_843_200), "2002-01-01"); // exact midnight UTC
+        // Leap day round-trips correctly.
+        assert_eq!(unix_to_ymd(1_582_934_400), "2020-02-29");
+    }
+
+    #[test]
+    fn store_app_type_labels() {
+        assert_eq!(store_app_type_label(EStoreAppType::k_EStoreAppType_Game), "Game");
+        assert_eq!(store_app_type_label(EStoreAppType::k_EStoreAppType_DLC), "DLC");
+        assert_eq!(store_app_type_label(EStoreAppType::k_EStoreAppType_Music), "Soundtrack");
     }
 
     #[tokio::test]

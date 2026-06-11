@@ -6,6 +6,41 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
+/// App ids that appear as `appmanifest_*.acf` files (and in the owned-games
+/// list) but are not actual games: Steam runtimes, redistributables, Proton,
+/// server tools, etc. These are hidden from the library so they don't show up
+/// as launchable titles. Mirrors Heroic's `ignoredSteamAppIds`.
+pub const IGNORED_STEAM_APP_IDS: &[u32] = &[
+    228980,  // Steamworks Common Redistributables
+    1070560, // Steam Linux Runtime 1.0 (scout)
+    1391110, // Steam Linux Runtime 2.0 (soldier)
+    1628350, // Steam Linux Runtime 3.0 (sniper)
+    1493710, // Proton Experimental
+    2348590, // Proton 8.0
+];
+
+/// Games whose name starts with any of these prefixes are Steam tooling rather
+/// than user games and are hidden from the library. Catches Proton/runtime
+/// builds whose app ids aren't in [`IGNORED_STEAM_APP_IDS`]. Mirrors Heroic's
+/// `ignoredSteamAppNamePrefixes`.
+pub const IGNORED_STEAM_APP_NAME_PREFIXES: &[&str] = &[
+    "Steam Linux Runtime",
+    "Proton",
+    "Steamworks Common Redistributables",
+];
+
+/// Whether an app is Steam tooling (runtime/redistributable/Proton/server tool)
+/// rather than a user-facing game, and so should be hidden from the library.
+pub fn is_ignored_steam_app(app_id: u32, name: &str) -> bool {
+    if IGNORED_STEAM_APP_IDS.contains(&app_id) {
+        return true;
+    }
+    let name = name.trim_start();
+    IGNORED_STEAM_APP_NAME_PREFIXES
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
+}
+
 #[derive(Debug, Deserialize)]
 struct LibraryFoldersFile {
     #[serde(default)]
@@ -396,6 +431,9 @@ pub fn build_game_library(
 
     // Games returned by the owned-games list are licensed to this account.
     for owned_game in owned {
+        if is_ignored_steam_app(owned_game.app_id, &owned_game.name) {
+            continue;
+        }
         let info = installed_info.get(&owned_game.app_id);
         let install_path = info.map(|i| i.install_path.to_string_lossy().to_string());
         let active_branch = info
@@ -422,6 +460,11 @@ pub fn build_game_library(
     // account. If its appmanifest records a different owner, it's Family-Shared.
     for (app_id, info) in installed_info {
         if games.iter().any(|g| g.app_id == app_id) {
+            continue;
+        }
+        // Skip Steam tooling (runtimes, Proton, redistributables) installed on disk.
+        let candidate_name = info.name.as_deref().unwrap_or("");
+        if is_ignored_steam_app(app_id, candidate_name) {
             continue;
         }
 
@@ -493,4 +536,53 @@ pub fn merge_games(owned: Vec<OwnedGame>, installed: Vec<LocalGame>) -> Vec<Game
     let mut games: Vec<GameModel> = merged.into_values().collect();
     games.sort_by(|a, b| a.name.cmp(&b.name));
     games
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ignores_tooling_by_app_id() {
+        assert!(is_ignored_steam_app(228980, "Steamworks Common Redistributables"));
+        assert!(is_ignored_steam_app(1628350, "")); // Steam Linux Runtime 3.0
+        assert!(is_ignored_steam_app(1493710, "Proton Experimental"));
+    }
+
+    #[test]
+    fn ignores_tooling_by_name_prefix() {
+        // App id not in the list, but the name marks it as tooling.
+        assert!(is_ignored_steam_app(9999999, "Proton 9.0 (Beta)"));
+        assert!(is_ignored_steam_app(9999998, "  Steam Linux Runtime 4.0"));
+    }
+
+    #[test]
+    fn keeps_real_games() {
+        assert!(!is_ignored_steam_app(620, "Portal 2"));
+        // A game that merely contains "Proton" mid-name is not tooling.
+        assert!(!is_ignored_steam_app(12345, "The Protonist"));
+    }
+
+    #[test]
+    fn build_game_library_filters_tooling() {
+        let owned = vec![
+            OwnedGame {
+                app_id: 620,
+                name: "Portal 2".to_string(),
+                playtime_forever_minutes: 0,
+                local_manifest_ids: HashMap::new(),
+                update_available: false,
+            },
+            OwnedGame {
+                app_id: 228980,
+                name: "Steamworks Common Redistributables".to_string(),
+                playtime_forever_minutes: 0,
+                local_manifest_ids: HashMap::new(),
+                update_available: false,
+            },
+        ];
+        let lib = build_game_library(owned, HashMap::new(), None);
+        assert_eq!(lib.games.len(), 1);
+        assert_eq!(lib.games[0].app_id, 620);
+    }
 }
