@@ -132,14 +132,29 @@ With `--json`, `login` becomes a machine-drivable handshake with **no TTY prompt
 driver (e.g. a GUI front-end) supplies credentials via flags/`AURELIA_PASSWORD` and exchanges
 NDJSON lines on stdout/stdin:
 
-- **Password:** `aurelia login --json -u <user> -p <pass>`. If Steam needs a Guard code, a
-  `{"event":"guard_required","type":"email"|"device"}` line is emitted; write the code as a
-  single line to the process's **stdin** and login retries. Accounts that use mobile-app
-  approval instead emit `{"event":"guard_required","type":"device_confirmation"}`.
+- **Password:** `aurelia login --json -u <user> -p <pass>`. The first line emitted is
+  always `{"event":"awaiting_confirmation","message":"…"}` — sent **before** the login
+  attempt blocks, so the driver can immediately tell the user to approve the sign-in on
+  their device (otherwise nothing prints until the attempt completes or times out). Then,
+  if Steam needs a Guard code, a `{"event":"guard_required","type":"email"|"device"}` line
+  follows; write the code as a single line to the process's **stdin** and login retries.
+  Accounts that use mobile-app approval instead emit
+  `{"event":"guard_required","type":"device_confirmation"}`.
 - **QR:** `aurelia login --qr --json` streams `{"event":"qr_challenge","url":"https://s.team/…"}`
   (re-emitted whenever Steam rotates the code); render the URL as a QR and wait.
 - **Result:** both end with `{"logged_in":true,"account":"<name>"}` on success, or
   `{"error":"…"}` (non-zero exit) on failure.
+
+The complete NDJSON event sequence a driver may observe, in order:
+
+| Event line | When | Driver action |
+| --- | --- | --- |
+| `{"event":"awaiting_confirmation","message":"…"}` | Immediately, on password login, before the attempt blocks. | Show the message; prompt the user to approve on their device if asked. |
+| `{"event":"qr_challenge","url":"…"}` | QR login; re-emitted on each code rotation. | Render `url` as a QR code and wait. |
+| `{"event":"guard_required","type":"email"\|"device"}` | A typed Steam Guard code is needed. | Read a code from the user, write it as one line to the child's **stdin**. |
+| `{"event":"guard_required","type":"device_confirmation"}` | The account approves via the Steam Mobile app. | Tell the user to approve in the app; the command then completes or times out. |
+| `{"logged_in":true,"account":"<name>"}` | Terminal — success. | Done; the session is persisted. |
+| `{"error":"…"}` | Terminal — failure (non-zero exit). | Surface the error. |
 
 In `--json` mode the username/password must be provided up front (no interactive prompt);
 only the Guard code is exchanged over stdin.
