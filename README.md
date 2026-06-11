@@ -65,7 +65,8 @@ sync, and Proton/Wine launching all work today.
       confirmation, refresh-token session restore
 - [x] **Library** — fetch owned games, scan local installs, search & filter, Family Sharing
 - [x] **Install & updates** — 4-phase download pipeline (manifest → security → chunks),
-      updates, uninstall, integrity verification
+      updates, uninstall, integrity verification, and moving installs between library
+      folders (with Steam's `appmanifest`/`libraryfolders.vdf` kept in sync)
 - [x] **DLC** — install, enable/disable, and per-DLC ownership/install status
 - [x] **Steam Cloud** — enumerate, download, upload save data
 - [x] **Proton/Wine** — runtime discovery and launch integration
@@ -121,7 +122,9 @@ aurelia account                      # show account details
 aurelia list                         # list your library
 aurelia list --installed             # only installed games
 aurelia list --search elden          # filter by name
-aurelia info 690830                  # full game details (description, tags, DLC, ...)
+aurelia list --online                # add an ONLINE column (needs-connection heuristic)
+aurelia info 690830                  # game details (description, release, reviews, DLC)
+aurelia info 690830 --extended       # + requirements, Metacritic, tags, genres, categories
 aurelia dlc 690830                   # list a game's DLC with ownership/install status
 aurelia image 1245620                # fetch cover art to the cache (prints the path)
 aurelia image 1245620 -o cover.jpg   # save artwork to a specific file
@@ -131,6 +134,7 @@ aurelia install 1245620              # download & install a game by app id
 aurelia update 1245620               # download the latest manifest
 aurelia verify 1245620               # verify installed files
 aurelia uninstall 1245620            # remove a game (--delete-prefix wipes its prefix)
+aurelia move 1245620 D:\SteamLibrary # move an install to another library (updates Steam data)
 
 # DLC
 aurelia enable 2001                  # enable an installed DLC for its base game

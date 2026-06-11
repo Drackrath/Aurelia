@@ -26,6 +26,7 @@ of a specific command. `--version` prints the build version.
   - [`update`](#update)
   - [`verify`](#verify)
   - [`uninstall`](#uninstall)
+  - [`move`](#move)
   - [`enable` / `disable`](#enable--disable)
 - [Launching](#launching)
   - [`play`](#play)
@@ -134,17 +135,30 @@ aurelia logout
 List games in your library (owned games merged with locally installed ones).
 
 ```
-aurelia list [-i] [-s <TEXT>] [--json]
+aurelia list [-i] [-s <TEXT>] [--online] [--json]
 ```
 
 | Option | Description |
 | --- | --- |
 | `-i, --installed` | Only show installed games. |
 | `-s, --search <TEXT>` | Filter by case-insensitive substring of the name. |
+| `--online` | Add an `ONLINE` column indicating whether each game appears to require an internet connection (see below). |
 | `--json` | Emit JSON instead of a table. |
 
 The `STATUS` column shows `installed`, `update` (installed with an update available), or
 `-` (not installed). A non-default branch is shown in brackets after the name.
+
+Steam **tooling** — Proton, the Steam Linux Runtimes, and Steamworks Common
+Redistributables — is filtered out, so the list shows only real games rather than the
+runtime/redistributable app ids that share the library.
+
+With **`--online`**, an extra `ONLINE` column reports whether the game looks like it
+**requires** a connection to play: `yes`, `no`, or `?` (undetermined). Steam exposes no
+explicit flag for this, so it is inferred from the game's PICS store categories — a title
+is treated as online-required when it advertises an online-multiplayer category (MMO,
+Online PvP, Online Co-op) but **no** single-player support. This makes one PICS lookup per
+listed game, so it is slower than a plain listing and needs an active session; without one
+the column reads `?`. The `--json` output carries an `online_required` boolean (or `null`).
 
 The `LICENSE` column shows whether the logged-in account holds a license for the game:
 
@@ -194,26 +208,42 @@ count, and VAC ban count.
 
 ### `info`
 
-Show detailed information about a game. No login required (public store data).
+Show detailed information about a game. Requires an active session — the metadata is
+fetched over Steam's CM connection (the `StoreBrowse` service), not the HTTPS storefront.
 
 ```
-aurelia info <APP_ID> [--json]
+aurelia info <APP_ID> [--extended] [--json]
 ```
 
 | Option | Description |
 | --- | --- |
+| `--extended` | Also show storefront-only fields (see below). Makes additional HTTPS storefront requests. |
 | `--json` | Emit JSON instead of formatted text. |
 
-Displays basic data (type, developers, publishers, release date, price, platforms,
-Metacritic, website), the short description, community **tags**, **genres**,
-**categories**, minimum and recommended **hardware requirements**, and the list of
-**DLC** (with names resolved). Data comes from the Steam storefront API, with user tags
-from SteamSpy.
+By default `info` shows what the `StoreBrowse` protocol provides directly: type,
+developers, publishers, franchises, release date (and Early-Access/coming-soon state),
+price and discount, platforms, the Steam **review summary**, the short description, and the
+list of **DLC** with names resolved. The DLC ids come from PICS appinfo and their names from
+a single batched `StoreBrowse` lookup — all over the CM connection, with no per-DLC web
+calls.
+
+A handful of fields have **no CM-protocol source**, so they are shown only with
+**`--extended`**, which fetches them from the public HTTPS storefront (Steam storefront API
+plus SteamSpy):
+
+- **System requirements** — minimum and recommended.
+- **Metacritic** score and **website**.
+- Store **genres** and **categories** (resolved to names).
+- Community **user tags** (from SteamSpy).
 
 ```bash
-aurelia info 690830
+aurelia info 690830              # protocol-native fields
+aurelia info 690830 --extended   # + requirements, Metacritic, tags, genres, categories
 aurelia info 690830 --json
 ```
+
+With `--json`, the extended fields (when requested) are grouped under an `"extended"` key so
+the default object shape is unchanged.
 
 ### `dlc`
 
@@ -228,9 +258,9 @@ aurelia dlc <APP_ID> [--json]
 | --- | --- |
 | `--json` | Emit JSON instead of formatted text. |
 
-A focused alternative to `info` when you only want the DLC list. The DLC ids and
-names come from the Steam storefront API (capped at 50 entries); each entry is then
-annotated with:
+A focused alternative to `info` when you only want the DLC list. The DLC ids come from
+PICS appinfo and their names from a single batched `StoreBrowse` lookup (both over the CM
+connection — no storefront API); each entry is then annotated with:
 
 - **owned** — your account holds a license for the DLC (an app ownership ticket is
   issued).
@@ -334,6 +364,44 @@ aurelia uninstall <APP_ID> [--delete-prefix]
 ```bash
 aurelia uninstall 1245620
 aurelia uninstall 1245620 --delete-prefix
+```
+
+### `move`
+
+Move an installed game to a different Steam library folder, updating Steam's on-disk data
+so the client recognises the game at its new path instead of reporting it as missing.
+
+```
+aurelia move <APP_ID> <LIBRARY> [--restart-steam]
+```
+
+| Option | Description |
+| --- | --- |
+| `<LIBRARY>` | Destination Steam **library root** (the folder containing `steamapps/`), e.g. `D:\SteamLibrary`. Must already be a Steam library. |
+| `--restart-steam` | Stop Steam for the duration of the move and restart it afterward. |
+
+The move relocates three things and reconciles Steam's bookkeeping:
+
+- the **game files** (`steamapps/common/<installdir>`),
+- the **Proton/Wine prefix** (`steamapps/compatdata/<appid>`), if the game has one,
+- the **`appmanifest_<appid>.acf`** (copied to the destination, removed from the source —
+  Steam derives a game's library from where its manifest lives), and
+- the **`apps` index in `libraryfolders.vdf`**, so the index isn't left pointing at the old
+  location (best-effort; Steam reconciles it from the manifests on next launch if the file
+  can't be edited cleanly).
+
+Progress is streamed with a `MOVING` percentage. Moves within the same drive use an instant
+`rename`; moves to another drive copy with byte-level progress. The **source is deleted only
+after the copy fully succeeds**, so an interrupted cross-drive move never loses the original.
+
+Steam rewrites these files on exit, so the move **refuses to run while Steam is open**
+unless you pass `--restart-steam`, which makes Aurelia stop Steam, move, then start it
+again. The destination must already be a registered Steam library (add a drive via Steam →
+Settings → Storage first); Aurelia warns if it isn't.
+
+```bash
+aurelia move 1245620 D:\SteamLibrary
+aurelia move 1245620 /mnt/games/SteamLibrary --restart-steam
 ```
 
 ### `enable` / `disable`
