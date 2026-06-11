@@ -127,8 +127,15 @@ enum Command {
     Branches { app_id: u32 },
     /// Switch a game to a different branch.
     SetBranch { app_id: u32, branch: String },
-    /// Show detailed information about a game (description, tags, categories, DLC).
-    Info { app_id: u32 },
+    /// Show detailed information about a game (description, release, reviews, DLC).
+    Info {
+        app_id: u32,
+        /// Also show storefront-only fields that have no CM-protocol source:
+        /// system requirements, Metacritic, website, store genres/categories and
+        /// SteamSpy user tags. This makes additional HTTPS storefront requests.
+        #[arg(long)]
+        extended: bool,
+    },
     /// List a game's DLC (app id and name only).
     Dlc { app_id: u32 },
     /// List depots for a game.
@@ -238,7 +245,7 @@ async fn run(cli: Cli) -> Result<()> {
         } => cmd_set_dlc(app_id, false, restart_steam, json).await,
         Command::Branches { app_id } => cmd_branches(app_id, json).await,
         Command::SetBranch { app_id, branch } => cmd_set_branch(app_id, branch, json).await,
-        Command::Info { app_id } => cmd_info(app_id, json).await,
+        Command::Info { app_id, extended } => cmd_info(app_id, extended, json).await,
         Command::Dlc { app_id } => cmd_dlc(app_id, json).await,
         Command::Depots { app_id } => cmd_depots(app_id, json).await,
         Command::Image {
@@ -930,7 +937,7 @@ async fn cmd_set_branch(app_id: u32, branch: String, json: bool) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_info(app_id: u32, json: bool) -> Result<()> {
+async fn cmd_info(app_id: u32, extended: bool, json: bool) -> Result<()> {
     // Metadata now comes from the StoreBrowse service over the Steam CM
     // connection (no HTTPS storefront API), so an authenticated session is needed.
     let client = authed_client().await?;
@@ -952,8 +959,31 @@ async fn cmd_info(app_id: u32, json: bool) -> Result<()> {
         .unwrap_or_default();
     let dlc = resolve_dlc_names_via_store(&client, &dlc_ids).await;
 
+    // Storefront-only fields (system requirements, Metacritic, website, store
+    // genres/categories, SteamSpy user tags). These have no CM-protocol source,
+    // so `--extended` fetches them from the public HTTPS storefront. Best-effort:
+    // any failure leaves them absent rather than failing the command.
+    let extended_info = if extended {
+        match reqwest::Client::builder().user_agent("aurelia/0.1").build() {
+            Ok(http) => {
+                let web = aurelia::store::fetch_app_details(&http, app_id)
+                    .await
+                    .ok()
+                    .flatten();
+                let tags = aurelia::store::fetch_tags(&http, app_id).await;
+                web.map(|d| (d, tags))
+            }
+            Err(e) => {
+                tracing::warn!("could not build HTTP client for --extended: {e:#}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     if json {
-        let value = serde_json::json!({
+        let mut value = serde_json::json!({
             "app_id": details.app_id,
             "name": details.name,
             "type": details.app_type,
@@ -972,6 +1002,19 @@ async fn cmd_info(app_id: u32, json: bool) -> Result<()> {
             "reviews": details.review_summary,
             "dlc": dlc.iter().map(|(id, name)| serde_json::json!({"app_id": id, "name": name})).collect::<Vec<_>>(),
         });
+        if let Some((web, tags)) = &extended_info {
+            value["extended"] = serde_json::json!({
+                "genres": web.genres,
+                "categories": web.categories,
+                "tags": tags,
+                "metacritic": web.metacritic,
+                "website": web.website,
+                "requirements": {
+                    "minimum": web.requirements_minimum,
+                    "recommended": web.requirements_recommended,
+                },
+            });
+        }
         println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(());
     }
@@ -1009,12 +1052,48 @@ async fn cmd_info(app_id: u32, json: bool) -> Result<()> {
     if let Some(reviews) = &details.review_summary {
         println!("Reviews    : {reviews}");
     }
+    if let Some((web, _)) = &extended_info {
+        if let Some(score) = web.metacritic {
+            println!("Metacritic : {score}");
+        }
+        if let Some(site) = &web.website {
+            println!("Website    : {site}");
+        }
+    }
 
     // --- Description ---
     if !details.short_description.is_empty() {
         println!("\nDescription:");
         for line in wrap_text(&details.short_description, 88) {
             println!("  {line}");
+        }
+    }
+
+    // --- Extended: tags / genres / categories / requirements ---
+    if let Some((web, tags)) = &extended_info {
+        if !tags.is_empty() {
+            println!(
+                "\nTags      : {}",
+                tags.iter().take(20).cloned().collect::<Vec<_>>().join(", ")
+            );
+        }
+        if !web.genres.is_empty() {
+            println!("Genres    : {}", web.genres.join(", "));
+        }
+        if !web.categories.is_empty() {
+            println!("Categories: {}", web.categories.join(", "));
+        }
+        if !web.requirements_minimum.is_empty() {
+            println!("\nMinimum requirements:");
+            for line in &web.requirements_minimum {
+                println!("  {line}");
+            }
+        }
+        if !web.requirements_recommended.is_empty() {
+            println!("\nRecommended requirements:");
+            for line in &web.requirements_recommended {
+                println!("  {line}");
+            }
         }
     }
 

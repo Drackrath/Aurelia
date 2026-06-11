@@ -39,6 +39,7 @@ async fn test_stage_validation_failure_launch_info() {
         local_manifest_ids: HashMap::new(),
         is_owned: true,
         is_family_shared: false,
+        online_required: None,
     });
     // ctx.launch_info is None, so ResolveProfileStage should fail
 
@@ -67,6 +68,7 @@ async fn test_stage_execution_failure_adhoc() {
         local_manifest_ids: HashMap::new(),
         is_owned: true,
         is_family_shared: false,
+        online_required: None,
     });
     ctx.launch_info = Some(aurelia::steam_client::LaunchInfo {
         app_id: 123,

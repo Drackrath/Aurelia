@@ -44,6 +44,7 @@ async fn test_batman_path_resolution() {
         local_manifest_ids: HashMap::new(),
         is_owned: true,
         is_family_shared: false,
+        online_required: None,
     };
 
     let launch_info = LaunchInfo {
