@@ -2347,6 +2347,13 @@ impl SteamClient {
             unlock_blocks = unlock_by_stat.len(),
             "achievements: parsed user-stats schema"
         );
+        if !stats_resp.schema().is_empty() && bit_index.is_empty() {
+            tracing::warn!(
+                appid,
+                schema_bytes = stats_resp.schema().len(),
+                "achievement schema present but parsed 0 entries; unlock state unavailable"
+            );
+        }
 
         let mut out = Vec::new();
         for ach in &def_resp.achievements {
@@ -4741,11 +4748,27 @@ fn achievement_icon_url(appid: u32, icon: &str) -> String {
 /// Schema shape: `<appid> { stats { <statid> { type "4" bits { <bit> { name
 /// "ACH_…" … } } } } }` — `type == 4` marks an achievement bitfield stat.
 fn parse_achievement_schema(schema: &[u8]) -> HashMap<String, (u32, u32)> {
-    let mut map = HashMap::new();
     if schema.is_empty() {
-        return map;
+        return HashMap::new();
     }
-    let Ok(vdf) = find_vdf_in_pics(schema) else {
+    // The binary-KV parser recurses one frame per nesting level; a malformed or
+    // misaligned blob can recurse on a run of zero bytes and overflow the stack.
+    // Parse on a thread with a generous stack so it can never crash the process.
+    let bytes = schema.to_vec();
+    std::thread::Builder::new()
+        .name("ach-schema-parse".to_string())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || parse_achievement_schema_inner(&bytes))
+        .ok()
+        .and_then(|handle| handle.join().ok())
+        .unwrap_or_default()
+}
+
+/// Inner schema parse. Parses the blob directly as binary KeyValues (no
+/// appinfo-style offset scanning, which could feed the parser misaligned data).
+fn parse_achievement_schema_inner(schema: &[u8]) -> HashMap<String, (u32, u32)> {
+    let mut map = HashMap::new();
+    let Ok(vdf) = steam_vdf_parser::parse_binary(schema) else {
         return map;
     };
     let Some(root) = vdf.as_obj() else {
