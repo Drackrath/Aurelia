@@ -13,7 +13,7 @@ use aurelia::library::{build_game_library, scan_installed_app_info};
 use aurelia::models::{
     DepotPlatform, DownloadProgress, DownloadProgressState, DownloadState, LibraryGame,
 };
-use aurelia::steam_client::{SharedApp, SteamClient};
+use aurelia::steam_client::{SharedApp, SteamClient, StoreAppInfo};
 
 /// Aurelia — a command-line Steam launcher (auth, library, install, launch).
 #[derive(Parser)]
@@ -171,7 +171,12 @@ enum Command {
     SetBranch { app_id: u32, branch: String },
     /// Show detailed information about a game (description, release, reviews, DLC).
     Info {
-        app_id: u32,
+        /// One or more app ids. Multiple ids are fetched over a *single* Steam
+        /// logon (one batched StoreBrowse call) — far cheaper than running `info`
+        /// once per id. With `--json`, one id yields an object and several yield an
+        /// array.
+        #[arg(required = true)]
+        app_ids: Vec<u32>,
         /// Also show storefront-only fields that have no CM-protocol source:
         /// system requirements, Metacritic, website, store genres/categories and
         /// SteamSpy user tags. This makes additional HTTPS storefront requests.
@@ -364,10 +369,10 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Branches { app_id } => cmd_branches(app_id, json).await,
         Command::SetBranch { app_id, branch } => cmd_set_branch(app_id, branch, json).await,
         Command::Info {
-            app_id,
+            app_ids,
             extended,
             no_cache,
-        } => cmd_info(app_id, extended, no_cache, json).await,
+        } => cmd_info(app_ids, extended, no_cache, json).await,
         Command::Dlc { app_id } => cmd_dlc(app_id, json).await,
         Command::Achievements { app_id, lang } => cmd_achievements(app_id, lang, json).await,
         Command::Depots { app_id } => cmd_depots(app_id, json).await,
@@ -1427,7 +1432,11 @@ async fn cmd_set_branch(app_id: u32, branch: String, json: bool) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_info(app_id: u32, extended: bool, no_cache: bool, json: bool) -> Result<()> {
+/// Storefront-only `--extended` data for one app: the HTTPS `AppDetails` plus the
+/// SteamSpy user tags.
+type ExtendedInfo = (aurelia::store::AppDetails, Vec<String>);
+
+async fn cmd_info(app_ids: Vec<u32>, extended: bool, no_cache: bool, json: bool) -> Result<()> {
     // The CM-sourced metadata (StoreBrowse + the DLC list) is effectively static
     // for hours, and drivers like Heroic call `info` repeatedly. Serve it from a
     // short-TTL disk cache so a repeat call avoids the Steam CM logon and the
@@ -1437,105 +1446,177 @@ async fn cmd_info(app_id: u32, extended: bool, no_cache: bool, json: bool) -> Re
     } else {
         info_cache_ttl()
     };
-    let (details, dlc) = match load_info_cache(app_id, ttl).await {
-        Some(cached) => (cached.details, cached.dlc),
-        None => {
-            // Metadata comes from the StoreBrowse service over the Steam CM
-            // connection (no HTTPS storefront API), so a session is needed here.
-            let client = authed_client().await?;
+    let single = app_ids.len() == 1;
 
-            let details = client
-                .fetch_store_apps(&[app_id])
-                .await?
-                .into_iter()
-                .find(|i| i.app_id == app_id)
-                .with_context(|| format!("no store information available for app {app_id}"))?;
+    // Partition the requested ids into cache hits and misses. Every miss is then
+    // fetched over a *single* Steam logon with one batched StoreBrowse call, so
+    // `info 1 2 3` costs one logon — not the three a caller spends running `info 1`,
+    // `info 2`, `info 3` separately.
+    let mut base: std::collections::HashMap<u32, (StoreAppInfo, Vec<(u32, Option<String>)>)> =
+        std::collections::HashMap::new();
+    let mut misses: Vec<u32> = Vec::new();
+    for &id in &app_ids {
+        match load_info_cache(id, ttl).await {
+            Some(cached) => {
+                base.insert(id, (cached.details, cached.dlc));
+            }
+            None => misses.push(id),
+        }
+    }
+
+    if !misses.is_empty() {
+        // Metadata comes from the StoreBrowse service over the Steam CM connection
+        // (no HTTPS storefront API), so a session is needed here.
+        let client = authed_client().await?;
+        let store = client
+            .fetch_store_apps(&misses)
+            .await
+            .context("failed to fetch store information")?;
+        for &id in &misses {
+            let Some(details) = store.iter().find(|i| i.app_id == id).cloned() else {
+                // A single-id caller expects a hard error for an unknown app; in a
+                // batch we skip it (with a warning) so one delisted id doesn't sink
+                // the rest.
+                if single {
+                    bail!("no store information available for app {id}");
+                }
+                tracing::warn!("no store information available for app {id}; skipping");
+                continue;
+            };
 
             // The DLC id list isn't part of StoreBrowse's per-item data; read it
             // from PICS appinfo (`common.dlc`), then resolve the DLC names in a
             // single batched StoreBrowse call.
             let dlc_ids = client
-                .get_extended_app_info(app_id)
+                .get_extended_app_info(id)
                 .await
                 .map(|e| e.dlcs)
                 .unwrap_or_default();
             let dlc = resolve_dlc_names_via_store(&client, &dlc_ids).await;
 
             // Best-effort cache write — a failure here must not fail the command.
-            if let Err(e) = save_info_cache(app_id, &details, &dlc).await {
-                tracing::warn!("could not cache info for app {app_id}: {e:#}");
+            if let Err(e) = save_info_cache(id, &details, &dlc).await {
+                tracing::warn!("could not cache info for app {id}: {e:#}");
             }
-            (details, dlc)
+            base.insert(id, (details, dlc));
         }
-    };
+    }
 
     // Storefront-only fields (system requirements, Metacritic, website, store
-    // genres/categories, SteamSpy user tags). These have no CM-protocol source,
-    // so `--extended` fetches them from the public HTTPS storefront. Best-effort:
-    // any failure leaves them absent rather than failing the command.
-    let extended_info = if extended {
+    // genres/categories, SteamSpy user tags). These have no CM-protocol source, so
+    // `--extended` fetches them from the public HTTPS storefront, reusing one HTTP
+    // client across ids. Best-effort: any failure leaves them absent.
+    let mut extended_by_id: std::collections::HashMap<u32, ExtendedInfo> =
+        std::collections::HashMap::new();
+    if extended {
         match reqwest::Client::builder().user_agent("aurelia/0.1").build() {
             Ok(http) => {
-                let web = aurelia::store::fetch_app_details(&http, app_id)
-                    .await
-                    .ok()
-                    .flatten();
-                let tags = aurelia::store::fetch_tags(&http, app_id).await;
-                web.map(|d| (d, tags))
+                for &id in &app_ids {
+                    if !base.contains_key(&id) {
+                        continue;
+                    }
+                    let web = aurelia::store::fetch_app_details(&http, id).await.ok().flatten();
+                    let tags = aurelia::store::fetch_tags(&http, id).await;
+                    if let Some(d) = web {
+                        extended_by_id.insert(id, (d, tags));
+                    }
+                }
             }
-            Err(e) => {
-                tracing::warn!("could not build HTTP client for --extended: {e:#}");
-                None
-            }
+            Err(e) => tracing::warn!("could not build HTTP client for --extended: {e:#}"),
         }
-    } else {
-        None
-    };
+    }
 
+    // --- Render in the order the ids were requested ---
     if json {
-        let mut value = serde_json::json!({
-            "app_id": details.app_id,
-            "name": details.name,
-            "type": details.app_type,
-            "is_free": details.is_free,
-            "early_access": details.is_early_access,
-            "description": details.short_description,
-            "full_description": details.full_description,
-            "developers": details.developers,
-            "publishers": details.publishers,
-            "franchises": details.franchises,
-            "release_date": details.release_date,
-            "coming_soon": details.coming_soon,
-            "price": details.price,
-            "discount_pct": details.discount_pct,
-            "platforms": details.platforms,
-            "reviews": details.review_summary,
-            "assets": {
-                "header": details.assets.header,
-                "capsule": details.assets.capsule,
-                "hero": details.assets.hero,
-                "background": details.assets.background,
-                "logo": details.assets.logo,
-            },
-            "dlc": dlc.iter().map(|(id, name)| serde_json::json!({"app_id": id, "name": name})).collect::<Vec<_>>(),
-        });
-        if let Some((web, tags)) = &extended_info {
-            value["extended"] = serde_json::json!({
-                "genres": web.genres,
-                "categories": web.categories,
-                "tags": tags,
-                "metacritic": web.metacritic,
-                "website": web.website,
-                "requirements": {
-                    "minimum": web.requirements_minimum,
-                    "recommended": web.requirements_recommended,
-                },
-            });
+        let items: Vec<serde_json::Value> = app_ids
+            .iter()
+            .filter_map(|id| {
+                base.get(id)
+                    .map(|(details, dlc)| info_json_value(details, dlc, extended_by_id.get(id)))
+            })
+            .collect();
+        // One id keeps the original single-object shape (backward compatible);
+        // several ids produce an array.
+        if single {
+            match items.into_iter().next() {
+                Some(v) => println!("{}", serde_json::to_string_pretty(&v)?),
+                None => bail!("no store information available for app {}", app_ids[0]),
+            }
+        } else {
+            println!("{}", serde_json::to_string_pretty(&serde_json::Value::Array(items))?);
         }
-        println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(());
     }
 
+    let mut first = true;
+    for id in &app_ids {
+        let Some((details, dlc)) = base.get(id) else {
+            continue;
+        };
+        if !first {
+            println!("\n{}", "─".repeat(60));
+        }
+        first = false;
+        print_info_human(details, dlc, extended_by_id.get(id));
+    }
+    Ok(())
+}
+
+/// Build the `--json` object for one app from its CM metadata, DLC list and
+/// optional `--extended` storefront data.
+fn info_json_value(
+    details: &StoreAppInfo,
+    dlc: &[(u32, Option<String>)],
+    extended_info: Option<&ExtendedInfo>,
+) -> serde_json::Value {
+    let mut value = serde_json::json!({
+        "app_id": details.app_id,
+        "name": details.name,
+        "type": details.app_type,
+        "is_free": details.is_free,
+        "early_access": details.is_early_access,
+        "description": details.short_description,
+        "full_description": details.full_description,
+        "developers": details.developers,
+        "publishers": details.publishers,
+        "franchises": details.franchises,
+        "release_date": details.release_date,
+        "coming_soon": details.coming_soon,
+        "price": details.price,
+        "discount_pct": details.discount_pct,
+        "platforms": details.platforms,
+        "reviews": details.review_summary,
+        "assets": {
+            "header": details.assets.header,
+            "capsule": details.assets.capsule,
+            "hero": details.assets.hero,
+            "background": details.assets.background,
+            "logo": details.assets.logo,
+        },
+        "dlc": dlc.iter().map(|(id, name)| serde_json::json!({"app_id": id, "name": name})).collect::<Vec<_>>(),
+    });
+    if let Some((web, tags)) = extended_info {
+        value["extended"] = serde_json::json!({
+            "genres": web.genres,
+            "categories": web.categories,
+            "tags": tags,
+            "metacritic": web.metacritic,
+            "website": web.website,
+            "requirements": {
+                "minimum": web.requirements_minimum,
+                "recommended": web.requirements_recommended,
+            },
+        });
+    }
+    value
+}
+
+/// Render the human-readable `info` block for one app to stdout.
+fn print_info_human(
+    details: &StoreAppInfo,
+    dlc: &[(u32, Option<String>)],
+    extended_info: Option<&ExtendedInfo>,
+) {
     // --- Header ---
     let ea = if details.is_early_access { " [Early Access]" } else { "" };
     println!("{}  (app {}){ea}", details.name, details.app_id);
@@ -1569,7 +1650,7 @@ async fn cmd_info(app_id: u32, extended: bool, no_cache: bool, json: bool) -> Re
     if let Some(reviews) = &details.review_summary {
         println!("Reviews    : {reviews}");
     }
-    if let Some((web, _)) = &extended_info {
+    if let Some((web, _)) = extended_info {
         if let Some(score) = web.metacritic {
             println!("Metacritic : {score}");
         }
@@ -1587,7 +1668,7 @@ async fn cmd_info(app_id: u32, extended: bool, no_cache: bool, json: bool) -> Re
     }
 
     // --- Extended: tags / genres / categories / requirements ---
-    if let Some((web, tags)) = &extended_info {
+    if let Some((web, tags)) = extended_info {
         if !tags.is_empty() {
             println!(
                 "\nTags      : {}",
@@ -1638,13 +1719,11 @@ async fn cmd_info(app_id: u32, extended: bool, no_cache: bool, json: bool) -> Re
     // --- DLC ---
     if !dlc.is_empty() {
         println!("\nDLC ({}):", dlc.len());
-        for (id, name) in &dlc {
+        for (id, name) in dlc {
             let name = name.clone().unwrap_or_else(|| "(name unavailable)".to_string());
             println!("  {id:>9}  {name}");
         }
     }
-
-    Ok(())
 }
 
 /// Resolve DLC names via a single batched `StoreBrowse.GetItems` call (over the

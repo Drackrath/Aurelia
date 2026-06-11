@@ -234,16 +234,19 @@ count, and VAC ban count.
 
 ### `info`
 
-Show detailed information about a game. Requires an active session — the metadata is
-fetched over Steam's CM connection (the `StoreBrowse` service), not the HTTPS storefront.
+Show detailed information about one or more games. The metadata is fetched over Steam's
+CM connection (the `StoreBrowse` service), not the HTTPS storefront. A session is required
+**only on a cache miss** — see [Caching](#caching) below; a cached lookup works offline.
 
 ```
-aurelia info <APP_ID> [--extended] [--json]
+aurelia info <APP_ID>... [--extended] [--no-cache] [--json]
 ```
 
 | Option | Description |
 | --- | --- |
+| `<APP_ID>...` | One or more app ids. Multiple ids are fetched together (see below). |
 | `--extended` | Also show storefront-only fields (see below). Makes additional HTTPS storefront requests. |
+| `--no-cache` | Bypass the local metadata cache and fetch fresh data from Steam. |
 | `--json` | Emit JSON instead of formatted text. |
 
 By default `info` shows what the `StoreBrowse` protocol provides directly: type,
@@ -266,14 +269,43 @@ plus SteamSpy):
 - Store **genres** and **categories** (resolved to names).
 - Community **user tags** (from SteamSpy).
 
-```bash
-aurelia info 690830              # protocol-native fields
-aurelia info 690830 --extended   # + requirements, Metacritic, tags, genres, categories
-aurelia info 690830 --json
-```
+#### Multiple app ids (one logon per batch)
+
+`info` accepts several app ids at once and resolves them over a **single** Steam logon
+with **one batched `StoreBrowse` call**, so `aurelia info <id1> <id2> <id3>` costs one
+connection — far cheaper than running `info` once per id. (DLC-name lookups still happen
+per game.) An id with no store data is skipped with a warning rather than failing the whole
+command; a single unknown id still errors.
+
+#### Caching
+
+To avoid a Steam logon on every call — Steam throttles repeated logons, and front-ends
+like Heroic poll `info` often — the CM-sourced metadata (the `StoreBrowse` fields plus the
+DLC list) is cached to disk per app under `info_cache/<APP_ID>.json` in the config
+directory. A cache **hit** serves the result with **no network access at all** (no logon,
+no `StoreBrowse`/PICS round-trip), so it also works offline.
+
+- The cache **time-to-live defaults to 6 hours**. Override it (in seconds) with the
+  `AURELIA_INFO_CACHE_TTL` environment variable; set it to `0` to disable the cache.
+- Pass `--no-cache` to ignore any cached copy and refresh from Steam (the fresh result is
+  then written back to the cache).
+- `--extended` storefront/SteamSpy fields are **not** cached — they are always fetched live
+  when `--extended` is given, though a cache hit still spares the CM logon for the base data.
+
+#### JSON output shape
 
 With `--json`, the extended fields (when requested) are grouped under an `"extended"` key so
-the default object shape is unchanged.
+the default object shape is unchanged. **One** id produces a single JSON **object** (as
+before); **several** ids produce a JSON **array** of those objects, in the order requested.
+
+```bash
+aurelia info 690830                      # protocol-native fields
+aurelia info 690830 --extended           # + requirements, Metacritic, tags, genres, categories
+aurelia info 690830 --json               # single object
+aurelia info 690830 570 730 --json       # array of three objects, one logon
+aurelia info 690830 --no-cache           # force a fresh fetch
+AURELIA_INFO_CACHE_TTL=0 aurelia info 690830   # bypass the cache for this run
+```
 
 ### `dlc`
 
@@ -537,6 +569,10 @@ Checks that an `appmanifest` exists and that the resolved install directory is p
 `--json` output is `{ "app_id", "available", "install_path" }` (`install_path` is `null` when
 nothing is registered).
 
+This is a **local, offline** check: it reads only on-disk Steam files and **never logs on to
+Steam** (no session required), so a front-end can call it freely per game without
+contributing to Steam logon rate limits.
+
 ```bash
 aurelia available 1245620
 aurelia available 1245620 --json
@@ -742,6 +778,7 @@ Aurelia stores its data under the user config directory:
 | --- | --- |
 | `session.json` | Persisted login session (refresh token). |
 | `images/` | Cached cover/header artwork (`<APP_ID>_library.jpg`). |
+| `info_cache/` | Cached `info` metadata (`<APP_ID>.json`); TTL via `AURELIA_INFO_CACHE_TTL` (default 6h). |
 | `logs/` | Per-launch event logs. |
 
 Game installs live in your Steam libraries (`steamapps/common/...`), which Aurelia
