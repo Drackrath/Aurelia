@@ -45,7 +45,11 @@ use steam_vent_proto::steammessages_familygroups_steamclient::{
     CFamilyGroups_GetSharedLibraryApps_Request, CFamilyGroups_GetSharedLibraryApps_Response,
 };
 use steam_vent_proto::steammessages_player_steamclient::{
+    CPlayer_GetGameAchievements_Request, CPlayer_GetGameAchievements_Response,
     CPlayer_GetOwnedGames_Request, CPlayer_GetOwnedGames_Response,
+};
+use steam_vent_proto::steammessages_clientserver_userstats::{
+    CMsgClientGetUserStats, CMsgClientGetUserStatsResponse,
 };
 use steam_vent_proto::steammessages_storebrowse_steamclient::{
     CStoreBrowse_GetItems_Request, CStoreBrowse_GetItems_Response, EStoreAppType,
@@ -236,6 +240,32 @@ pub struct InstallSizeEstimate {
     pub download_size: u64,
     pub disk_size: u64,
     pub depot_count: u64,
+}
+
+/// A single Steam achievement for a game, combining the game's achievement
+/// definition (name/description/icons/global rarity) with the logged-in user's
+/// unlock state. Shaped to match how launchers (Heroic/Legendary) report
+/// achievements.
+#[derive(Debug, Clone, Default)]
+pub struct GameAchievement {
+    /// Stable API/internal name (e.g. `ACH_WIN_ONE_GAME`).
+    pub api_name: String,
+    /// Localized display name.
+    pub name: String,
+    /// Localized description (may be empty for hidden achievements).
+    pub description: String,
+    /// Whether the achievement is hidden until unlocked.
+    pub hidden: bool,
+    /// Full CDN URL of the unlocked (color) icon.
+    pub icon_unlocked: String,
+    /// Full CDN URL of the locked (gray) icon.
+    pub icon_locked: String,
+    /// Global unlock rate across all players, as a percentage (rarity).
+    pub global_percent: f32,
+    /// Whether the logged-in user has unlocked it.
+    pub unlocked: bool,
+    /// Unix time (seconds) the user unlocked it, if unlocked.
+    pub unlock_time: Option<u32>,
 }
 
 /// One entry from a game's PICS `config/launch` table — a way Steam knows to
@@ -2257,6 +2287,98 @@ impl SteamClient {
             (_, "0") => std::cmp::Ordering::Greater,
             _ => a.id.cmp(&b.id),
         });
+        Ok(out)
+    }
+
+    /// Fetch the logged-in user's achievements for a game, combining the game's
+    /// achievement definitions + global rarity (`Player.GetGameAchievements`) with
+    /// the user's per-achievement unlock state and time (`ClientGetUserStats`,
+    /// whose binary-KV schema maps each achievement to its stat/bit). Achievements
+    /// the user hasn't unlocked are returned with `unlocked = false`.
+    pub async fn fetch_achievements(
+        &self,
+        appid: u32,
+        language: &str,
+    ) -> Result<Vec<GameAchievement>> {
+        let connection = self
+            .connection
+            .as_ref()
+            .context("steam connection not initialized")?;
+        let steam_id = self
+            .steam_id()
+            .context("not logged in — achievements need an authenticated session")?;
+
+        // 1. Definitions + global rarity (localized).
+        let mut def_req = CPlayer_GetGameAchievements_Request::new();
+        def_req.set_appid(appid);
+        def_req.set_language(language.to_string());
+        let def_resp: CPlayer_GetGameAchievements_Response = connection
+            .service_method(def_req)
+            .await
+            .context("Player.GetGameAchievements failed")?;
+
+        // 2. The user's unlock state. A user who never launched the game returns no
+        //    blocks (everything stays locked) — not an error.
+        let mut stats_req = CMsgClientGetUserStats::new();
+        stats_req.set_game_id(u64::from(appid));
+        stats_req.set_steam_id_for_user(steam_id);
+        let stats_resp: CMsgClientGetUserStatsResponse = connection
+            .job(stats_req)
+            .await
+            .context("ClientGetUserStats failed")?;
+
+        // api-name -> (stat_id, bit), parsed from the binary-KV schema.
+        let bit_index = parse_achievement_schema(stats_resp.schema());
+        // Case-insensitive fallback (some games' definition vs schema names differ in case).
+        let bit_index_ci: HashMap<String, (u32, u32)> = bit_index
+            .iter()
+            .map(|(k, v)| (k.to_ascii_lowercase(), *v))
+            .collect();
+        // stat_id -> unlock_time vector (indexed by bit).
+        let mut unlock_by_stat: HashMap<u32, &Vec<u32>> = HashMap::new();
+        for block in &stats_resp.achievement_blocks {
+            unlock_by_stat.insert(block.achievement_id(), &block.unlock_time);
+        }
+        tracing::debug!(
+            appid,
+            eresult = stats_resp.eresult(),
+            schema_bytes = stats_resp.schema().len(),
+            schema_achievements = bit_index.len(),
+            unlock_blocks = unlock_by_stat.len(),
+            "achievements: parsed user-stats schema"
+        );
+
+        let mut out = Vec::new();
+        for ach in &def_resp.achievements {
+            let api = ach.internal_name().to_string();
+            let mapped = bit_index
+                .get(&api)
+                .or_else(|| bit_index_ci.get(&api.to_ascii_lowercase()))
+                .copied();
+            let (unlocked, unlock_time) = match mapped {
+                Some((stat_id, bit)) => {
+                    let t = unlock_by_stat
+                        .get(&stat_id)
+                        .and_then(|times| times.get(bit as usize))
+                        .copied()
+                        .unwrap_or(0);
+                    if t > 0 { (true, Some(t)) } else { (false, None) }
+                }
+                None => (false, None),
+            };
+
+            out.push(GameAchievement {
+                name: ach.localized_name().to_string(),
+                description: ach.localized_desc().to_string(),
+                hidden: ach.hidden(),
+                icon_unlocked: achievement_icon_url(appid, ach.icon()),
+                icon_locked: achievement_icon_url(appid, ach.icon_gray()),
+                global_percent: ach.player_percent_unlocked().parse::<f32>().unwrap_or(0.0),
+                unlocked,
+                unlock_time,
+                api_name: api,
+            });
+        }
         Ok(out)
     }
 
@@ -4598,6 +4720,80 @@ async fn update_libraryfolders_for(from_lib: &Path, to_lib: &Path, appid: u32, i
     }
 }
 
+/// Build the full Steam Community CDN URL for an achievement icon hash. Returns
+/// it unchanged if it's already a URL, and empty for an empty hash.
+fn achievement_icon_url(appid: u32, icon: &str) -> String {
+    if icon.is_empty() {
+        String::new()
+    } else if icon.starts_with("http") {
+        icon.to_string()
+    } else {
+        format!(
+            "https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/{appid}/{icon}"
+        )
+    }
+}
+
+/// Parse the binary-KV achievement schema from a `ClientGetUserStats` response
+/// into a map of achievement api-name → `(stat_id, bit)`, so the user's unlock
+/// blocks (keyed by stat id, indexed by bit) can be matched to each achievement.
+///
+/// Schema shape: `<appid> { stats { <statid> { type "4" bits { <bit> { name
+/// "ACH_…" … } } } } }` — `type == 4` marks an achievement bitfield stat.
+fn parse_achievement_schema(schema: &[u8]) -> HashMap<String, (u32, u32)> {
+    let mut map = HashMap::new();
+    if schema.is_empty() {
+        return map;
+    }
+    let Ok(vdf) = find_vdf_in_pics(schema) else {
+        return map;
+    };
+    let Some(root) = vdf.as_obj() else {
+        return map;
+    };
+    // `stats` is directly under the appid-keyed root (or one level deeper).
+    let stats = root
+        .get("stats")
+        .and_then(|v| v.as_obj())
+        .or_else(|| {
+            root.values()
+                .next()
+                .and_then(|v| v.as_obj())
+                .and_then(|o| o.get("stats"))
+                .and_then(|v| v.as_obj())
+        });
+    let Some(stats) = stats else {
+        return map;
+    };
+
+    for (stat_key, stat_val) in stats.iter() {
+        let Ok(stat_id) = stat_key.parse::<u32>() else {
+            continue;
+        };
+        let Some(stat_obj) = stat_val.as_obj() else {
+            continue;
+        };
+        // Achievement-bitfield stats are exactly those carrying a `bits` table.
+        // (Don't filter on `type`: in binary KV it's an integer, not "4".)
+        let Some(bits) = stat_obj.get("bits").and_then(|v| v.as_obj()) else {
+            continue;
+        };
+        for (bit_key, bit_val) in bits.iter() {
+            let Ok(bit) = bit_key.parse::<u32>() else {
+                continue;
+            };
+            if let Some(name) = bit_val
+                .as_obj()
+                .and_then(|o| o.get("name"))
+                .and_then(|v| v.as_str())
+            {
+                map.insert(name.to_string(), (stat_id, bit));
+            }
+        }
+    }
+    map
+}
+
 pub fn should_keep_depot(oslist: Option<&str>, target: DepotPlatform) -> bool {
     match target {
         DepotPlatform::Windows => match oslist {
@@ -5234,6 +5430,20 @@ mod tests {
         assert_eq!(unix_to_ymd(1_009_843_200), "2002-01-01"); // exact midnight UTC
         // Leap day round-trips correctly.
         assert_eq!(unix_to_ymd(1_582_934_400), "2020-02-29");
+    }
+
+    #[test]
+    fn achievement_icon_urls() {
+        assert_eq!(achievement_icon_url(440, ""), "");
+        assert_eq!(
+            achievement_icon_url(440, "abc123.jpg"),
+            "https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/440/abc123.jpg"
+        );
+        // An already-absolute URL is passed through unchanged.
+        assert_eq!(
+            achievement_icon_url(440, "https://example.com/i.png"),
+            "https://example.com/i.png"
+        );
     }
 
     #[test]

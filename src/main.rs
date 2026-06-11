@@ -179,6 +179,13 @@ enum Command {
     },
     /// List a game's DLC (app id and name only).
     Dlc { app_id: u32 },
+    /// Show the logged-in user's achievements for a game (with unlock state).
+    Achievements {
+        app_id: u32,
+        /// Language for achievement names/descriptions (Steam API language name).
+        #[arg(short, long, default_value = "english")]
+        lang: String,
+    },
     /// List depots for a game.
     Depots { app_id: u32 },
     /// List a game's launch options (executables/arguments Steam can start it with).
@@ -333,6 +340,7 @@ async fn run(cli: Cli) -> Result<()> {
         Command::SetBranch { app_id, branch } => cmd_set_branch(app_id, branch, json).await,
         Command::Info { app_id, extended } => cmd_info(app_id, extended, json).await,
         Command::Dlc { app_id } => cmd_dlc(app_id, json).await,
+        Command::Achievements { app_id, lang } => cmd_achievements(app_id, lang, json).await,
         Command::Depots { app_id } => cmd_depots(app_id, json).await,
         Command::LaunchOptions { app_id } => cmd_launch_options(app_id, json).await,
         Command::Image {
@@ -1629,6 +1637,64 @@ async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
         };
         println!("{id:>9}  {owned:<5}  {status:<13}  {name}");
     }
+    Ok(())
+}
+
+async fn cmd_achievements(app_id: u32, lang: String, json: bool) -> Result<()> {
+    let client = authed_client().await?;
+    let achievements = client
+        .fetch_achievements(app_id, &lang)
+        .await
+        .with_context(|| format!("failed to fetch achievements for app {app_id}"))?;
+    let unlocked = achievements.iter().filter(|a| a.unlocked).count();
+
+    if json {
+        let arr: Vec<_> = achievements
+            .iter()
+            .map(|a| {
+                serde_json::json!({
+                    "achievement_id": a.api_name,
+                    "achievement_key": a.api_name,
+                    "name": a.name,
+                    "description": a.description,
+                    "visible": !a.hidden,
+                    "image_url_unlocked": a.icon_unlocked,
+                    "image_url_locked": a.icon_locked,
+                    "rarity": a.global_percent,
+                    "unlocked": a.unlocked,
+                    "unlock_time": a.unlock_time,
+                    "date_unlocked": a.unlock_time.map(|t| format_unix_timestamp(u64::from(t))),
+                })
+            })
+            .collect();
+        print_json(&serde_json::json!({
+            "app_id": app_id,
+            "unlocked": unlocked,
+            "total": achievements.len(),
+            "achievements": arr,
+        }));
+        return Ok(());
+    }
+
+    if achievements.is_empty() {
+        println!("No achievements for app {app_id}.");
+        return Ok(());
+    }
+    println!("{:<2}  {:>6}  {:<19}  NAME", "", "RARITY", "UNLOCKED");
+    for a in &achievements {
+        let mark = if a.unlocked { "✓" } else { " " };
+        let when = a
+            .unlock_time
+            .map(|t| format_unix_timestamp(u64::from(t)))
+            .unwrap_or_else(|| "-".to_string());
+        let name = if a.hidden && !a.unlocked {
+            format!("{} (hidden)", a.name)
+        } else {
+            a.name.clone()
+        };
+        println!("{mark:<2}  {:>5.1}%  {when:<19}  {name}", a.global_percent);
+    }
+    println!("\n{unlocked}/{} unlocked.", achievements.len());
     Ok(())
 }
 

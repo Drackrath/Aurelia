@@ -20,6 +20,7 @@ of a specific command. `--version` prints the build version.
   - [`list`](#list)
   - [`account`](#account)
   - [`info`](#info)
+  - [`achievements`](#achievements)
   - [`image`](#image)
 - [Installation & maintenance](#installation--maintenance)
   - [`install`](#install)
@@ -305,6 +306,35 @@ install/enable state to be meaningful; otherwise every DLC reads as `not-install
 ```bash
 aurelia dlc 690830
 aurelia dlc 690830 --json
+```
+
+### `achievements`
+
+Show the logged-in user's achievements for a game, with per-achievement unlock state.
+Requires an active session.
+
+```
+aurelia achievements <APP_ID> [-l <LANG>] [--json]
+```
+
+| Option | Description |
+| --- | --- |
+| `-l, --lang <LANG>` | Language for names/descriptions (Steam API language name, e.g. `english`, `german`). Default `english`. |
+| `--json` | Emit JSON instead of a table. |
+
+Combines the game's achievement **definitions** and **global rarity** (`Player.GetGameAchievements`)
+with your **unlock state and time** (`ClientGetUserStats`) — all over the Steam CM connection.
+The text view marks unlocked achievements (`✓`), the global unlock rate, and the unlock date;
+hidden-and-still-locked ones are tagged `(hidden)`. The `--json` output is
+`{ "app_id", "unlocked", "total", "achievements": [ { achievement_id, achievement_key, name,
+description, visible, image_url_unlocked, image_url_locked, rarity, unlocked, unlock_time,
+date_unlocked } ] }` (rarity is the global unlock percentage; `date_unlocked`/`unlock_time` are
+`null` when locked). A game you've never launched still lists every achievement, all locked.
+
+```bash
+aurelia achievements 620
+aurelia achievements 620 --lang german
+aurelia achievements 620 --json
 ```
 
 ### `image`

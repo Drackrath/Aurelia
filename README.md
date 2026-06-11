@@ -136,6 +136,7 @@ aurelia list --online                # add an ONLINE column (needs-connection he
 aurelia info 690830                  # game details (description, release, reviews, DLC)
 aurelia info 690830 --extended       # + requirements, Metacritic, tags, genres, categories
 aurelia dlc 690830                   # list a game's DLC with ownership/install status
+aurelia achievements 620             # your achievements for a game (unlock state + rarity)
 aurelia image 1245620                # fetch cover art to the cache (prints the path)
 aurelia image 1245620 -o cover.jpg   # save artwork to a specific file
 
