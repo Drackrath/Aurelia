@@ -226,6 +226,88 @@ pub async fn load_library_cache() -> Result<Vec<OwnedGame>> {
     Ok(cached)
 }
 
+/// Default lifetime of a cached `aurelia info` record before it is re-fetched
+/// from Steam. Store metadata is effectively static for hours, while drivers like
+/// Heroic call `info` repeatedly; caching it collapses those into one Steam CM
+/// logon + StoreBrowse/PICS round-trip per app per window. Override (in seconds)
+/// with `AURELIA_INFO_CACHE_TTL` — `0` disables the cache.
+const INFO_CACHE_DEFAULT_TTL_SECS: u64 = 6 * 60 * 60;
+
+/// The configured `info` cache TTL ([`INFO_CACHE_DEFAULT_TTL_SECS`] unless
+/// `AURELIA_INFO_CACHE_TTL` overrides it).
+pub fn info_cache_ttl() -> std::time::Duration {
+    let secs = std::env::var("AURELIA_INFO_CACHE_TTL")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(INFO_CACHE_DEFAULT_TTL_SECS);
+    std::time::Duration::from_secs(secs)
+}
+
+/// A cached `aurelia info` result: the StoreBrowse metadata plus resolved DLC
+/// `(app_id, name)` pairs, stamped with the unix time it was fetched so a reader
+/// can honour a TTL.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CachedAppInfo {
+    pub fetched_at: u64,
+    pub details: crate::steam_client::StoreAppInfo,
+    pub dlc: Vec<(u32, Option<String>)>,
+}
+
+fn info_cache_dir() -> Result<PathBuf> {
+    Ok(data_dir()?.join("info_cache"))
+}
+
+/// Per-app cache file. One file per app id (rather than a shared map) so
+/// concurrent Aurelia invocations for different apps never clobber each other.
+fn info_cache_path(app_id: u32) -> Result<PathBuf> {
+    Ok(info_cache_dir()?.join(format!("{app_id}.json")))
+}
+
+fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Load a cached `info` record for `app_id` if one exists and is still within
+/// `ttl`. Returns `None` on a miss, a stale entry, or any read/parse error, so the
+/// caller falls through to a fresh fetch. A zero `ttl` always misses.
+pub async fn load_info_cache(app_id: u32, ttl: std::time::Duration) -> Option<CachedAppInfo> {
+    if ttl.is_zero() {
+        return None;
+    }
+    let path = info_cache_path(app_id).ok()?;
+    let raw = fs::read_to_string(&path).await.ok()?;
+    let cached: CachedAppInfo = serde_json::from_str(&raw).ok()?;
+    let age = now_unix().saturating_sub(cached.fetched_at);
+    (age <= ttl.as_secs()).then_some(cached)
+}
+
+/// Persist an `info` record for `app_id`, stamped with the current time.
+pub async fn save_info_cache(
+    app_id: u32,
+    details: &crate::steam_client::StoreAppInfo,
+    dlc: &[(u32, Option<String>)],
+) -> Result<()> {
+    let dir = info_cache_dir()?;
+    fs::create_dir_all(&dir)
+        .await
+        .with_context(|| format!("failed creating {}", dir.display()))?;
+
+    let record = CachedAppInfo {
+        fetched_at: now_unix(),
+        details: details.clone(),
+        dlc: dlc.to_vec(),
+    };
+    let path = info_cache_path(app_id)?;
+    let body = serde_json::to_string_pretty(&record)?;
+    fs::write(&path, body)
+        .await
+        .with_context(|| format!("failed writing {}", path.display()))?;
+    Ok(())
+}
+
 pub async fn load_user_configs() -> Result<UserConfigStore> {
     let path = config_dir()?.join("user_apps.json");
     if !path.exists() {

@@ -6,7 +6,8 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 
 use aurelia::config::{
-    load_launcher_config, load_library_cache, load_session, load_user_configs,
+    info_cache_ttl, load_info_cache, load_launcher_config, load_library_cache, load_session,
+    load_user_configs, save_info_cache,
 };
 use aurelia::library::{build_game_library, scan_installed_app_info};
 use aurelia::models::{
@@ -176,6 +177,11 @@ enum Command {
         /// SteamSpy user tags. This makes additional HTTPS storefront requests.
         #[arg(long)]
         extended: bool,
+        /// Bypass the local metadata cache and fetch fresh data from Steam.
+        /// By default `info` serves cached store metadata (TTL via
+        /// `AURELIA_INFO_CACHE_TTL`, default 6h) to avoid a Steam logon per call.
+        #[arg(long)]
+        no_cache: bool,
     },
     /// List a game's DLC (app id and name only).
     Dlc { app_id: u32 },
@@ -357,7 +363,11 @@ async fn run(cli: Cli) -> Result<()> {
         } => cmd_set_dlc(app_id, false, restart_steam, json).await,
         Command::Branches { app_id } => cmd_branches(app_id, json).await,
         Command::SetBranch { app_id, branch } => cmd_set_branch(app_id, branch, json).await,
-        Command::Info { app_id, extended } => cmd_info(app_id, extended, json).await,
+        Command::Info {
+            app_id,
+            extended,
+            no_cache,
+        } => cmd_info(app_id, extended, no_cache, json).await,
         Command::Dlc { app_id } => cmd_dlc(app_id, json).await,
         Command::Achievements { app_id, lang } => cmd_achievements(app_id, lang, json).await,
         Command::Depots { app_id } => cmd_depots(app_id, json).await,
@@ -1189,7 +1199,12 @@ async fn cmd_import(
 }
 
 async fn cmd_available(app_id: u32, json: bool) -> Result<()> {
-    let client = restored_client().await?;
+    // `is_game_available` only reads the local appmanifest and checks the files on
+    // disk, so we deliberately build a client *without* restoring the Steam session.
+    // A driver like Heroic calls `available` per game on every refresh; restoring
+    // the session here would mean one Steam CM logon per call (and Steam throttles
+    // repeated logons hard) for data we never fetch over the wire.
+    let client = SteamClient::new()?;
     let (available, install_path) = client.is_game_available(app_id).await;
     if json {
         print_json(&serde_json::json!({
@@ -1412,27 +1427,47 @@ async fn cmd_set_branch(app_id: u32, branch: String, json: bool) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_info(app_id: u32, extended: bool, json: bool) -> Result<()> {
-    // Metadata now comes from the StoreBrowse service over the Steam CM
-    // connection (no HTTPS storefront API), so an authenticated session is needed.
-    let client = authed_client().await?;
+async fn cmd_info(app_id: u32, extended: bool, no_cache: bool, json: bool) -> Result<()> {
+    // The CM-sourced metadata (StoreBrowse + the DLC list) is effectively static
+    // for hours, and drivers like Heroic call `info` repeatedly. Serve it from a
+    // short-TTL disk cache so a repeat call avoids the Steam CM logon and the
+    // StoreBrowse/PICS round-trips entirely. `--no-cache` forces a fresh fetch.
+    let ttl = if no_cache {
+        std::time::Duration::ZERO
+    } else {
+        info_cache_ttl()
+    };
+    let (details, dlc) = match load_info_cache(app_id, ttl).await {
+        Some(cached) => (cached.details, cached.dlc),
+        None => {
+            // Metadata comes from the StoreBrowse service over the Steam CM
+            // connection (no HTTPS storefront API), so a session is needed here.
+            let client = authed_client().await?;
 
-    let details = client
-        .fetch_store_apps(&[app_id])
-        .await?
-        .into_iter()
-        .find(|i| i.app_id == app_id)
-        .with_context(|| format!("no store information available for app {app_id}"))?;
+            let details = client
+                .fetch_store_apps(&[app_id])
+                .await?
+                .into_iter()
+                .find(|i| i.app_id == app_id)
+                .with_context(|| format!("no store information available for app {app_id}"))?;
 
-    // The DLC id list isn't part of StoreBrowse's per-item data; read it from PICS
-    // appinfo (`common.dlc`), then resolve the DLC names in a single batched
-    // StoreBrowse call.
-    let dlc_ids = client
-        .get_extended_app_info(app_id)
-        .await
-        .map(|e| e.dlcs)
-        .unwrap_or_default();
-    let dlc = resolve_dlc_names_via_store(&client, &dlc_ids).await;
+            // The DLC id list isn't part of StoreBrowse's per-item data; read it
+            // from PICS appinfo (`common.dlc`), then resolve the DLC names in a
+            // single batched StoreBrowse call.
+            let dlc_ids = client
+                .get_extended_app_info(app_id)
+                .await
+                .map(|e| e.dlcs)
+                .unwrap_or_default();
+            let dlc = resolve_dlc_names_via_store(&client, &dlc_ids).await;
+
+            // Best-effort cache write — a failure here must not fail the command.
+            if let Err(e) = save_info_cache(app_id, &details, &dlc).await {
+                tracing::warn!("could not cache info for app {app_id}: {e:#}");
+            }
+            (details, dlc)
+        }
+    };
 
     // Storefront-only fields (system requirements, Metacritic, website, store
     // genres/categories, SteamSpy user tags). These have no CM-protocol source,

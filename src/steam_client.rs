@@ -176,7 +176,7 @@ pub struct ExtendedAppInfo {
 /// intentionally absent — system requirements, Metacritic score, and
 /// name-resolved store tags/genres/categories (StoreBrowse returns only numeric
 /// ids for those, which would need a separate localized tag dictionary).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct StoreAppInfo {
     pub app_id: u32,
     pub name: String,
@@ -201,7 +201,7 @@ pub struct StoreAppInfo {
 /// Artwork URLs for a store app. Built from the StoreBrowse `assets` block when
 /// present, falling back to Steam's conventional per-appid CDN paths so a caller
 /// (e.g. Heroic) always has usable URLs instead of guessing them itself.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct StoreAppAssets {
     /// Wide store header / capsule (`header.jpg`).
     pub header: Option<String>,
