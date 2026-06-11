@@ -396,6 +396,13 @@ async fn cmd_login(
         return cmd_login_qr(json).await;
     }
 
+    // In `--json` mode the login is driven non-interactively (e.g. by Heroic): no
+    // TTY prompts. Credentials come from flags/env, and a Steam Guard code is
+    // requested via a `{event:"guard_required",...}` line and read back from stdin.
+    if json {
+        return cmd_login_json(username, password, guard).await;
+    }
+
     let username = match username {
         Some(u) => u,
         None => prompt_line("Steam username: ")?,
@@ -452,15 +459,104 @@ async fn cmd_login(
 }
 
 /// Log in by scanning a QR code with the Steam Mobile app.
+///
+/// In `--json` mode the challenge URL is streamed as `{event:"qr_challenge",url}`
+/// (re-emitted whenever Steam rotates the code) so a driver like Heroic can render
+/// the QR itself; otherwise it's drawn to stderr as a terminal QR.
 async fn cmd_login_qr(json: bool) -> Result<()> {
     let mut client = SteamClient::new()?;
-    let session = client
-        .login_qr(render_login_qr)
-        .await
-        .context("QR login failed")?;
+    let result = if json {
+        client.login_qr(emit_qr_challenge_json).await
+    } else {
+        client.login_qr(render_login_qr).await
+    };
+    let session = result.context("QR login failed")?;
     let account = session.account_name.clone().unwrap_or_default();
     report_login_success(&account, json);
     Ok(())
+}
+
+/// Non-interactive password login for `--json` drivers (e.g. Heroic). Credentials
+/// come from flags or `AURELIA_PASSWORD`; if Steam requires a Guard code, emit
+/// `{event:"guard_required",type:"email"|"device"}` and read the code (one line)
+/// from stdin, then retry. Device-confirmation (mobile-app approval) accounts are
+/// reported via `{event:"guard_required",type:"device_confirmation"}`.
+async fn cmd_login_json(
+    username: Option<String>,
+    password: Option<String>,
+    guard: Option<String>,
+) -> Result<()> {
+    let username =
+        username.context("--json login requires a username (-u/--username)")?;
+    let password = password
+        .or_else(|| std::env::var("AURELIA_PASSWORD").ok())
+        .context("--json login requires a password (-p/--password or AURELIA_PASSWORD)")?;
+    let account = username.clone();
+
+    let mut client = SteamClient::new()?;
+    match client
+        .login(username.clone(), password.clone(), guard.clone(), false)
+        .await
+    {
+        Ok(_) => {
+            report_login_success(&account, true);
+            Ok(())
+        }
+        Err(err) => {
+            use aurelia::models::SteamGuardReq::{DeviceCode, DeviceConfirmation, EmailCode};
+
+            // A typed Steam Guard code is needed (email or authenticator).
+            let code_kind = guard.is_none().then(|| {
+                client.pending_confirmations().iter().find_map(|p| match p.requirement {
+                    EmailCode { .. } => Some("email"),
+                    DeviceCode => Some("device"),
+                    _ => None,
+                })
+            }).flatten();
+
+            if let Some(kind) = code_kind {
+                print_json_line(&serde_json::json!({ "event": "guard_required", "type": kind }));
+                let code = read_stdin_line()
+                    .await
+                    .context("failed reading Steam Guard code from stdin")?;
+                client
+                    .login(username, password, Some(code), false)
+                    .await
+                    .context("login failed after providing Steam Guard code")?;
+                report_login_success(&account, true);
+                Ok(())
+            } else if client
+                .pending_confirmations()
+                .iter()
+                .any(|p| matches!(p.requirement, DeviceConfirmation))
+            {
+                print_json_line(
+                    &serde_json::json!({ "event": "guard_required", "type": "device_confirmation" }),
+                );
+                bail!("approve this login in the Steam Mobile app, then run login again")
+            } else {
+                Err(err).context("login failed")
+            }
+        }
+    }
+}
+
+/// Emit a QR login challenge URL as one NDJSON line for a `--json` driver.
+fn emit_qr_challenge_json(url: &str) {
+    print_json_line(&serde_json::json!({ "event": "qr_challenge", "url": url }));
+}
+
+/// Read a single line from stdin (used to receive a Guard code from a `--json`
+/// driver). Returns the trimmed contents.
+async fn read_stdin_line() -> Result<String> {
+    use tokio::io::AsyncBufReadExt;
+    let mut line = String::new();
+    let mut reader = tokio::io::BufReader::new(tokio::io::stdin());
+    reader
+        .read_line(&mut line)
+        .await
+        .context("failed reading stdin")?;
+    Ok(line.trim().to_string())
 }
 
 /// Render a Steam login challenge URL as a scannable QR code on stderr, with the

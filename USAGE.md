@@ -118,6 +118,24 @@ aurelia login -u myname -p 'secret' -g ABCDE
 AURELIA_PASSWORD='secret' aurelia login -u myname
 ```
 
+#### Non-interactive `--json` login (for tooling)
+
+With `--json`, `login` becomes a machine-drivable handshake with **no TTY prompts** — a
+driver (e.g. a GUI front-end) supplies credentials via flags/`AURELIA_PASSWORD` and exchanges
+NDJSON lines on stdout/stdin:
+
+- **Password:** `aurelia login --json -u <user> -p <pass>`. If Steam needs a Guard code, a
+  `{"event":"guard_required","type":"email"|"device"}` line is emitted; write the code as a
+  single line to the process's **stdin** and login retries. Accounts that use mobile-app
+  approval instead emit `{"event":"guard_required","type":"device_confirmation"}`.
+- **QR:** `aurelia login --qr --json` streams `{"event":"qr_challenge","url":"https://s.team/…"}`
+  (re-emitted whenever Steam rotates the code); render the URL as a QR and wait.
+- **Result:** both end with `{"logged_in":true,"account":"<name>"}` on success, or
+  `{"error":"…"}` (non-zero exit) on failure.
+
+In `--json` mode the username/password must be provided up front (no interactive prompt);
+only the Guard code is exchanged over stdin.
+
 ### `logout`
 
 Clear the stored session.
