@@ -157,6 +157,8 @@ enum Command {
     Dlc { app_id: u32 },
     /// List depots for a game.
     Depots { app_id: u32 },
+    /// List a game's launch options (executables/arguments Steam can start it with).
+    LaunchOptions { app_id: u32 },
     /// Download a game's cover/header artwork to the local image cache.
     Image {
         app_id: u32,
@@ -296,6 +298,7 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Info { app_id, extended } => cmd_info(app_id, extended, json).await,
         Command::Dlc { app_id } => cmd_dlc(app_id, json).await,
         Command::Depots { app_id } => cmd_depots(app_id, json).await,
+        Command::LaunchOptions { app_id } => cmd_launch_options(app_id, json).await,
         Command::Image {
             app_id,
             output,
@@ -1507,6 +1510,55 @@ async fn cmd_depots(app_id: u32, json: bool) -> Result<()> {
     println!("{:>12}  {:>14}  NAME", "DEPOT", "SIZE(bytes)");
     for d in &depots {
         println!("{:>12}  {:>14}  {}", d.id, d.size, d.name);
+    }
+    Ok(())
+}
+
+async fn cmd_launch_options(app_id: u32, json: bool) -> Result<()> {
+    let client = authed_client().await?;
+    let options = client
+        .fetch_launch_options(app_id)
+        .await
+        .with_context(|| format!("failed to load launch options for app {app_id}"))?;
+
+    if json {
+        let arr: Vec<_> = options
+            .iter()
+            .map(|o| {
+                serde_json::json!({
+                    "id": o.id,
+                    "description": o.description,
+                    "executable": o.executable,
+                    "arguments": o.arguments,
+                    "working_dir": o.working_dir,
+                    "oslist": o.oslist,
+                    "osarch": o.osarch,
+                    "type": o.launch_type,
+                })
+            })
+            .collect();
+        print_json(&serde_json::json!({ "app_id": app_id, "launch_options": arr }));
+        return Ok(());
+    }
+
+    if options.is_empty() {
+        println!("No launch options for app {app_id}.");
+        return Ok(());
+    }
+    println!("{:>3}  {:<10}  NAME / COMMAND", "ID", "OS");
+    for o in &options {
+        let os = if o.oslist.is_empty() { "any" } else { &o.oslist };
+        let desc = if o.description.is_empty() {
+            &o.executable
+        } else {
+            &o.description
+        };
+        println!("{:>3}  {:<10}  {}", o.id, os, desc);
+        let cmd = format!("{} {}", o.executable, o.arguments);
+        let cmd = cmd.trim();
+        if !cmd.is_empty() {
+            println!("       {cmd}");
+        }
     }
     Ok(())
 }

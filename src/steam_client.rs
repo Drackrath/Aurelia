@@ -218,6 +218,24 @@ pub struct InstallSizeEstimate {
     pub depot_count: u64,
 }
 
+/// One entry from a game's PICS `config/launch` table — a way Steam knows to
+/// start the game (an executable, its arguments, and platform constraints).
+#[derive(Debug, Clone, Default)]
+pub struct LaunchOptionInfo {
+    /// The launch entry's key (`"0"`, `"1"`, …); `"0"` is the default.
+    pub id: String,
+    pub description: String,
+    pub executable: String,
+    pub arguments: String,
+    pub working_dir: String,
+    /// Target OS (`windows`/`linux`/`macos`), or empty for any.
+    pub oslist: String,
+    /// Target architecture (`32`/`64`), or empty for any.
+    pub osarch: String,
+    /// Steam launch `type` (e.g. `default`, `option1`), if set.
+    pub launch_type: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct ConfirmationPrompt {
     pub requirement: SteamGuardReq,
@@ -1928,6 +1946,83 @@ impl SteamClient {
         }
 
         Ok(est)
+    }
+
+    /// List a game's launch options from its PICS `config/launch` table — the set
+    /// of executables/arguments Steam can start the game with, plus their platform
+    /// constraints. Read with the binary-safe VDF path (works for both binary and
+    /// text PICS payloads). Entry `"0"` is sorted first (the default).
+    pub async fn fetch_launch_options(&self, app_id: u32) -> Result<Vec<LaunchOptionInfo>> {
+        let connection = self
+            .connection
+            .as_ref()
+            .context("steam connection not initialized")?;
+
+        let mut request = CMsgClientPICSProductInfoRequest::new();
+        request
+            .apps
+            .push(cmsg_client_picsproduct_info_request::AppInfo {
+                appid: Some(app_id),
+                ..Default::default()
+            });
+
+        let response: CMsgClientPICSProductInfoResponse = connection
+            .job(request)
+            .await
+            .context("failed requesting appinfo product info for launch options")?;
+
+        let app = response
+            .apps
+            .iter()
+            .find(|entry| entry.appid() == app_id)
+            .ok_or_else(|| anyhow!("missing appinfo payload for app {app_id}"))?;
+
+        let vdf = find_vdf_in_pics(app.buffer()).context("failed to parse product info VDF")?;
+        let root_obj = vdf.as_obj().context("root is not an object")?;
+
+        // `config` sits at the root or under the numeric/"appinfo" wrapper.
+        let config = root_obj.get("config").and_then(|v| v.as_obj()).or_else(|| {
+            root_obj
+                .get("appinfo")
+                .and_then(|v| v.as_obj())
+                .and_then(|o| o.get("config"))
+                .and_then(|v| v.as_obj())
+        });
+
+        let mut out = Vec::new();
+        if let Some(launch) = config.and_then(|c| c.get("launch")).and_then(|v| v.as_obj()) {
+            for (id, entry) in launch.iter() {
+                let Some(e) = entry.as_obj() else { continue };
+                let field = |k: &str| e.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let cfg = e.get("config").and_then(|v| v.as_obj());
+                let cfg_field = |k: &str| {
+                    cfg.and_then(|c| c.get(k))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string()
+                };
+
+                out.push(LaunchOptionInfo {
+                    id: id.to_string(),
+                    description: field("description"),
+                    executable: field("executable"),
+                    arguments: field("arguments"),
+                    working_dir: field("workingdir"),
+                    oslist: cfg_field("oslist"),
+                    osarch: cfg_field("osarch"),
+                    launch_type: field("type"),
+                });
+            }
+        }
+
+        // Default entry ("0") first, then by id.
+        out.sort_by(|a, b| match (a.id.as_str(), b.id.as_str()) {
+            ("0", "0") => std::cmp::Ordering::Equal,
+            ("0", _) => std::cmp::Ordering::Less,
+            (_, "0") => std::cmp::Ordering::Greater,
+            _ => a.id.cmp(&b.id),
+        });
+        Ok(out)
     }
 
     pub async fn get_depot_key(&self, app_id: u32, depot_id: u32) -> Result<Vec<u8>> {
