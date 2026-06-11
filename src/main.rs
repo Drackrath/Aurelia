@@ -255,8 +255,27 @@ impl From<PlatformArg> for DepotPlatform {
     }
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    // The CLI's top-level async future is large (every command arm) and the Steam
+    // connect/auth path is deeply nested; in debug builds this can overflow the OS
+    // main thread's default stack (~1 MB on Windows) before any command runs. Run
+    // the Tokio runtime on a thread with a generous stack to avoid that.
+    let worker = std::thread::Builder::new()
+        .name("aurelia-main".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(|| {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .thread_stack_size(16 * 1024 * 1024)
+                .build()
+                .expect("failed to build the Tokio runtime");
+            runtime.block_on(async_main());
+        })
+        .expect("failed to spawn the main worker thread");
+    worker.join().expect("the main worker thread panicked");
+}
+
+async fn async_main() {
     let cli = Cli::parse();
     let json = cli.json;
 

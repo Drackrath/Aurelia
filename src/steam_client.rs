@@ -2309,6 +2309,7 @@ impl SteamClient {
             .context("not logged in — achievements need an authenticated session")?;
 
         // 1. Definitions + global rarity (localized).
+        eprintln!("ACHV-DBG: calling Player.GetGameAchievements ...");
         let mut def_req = CPlayer_GetGameAchievements_Request::new();
         def_req.set_appid(appid);
         def_req.set_language(language.to_string());
@@ -2316,9 +2317,14 @@ impl SteamClient {
             .service_method(def_req)
             .await
             .context("Player.GetGameAchievements failed")?;
+        eprintln!(
+            "ACHV-DBG: GetGameAchievements OK ({} achievements)",
+            def_resp.achievements.len()
+        );
 
         // 2. The user's unlock state. A user who never launched the game returns no
         //    blocks (everything stays locked) — not an error.
+        eprintln!("ACHV-DBG: calling ClientGetUserStats job ...");
         let mut stats_req = CMsgClientGetUserStats::new();
         stats_req.set_game_id(u64::from(appid));
         stats_req.set_steam_id_for_user(steam_id);
@@ -2326,9 +2332,17 @@ impl SteamClient {
             .job(stats_req)
             .await
             .context("ClientGetUserStats failed")?;
+        eprintln!(
+            "ACHV-DBG: ClientGetUserStats OK (eresult={}, schema={} bytes, blocks={})",
+            stats_resp.eresult(),
+            stats_resp.schema().len(),
+            stats_resp.achievement_blocks.len()
+        );
 
         // api-name -> (stat_id, bit), parsed from the binary-KV schema.
+        eprintln!("ACHV-DBG: parsing schema ...");
         let bit_index = parse_achievement_schema(stats_resp.schema());
+        eprintln!("ACHV-DBG: schema parsed ({} entries)", bit_index.len());
         // Case-insensitive fallback (some games' definition vs schema names differ in case).
         let bit_index_ci: HashMap<String, (u32, u32)> = bit_index
             .iter()
