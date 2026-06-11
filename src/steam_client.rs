@@ -65,6 +65,11 @@ use tokio::sync::mpsc::Receiver;
 /// its own, so an unresponsive CM would otherwise block the command forever.
 const CM_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Upper bound on a single liveness probe ([`SteamClient::probe_alive`]). Generous
+/// enough not to false-positive when the connection is merely busy (e.g. during a
+/// heavy download), short enough to detect a dead socket within one probe cycle.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(20);
+
 /// How many CM servers to try before failing. `ServerList::pick_ws` rotates
 /// round-robin, so each attempt hits a different server.
 const CM_CONNECT_ATTEMPTS: usize = 3;

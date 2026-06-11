@@ -39,9 +39,11 @@ pub async fn run_server() -> Result<()> {
     };
     tracing::info!("aurelia daemon listening on {}", transport::endpoint());
 
-    // Establish the shared session in the background (one logon if a token exists).
+    // Establish the shared session in the background (one logon if a token exists),
+    // then keep it alive: the liveness loop reconnects if the socket later dies.
     let state = super::init_state();
     tokio::spawn(async move { state.ensure_session().await });
+    tokio::spawn(async move { state.liveness_loop().await });
 
     loop {
         match listener.next().await {

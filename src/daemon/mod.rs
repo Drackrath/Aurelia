@@ -18,7 +18,7 @@ mod server;
 mod transport;
 
 use std::sync::OnceLock;
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
@@ -39,6 +39,23 @@ struct Header {
 /// distinguishes the two.
 static DAEMON: OnceLock<DaemonState> = OnceLock::new();
 
+/// After a failed session restore, wait at least this long before the next request
+/// is allowed to retry. Long enough that a genuinely bad/throttled token can't
+/// re-create the per-request logon storm the daemon exists to prevent, short enough
+/// that a *transient* failure (CM blip, timeout during a heavy download) self-heals
+/// on a later command instead of wedging the daemon until `login --reconnect`.
+const RESTORE_RETRY_BACKOFF: Duration = Duration::from_secs(30);
+
+/// How often the background liveness loop probes the shared connection. A dropped
+/// socket is otherwise invisible (steam-vent leaves the `Connection` API-usable), so
+/// without this the session only heals when a command happens to fail on it.
+const LIVENESS_PROBE_INTERVAL: Duration = Duration::from_secs(60);
+
+/// After a failed probe, wait this long and probe once more before reconnecting — a
+/// single failure can be a transient hiccup, and a needless reconnect drops a working
+/// session and burns a logon.
+const LIVENESS_RECHECK_DELAY: Duration = Duration::from_secs(2);
+
 struct DaemonState {
     slot: RwLock<Slot>,
 }
@@ -50,9 +67,30 @@ struct Slot {
     /// a restore exactly when the token file changes (e.g. after `login`), rather
     /// than re-logging-on per request (which would re-create the storm).
     session_mtime: Option<SystemTime>,
-    /// Whether the last restore attempt for `session_mtime` failed (so we don't
-    /// retry a known-bad token until the file changes).
-    last_attempt_failed: bool,
+    /// When the last restore attempt for `session_mtime` failed, if it did. Gates
+    /// retries to one per [`RESTORE_RETRY_BACKOFF`]: a transient failure is retried
+    /// (and self-heals) once the window elapses, but a persistently failing token is
+    /// not retried fast enough to re-create the logon storm. `None` means the last
+    /// attempt succeeded or none has been made.
+    last_failure: Option<Instant>,
+}
+
+impl Slot {
+    /// Whether the slot already reflects `mtime` and needs no restore attempt now:
+    /// either a live client exists, or a recent failure is still within its backoff.
+    fn is_current(&self, mtime: Option<SystemTime>) -> bool {
+        if self.session_mtime != mtime {
+            return false; // token file changed — must re-restore.
+        }
+        if self.client.is_some() {
+            return true; // healthy session already established.
+        }
+        // No client: retry, unless a failure is still inside the backoff window.
+        match self.last_failure {
+            Some(at) => at.elapsed() < RESTORE_RETRY_BACKOFF,
+            None => false,
+        }
+    }
 }
 
 /// Whether this process is the daemon (vs. a thin client / standalone run).
@@ -65,7 +103,7 @@ fn init_state() -> &'static DaemonState {
         slot: RwLock::new(Slot {
             client: None,
             session_mtime: None,
-            last_attempt_failed: false,
+            last_failure: None,
         }),
     })
 }
@@ -76,20 +114,22 @@ async fn session_mtime() -> Option<SystemTime> {
 }
 
 impl DaemonState {
-    /// Ensure the shared session reflects the current `session.json`. Restores once
-    /// when the token file appears or changes; otherwise a no-op (no per-request
-    /// logon). Failures are remembered so a bad token isn't retried in a loop.
+    /// Ensure the shared session reflects the current `session.json`. Restores when
+    /// the token file appears or changes; otherwise a no-op (no per-request logon)
+    /// while a live session exists. A failed restore is retried on a later request
+    /// once [`RESTORE_RETRY_BACKOFF`] has elapsed, so a transient drop self-heals
+    /// without re-creating the logon storm.
     async fn ensure_session(&self) {
         let mtime = session_mtime().await;
         {
             let s = self.slot.read().await;
-            if s.session_mtime == mtime && (s.client.is_some() || s.last_attempt_failed) {
+            if s.is_current(mtime) {
                 return;
             }
         }
         let mut s = self.slot.write().await;
         // Re-check under the write lock (another task may have just restored).
-        if s.session_mtime == mtime && (s.client.is_some() || s.last_attempt_failed) {
+        if s.is_current(mtime) {
             return;
         }
 
@@ -98,35 +138,73 @@ impl DaemonState {
                 Ok(_) if client.is_authenticated() => {
                     tracing::info!("daemon: shared Steam session established");
                     s.client = Some(client);
-                    s.last_attempt_failed = false;
+                    s.last_failure = None;
                 }
                 Ok(_) => {
                     tracing::warn!("daemon: session restore did not authenticate");
                     s.client = None;
-                    s.last_attempt_failed = true;
+                    s.last_failure = Some(Instant::now());
                 }
                 Err(e) => {
                     tracing::warn!("daemon: could not restore shared session: {e:#}");
                     s.client = None;
-                    s.last_attempt_failed = true;
+                    s.last_failure = Some(Instant::now());
                 }
             },
             Err(e) => {
                 tracing::warn!("daemon: could not build Steam client: {e:#}");
                 s.client = None;
-                s.last_attempt_failed = true;
+                s.last_failure = Some(Instant::now());
             }
         }
         s.session_mtime = mtime;
     }
 
-    /// Drop the shared session and clear the failure latch so the next
-    /// [`ensure_session`] re-attempts from scratch (used after login/logout).
+    /// Drop the shared session and clear the failure backoff so the next
+    /// [`ensure_session`] re-attempts immediately (used after login/logout).
     async fn invalidate(&self) {
         let mut s = self.slot.write().await;
         s.client = None;
-        s.last_attempt_failed = false;
+        s.last_failure = None;
         s.session_mtime = None;
+    }
+
+    /// Periodically verify the shared connection is still alive and re-establish it if
+    /// not. steam-vent leaves a `Connection` usable in its API after the socket dies,
+    /// so a dropped session is otherwise invisible until a command fails on it. On a
+    /// confirmed-dead connection this re-establishes the session in the background so
+    /// the next command doesn't have to eat the failure first. Never returns.
+    async fn liveness_loop(&self) {
+        loop {
+            tokio::time::sleep(LIVENESS_PROBE_INTERVAL).await;
+
+            // Healthy, or nothing to probe — wait for the next tick.
+            if self.probe_once().await {
+                continue;
+            }
+            // One failure can be a transient hiccup; confirm before paying for a
+            // reconnect (which drops a possibly-fine session and burns a logon).
+            tokio::time::sleep(LIVENESS_RECHECK_DELAY).await;
+            if self.probe_once().await {
+                continue;
+            }
+
+            tracing::warn!("daemon: shared session failed liveness probe; reconnecting");
+            self.invalidate().await;
+            self.ensure_session().await;
+        }
+    }
+
+    /// Probe the current shared connection once. Returns `true` when it is healthy
+    /// **or** there is no session to probe (nothing to do); `false` only when a
+    /// live-looking session failed the probe and should be re-established.
+    async fn probe_once(&self) -> bool {
+        // Snapshot the (cheap, Arc-backed) client so the probe doesn't hold the lock.
+        let client = self.slot.read().await.client.clone();
+        match client {
+            Some(client) => client.probe_alive().await.is_ok(),
+            None => true,
+        }
     }
 }
 
@@ -199,5 +277,52 @@ async fn maybe_refresh_after(argv: &[String]) {
             state.invalidate().await;
             state.ensure_session().await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MTIME: Option<SystemTime> = Some(SystemTime::UNIX_EPOCH);
+
+    fn slot(client: bool, session_mtime: Option<SystemTime>, last_failure: Option<Instant>) -> Slot {
+        Slot {
+            client: client.then(|| SteamClient::new().unwrap()),
+            session_mtime,
+            last_failure,
+        }
+    }
+
+    #[test]
+    fn never_attempted_triggers_a_restore() {
+        // Fresh daemon: no client, no recorded failure, mtime differs from None.
+        assert!(!slot(false, None, None).is_current(MTIME));
+    }
+
+    #[test]
+    fn live_session_is_a_no_op() {
+        assert!(slot(true, MTIME, None).is_current(MTIME));
+    }
+
+    #[test]
+    fn token_change_forces_restore_even_with_live_client() {
+        let other = Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1));
+        assert!(!slot(true, MTIME, None).is_current(other));
+    }
+
+    #[test]
+    fn recent_failure_is_held_off_until_the_backoff_elapses() {
+        assert!(slot(false, MTIME, Some(Instant::now())).is_current(MTIME));
+    }
+
+    #[test]
+    fn stale_failure_self_heals_after_the_backoff() {
+        // A failure older than the backoff window must allow another restore attempt —
+        // this is the regression guard for the daemon wedging until `login --reconnect`.
+        let past = Instant::now()
+            .checked_sub(RESTORE_RETRY_BACKOFF + Duration::from_secs(1))
+            .expect("instant underflow");
+        assert!(!slot(false, MTIME, Some(past)).is_current(MTIME));
     }
 }

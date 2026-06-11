@@ -44,6 +44,28 @@ impl SteamClient {
         self.connection.as_ref()
     }
 
+    /// Lightweight round-trip that confirms the shared connection is *actually*
+    /// alive. steam-vent keeps a [`Connection`] usable in its API even after the
+    /// underlying socket dies (its heartbeat task only logs send failures and never
+    /// tears the connection down), so a dropped session is invisible until a real
+    /// request fails. The daemon's liveness loop calls this to surface that
+    /// proactively. Uses `GetFamilyGroupForUser` — a single cheap service method —
+    /// bounded by an explicit timeout so a dead socket is detected promptly.
+    pub async fn probe_alive(&self) -> Result<()> {
+        let connection = self
+            .connection
+            .as_ref()
+            .context("steam connection not initialized")?;
+        let mut req = CFamilyGroups_GetFamilyGroupForUser_Request::new();
+        req.set_steamid(u64::from(connection.steam_id()));
+        let _: CFamilyGroups_GetFamilyGroupForUser_Response =
+            tokio::time::timeout(PROBE_TIMEOUT, connection.service_method(req))
+                .await
+                .context("liveness probe timed out")?
+                .context("liveness probe failed")?;
+        Ok(())
+    }
+
     /// Build a Steam Cloud client over the current connection (for save sync).
     pub fn cloud_client(&self) -> Result<crate::cloud_sync::CloudClient> {
         let connection = self
