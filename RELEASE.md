@@ -7,6 +7,25 @@ Builds are produced **from this repository**, so the patched `steam-vent` (git) 
 `steam-cdn` resolve correctly. You do **not** publish to crates.io (the patched deps make
 that impossible); distribution is via tagged GitHub releases with attached binaries.
 
+## TL;DR — the automated path (recommended)
+
+[`.github/workflows/release.yml`](.github/workflows/release.yml) does §2–§4 for you: a
+**native runner per target** (no cross-compiling) builds each binary, renames it to the
+Heroic asset convention, and publishes a GitHub Release. Just bump the version and push a tag:
+
+```bash
+# edit Cargo.toml: version = "0.1.1"; commit Cargo.toml + Cargo.lock
+git tag -a v0.1.1 -m "Aurelia v0.1.1" && git push origin main --tags
+```
+
+The release appears with all `aurelia_<os>_<arch>` assets attached. (Run the workflow via
+**Actions → Aurelia Release → Run workflow** to build the assets without tagging.) The manual
+steps below are for local one-off builds or if you don't use CI.
+
+> The matrix uses GitHub-hosted **ARM runners** (`ubuntu-24.04-arm`, `windows-11-arm`) for the
+> arm64 targets — free on public repos. macOS uses `macos-13` (Intel) and `macos-14` (Apple
+> Silicon).
+
 ---
 
 ## 1. Bump the version
@@ -44,6 +63,26 @@ one host also works with the right toolchains.
 The binary lands at `target/<triple>/release/aurelia` (`aurelia.exe` on Windows). Install a
 target first with `rustup target add <triple>`; cross-compiling Linux needs the matching
 linker (e.g. `gcc-aarch64-linux-gnu`).
+
+> **VS Code shortcut:** `.vscode/tasks.json` has these as tasks — run **Terminal → Run
+> Task…** and pick a per-target task, a host group (`Release: All Windows/Linux/macOS`), or
+> `Release: Build All Targets` (the default build task, `Ctrl+Shift+B`). Run `Release: Add
+> Rust targets` once first to install the toolchains.
+
+### Cross-compiling from one host
+
+Plain `cargo build --target <other-os>` usually **fails** off-host: some dependencies compile
+C code (e.g. `xz2`/liblzma, the vendored `steam-cdn`), so building a Linux target on Windows
+errors with `failed to find tool "x86_64-linux-gnu-gcc"`. Two ways around it:
+
+- **`cargo-zigbuild`** (uses zig as the C cross-compiler — no per-target GCC). One-time:
+  `winget install zig.zig` (or scoop/choco) and `cargo install --locked cargo-zigbuild`, then
+  `cargo zigbuild --release --target x86_64-unknown-linux-gnu`. The VS Code tasks
+  `Release (zig): …` and `Release: Cross-build from Windows (zig)` wrap this (Windows targets
+  build natively, Linux targets via zig). macOS targets additionally need the macOS SDK
+  (e.g. via osxcross / `SDKROOT`).
+- **Native builds / CI** — the most reliable path: build each target on its own OS, or let a
+  GitHub Actions matrix do it (one job per runner OS). Recommended for actual releases.
 
 ---
 

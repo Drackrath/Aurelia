@@ -2,3 +2,4 @@ target/
 docs/
 agents/
 tests/s
+.vscode/
