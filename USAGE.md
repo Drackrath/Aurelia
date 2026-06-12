@@ -3,7 +3,7 @@
 Aurelia is a command-line Steam launcher. It authenticates against Steam, manages
 your library, downloads/verifies games, and launches them — all from the terminal.
 
-```
+```text
 aurelia <COMMAND> [OPTIONS]
 ```
 
@@ -20,6 +20,7 @@ of a specific command. `--version` prints the build version.
   - [`list`](#list)
   - [`account`](#account)
   - [`info`](#info)
+  - [`dlc`](#dlc)
   - [`achievements`](#achievements)
   - [`image`](#image)
 - [Installation & maintenance](#installation--maintenance)
@@ -88,7 +89,7 @@ of a specific command. `--version` prints the build version.
 
 Authenticate with Steam and persist the session.
 
-```
+```text
 aurelia login [-u <USERNAME>] [-p <PASSWORD>] [-g <GUARD_CODE>] [--code] [--qr]
 aurelia login --health      # report session status (no login)
 aurelia login --reconnect   # rebuild the daemon's shared session
@@ -206,7 +207,7 @@ aurelia logout
 
 List games in your library (owned games merged with locally installed ones).
 
-```
+```text
 aurelia list [-i] [-s <TEXT>] [--online] [--json]
 ```
 
@@ -266,7 +267,7 @@ and not-installed Family-Shared titles). See
 
 Show account details for the logged-in user. Requires an active session.
 
-```
+```text
 aurelia account [--json]
 ```
 
@@ -284,7 +285,7 @@ Show detailed information about one or more games. The metadata is fetched over 
 CM connection (the `StoreBrowse` service), not the HTTPS storefront. A session is required
 **only on a cache miss** — see [Caching](#caching) below; a cached lookup works offline.
 
-```
+```text
 aurelia info <APP_ID>... [--extended] [--no-cache] [--json]
 ```
 
@@ -358,7 +359,7 @@ AURELIA_INFO_CACHE_TTL=0 aurelia info 690830   # bypass the cache for this run
 List a game's DLC together with its ownership and install state. Requires login
 (ownership is checked against your account).
 
-```
+```text
 aurelia dlc <APP_ID> [--json]
 ```
 
@@ -391,7 +392,7 @@ aurelia dlc 690830 --json
 Show the logged-in user's achievements for a game, with per-achievement unlock state.
 Requires an active session.
 
-```
+```text
 aurelia achievements <APP_ID> [-l <LANG>] [--json]
 ```
 
@@ -419,7 +420,7 @@ aurelia achievements 620 --json
 
 Download a game's cover/header artwork from the Steam CDN to the local image cache.
 
-```
+```text
 aurelia image <APP_ID> [-o <PATH>] [-f]
 ```
 
@@ -447,7 +448,7 @@ These commands require an active session.
 
 Download and install a game.
 
-```
+```text
 aurelia install <APP_ID> [-p <windows|linux>] [--dry-run]
 ```
 
@@ -502,7 +503,7 @@ aurelia verify 1245620
 
 Uninstall a game.
 
-```
+```text
 aurelia uninstall <APP_ID> [--delete-prefix]
 ```
 
@@ -520,7 +521,7 @@ aurelia uninstall 1245620 --delete-prefix
 Move an installed game to a different Steam library folder, updating Steam's on-disk data
 so the client recognises the game at its new path instead of reporting it as missing.
 
-```
+```text
 aurelia move <APP_ID> <LIBRARY> [--restart-steam]
 ```
 
@@ -559,7 +560,7 @@ Point Steam at an install that already lives in a different library — **withou
 files**. Use this when you moved a game's folder yourself (Aurelia only updates Steam's
 records); use [`move`](#move) when the files still need to be copied.
 
-```
+```text
 aurelia relink <APP_ID> <LIBRARY> [--restart-steam]
 ```
 
@@ -583,7 +584,7 @@ Register an existing on-disk install that Steam doesn't know about — Aurelia w
 `appmanifest_<appid>.acf` (depot manifests and build id taken from PICS, so Steam sees it as
 installed and up to date) and adds it to `libraryfolders.vdf`.
 
-```
+```text
 aurelia import <APP_ID> <LIBRARY> [-p <windows|linux>] [--restart-steam]
 ```
 
@@ -607,7 +608,7 @@ aurelia import 1245620 ~/.steam/steam --platform linux --restart-steam
 Report whether a game is installed **and** its files are present on disk (mirrors what a
 front-end needs to decide if a title can be launched).
 
-```
+```text
 aurelia available <APP_ID> [--json]
 ```
 
@@ -630,7 +631,7 @@ Enable or disable an owned DLC for its base game by toggling the DLC's entry in 
 game's `appmanifest` `DisabledDLC` lists. The `<APP_ID>` is the **DLC's** app id; its base
 game is resolved automatically and must be installed.
 
-```
+```text
 aurelia enable  <APP_ID> [--restart-steam]
 aurelia disable <APP_ID> [--restart-steam]
 ```
@@ -663,7 +664,7 @@ downloaded yet.
 Launch a game and wait for it to exit. Requires an active session. If Steam Cloud sync is
 enabled, saves are synced down before launch and up afterward.
 
-```
+```text
 aurelia play <APP_ID> [-p <PROTON>] [-w]
 ```
 
@@ -704,7 +705,7 @@ aurelia branches 1245620
 
 Switch a game to a different branch. Run `update` afterward to apply the change.
 
-```
+```text
 aurelia set-branch <APP_ID> <BRANCH>
 ```
 
@@ -726,7 +727,7 @@ aurelia depots 1245620
 List a game's launch options — the executables/arguments Steam can start it with, read from
 the PICS `config/launch` table.
 
-```
+```text
 aurelia launch-options <APP_ID> [--json]
 ```
 
@@ -751,7 +752,7 @@ These commands require an active session.
 
 Synchronise a game's Steam Cloud saves with their real on-disk locations.
 
-```
+```text
 aurelia cloud sync <APP_ID> [--up | --down] [--path <DIR>] [--json]
 ```
 
@@ -804,7 +805,7 @@ aurelia cloud sync 1245620 --json
 
 List a game's Steam Cloud files with size and last-modified time.
 
-```
+```text
 aurelia cloud list <APP_ID> [--json]
 ```
 
@@ -848,7 +849,7 @@ Run a background process that logs in to Steam **once** and serves every other `
 command over a local socket — so a whole session's worth of commands shares **one** Steam
 connection instead of re-authenticating on each call.
 
-```
+```text
 aurelia daemon [--socket <PATH>]
 aurelia daemon list [--json]
 aurelia daemon stop [PID] [--json]
@@ -905,7 +906,7 @@ shared session.
 Terminate **every** running aurelia process, including the session daemon. Useful after
 deploying a new binary (the long-lived daemon keeps running the old code until restarted).
 
-```
+```text
 aurelia kill [--json]
 ```
 
