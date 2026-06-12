@@ -18,6 +18,7 @@ use aurelia::steam_client::{SharedApp, SteamClient, StoreAppInfo};
 #[macro_use]
 mod output;
 mod daemon;
+mod proc_admin;
 
 /// Aurelia — a command-line Steam launcher (auth, library, install, launch).
 #[derive(Parser)]
@@ -233,15 +234,33 @@ enum Command {
         #[command(subcommand)]
         command: CloudCommand,
     },
+    /// Kill all running aurelia processes, including the session daemon.
+    Kill,
     /// Run the background session daemon: log in to Steam **once** and serve every
     /// other `aurelia` command over a local socket, so repeated commands never
     /// re-authenticate (avoiding Steam's logon rate limits). Start one per session
     /// (e.g. at Heroic startup); other invocations auto-connect to it.
+    ///
+    /// With a subcommand (`stop`/`list`) it manages running daemons instead of
+    /// starting one.
     Daemon {
         /// Override the socket/pipe path (also settable via `AURELIA_DAEMON_SOCKET`).
         #[arg(long)]
         socket: Option<String>,
+        #[command(subcommand)]
+        command: Option<DaemonCommand>,
     },
+}
+
+#[derive(Subcommand)]
+enum DaemonCommand {
+    /// Stop running aurelia daemon(s). With a PID, stop only that daemon.
+    Stop {
+        /// The daemon PID to stop (from `aurelia daemon list`). Omit to stop all.
+        pid: Option<u32>,
+    },
+    /// List running aurelia daemon(s) with their PID.
+    List,
 }
 
 #[derive(Subcommand)]
@@ -313,8 +332,8 @@ async fn async_main() {
     // Send tracing/diagnostics to stderr so stdout stays clean for --json output.
     aurelia::infra::logging::init_cli_logging(cli.verbose);
 
-    // `aurelia daemon`: become the shared-session server. Never forwards.
-    if let Command::Daemon { socket } = &cli.command {
+    // Bare `aurelia daemon`: become the shared-session server. Never forwards.
+    if let Command::Daemon { socket, command: None } = &cli.command {
         if let Some(path) = socket {
             // SAFETY: single-threaded at this point (set before any worker spawns).
             unsafe { std::env::set_var("AURELIA_DAEMON_SOCKET", path) };
@@ -326,10 +345,18 @@ async fn async_main() {
         return;
     }
 
+    // `kill` and `daemon stop|list` manage local OS processes directly — they must
+    // run in *this* process and never forward to (or auto-spawn) the daemon they may
+    // be about to terminate.
+    let local_only = matches!(
+        cli.command,
+        Command::Kill | Command::Daemon { command: Some(_), .. }
+    );
+
     // Thin client: forward this command to a running daemon (auto-spawning one if
     // needed) so it runs against the single shared Steam session. If no daemon is
     // available, fall through and run locally. `AURELIA_NO_DAEMON` opts out.
-    if std::env::var_os("AURELIA_NO_DAEMON").is_none() {
+    if !local_only && std::env::var_os("AURELIA_NO_DAEMON").is_none() {
         match daemon::client::try_forward().await {
             // Exit the process directly rather than returning: the stdin-forwarding
             // task reads `tokio::io::stdin()` on a blocking thread that never
@@ -481,8 +508,17 @@ async fn run(cli: Cli) -> Result<()> {
             } => cmd_cloud_sync(app_id, up, down, path, json).await,
             CloudCommand::List { app_id } => cmd_cloud_list(app_id, json).await,
         },
-        // Intercepted in `async_main`; a forwarded `daemon` command never reaches here.
-        Command::Daemon { .. } => bail!("`aurelia daemon` cannot be run as a forwarded command"),
+        Command::Kill => cmd_kill(json),
+        Command::Daemon {
+            command: Some(sub), ..
+        } => match sub {
+            DaemonCommand::Stop { pid } => cmd_daemon_stop(pid, json),
+            DaemonCommand::List => cmd_daemon_list(json),
+        },
+        // Bare `daemon` is intercepted in `async_main`; it never reaches here.
+        Command::Daemon { command: None, .. } => {
+            bail!("`aurelia daemon` cannot be run as a forwarded command")
+        }
     }
 }
 
@@ -1497,6 +1533,79 @@ async fn cmd_stop(app_id: Option<u32>, json: bool) -> Result<()> {
         }));
     } else {
         cli_println!("Stopped {} (app {}).", stopped.name, stopped.app_id);
+    }
+    Ok(())
+}
+
+/// `aurelia kill`: terminate every running aurelia process (daemon and otherwise),
+/// except the current one.
+fn cmd_kill(json: bool) -> Result<()> {
+    let procs = proc_admin::find_aurelia_processes();
+    let pids: Vec<u32> = procs.iter().map(|p| p.pid).collect();
+    let killed = proc_admin::kill_pids(&pids);
+
+    if json {
+        print_json(&serde_json::json!({ "found": pids.len(), "killed": killed, "pids": pids }));
+    } else if pids.is_empty() {
+        cli_println!("No other aurelia processes are running.");
+    } else {
+        cli_println!("Killed {killed} of {} aurelia process(es) (including the daemon).", pids.len());
+    }
+    Ok(())
+}
+
+/// `aurelia daemon stop [PID]`: terminate the session daemon(s). With a PID, stop
+/// only that daemon (erroring if it isn't a running aurelia daemon).
+fn cmd_daemon_stop(pid: Option<u32>, json: bool) -> Result<()> {
+    let daemons: Vec<_> = proc_admin::find_aurelia_processes()
+        .into_iter()
+        .filter(|p| p.is_daemon)
+        .collect();
+
+    let targets: Vec<u32> = match pid {
+        Some(pid) => {
+            if !daemons.iter().any(|d| d.pid == pid) {
+                bail!("PID {pid} is not a running aurelia daemon (see `aurelia daemon list`)");
+            }
+            vec![pid]
+        }
+        None => daemons.iter().map(|d| d.pid).collect(),
+    };
+    let killed = proc_admin::kill_pids(&targets);
+
+    if json {
+        print_json(&serde_json::json!({ "killed": killed, "pids": targets }));
+    } else if targets.is_empty() {
+        cli_println!("No aurelia daemon is running.");
+    } else {
+        cli_println!("Stopped {killed} aurelia daemon(s).");
+    }
+    Ok(())
+}
+
+/// `aurelia daemon list`: show running aurelia daemon(s) and their PIDs.
+fn cmd_daemon_list(json: bool) -> Result<()> {
+    let daemons: Vec<_> = proc_admin::find_aurelia_processes()
+        .into_iter()
+        .filter(|p| p.is_daemon)
+        .collect();
+
+    if json {
+        let arr: Vec<_> = daemons
+            .iter()
+            .map(|d| serde_json::json!({ "pid": d.pid, "command": d.command }))
+            .collect();
+        print_json(&serde_json::json!({ "daemons": arr }));
+        return Ok(());
+    }
+
+    if daemons.is_empty() {
+        cli_println!("No aurelia daemon is running.");
+        return Ok(());
+    }
+    cli_println!("{:>8}  COMMAND", "PID");
+    for d in &daemons {
+        cli_println!("{:>8}  {}", d.pid, d.command);
     }
     Ok(())
 }
