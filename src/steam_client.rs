@@ -6,7 +6,7 @@ use crate::config::{
 };
 use crate::depot_browser::{self, DepotInfo as BrowserDepotInfo, ManifestFileEntry};
 use crate::models::{
-    AppInfoRoot, DepotPlatform, DlcState, DownloadProgress, DownloadProgressState, LibraryGame,
+    DepotPlatform, DlcState, DownloadProgress, DownloadProgressState, LibraryGame,
     ManifestSelection, OwnedGame, SessionState, SteamGuardReq, UserProfile,
 };
 use anyhow::{anyhow, bail, Context, Result};
