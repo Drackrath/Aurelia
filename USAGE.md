@@ -44,6 +44,7 @@ of a specific command. `--version` prints the build version.
   - [`cloud sync`](#cloud-sync)
   - [`cloud list`](#cloud-list)
 - [Steam Workshop](#steam-workshop)
+  - [`workshop browse`](#workshop-browse)
   - [`workshop info`](#workshop-info)
   - [`workshop list`](#workshop-list)
   - [`workshop install`](#workshop-install)
@@ -828,24 +829,79 @@ aurelia cloud list 1245620 --json
 
 ## Steam Workshop
 
-Manage Steam Workshop items (published files) for a game. These commands require an
-active session. Workshop content is downloaded into
-`<library>/steamapps/workshop/content/<APP_ID>/<ID>/` and registered in
-`<library>/steamapps/workshop/appworkshop_<APP_ID>.acf`, so the Steam client recognises
-the items as installed.
+Manage Steam Workshop items (**published files**) for a game. Except for the local
+portion of `status`, these commands require an active session.
 
-An `<ID>` is a Workshop **published-file id** (the numeric id in a Workshop page's URL).
-Wherever ids are accepted, a **collection** id may be given: by default it is expanded to
-its member items (recursively), which `--no-recurse` disables. v1 downloads **SteamPipe**
-items (the modern norm); legacy `file_url` UGC is not yet supported.
+An `<ID>` is a Workshop **published-file id** — the numeric id in a Workshop page's URL
+(`…/sharedfiles/filedetails/?id=1234567890`). To **find** ids in the first place, use
+[`workshop browse`](#workshop-browse). Wherever ids are accepted, a **collection** id may
+be given in its place: by default a collection is **expanded to its member items**
+(recursively, with cycles and duplicates removed), and each member is acted on. Pass
+`--no-recurse` to act on the listed id itself without expanding.
+
+**What gets stored.** Installing downloads an item's content into
+
+```text
+<library>/steamapps/workshop/content/<APP_ID>/<ID>/
+```
+
+and records it in `<library>/steamapps/workshop/appworkshop_<APP_ID>.acf`, so the Steam
+client itself recognises the item as installed. The library is Aurelia's configured Steam
+library (see [`config show`](#config-show)).
+
+**How content is retrieved.** A Workshop item carries an `hcontent_file` manifest id on the
+game's workshop depot; Aurelia downloads it through the **same** content-server → manifest →
+CDN-chunk pipeline used by [`install`](#install) (decrypting and decompressing each chunk
+with the depot key). This v1 supports **SteamPipe** items (the modern norm); **legacy
+`file_url` UGC** is not yet supported and is rejected with a clear error.
+
+### `workshop browse`
+
+Search/browse a game's Workshop to **discover** items (and their ids) to subscribe to or
+install — `PublishedFile.QueryFiles` under the hood. This is the entry point when you don't
+already know an item's id.
+
+```text
+aurelia workshop browse <APP_ID> [-s <TEXT>] [--sort <ORDER>] [--count <N>] [--cursor <C>] [--tag <TAG>]... [--json]
+```
+
+| Option | Description |
+| --- | --- |
+| `-s, --search <TEXT>` | Free-text match on title/description. |
+| `--sort <ORDER>` | Result ordering: `trend` (default), `popular`, `recent`, `updated`, `subscriptions`, `text`. Use `text` with `--search` for best relevance. |
+| `--count <N>` | Results per page, 1–100 (default 20). |
+| `--cursor <C>` | Pagination cursor; pass a previous page's `next_cursor`. `*` is the first page (default). |
+| `--tag <TAG>` | Restrict to items carrying this tag (repeatable; all must match). |
+
+The text view is an `ID / SIZE / TITLE` table, followed by the match total and — when more
+results remain — the `--cursor` value to pass for the next page. The `--json` output is
+`{ "app_id", "total", "next_cursor", "items": [ <item object>... ] }`, where each item has
+the same shape as [`workshop info`](#workshop-info). Paging is **cursor-based**: start at
+`*`, then feed each response's `next_cursor` back via `--cursor` until it stops advancing.
+
+```bash
+aurelia workshop browse 1245620                          # trending items
+aurelia workshop browse 1245620 --search "hd textures"   # search
+aurelia workshop browse 1245620 --sort subscriptions --count 50
+aurelia workshop browse 1245620 --tag Gameplay --tag Mod --json
+aurelia workshop browse 1245620 --cursor "AoJw0Yzg..."   # next page
+```
 
 ### `workshop info`
 
-Show metadata for one or more items/collections (batched `PublishedFile.GetDetails`).
+Show metadata for one or more items/collections, fetched in a single batched
+`PublishedFile.GetDetails` call.
 
 ```text
 aurelia workshop info <ID>... [--json]
 ```
+
+The text view prints id, title, owning app, type (`item`/`collection`), and — for items —
+size and content manifest id; for collections, the member count. The `--json` output is an
+array of objects (a single id still yields a one-element array): `{ "id", "app_id",
+"title", "hcontent_file", "file_url", "file_size", "time_updated", "kind"
+("Item"|"Collection"), "children": [<id>...] }` (`children` is populated for collections,
+empty otherwise; `hcontent_file` is `0` for legacy/collection entries).
 
 ```bash
 aurelia workshop info 1234567890
@@ -854,16 +910,26 @@ aurelia workshop info 1234567890 2345678901 --json
 
 ### `workshop list`
 
-List the Workshop items you're subscribed to for a game.
+List the Workshop items you're subscribed to for a game (your subscriptions are enumerated,
+then resolved to metadata).
 
 ```text
 aurelia workshop list <APP_ID> [--json]
 ```
 
+The text view is an `ID / SIZE / TITLE` table; `--json` emits the same array of item objects
+as [`workshop info`](#workshop-info).
+
+```bash
+aurelia workshop list 1245620
+aurelia workshop list 1245620 --json
+```
+
 ### `workshop install`
 
 Download one or more items/collections and register them in the workshop manifest. Progress
-is streamed (NDJSON with `--json`), like `install`.
+is streamed to the terminal, and as NDJSON with `--json` — the same event stream as
+[`install`](#install) (`queued` → `progress` …), followed by one result line per item.
 
 ```text
 aurelia workshop install <ID>... [--no-recurse] [--json]
@@ -873,46 +939,76 @@ aurelia workshop install <ID>... [--no-recurse] [--json]
 | --- | --- |
 | `--no-recurse` | Install only the given ids; don't expand a collection to its members. |
 
+The per-item `--json` result line is
+`{ "event": "result", "id", "app_id", "status": "installed" }`. Installing a collection id
+(without `--no-recurse`) installs every member.
+
 ```bash
 aurelia workshop install 1234567890
-aurelia workshop install 9000000000 --no-recurse   # the collection entry only
+aurelia workshop install 5000000000              # a collection — installs all its items
+aurelia workshop install 9000000000 --no-recurse # the collection entry only, no members
 ```
 
 ### `workshop uninstall`
 
-Remove installed items/collections (their content directory and `appworkshop` entry).
+Remove installed items/collections — deletes each item's content directory and its entry in
+`appworkshop_<APP_ID>.acf`. The owning app of each id is resolved via `GetDetails` (so this
+needs a session).
 
 ```text
 aurelia workshop uninstall <ID>... [--no-recurse] [--json]
 ```
 
+| Option | Description |
+| --- | --- |
+| `--no-recurse` | Uninstall only the given ids; don't expand a collection to its members. |
+
+The `--json` output is `{ "uninstalled": [<id>...] }`.
+
+```bash
+aurelia workshop uninstall 1234567890
+aurelia workshop uninstall 5000000000 --json
+```
+
 ### `workshop subscribe` / `unsubscribe`
 
-Subscribe to or unsubscribe from items/collections. `subscribe` registers only; add
-`--install` to also download the content.
+Subscribe to or unsubscribe from items/collections. By default `subscribe` only **registers**
+the subscription; pass `--install` to also download the content immediately (streaming
+progress, as `install` does).
 
 ```text
 aurelia workshop subscribe   <ID>... [--install] [--no-recurse] [--json]
 aurelia workshop unsubscribe <ID>... [--no-recurse] [--json]
 ```
 
+| Option | Description |
+| --- | --- |
+| `--install` | (`subscribe` only) Download the content after subscribing. |
+| `--no-recurse` | Act on the given ids only; don't expand a collection to its members. |
+
+`subscribe` `--json`: `{ "subscribed": [<id>...], "installed": <bool> }`.
+`unsubscribe` `--json`: `{ "unsubscribed": [<id>...] }`.
+
 ```bash
 aurelia workshop subscribe 1234567890 --install
+aurelia workshop subscribe 5000000000            # subscribe to a collection's items
 aurelia workshop unsubscribe 1234567890
 ```
 
 ### `workshop status`
 
-Show, per item, whether it's installed, subscribed, and whether an update is available
-(the installed content manifest differs from the current one). Installed state is read
-locally; subscription and update state are best-effort (they need the network).
+Report, per item, whether it's **installed**, **subscribed**, and whether an **update** is
+available (the installed content manifest differs from the current `hcontent_file`). The
+installed set is read **locally** from `appworkshop_<APP_ID>.acf`; subscription and
+update state are **best-effort** — they need the network, and are omitted/blank when offline.
 
 ```text
 aurelia workshop status <APP_ID> [--json]
 ```
 
-The `--json` output is `{ "app_id", "items": [{ "id", "title", "installed", "subscribed",
-"update_available" }] }`.
+The text view is an `ID / INSTALLED / SUBSCRIBED / UPDATE / TITLE` table over the union of
+installed and subscribed items. The `--json` output is `{ "app_id", "items": [{ "id",
+"title", "installed", "subscribed", "update_available" }] }`.
 
 ```bash
 aurelia workshop status 1245620

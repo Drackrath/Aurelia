@@ -298,6 +298,25 @@ enum CloudCommand {
 
 #[derive(Subcommand)]
 enum WorkshopCommand {
+    /// Browse/search a game's Workshop to discover items to subscribe to or install.
+    Browse {
+        app_id: u32,
+        /// Filter by search text (free-text match on title/description).
+        #[arg(short, long)]
+        search: Option<String>,
+        /// Sort order.
+        #[arg(long, value_enum, default_value_t = WorkshopSort::Trend)]
+        sort: WorkshopSort,
+        /// Number of results per page (1–100).
+        #[arg(long, default_value_t = 20)]
+        count: u32,
+        /// Pagination cursor; use a previous page's `next_cursor` (`*` = first page).
+        #[arg(long, default_value = "*")]
+        cursor: String,
+        /// Only items carrying this tag (repeatable).
+        #[arg(long = "tag")]
+        tags: Vec<String>,
+    },
     /// Show metadata for one or more Workshop items (or collections).
     Info {
         /// One or more Workshop published-file ids.
@@ -349,6 +368,36 @@ enum WorkshopCommand {
 enum PlatformArg {
     Windows,
     Linux,
+}
+
+/// Sort order for `workshop browse`, mapped to an `EPublishedFileQueryType`.
+#[derive(Clone, Copy, ValueEnum)]
+enum WorkshopSort {
+    /// Trending now (default).
+    Trend,
+    /// Highest rated overall.
+    Popular,
+    /// Most recently published.
+    Recent,
+    /// Most recently updated.
+    Updated,
+    /// Most subscribed.
+    Subscriptions,
+    /// Best text-search relevance (use with `--search`).
+    Text,
+}
+
+impl WorkshopSort {
+    fn query_type(self) -> u32 {
+        match self {
+            WorkshopSort::Trend => 3,
+            WorkshopSort::Popular => 0,
+            WorkshopSort::Recent => 1,
+            WorkshopSort::Updated => 21,
+            WorkshopSort::Subscriptions => 9,
+            WorkshopSort::Text => 12,
+        }
+    }
 }
 
 impl From<PlatformArg> for DepotPlatform {
@@ -563,6 +612,14 @@ async fn run(cli: Cli) -> Result<()> {
             CloudCommand::List { app_id } => cmd_cloud_list(app_id, json).await,
         },
         Command::Workshop { command } => match command {
+            WorkshopCommand::Browse {
+                app_id,
+                search,
+                sort,
+                count,
+                cursor,
+                tags,
+            } => cmd_workshop_browse(app_id, search, sort, count, cursor, tags, json).await,
             WorkshopCommand::Info { ids } => cmd_workshop_info(ids, json).await,
             WorkshopCommand::List { app_id } => cmd_workshop_list(app_id, json).await,
             WorkshopCommand::Install { ids, no_recurse } => {
@@ -2495,6 +2552,52 @@ fn workshop_kind_label(kind: aurelia::models::WorkshopItemKind) -> &'static str 
         aurelia::models::WorkshopItemKind::Collection => "collection",
         aurelia::models::WorkshopItemKind::Item => "item",
     }
+}
+
+/// `workshop browse`: search/browse a game's Workshop to discover items.
+async fn cmd_workshop_browse(
+    app_id: u32,
+    search: Option<String>,
+    sort: WorkshopSort,
+    count: u32,
+    cursor: String,
+    tags: Vec<String>,
+    json: bool,
+) -> Result<()> {
+    let client = authed_client().await?;
+    let page = client
+        .query_workshop_files(app_id, search.as_deref(), sort.query_type(), &cursor, count, &tags)
+        .await?;
+
+    if json {
+        print_json(&serde_json::json!({
+            "app_id": app_id,
+            "total": page.total,
+            "next_cursor": page.next_cursor,
+            "items": page.items,
+        }));
+        return Ok(());
+    }
+
+    if page.items.is_empty() {
+        cli_println!("No Workshop items found.");
+        return Ok(());
+    }
+    cli_println!("{:>12}  {:>10}  TITLE", "ID", "SIZE");
+    for item in &page.items {
+        let size = if item.file_size > 0 {
+            human_bytes(item.file_size)
+        } else {
+            "-".to_string()
+        };
+        cli_println!("{:>12}  {:>10}  {}", item.id, size, item.title);
+    }
+    cli_println!("\nShowing {} of {} result(s).", page.items.len(), page.total);
+    // Offer the next page only when the cursor actually advances.
+    if !page.next_cursor.is_empty() && page.next_cursor != cursor {
+        cli_println!("Next page: --cursor \"{}\"", page.next_cursor);
+    }
+    Ok(())
 }
 
 /// `workshop info`: show metadata for one or more published files.

@@ -13,13 +13,50 @@ use crate::models::{WorkshopItem, WorkshopItemKind};
 use steam_vent_proto::steammessages_clientserver_ucm::CMsgClientUCMEnumerateUserSubscribedFilesWithUpdates;
 use steam_vent_proto::steammessages_publishedfile_steamclient::{
     CPublishedFile_GetDetails_Request, CPublishedFile_GetDetails_Response,
+    CPublishedFile_QueryFiles_Request, CPublishedFile_QueryFiles_Response,
     CPublishedFile_Subscribe_Request, CPublishedFile_Subscribe_Response,
     CPublishedFile_Unsubscribe_Request, CPublishedFile_Unsubscribe_Response,
+    PublishedFileDetails,
 };
 
 /// Maximum depth `expand_collections` will recurse into nested collections
 /// before giving up, as a backstop in addition to the visited-set cycle guard.
 const MAX_COLLECTION_DEPTH: usize = 8;
+
+/// Map a `PublishedFileDetails` (from GetDetails or QueryFiles) into our
+/// [`WorkshopItem`]. `fallback_app_id` is used when the detail carries no
+/// `consumer_appid` (QueryFiles results sometimes omit it — we know the app we
+/// queried). The caller is responsible for skipping non-OK / zero-id details.
+fn detail_to_workshop_item(detail: &PublishedFileDetails, fallback_app_id: u32) -> WorkshopItem {
+    let children: Vec<u64> = detail
+        .children
+        .iter()
+        .map(|c| c.publishedfileid())
+        .filter(|&cid| cid != 0)
+        .collect();
+    // A collection is a Workshop entry whose payload is a list of member ids.
+    let kind = if !children.is_empty() || detail.num_children() > 0 {
+        WorkshopItemKind::Collection
+    } else {
+        WorkshopItemKind::Item
+    };
+    let app_id = match detail.consumer_appid() {
+        0 => fallback_app_id,
+        a => a,
+    };
+    WorkshopItem {
+        id: detail.publishedfileid(),
+        app_id,
+        title: detail.title().to_string(),
+        hcontent_file: detail.hcontent_file(),
+        file_url: detail.file_url().to_string(),
+        file_size: detail.file_size(),
+        // proto field is `uint32`; widen to the model's `i64`.
+        time_updated: i64::from(detail.time_updated()),
+        kind,
+        children,
+    }
+}
 
 impl SteamClient {
     /// Fetch metadata for a batch of Workshop published files in a single
@@ -55,38 +92,66 @@ impl SteamClient {
                 );
                 continue;
             }
-
-            let children: Vec<u64> = detail
-                .children
-                .iter()
-                .map(|c| c.publishedfileid())
-                .filter(|&cid| cid != 0)
-                .collect();
-
-            // A collection is a Workshop entry whose payload is a list of member
-            // ids. The proto exposes both a `num_children` count and the actual
-            // `children` list; treat either signal as a collection.
-            let kind = if !children.is_empty() || detail.num_children() > 0 {
-                WorkshopItemKind::Collection
-            } else {
-                WorkshopItemKind::Item
-            };
-
-            out.push(WorkshopItem {
-                id,
-                app_id: detail.consumer_appid(),
-                title: detail.title().to_string(),
-                hcontent_file: detail.hcontent_file(),
-                file_url: detail.file_url().to_string(),
-                file_size: detail.file_size(),
-                // proto field is `uint32`; widen to the model's `i64`.
-                time_updated: i64::from(detail.time_updated()),
-                kind,
-                children,
-            });
+            out.push(detail_to_workshop_item(detail, 0));
         }
 
         Ok(out)
+    }
+
+    /// Browse/search a game's Workshop via `PublishedFile.QueryFiles`. Returns one
+    /// page of results plus the total match count and a `next_cursor` for paging.
+    ///
+    /// - `query_type` is an `EPublishedFileQueryType` (e.g. 3 = RankedByTrend,
+    ///   0 = RankedByVote, 1 = RankedByPublicationDate, 9 = TotalUniqueSubscriptions,
+    ///   12 = RankedByTextSearch, 21 = RankedByLastUpdatedDate).
+    /// - `cursor` is `"*"` for the first page, or a previous page's `next_cursor`.
+    /// - `numperpage` is clamped to Steam's 1..=100 range.
+    pub async fn query_workshop_files(
+        &self,
+        app_id: u32,
+        search_text: Option<&str>,
+        query_type: u32,
+        cursor: &str,
+        numperpage: u32,
+        required_tags: &[String],
+    ) -> Result<crate::models::WorkshopQueryPage> {
+        let connection = self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))?;
+
+        let mut request = CPublishedFile_QueryFiles_Request::new();
+        request.set_appid(app_id);
+        request.set_query_type(query_type);
+        request.set_cursor(cursor.to_string());
+        request.set_numperpage(numperpage.clamp(1, 100));
+        if let Some(text) = search_text {
+            if !text.is_empty() {
+                request.set_search_text(text.to_string());
+            }
+        }
+        if !required_tags.is_empty() {
+            request.requiredtags = required_tags.to_vec();
+        }
+        // Ask for full per-item details (title/size/manifest/consumer app) and
+        // collection children so results map to complete `WorkshopItem`s.
+        request.set_return_details(true);
+        request.set_return_children(true);
+
+        let response: CPublishedFile_QueryFiles_Response = connection
+            .service_method(request)
+            .await
+            .context("failed calling PublishedFile.QueryFiles")?;
+
+        let items: Vec<WorkshopItem> = response
+            .publishedfiledetails
+            .iter()
+            .filter(|d| d.publishedfileid() != 0)
+            .map(|d| detail_to_workshop_item(d, app_id))
+            .collect();
+
+        Ok(crate::models::WorkshopQueryPage {
+            items,
+            total: response.total(),
+            next_cursor: response.next_cursor().to_string(),
+        })
     }
 
     /// Resolve `ids` to a flat, de-duplicated, first-seen-ordered list of leaf

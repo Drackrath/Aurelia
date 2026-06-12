@@ -492,3 +492,14 @@ pub struct WorkshopInstalledInfo {
     pub size: u64,
     pub time_updated: i64,
 }
+
+/// One page of `PublishedFile.QueryFiles` results (browse/search). `next_cursor`
+/// is fed back as the `cursor` for the following page; an empty/repeated cursor
+/// means there are no more results.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WorkshopQueryPage {
+    pub items: Vec<WorkshopItem>,
+    /// Total matching items across all pages (as reported by Steam).
+    pub total: u32,
+    pub next_cursor: String,
+}
