@@ -1,4 +1,4 @@
-use crate::cloud_sync::{default_cloud_root, CloudClient};
+use crate::cloud_sync::{default_cloud_root, CloudClient, CloudPathResolver, UfsSaveSpec};
 use crate::cm_list::get_cm_endpoints;
 use crate::config::{
     delete_session, library_cache_path, load_launcher_config, load_library_cache, load_session,
@@ -1020,6 +1020,64 @@ pub fn find_vdf_in_pics(buffer: &[u8]) -> Result<steam_vdf_parser::Vdf<'static>>
     bail!("Failed to locate valid VDF (Text or Binary) in PICS buffer")
 }
 
+/// PICS appinfo nests an app's sections (`common`, `extended`, `config`, `depots`)
+/// under a single root key — either the literal `appinfo` or the numeric appid.
+/// Return the inner value that actually holds those sections, descending one level
+/// past the wrapper when present so callers can navigate by section name directly.
+pub(crate) fn pics_app_section<'a>(
+    root: &'a steam_vdf_parser::Value<'static>,
+) -> &'a steam_vdf_parser::Value<'static> {
+    fn has_sections(v: &steam_vdf_parser::Value) -> bool {
+        ["common", "extended", "config", "depots"]
+            .iter()
+            .any(|k| v.get(k).is_some())
+    }
+    if has_sections(root) {
+        return root;
+    }
+    if let Some(inner) = root.as_obj().and_then(|o| o.values().find(|v| has_sections(v))) {
+        return inner;
+    }
+    root
+}
+
+/// Steam Auto-Cloud save-file rules from an app's `ufs/savefiles` PICS section.
+/// Each entry names a root token, sub-path, filename glob, and recursion flag.
+pub(crate) fn ufs_save_specs_from_section(section: &steam_vdf_parser::Value) -> Vec<UfsSaveSpec> {
+    let mut specs = Vec::new();
+    if let Some(savefiles) = section.get_obj(&["ufs", "savefiles"]) {
+        for (_, entry) in savefiles.iter() {
+            let get = |k: &str| entry.get(k).and_then(|v| v.as_str());
+            let root = get("root").unwrap_or("").to_string();
+            if root.is_empty() {
+                continue;
+            }
+            specs.push(UfsSaveSpec {
+                root,
+                path: get("path").unwrap_or("").to_string(),
+                pattern: get("pattern").unwrap_or("*").to_string(),
+                recursive: get("recursive") == Some("1"),
+            });
+        }
+    }
+    specs
+}
+
+/// DLC app ids declared by an app's PICS section, read from the canonical
+/// `extended/listofdlc` field (a comma-separated string of app ids). Order is
+/// preserved and duplicates dropped.
+pub(crate) fn dlc_ids_from_section(section: &steam_vdf_parser::Value) -> Vec<u32> {
+    let mut dlcs: Vec<u32> = Vec::new();
+    if let Some(list) = section.get_str(&["extended", "listofdlc"]) {
+        for id in list.split(',').filter_map(|p| p.trim().parse::<u32>().ok()) {
+            if !dlcs.contains(&id) {
+                dlcs.push(id);
+            }
+        }
+    }
+    dlcs
+}
+
 pub fn parse_pics_product_info(buffer: &[u8]) -> Result<HashMap<u64, u64>> {
     let is_text = buffer
         .first()
@@ -1616,6 +1674,69 @@ mod tests {
         assert_eq!(launch.target, LaunchTarget::NativeLinux);
         assert_eq!(launch.executable, "linux/game.sh");
         assert_eq!(launch.arguments, "-foo -bar");
+    }
+
+    #[test]
+    fn extracts_dlc_ids_from_listofdlc() {
+        // Mirrors a real PICS appinfo: sections nested under an appid-keyed root,
+        // DLC declared in `extended/listofdlc`. Regression guard for the daemon
+        // returning an empty DLC list when appinfo isn't the text-only shape.
+        let raw = r#""1794680"
+{
+  "common" { "name" "Vampire Survivors" }
+  "extended" { "listofdlc" "2305610,2305620, 2305630,2305640,2305650" }
+}"#;
+        let vdf = find_vdf_in_pics(raw.as_bytes()).expect("parse pics vdf");
+        let section = pics_app_section(vdf.value());
+
+        assert_eq!(section.get_str(&["common", "name"]), Some("Vampire Survivors"));
+        assert_eq!(
+            dlc_ids_from_section(section),
+            vec![2305610, 2305620, 2305630, 2305640, 2305650],
+        );
+    }
+
+    #[test]
+    fn dlc_ids_empty_when_no_listofdlc() {
+        let raw = r#""appinfo" { "common" { "name" "No DLC Game" } }"#;
+        let vdf = find_vdf_in_pics(raw.as_bytes()).expect("parse pics vdf");
+        let section = pics_app_section(vdf.value());
+        assert!(dlc_ids_from_section(section).is_empty());
+    }
+
+    #[test]
+    fn parses_ufs_savefile_rules() {
+        let raw = r#""2784470"
+{
+  "ufs"
+  {
+    "savefiles"
+    {
+      "0"
+      {
+        "root" "WinAppDataLocalLow"
+        "path" "SadSocket/9Kings"
+        "pattern" "*"
+        "recursive" "1"
+      }
+      "1"
+      {
+        "root" "GameInstall"
+        "path" "Saves"
+        "pattern" "*.sav"
+      }
+    }
+  }
+}"#;
+        let vdf = find_vdf_in_pics(raw.as_bytes()).expect("parse pics vdf");
+        let specs = ufs_save_specs_from_section(pics_app_section(vdf.value()));
+        assert_eq!(specs.len(), 2);
+        assert_eq!(specs[0].root, "WinAppDataLocalLow");
+        assert_eq!(specs[0].path, "SadSocket/9Kings");
+        assert!(specs[0].recursive);
+        assert_eq!(specs[1].root, "GameInstall");
+        assert_eq!(specs[1].pattern, "*.sav");
+        assert!(!specs[1].recursive); // absent recursive defaults to false
     }
 }
 

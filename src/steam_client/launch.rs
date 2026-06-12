@@ -46,7 +46,8 @@ impl SteamClient {
 
         let cloud_enabled = launcher_config.enable_cloud_sync && !self.is_offline();
         let mut cloud_client = None;
-        let mut local_root = None;
+        let mut cloud_resolver = None;
+        let mut cloud_specs: Vec<crate::cloud_sync::UfsSaveSpec> = Vec::new();
 
         if cloud_enabled {
             let client = CloudClient::new(
@@ -55,11 +56,18 @@ impl SteamClient {
                     .cloned()
                     .context("steam connection not initialized")?,
             );
-            let root = default_cloud_root(client.steam_id(), app.app_id)?;
-            tracing::info!(appid = app.app_id, path = %root.display(), "Syncing Cloud...");
-            let _ = client.sync_down(app.app_id, &root).await;
+            let remote_root = default_cloud_root(client.steam_id(), app.app_id)?.join("remote");
+            let resolver = CloudPathResolver::new(
+                remote_root,
+                app.install_path.as_ref().map(PathBuf::from),
+            );
+            tracing::info!(appid = app.app_id, "Syncing Cloud...");
+            let _ = client.sync_down(app.app_id, &resolver).await;
+            // UFS rules let sync_up discover brand-new local saves; best-effort.
+            let specs = self.fetch_ufs_save_specs(app.app_id).await.unwrap_or_default();
             cloud_client = Some(client);
-            local_root = Some(root);
+            cloud_resolver = Some(resolver);
+            cloud_specs = specs;
         }
 
         let mut child = if native_windows {
@@ -94,11 +102,11 @@ impl SteamClient {
         wait_result?;
 
         if cloud_enabled {
-            if let (Some(client), Some(root)) = (cloud_client.as_ref(), local_root.as_ref()) {
+            if let (Some(client), Some(resolver)) = (cloud_client.as_ref(), cloud_resolver.as_ref()) {
                 // The game has already run and exited, so a cloud-upload failure must not
                 // be surfaced as a launch failure. Log it and continue (this mirrors the
                 // best-effort sync_down before launch).
-                match client.sync_up(app.app_id, root).await {
+                match client.sync_up(app.app_id, resolver, &cloud_specs).await {
                     Ok(()) => tracing::info!(appid = app.app_id, "Upload Complete"),
                     Err(e) => {
                         tracing::warn!(appid = app.app_id, "Cloud upload failed (continuing): {e:#}")

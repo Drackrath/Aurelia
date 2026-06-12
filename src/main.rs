@@ -2209,27 +2209,34 @@ async fn cmd_cloud_sync(
     let client = authed_client().await?;
     let cloud = client.cloud_client()?;
 
-    let root = match path {
+    // Classic (token-less) remote-storage files live under `<appid>/remote`; Auto-Cloud
+    // files resolve to real OS paths via their `%RootToken%` prefix. `--path` overrides
+    // only the classic base. `%GameInstall%` needs the game's install directory.
+    let remote_root = match path {
         Some(p) => p,
         None => aurelia::cloud_sync::default_cloud_root(cloud.steam_id(), app_id)
-            .context("could not resolve the local cloud save directory")?,
+            .context("could not resolve the local cloud save directory")?
+            .join("remote"),
     };
-    std::fs::create_dir_all(&root)
-        .with_context(|| format!("failed creating save directory {}", root.display()))?;
+    let (_, install_path) = client.is_game_available(app_id).await;
+    let resolver =
+        aurelia::cloud_sync::CloudPathResolver::new(remote_root.clone(), install_path.map(PathBuf::from));
 
     // No flag = full sync (down then up); `--down`/`--up` restrict the direction.
     let mut downloaded = false;
     let mut uploaded = false;
     if !up {
         cloud
-            .sync_down(app_id, &root)
+            .sync_down(app_id, &resolver)
             .await
             .with_context(|| format!("cloud sync-down failed for app {app_id}"))?;
         downloaded = true;
     }
     if !down {
+        // UFS save rules let sync_up discover brand-new local saves; best-effort.
+        let specs = client.fetch_ufs_save_specs(app_id).await.unwrap_or_default();
         cloud
-            .sync_up(app_id, &root)
+            .sync_up(app_id, &resolver, &specs)
             .await
             .with_context(|| format!("cloud sync-up failed for app {app_id}"))?;
         uploaded = true;
@@ -2246,12 +2253,12 @@ async fn cmd_cloud_sync(
         print_json(&serde_json::json!({
             "app_id": app_id,
             "direction": direction,
-            "path": root.to_string_lossy(),
+            "remote_root": remote_root.to_string_lossy(),
             "downloaded": downloaded,
             "uploaded": uploaded,
         }));
     } else {
-        cli_println!("Synced Cloud saves for app {app_id} ({direction}) at {}.", root.display());
+        cli_println!("Synced Cloud saves for app {app_id} ({direction}).");
     }
     Ok(())
 }

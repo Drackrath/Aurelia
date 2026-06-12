@@ -230,62 +230,57 @@ impl SteamClient {
             .find(|entry| entry.appid() == appid)
             .ok_or_else(|| anyhow!("missing appinfo payload for app {appid}"))?;
 
-        let raw_vdf = String::from_utf8_lossy(app.buffer()).to_string();
-        let parsed: AppInfoRoot =
-            parse_appinfo(&raw_vdf).context("failed to parse product info VDF")?;
+        // PICS product-info buffers are usually *binary* VDF (text only for some
+        // apps), so parse via `find_vdf_in_pics` rather than the text-only
+        // `parse_appinfo` — otherwise binary appinfo silently yields no DLC/depots.
+        // Extract everything in a block so the borrowed VDF tree is dropped before
+        // the later `.await`.
+        let (name, dlcs, depots, launch_options) = {
+            let vdf = find_vdf_in_pics(app.buffer())
+                .context("failed to parse product info VDF")?;
+            let section = pics_app_section(vdf.value());
 
-        let common = parsed
-            .appinfo
-            .as_ref()
-            .and_then(|a| a.common.as_ref())
-            .or(parsed.common.as_ref());
+            let name = section.get_str(&["common", "name"]).map(str::to_string);
 
-        let name = common.and_then(|c| c.name.clone());
+            // The canonical DLC list is `extended/listofdlc` — a comma-separated
+            // string of app ids.
+            let dlcs = dlc_ids_from_section(section);
 
-        let dlcs: Vec<u32> = common
-            .map(|c| {
-                c.dlc
-                    .keys()
-                    .filter_map(|k| k.parse::<u32>().ok())
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let depots_map = parsed
-            .appinfo
-            .as_ref()
-            .map(|a| &a.depots)
-            .unwrap_or(&parsed.depots);
-        let mut depots = Vec::new();
-        for (id_str, node) in depots_map {
-            let is_digit = id_str.chars().all(|c| c.is_ascii_digit());
-            if is_digit {
-                let id = id_str.parse::<u32>().unwrap_or(0);
-                let name = node
-                    ._other
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Unknown Depot")
-                    .to_string();
-                depots.push((id, name));
+            // `depots` holds numeric depot-id keys alongside non-numeric siblings
+            // (`branches`, `baselanguages`, …); keep only the numeric ones.
+            let mut depots = Vec::new();
+            if let Some(depots_obj) = section.get_obj(&["depots"]) {
+                for (id_str, node) in depots_obj.iter() {
+                    let Ok(id) = id_str.parse::<u32>() else { continue };
+                    let name = node
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Unknown Depot")
+                        .to_string();
+                    depots.push((id, name));
+                }
             }
-        }
 
-        let config = parsed
-            .appinfo
-            .as_ref()
-            .and_then(|a| a.config.as_ref())
-            .or(parsed.config.as_ref());
-
-        let mut launch_options = Vec::new();
-        if let Some(config) = config {
-            for entry in config.launch.values() {
-                launch_options.push(RawLaunchOption {
-                    executable: entry.executable.clone().unwrap_or_default(),
-                    arguments: entry.arguments.clone().unwrap_or_default(),
-                });
+            let mut launch_options = Vec::new();
+            if let Some(launch_obj) = section.get_obj(&["config", "launch"]) {
+                for entry in launch_obj.values() {
+                    launch_options.push(RawLaunchOption {
+                        executable: entry
+                            .get("executable")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                        arguments: entry
+                            .get("arguments")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                    });
+                }
             }
-        }
+
+            (name, dlcs, depots, launch_options)
+        };
 
         let manifest_path = self.appmanifest_path(appid).await?;
         let active_branch = if manifest_path.exists() {
@@ -302,6 +297,39 @@ impl SteamClient {
             launch_options,
             active_branch,
         })
+    }
+
+    /// Fetch the app's Steam Auto-Cloud `savefiles` rules from PICS appinfo. These
+    /// describe where the game's saves live on disk so Cloud sync can discover and
+    /// upload brand-new local saves (not just files already in the cloud). Returns
+    /// an empty list for apps with no UFS config.
+    pub async fn fetch_ufs_save_specs(&self, appid: u32) -> Result<Vec<UfsSaveSpec>> {
+        let connection = self
+            .connection
+            .as_ref()
+            .context("steam connection not initialized")?;
+
+        let mut request = CMsgClientPICSProductInfoRequest::new();
+        request
+            .apps
+            .push(cmsg_client_picsproduct_info_request::AppInfo {
+                appid: Some(appid),
+                ..Default::default()
+            });
+
+        let response: CMsgClientPICSProductInfoResponse = connection
+            .job(request)
+            .await
+            .context("failed requesting appinfo product info for UFS save specs")?;
+
+        let app = response
+            .apps
+            .iter()
+            .find(|entry| entry.appid() == appid)
+            .ok_or_else(|| anyhow!("missing appinfo payload for app {appid}"))?;
+
+        let vdf = find_vdf_in_pics(app.buffer()).context("failed to parse product info VDF")?;
+        Ok(ufs_save_specs_from_section(pics_app_section(vdf.value())))
     }
 
     /// Fetch a single app's PICS appinfo and infer whether it appears to require
