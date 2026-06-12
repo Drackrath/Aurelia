@@ -20,6 +20,11 @@
 >
 > Use Aurelia entirely **at your own risk**. The authors accept no liability for damage to your Steam installation, lost data, or banned/suspended accounts.
 
+<!-- -->
+
+> [!NOTE]
+> Manual review checklist for the latest code-review changes: [FILES_REVIEWED.md](FILES_REVIEWED.md).
+
 Aurelia is a pure command-line Steam launcher and library manager — no CEF, no WebViews,
 no GUI. It talks to Steam's real network protocols through
 [`steam-vent`](https://codeberg.org/steam-vent/steam-vent), so you can log in, manage your

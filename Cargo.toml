@@ -1,9 +1,9 @@
 [package]
 name = "aurelia"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 description = "Aurelia CLI launcher using steam-vent for auth/network"
-license = "MIT"
+license = "GPL 3.0"
 
 [dependencies]
 anyhow = "1"
