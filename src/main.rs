@@ -326,6 +326,38 @@ fn main() {
     worker.join().expect("the main worker thread panicked");
 }
 
+/// Whether this invocation must run in **this** process rather than being forwarded
+/// to the session daemon.
+///
+/// Interactive `login` (default credential prompts, `--qr`, or `--code`/`--pin`) needs
+/// the real terminal: it reads the username and **masks the password**. Forwarding it
+/// would run `rpassword` inside the daemon — a process with no access to the user's tty
+/// — so the password could not be hidden and would be echoed in clear text. The daemon
+/// reloads the shared session from `session.json` (by mtime) on the next forwarded
+/// command, so logging in locally still updates it. `login --health`/`--reconnect`
+/// (daemon-oriented) and `login --json` (non-tty, GUI-driven NDJSON) are not interactive
+/// and keep forwarding.
+///
+/// `kill` and `daemon stop|list` manage local OS processes directly and must likewise
+/// never forward to (or auto-spawn) the daemon they may be about to terminate.
+fn must_run_locally(cli: &Cli) -> bool {
+    let interactive_login = !cli.json
+        && matches!(
+            cli.command,
+            Command::Login {
+                health: false,
+                reconnect: false,
+                ..
+            }
+        );
+
+    interactive_login
+        || matches!(
+            cli.command,
+            Command::Kill | Command::Daemon { command: Some(_), .. }
+        )
+}
+
 async fn async_main() {
     let cli = Cli::parse();
 
@@ -345,13 +377,7 @@ async fn async_main() {
         return;
     }
 
-    // `kill` and `daemon stop|list` manage local OS processes directly — they must
-    // run in *this* process and never forward to (or auto-spawn) the daemon they may
-    // be about to terminate.
-    let local_only = matches!(
-        cli.command,
-        Command::Kill | Command::Daemon { command: Some(_), .. }
-    );
+    let local_only = must_run_locally(&cli);
 
     // Thin client: forward this command to a running daemon (auto-spawning one if
     // needed) so it runs against the single shared Steam session. If no daemon is
@@ -2736,5 +2762,42 @@ mod tests {
         let (s, e) = r.sample(0, 1000);
         assert_eq!(s, 0.0);
         assert!(e.is_none());
+    }
+
+    /// Parse an argv into a `Cli` the way the binary does.
+    fn parse(args: &[&str]) -> Cli {
+        Cli::try_parse_from(args).expect("args should parse")
+    }
+
+    #[test]
+    fn interactive_login_runs_locally_not_forwarded() {
+        // The regression: these were forwarded to the daemon, where rpassword ran
+        // without a tty and the password was echoed in clear text.
+        assert!(must_run_locally(&parse(&["aurelia", "login"])));
+        assert!(must_run_locally(&parse(&["aurelia", "login", "-u", "me"])));
+        assert!(must_run_locally(&parse(&["aurelia", "login", "--qr"])));
+        assert!(must_run_locally(&parse(&["aurelia", "login", "--code"])));
+        assert!(must_run_locally(&parse(&["aurelia", "login", "--pin"])));
+    }
+
+    #[test]
+    fn daemon_oriented_and_json_login_still_forward() {
+        // These need the daemon (or are non-tty), so they must NOT be pinned local.
+        assert!(!must_run_locally(&parse(&["aurelia", "login", "--health"])));
+        assert!(!must_run_locally(&parse(&["aurelia", "login", "--reconnect"])));
+        assert!(!must_run_locally(&parse(&["aurelia", "--json", "login", "-u", "me"])));
+        assert!(!must_run_locally(&parse(&["aurelia", "login", "--json", "--qr"])));
+    }
+
+    #[test]
+    fn ordinary_commands_forward_but_local_managers_do_not() {
+        assert!(!must_run_locally(&parse(&["aurelia", "list"])));
+        assert!(!must_run_locally(&parse(&["aurelia", "logout"])));
+        // Process/daemon managers must run in-process.
+        assert!(must_run_locally(&parse(&["aurelia", "kill"])));
+        assert!(must_run_locally(&parse(&["aurelia", "daemon", "stop"])));
+        // Bare `aurelia daemon` (becomes the server) is handled earlier, before the
+        // forward gate, so it is not flagged local here.
+        assert!(!must_run_locally(&parse(&["aurelia", "daemon"])));
     }
 }
