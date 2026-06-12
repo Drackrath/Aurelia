@@ -6,8 +6,8 @@ in the latest code review (`git diff <file>` to see what changed).
 
 ## src/ top level
 
-- [ ] [src/lib.rs](src/lib.rs)
-- [ ] [src/main.rs](src/main.rs)
+- [x] [src/lib.rs](src/lib.rs)
+- [x] [src/main.rs](src/main.rs)
 - [ ] [src/models.rs](src/models.rs)
 - [ ] [src/config.rs](src/config.rs) ★
 - [ ] [src/utils.rs](src/utils.rs) ★
@@ -23,6 +23,7 @@ in the latest code review (`git diff <file>` to see what changed).
 - [ ] [src/running.rs](src/running.rs)
 - [ ] [src/proc_admin.rs](src/proc_admin.rs)
 - [ ] [src/steam_client.rs](src/steam_client.rs) ★
+- [x] [src/progress.rs](src/progress.rs) ★
 
 ## src/steam_client/
 

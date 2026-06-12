@@ -56,7 +56,7 @@ use steam_vent_proto::steammessages_storebrowse_steamclient::{
     StoreBrowseContext, StoreBrowseItemDataRequest, StoreItem, StoreItemID,
 };
 use protobuf::MessageField;
-use steam_vent::{ConnectionError, ConnectionTrait, ServerList};
+use steam_vent::{ConnectionError, ConnectionTrait, LoginError, ServerList};
 use tokio::io::{duplex, sink, AsyncWriteExt};
 use tokio::sync::mpsc::Receiver;
 
@@ -104,6 +104,15 @@ async fn access_with_retry(
                 tracing::debug!("Refresh-token authentication succeeded");
                 return Ok(connection);
             }
+            // An auth-class result on a *refresh-token* logon is never a wrong
+            // password (none is sent) — it is a rate limit or an expired session.
+            // Steam confusingly reports logon throttling as `InvalidPassword`
+            // (steam-vent: `LoginError::InvalidCredentials`), so we must not relay
+            // it as "invalid credentials". Return a clear error and stop retrying:
+            // hammering another server only extends the per-account/IP lockout.
+            Ok(Err(ConnectionError::LoginError(login_err))) => {
+                return Err(refresh_login_error(account, login_err));
+            }
             Ok(Err(err)) => {
                 tracing::warn!(
                     "CM connect attempt {attempt}/{CM_CONNECT_ATTEMPTS} failed: {err}"
@@ -127,6 +136,33 @@ async fn access_with_retry(
     Err(last_err
         .unwrap_or_else(|| anyhow!("failed to connect to any Steam CM server")))
     .context("refresh token login failed")
+}
+
+/// Turn a steam-vent [`LoginError`] from a *refresh-token* logon into an
+/// actionable error message.
+///
+/// A refresh-token logon sends no password, so an auth-class failure here is never
+/// a wrong-password error. Steam reports logon throttling as `InvalidPassword`,
+/// which steam-vent maps to [`LoginError::InvalidCredentials`]; presenting that
+/// verbatim wrongly tells the user their credentials are bad (e.g. right after a QR
+/// scan the user already approved). Map both the explicit rate-limit and the
+/// throttle-as-invalid-credentials cases to clear guidance.
+fn refresh_login_error(account: &str, err: LoginError) -> anyhow::Error {
+    match err {
+        LoginError::RateLimited => anyhow!(
+            "Steam is rate-limiting logons for account '{account}'. This is NOT an \
+             invalid-credentials error — Steam is temporarily throttling logons. \
+             Wait a few minutes, then try again."
+        ),
+        LoginError::InvalidCredentials => anyhow!(
+            "Steam rejected the stored session for account '{account}'. A refresh-token \
+             logon sends no password, and Steam reports BOTH logon throttling and an \
+             expired session this way — so this is most likely a rate limit (wait a \
+             few minutes and retry) or an expired token (run `aurelia login` to \
+             re-authenticate), NOT a wrong password."
+        ),
+        other => anyhow!(other).context("refresh token login failed"),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

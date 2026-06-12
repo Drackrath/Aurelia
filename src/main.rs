@@ -11,7 +11,7 @@ use aurelia::config::{
 };
 use aurelia::library::{build_game_library, scan_installed_app_info};
 use aurelia::models::{
-    DepotPlatform, DownloadProgress, DownloadProgressState, DownloadState, LibraryGame,
+    DepotPlatform, DownloadState, LibraryGame,
 };
 use aurelia::steam_client::{SharedApp, SteamClient, StoreAppInfo};
 
@@ -19,6 +19,9 @@ use aurelia::steam_client::{SharedApp, SteamClient, StoreAppInfo};
 mod output;
 mod daemon;
 mod proc_admin;
+mod progress;
+
+use progress::drive_progress;
 
 /// Aurelia — a command-line Steam launcher (auth, library, install, launch).
 #[derive(Parser)]
@@ -53,208 +56,161 @@ enum Command {
         /// username/password needed). Renders the QR in the terminal.
         #[arg(long, conflicts_with_all = ["username", "password", "guard", "code"])]
         qr: bool,
-        /// Enter the Steam Guard code interactively when prompted, instead of
-        /// approving the login in the Steam Mobile app. (Alias: --pin)
+        /// Enter the Steam Guard code interactively when prompted
         #[arg(long, visible_alias = "pin", conflicts_with = "guard")]
         code: bool,
-        /// Report the current session health (authenticated? which account?) without
-        /// logging in. Reflects the daemon's shared session when one is in use.
+        /// Report the current session health
         #[arg(long, conflicts_with_all = ["username", "password", "guard", "qr", "code", "reconnect"])]
         health: bool,
-        /// Tear down and re-establish the daemon's shared session from the stored
-        /// token — use after the live connection dropped. Requires a running daemon.
+        /// Tear down and re-establish the daemon's shared session 
         #[arg(long, conflicts_with_all = ["username", "password", "guard", "qr", "code", "health"])]
         reconnect: bool,
     },
-    /// Clear the stored session.
     Logout,
     /// List games in your library.
     List {
-        /// Only show installed games.
+        /// show installed games.
         #[arg(short, long)]
         installed: bool,
-        /// Filter by case-insensitive substring of the game name.
         #[arg(short, long)]
         search: Option<String>,
-        /// Show an ONLINE column indicating whether each game appears to require
-        /// an online connection (inferred from Steam store categories). This
         /// fetches PICS appinfo per game, so it is slower than a plain listing.
         #[arg(long)]
         online: bool,
     },
-    /// Show account details for the logged-in user.
     Account,
     /// Download and install a game.
     Install {
         app_id: u32,
-        /// Depot platform to install. Auto-detected if omitted.
+        /// Depot platform to install. Auto-detected.
         #[arg(short, long)]
         platform: Option<PlatformArg>,
-        /// When installing a DLC, restart the Steam client afterward so the running
-        /// client picks up the change (Windows). Without this it only warns.
         #[arg(long)]
         restart_steam: bool,
-        /// Don't install — just report the estimated download and on-disk size
-        /// (from PICS, no files fetched). Pair with `--json` for tooling.
         #[arg(long)]
         dry_run: bool,
     },
-    /// Uninstall a game.
     Uninstall {
         app_id: u32,
-        /// Also delete the game's Wine prefix / compat data.
+        /// delete the game's Wine prefix / compat data.
         #[arg(long)]
         delete_prefix: bool,
     },
-    /// Move an installed game to a different Steam library folder, updating
-    /// Steam's data so the client recognises the new install path.
+    /// Move an installed game
     Move {
         app_id: u32,
-        /// Destination Steam library folder (its root, containing `steamapps/`),
-        /// e.g. `D:\SteamLibrary`. Must already be a Steam library.
+        /// Destination
         library: PathBuf,
-        /// Stop Steam for the duration of the move and restart it afterward.
-        /// Steam overwrites its data files on exit, so moving while it runs is
-        /// unsafe; without this, the move refuses to run while Steam is open.
+        /// Stop Steam for the duration
         #[arg(long)]
         restart_steam: bool,
     },
-    /// Relink an install to a different Steam library **without copying** — the
-    /// files must already be at the destination (e.g. you moved them by hand).
     Relink {
         app_id: u32,
-        /// Destination Steam library root (containing `steamapps/`).
+        /// Destination 
         library: PathBuf,
-        /// Stop Steam for the duration and restart it afterward.
+        /// Stop Steam for the duration
         #[arg(long)]
         restart_steam: bool,
     },
-    /// Register an existing on-disk install with Steam (writes its appmanifest).
     Import {
         app_id: u32,
-        /// Steam library root whose `steamapps/common/<installdir>` holds the files.
+        /// Steam library root
         library: PathBuf,
-        /// Depot platform whose files are present. Defaults to the current OS.
         #[arg(short, long)]
         platform: Option<PlatformArg>,
-        /// Stop Steam for the duration and restart it afterward.
+        /// Stop Steam for the duration
         #[arg(long)]
         restart_steam: bool,
     },
-    /// Report whether a game is installed and its files are present on disk.
     Available { app_id: u32 },
-    /// Verify the integrity of an installed game.
     Verify { app_id: u32 },
-    /// Download the latest manifest for an installed game.
     Update { app_id: u32 },
     /// Launch a game and wait for it to exit.
     Play {
         app_id: u32,
-        /// Force a specific Proton/Wine runner (Linux only; implies Windows target).
+        /// Force a specific Proton/Wine runner.
         #[arg(short, long)]
         proton: Option<String>,
-        /// Run the Windows executable directly with no Proton/Wine layer.
-        /// Always implied when running on Windows.
         #[arg(short, long)]
         windows: bool,
     },
-    /// Stop a running game previously launched with `aurelia play`.
+    /// Stop a running game.
     Stop {
-        /// App id to stop. Omit to list the games Aurelia is tracking as running.
         app_id: Option<u32>,
     },
-    /// Enable an installed DLC for its base game.
+    /// Enable an installed DLC.
     Enable {
         app_id: u32,
-        /// Stop Steam while applying the change, then restart it, so the running
-        /// client picks it up (Windows). Steam reads DLC state only at startup.
+        /// Stop Steam while applying the change.
         #[arg(long)]
         restart_steam: bool,
     },
-    /// Disable a DLC for its base game.
+    /// Disable an installed DLC.
     Disable {
         app_id: u32,
-        /// Stop Steam while applying the change, then restart it (Windows).
+        /// Stop Steam while applying the change.
         #[arg(long)]
         restart_steam: bool,
     },
-    /// List available beta branches for a game.
+    /// List available branches for a game.
     Branches { app_id: u32 },
-    /// Switch a game to a different branch.
     SetBranch { app_id: u32, branch: String },
-    /// Show detailed information about a game (description, release, reviews, DLC).
+    /// Show detailed information about a game.
     Info {
-        /// One or more app ids. Multiple ids are fetched over a *single* Steam
-        /// logon (one batched StoreBrowse call) — far cheaper than running `info`
-        /// once per id. With `--json`, one id yields an object and several yield an
-        /// array.
+        /// One or more app ids.
         #[arg(required = true)]
         app_ids: Vec<u32>,
-        /// Also show storefront-only fields that have no CM-protocol source:
-        /// system requirements, Metacritic, website, store genres/categories and
-        /// SteamSpy user tags. This makes additional HTTPS storefront requests.
+        /// Also show storefront-only fields that have no CM-protocol source.
         #[arg(long)]
         extended: bool,
         /// Bypass the local metadata cache and fetch fresh data from Steam.
-        /// By default `info` serves cached store metadata (TTL via
-        /// `AURELIA_INFO_CACHE_TTL`, default 6h) to avoid a Steam logon per call.
         #[arg(long)]
         no_cache: bool,
     },
-    /// List a game's DLC (app id and name only).
+    /// List a game's DLC.
     Dlc { app_id: u32 },
-    /// Show the logged-in user's achievements for a game (with unlock state).
+    /// Show the logged-in user's achievements for a game.
     Achievements {
         app_id: u32,
-        /// Language for achievement names/descriptions (Steam API language name).
         #[arg(short, long, default_value = "english")]
         lang: String,
     },
     /// List depots for a game.
     Depots { app_id: u32 },
-    /// List a game's launch options (executables/arguments Steam can start it with).
+    /// List a game's launch options.
     LaunchOptions { app_id: u32 },
     /// Download a game's cover/header artwork to the local image cache.
     Image {
         app_id: u32,
-        /// Write the image to this path instead of the cache directory.
         #[arg(short, long)]
         output: Option<PathBuf>,
-        /// Re-download even if a cached copy already exists.
         #[arg(short, long)]
         force: bool,
     },
-    /// Inspect launcher configuration.
     Config {
         #[command(subcommand)]
         command: ConfigCommand,
     },
-    /// Manage Steam Cloud saves for a game.
     Cloud {
         #[command(subcommand)]
         command: CloudCommand,
     },
-    /// Manage Steam Workshop items (published files) for a game.
     Workshop {
         #[command(subcommand)]
         command: WorkshopCommand,
     },
-    /// Download and manage Proton/Wine runtimes (official Valve Proton + GE builds).
+    /// Download and manage Proton/Wine runtimes.
     Proton {
         #[command(subcommand)]
         command: ProtonCommand,
     },
     /// Kill all running aurelia processes, including the session daemon.
     Kill,
-    /// Run the background session daemon: log in to Steam **once** and serve every
-    /// other `aurelia` command over a local socket, so repeated commands never
-    /// re-authenticate (avoiding Steam's logon rate limits). Start one per session
-    /// (e.g. at Heroic startup); other invocations auto-connect to it.
-    ///
-    /// With a subcommand (`stop`/`list`) it manages running daemons instead of
-    /// starting one.
+    /// Run the background session daemon.
     Daemon {
-        /// Override the socket/pipe path (also settable via `AURELIA_DAEMON_SOCKET`).
+        /// Override the socket/pipe 
+        // 'AURELIA_DAEMON_SOCKET'
         #[arg(long)]
         socket: Option<String>,
         #[command(subcommand)]
@@ -264,32 +220,24 @@ enum Command {
 
 #[derive(Subcommand)]
 enum DaemonCommand {
-    /// Stop running aurelia daemon(s). With a PID, stop only that daemon.
     Stop {
-        /// The daemon PID to stop (from `aurelia daemon list`). Omit to stop all.
         pid: Option<u32>,
     },
-    /// List running aurelia daemon(s) with their PID.
     List,
 }
 
 #[derive(Subcommand)]
 enum ConfigCommand {
-    /// Print the current launcher configuration as JSON.
     Show,
-    /// List detected Proton/Wine runtimes.
     Protons,
-    /// View or set per-game launch settings (Proton version, platform).
     Game {
         app_id: u32,
-        /// Set the Proton/Wine version this game launches with. Use a name from
-        /// `aurelia proton list` (installed). Overrides the global default.
         #[arg(long)]
         proton: Option<String>,
-        /// Clear the per-game Proton version (fall back to the global default).
+        /// Clear the per-game Proton version.
         #[arg(long, conflicts_with = "proton")]
         clear_proton: bool,
-        /// Force the game's platform target (`windows` runs through Proton on Linux).
+        /// Force the game's platform target.
         #[arg(long)]
         platform: Option<PlatformArg>,
     },
@@ -297,40 +245,34 @@ enum ConfigCommand {
 
 #[derive(Subcommand)]
 enum ProtonCommand {
-    /// List installable runtimes (Valve + GE) and what's already installed.
+    /// List installable runtimes.
     List {
-        /// Only show what's installed on disk (skips the GitHub/Valve lookup).
+        /// Only show what's installed on disk.
         #[arg(long)]
         installed: bool,
     },
-    /// Download and install a runtime by name (from `proton list`).
     Install {
-        /// Runtime name, e.g. `GE-Proton9-20` or `Proton 9.0`.
         version: String,
     },
-    /// Uninstall an installed custom (GE) runtime from compatibilitytools.d.
     Uninstall { version: String },
-    /// Set the global default Proton/Wine version (used when a game has none set).
+    /// Set the global default
     Default { version: String },
 }
 
 #[derive(Subcommand)]
 enum CloudCommand {
-    /// Sync a game's Steam Cloud saves with the local save directory. With
-    /// neither flag it syncs down then up; `--down`/`--up` restrict the direction.
+    /// Sync a game's Steam Cloud saves with the local save directory. 
+    /// Syncs down then up
+    /// '--down'/'--up' restrict the direction.
     Sync {
         app_id: u32,
-        /// Only upload local saves to Steam.
         #[arg(long, conflicts_with = "down")]
         up: bool,
-        /// Only download saves from Steam.
         #[arg(long, conflicts_with = "up")]
         down: bool,
-        /// Local save directory. Defaults to Aurelia's managed cloud root.
         #[arg(long)]
         path: Option<PathBuf>,
     },
-    /// List a game's Steam Cloud files (name, size, modified time).
     List { app_id: u32 },
 }
 
@@ -339,31 +281,25 @@ enum WorkshopCommand {
     /// Browse/search a game's Workshop to discover items to subscribe to or install.
     Browse {
         app_id: u32,
-        /// Filter by search text (free-text match on title/description).
         #[arg(short, long)]
         search: Option<String>,
-        /// Sort order.
         #[arg(long, value_enum, default_value_t = WorkshopSort::Trend)]
         sort: WorkshopSort,
-        /// Number of results per page (1–100).
         #[arg(long, default_value_t = 20)]
         count: u32,
-        /// Pagination cursor; use a previous page's `next_cursor` (`*` = first page).
+        /// Pagination
         #[arg(long, default_value = "*")]
         cursor: String,
-        /// Only items carrying this tag (repeatable).
         #[arg(long = "tag")]
         tags: Vec<String>,
     },
-    /// Show metadata for one or more Workshop items (or collections).
+    /// Show metadata for one or more Workshop items.
     Info {
-        /// One or more Workshop published-file ids.
         #[arg(required = true)]
         ids: Vec<u64>,
     },
-    /// List the Workshop items you're subscribed to for a game.
     List { app_id: u32 },
-    /// Download one or more Workshop items (or collections) and register them.
+    /// Download one or more Workshop items and register them.
     Install {
         #[arg(required = true)]
         ids: Vec<u64>,
@@ -371,7 +307,7 @@ enum WorkshopCommand {
         #[arg(long)]
         no_recurse: bool,
     },
-    /// Remove one or more installed Workshop items (or collections).
+    /// Remove one or more installed Workshop items.
     Uninstall {
         #[arg(required = true)]
         ids: Vec<u64>,
@@ -404,7 +340,7 @@ enum WorkshopCommand {
     Rate {
         /// The Workshop published-file id.
         id: u64,
-        /// `up` or `down`.
+        /// 'up' or 'down'.
         vote: VoteArg,
     },
     /// Read the comments on a Workshop item.
@@ -422,7 +358,6 @@ enum WorkshopCommand {
     Comment {
         /// The Workshop published-file id.
         id: u64,
-        /// The comment text.
         text: String,
     },
 }
@@ -433,20 +368,14 @@ enum PlatformArg {
     Linux,
 }
 
-/// Sort order for `workshop browse`, mapped to an `EPublishedFileQueryType`.
 #[derive(Clone, Copy, ValueEnum)]
 enum WorkshopSort {
-    /// Trending now (default).
+    /// default.
     Trend,
-    /// Highest rated overall.
     Popular,
-    /// Most recently published.
     Recent,
-    /// Most recently updated.
     Updated,
-    /// Most subscribed.
     Subscriptions,
-    /// Best text-search relevance (use with `--search`).
     Text,
 }
 
@@ -463,7 +392,6 @@ impl WorkshopSort {
     }
 }
 
-/// Thumbs-up/down for `workshop rate`.
 #[derive(Clone, Copy, ValueEnum)]
 enum VoteArg {
     Up,
@@ -480,10 +408,7 @@ impl From<PlatformArg> for DepotPlatform {
 }
 
 fn main() {
-    // The CLI's top-level async future is large (every command arm) and the Steam
-    // connect/auth path is deeply nested; in debug builds this can overflow the OS
-    // main thread's default stack (~1 MB on Windows) before any command runs. Run
-    // the Tokio runtime on a thread with a generous stack to avoid that.
+    // Run the Tokio runtime on a thread.
     let worker = std::thread::Builder::new()
         .name("aurelia-main".to_string())
         .stack_size(32 * 1024 * 1024)
@@ -501,18 +426,6 @@ fn main() {
 
 /// Whether this invocation must run in **this** process rather than being forwarded
 /// to the session daemon.
-///
-/// Interactive `login` (default credential prompts, `--qr`, or `--code`/`--pin`) needs
-/// the real terminal: it reads the username and **masks the password**. Forwarding it
-/// would run `rpassword` inside the daemon — a process with no access to the user's tty
-/// — so the password could not be hidden and would be echoed in clear text. The daemon
-/// reloads the shared session from `session.json` (by mtime) on the next forwarded
-/// command, so logging in locally still updates it. `login --health`/`--reconnect`
-/// (daemon-oriented) and `login --json` (non-tty, GUI-driven NDJSON) are not interactive
-/// and keep forwarding.
-///
-/// `kill` and `daemon stop|list` manage local OS processes directly and must likewise
-/// never forward to (or auto-spawn) the daemon they may be about to terminate.
 fn must_run_locally(cli: &Cli) -> bool {
     let interactive_login = !cli.json
         && matches!(
@@ -537,7 +450,7 @@ async fn async_main() {
     // Send tracing/diagnostics to stderr so stdout stays clean for --json output.
     aurelia::infra::logging::init_cli_logging(cli.verbose);
 
-    // Bare `aurelia daemon`: become the shared-session server. Never forwards.
+    // Bare 'aurelia daemon': become the shared-session server. Never forwards.
     if let Command::Daemon { socket, command: None } = &cli.command {
         if let Some(path) = socket {
             // SAFETY: single-threaded at this point (set before any worker spawns).
@@ -552,15 +465,12 @@ async fn async_main() {
 
     let local_only = must_run_locally(&cli);
 
-    // Thin client: forward this command to a running daemon (auto-spawning one if
-    // needed) so it runs against the single shared Steam session. If no daemon is
-    // available, fall through and run locally. `AURELIA_NO_DAEMON` opts out.
+    // Thin client: 
+    // forward this command to a running daemon 
+    // 'AURELIA_NO_DAEMON' opts out.
     if !local_only && std::env::var_os("AURELIA_NO_DAEMON").is_none() {
         match daemon::client::try_forward().await {
-            // Exit the process directly rather than returning: the stdin-forwarding
-            // task reads `tokio::io::stdin()` on a blocking thread that never
-            // finishes for an interactive (no-EOF) stdin, which would otherwise stall
-            // the runtime's shutdown and hang exit.
+            // Exit the process directly rather than returning
             Ok(Some(code)) => std::process::exit(code),
             Ok(None) => {}
             Err(e) => tracing::warn!("daemon forwarding failed ({e:#}); running locally"),
@@ -571,9 +481,7 @@ async fn async_main() {
     std::process::exit(code);
 }
 
-/// Parse `argv` and run the resulting command, reporting any error the same way the
-/// CLI does. Returns the process exit code. This is the daemon's entry point for a
-/// forwarded command (see [`daemon`]); `argv[0]` is the program name.
+/// Parse `argv` and run the resulting command.
 pub(crate) async fn run_argv(argv: Vec<String>) -> i32 {
     match Cli::try_parse_from(&argv) {
         Ok(cli) => run_and_report(cli).await,
@@ -604,7 +512,6 @@ async fn run_and_report(cli: Cli) -> i32 {
         Ok(()) => 0,
         Err(err) => {
             if json {
-                // Single line so it stays valid in the NDJSON streams (e.g. `install`).
                 print_json_line(&serde_json::json!({ "error": format!("{err:#}") }));
             } else {
                 cli_eprintln!("Error: {err:#}");
@@ -784,9 +691,6 @@ fn print_json_line(value: &serde_json::Value) {
 }
 
 /// Build a client and restore a persisted session if one exists.
-///
-/// Inside the daemon this returns a cheap client backed by the **single shared
-/// connection** (no logon); only a standalone run actually re-authenticates here.
 async fn restored_client() -> Result<SteamClient> {
     if daemon::in_daemon() {
         return Ok(daemon::shared_restored_client().await);
@@ -803,11 +707,11 @@ async fn restored_client() -> Result<SteamClient> {
     Ok(client)
 }
 
-/// Require an authenticated client, erroring out with a helpful message otherwise.
+/// Require an authenticated client, erroring out otherwise.
 async fn authed_client() -> Result<SteamClient> {
     let client = restored_client().await?;
     if !client.is_authenticated() {
-        bail!("not logged in — run `aurelia login` first");
+        bail!("not logged in, run 'aurelia login' first");
     }
     Ok(client)
 }
@@ -816,33 +720,29 @@ async fn authed_client() -> Result<SteamClient> {
 async fn load_library(client: &mut SteamClient) -> Vec<LibraryGame> {
     let cached = load_library_cache().await.unwrap_or_default();
     let owned = if client.is_authenticated() {
-        tracing::info!("Fetching owned games from Steam ...");
+        tracing::info!("Fetching owned games from Steam...");
         match client.fetch_owned_games().await {
             Ok(games) => {
                 tracing::info!("Fetched {} owned games", games.len());
                 games
             }
             Err(e) => {
-                tracing::warn!("Could not fetch owned games ({e:#}); using cached library");
+                tracing::warn!("Could not fetch owned games ({e:#}), using cached library");
                 cached
             }
         }
     } else if !cached.is_empty() {
         cached
     } else {
-        // Not logged in to Aurelia (and nothing cached). The Steam client is
-        // almost always already signed in on Linux and keeps the whole library
-        // on disk, so fall back to reading its caches. This makes `list` show
-        // the full library instead of only locally-installed games.
+        // Not logged in to Aurelia.
         aurelia::local_library::discover_local_owned_games().await
     };
     let installed = scan_installed_app_info().await.unwrap_or_default();
     build_game_library(owned, installed, client.steam_id()).games
 }
 
-/// Merge Family-Shared apps into the library. Apps already present (e.g. installed,
-/// or surfaced via another path) are flagged as family-shared if not owned; apps not
-/// yet present are added as non-installed family-shared entries.
+// Merge Family-Shared apps into the library. 
+// Not yet present are added as non-installed family-shared entries.
 fn merge_family_shared(games: &mut Vec<LibraryGame>, shared: Vec<SharedApp>) {
     for app in shared {
         if aurelia::library::is_ignored_steam_app(app.app_id, &app.name) {
@@ -900,9 +800,6 @@ async fn cmd_login(
         return cmd_login_qr(json).await;
     }
 
-    // In `--json` mode the login is driven non-interactively (e.g. by Heroic): no
-    // TTY prompts. Credentials come from flags/env, and a Steam Guard code is
-    // requested via a `{event:"guard_required",...}` line and read back from stdin.
     if json {
         return cmd_login_json(username, password, guard).await;
     }
@@ -919,9 +816,8 @@ async fn cmd_login(
     };
 
     let mut client = SteamClient::new()?;
-    // `--code` (alias `--pin`) reads the Steam Guard code interactively from stdin
-    // (handled inside `login`); otherwise we wait for mobile-app approval and only
-    // prompt for a code on the retry path below.
+    // '--code' (alias '--pin') reads the Steam Guard code interactively from stdin
+    // otherwise wait for mobile-app approval
     let attempt = client
         .login(username.clone(), password.clone(), guard.clone(), code)
         .await;
@@ -954,7 +850,7 @@ async fn cmd_login(
                 .any(|p| matches!(p.requirement, aurelia::models::SteamGuardReq::DeviceConfirmation))
             {
                 tracing::info!("Login method awaited: Steam Mobile app approval");
-                bail!("approve this login in the Steam Mobile app, then run `aurelia login` again")
+                bail!("approve this login in the Steam Mobile app, then run 'aurelia login' again")
             } else {
                 Err(err).context("login failed")
             }
@@ -963,10 +859,7 @@ async fn cmd_login(
 }
 
 /// Log in by scanning a QR code with the Steam Mobile app.
-///
 /// In `--json` mode the challenge URL is streamed as `{event:"qr_challenge",url}`
-/// (re-emitted whenever Steam rotates the code) so a driver like Heroic can render
-/// the QR itself; otherwise it's drawn to stderr as a terminal QR.
 async fn cmd_login_qr(json: bool) -> Result<()> {
     let mut client = SteamClient::new()?;
     let result = if json {
@@ -980,14 +873,10 @@ async fn cmd_login_qr(json: bool) -> Result<()> {
     Ok(())
 }
 
-/// How long to wait for a single Steam login attempt before giving up. The login
-/// call blocks inside steam-vent while it waits for a Steam Guard code or for the
-/// user to approve the login in the Steam Mobile app; this bounds that wait so a
-/// `--json` driver never hangs indefinitely.
+/// How long to wait for a single Steam login attempt before giving up.
 const LOGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
-/// Run one `login` attempt with [`LOGIN_TIMEOUT`]. On timeout, returns a clear
-/// error (so a `--json` driver gets `{ "error": ... }` rather than hanging).
+/// Run one `login` attempt with [`LOGIN_TIMEOUT`].
 async fn login_with_timeout(
     client: &mut SteamClient,
     username: &str,
@@ -1008,18 +897,12 @@ async fn login_with_timeout(
     }
 }
 
-/// Non-interactive password login for `--json` drivers (e.g. Heroic). Credentials
-/// come from flags or `AURELIA_PASSWORD`. To keep the driver informed (and never
-/// silent), it emits:
-/// - `{event:"awaiting_confirmation"}` right away — the login may block while
-///   Steam waits for the Guard code or Mobile-app approval, so the driver should
-///   prompt the user to approve on their device;
-/// - `{event:"guard_required",type:"email"|"device"}` if a typed Guard code is
-///   needed and none was supplied (the code is then read as one line from stdin);
-/// - `{event:"guard_required",type:"device_confirmation"}` for mobile-approval
-///   accounts;
-/// - finally `{logged_in:true,...}` or `{error:...}`.
-///
+/// Non-interactive password login for `--json` drivers. Credentials
+/// come from flags or `AURELIA_PASSWORD`.
+/// - `{event:"awaiting_confirmation"}` 
+/// - `{event:"guard_required",type:"email"|"device"}`
+/// - `{event:"guard_required",type:"device_confirmation"}` 
+/// - finally `{logged_in:true,...}` or `{error:...}`
 /// Each login attempt is bounded by [`LOGIN_TIMEOUT`].
 async fn cmd_login_json(
     username: Option<String>,
@@ -1035,13 +918,10 @@ async fn cmd_login_json(
 
     let mut client = SteamClient::new()?;
 
-    // The login call below blocks inside steam-vent while it waits for the Guard
-    // code / mobile confirmation. Emit this first so the driver can immediately
-    // tell the user to approve the login (otherwise it sees no output until the
-    // attempt completes or times out).
+    // The login call below blocks inside steam-vent waiting for Steam Guard
     print_json_line(&serde_json::json!({
         "event": "awaiting_confirmation",
-        "message": "Signing in — if prompted, approve this login in your Steam Mobile app."
+        "message": "Signing in... approve this login in your Steam Mobile app."
     }));
 
     match login_with_timeout(&mut client, &username, &password, guard.clone()).await {
@@ -1052,7 +932,7 @@ async fn cmd_login_json(
         Err(err) => {
             use aurelia::models::SteamGuardReq::{DeviceCode, DeviceConfirmation, EmailCode};
 
-            // A typed Steam Guard code is needed (email or authenticator).
+            // A typed Steam Guard code is needed.
             let code_kind = guard.is_none().then(|| {
                 client.pending_confirmations().iter().find_map(|p| match p.requirement {
                     EmailCode { .. } => Some("email"),
@@ -1065,7 +945,7 @@ async fn cmd_login_json(
                 print_json_line(&serde_json::json!({ "event": "guard_required", "type": kind }));
                 let code = read_stdin_line()
                     .await
-                    .context("failed reading Steam Guard code from stdin")?;
+                    .context("failed reading Steam Guard code")?;
                 login_with_timeout(&mut client, &username, &password, Some(code))
                     .await
                     .context("login failed after providing Steam Guard code")?;
@@ -1087,14 +967,12 @@ async fn cmd_login_json(
     }
 }
 
-/// Emit a QR login challenge URL as one NDJSON line for a `--json` driver.
+/// Emit a QR login challenge URL.
 fn emit_qr_challenge_json(url: &str) {
     print_json_line(&serde_json::json!({ "event": "qr_challenge", "url": url }));
 }
 
-/// Read a single line from stdin (used to receive a Guard code from a `--json`
-/// driver). Returns the trimmed contents. Routes through [`output::read_line`] so
-/// that, inside the daemon, it reads the forwarding client's stdin.
+/// Read a single line from stdin.
 async fn read_stdin_line() -> Result<String> {
     output::read_line()
         .await
@@ -1102,8 +980,7 @@ async fn read_stdin_line() -> Result<String> {
         .map(|s| s.trim().to_string())
 }
 
-/// Render a Steam login challenge URL as a scannable QR code on stderr, with the
-/// raw URL as a fallback. Diagnostics go to stderr so stdout stays clean.
+/// Render a Steam login challenge URL as a scannable QR code on stderr.
 fn render_login_qr(url: &str) {
     match qrcode::QrCode::new(url.as_bytes()) {
         Ok(code) => {
@@ -1115,7 +992,7 @@ fn render_login_qr(url: &str) {
         }
         Err(e) => cli_eprintln!("\n(could not render QR code: {e})"),
     }
-    cli_eprintln!("Or open this link in the Steam Mobile app:\n  {url}\n");
+    cli_eprintln!("Open this link in the Steam Mobile app:\n  {url}\n");
 }
 
 fn report_login_success(account: &str, json: bool) {
@@ -1138,8 +1015,6 @@ async fn cmd_logout(json: bool) -> Result<()> {
 }
 
 /// `login --health`: report whether a session is authenticated, without logging in.
-/// When a daemon is in use this reflects its shared session (no new logon); standalone
-/// it does a one-off live restore check.
 async fn cmd_login_health(json: bool) -> Result<()> {
     let via_daemon = daemon::in_daemon();
     let status = if via_daemon {
@@ -1156,13 +1031,13 @@ async fn cmd_login_health(json: bool) -> Result<()> {
     Ok(())
 }
 
-/// `login --reconnect`: tear down and re-establish the daemon's shared session from
-/// the stored token (for use after the live connection dropped).
+/// `login --reconnect`: 
+// tear down and re-establish session from the stored token.
 async fn cmd_login_reconnect(json: bool) -> Result<()> {
     if !daemon::in_daemon() {
         bail!(
             "--reconnect needs the session daemon, but this command is running standalone \
-             (AURELIA_NO_DAEMON is set, or the daemon is unreachable). Start `aurelia daemon` first."
+             (AURELIA_NO_DAEMON is set, or the daemon is unreachable). Start 'aurelia daemon' first."
         );
     }
     let status = daemon::force_reconnect().await;
@@ -1170,7 +1045,7 @@ async fn cmd_login_reconnect(json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Print a [`daemon::SessionStatus`] for `--health`/`--reconnect`.
+/// Print a [`daemon::SessionStatus`]
 fn report_session_status(status: &daemon::SessionStatus, via_daemon: bool, json: bool) {
     if json {
         print_json(&serde_json::json!({
@@ -1206,8 +1081,7 @@ async fn cmd_list(
     let mut client = restored_client().await?;
     let mut games = load_library(&mut client).await;
 
-    // Include Family-Shared games that aren't installed (and which we don't own),
-    // such as titles only available through a family member's library.
+    // Include Family-Shared games that aren't installed.
     if client.is_authenticated() {
         tracing::info!("Fetching Family Sharing library from Steam ...");
         match client.fetch_family_shared_apps().await {
@@ -1227,8 +1101,7 @@ async fn cmd_list(
     }
     games.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
 
-    // Resolve the "online required" status only when requested: it needs a PICS
-    // appinfo fetch per game, which is too costly to do on every `list`.
+    // Resolve the "online required" status only when requested.
     if online {
         if client.is_authenticated() && !client.is_offline() {
             tracing::info!("Resolving online-required status for {} game(s) ...", games.len());
@@ -1364,17 +1237,14 @@ async fn cmd_install(
 ) -> Result<()> {
     let mut client = authed_client().await?;
 
-    // `--dry-run` reports the size estimate and stops — it never touches Steam or
-    // downloads anything.
+    // `--dry-run` reports the size estimate and stops
     if dry_run {
         return cmd_install_dry_run(&mut client, app_id, platform, json).await;
     }
 
-    // Note whether this is a DLC so we can refresh Steam's view afterward.
+    // For a DLC, stop Steam before editing its base appmanifest
+    // then restart it afterward so the running client picks up the change.
     let is_dlc = client.resolve_dlc_parent(app_id).await.is_some();
-
-    // For a DLC, stop Steam before editing its base appmanifest (Steam overwrites it
-    // on exit), then restart it afterward so the running client picks up the change.
     let manage_steam = restart_steam && is_dlc && SteamClient::steam_is_running();
     if manage_steam {
         if !json {
@@ -1417,8 +1287,6 @@ async fn cmd_install(
         steam_restarted = true;
     }
 
-    // A newly installed DLC is invisible to an already-running Steam client until it
-    // re-reads the appmanifest (which it does at startup).
     let steam_restart_required = is_dlc && !manage_steam && SteamClient::steam_is_running();
     if steam_restart_required && !json {
         cli_eprintln!();
@@ -1440,8 +1308,7 @@ async fn cmd_install(
     Ok(())
 }
 
-/// Report the estimated download/disk size for installing `app_id` without
-/// installing anything (mirrors Nile's `install --info --json`).
+/// Report the estimated download/disk size 
 async fn cmd_install_dry_run(
     client: &mut SteamClient,
     app_id: u32,
@@ -1482,7 +1349,7 @@ async fn cmd_install_dry_run(
     Ok(())
 }
 
-/// Format a byte count as a human-readable size (binary units).
+/// Format a byte count as a human-readable size.
 fn human_bytes(bytes: u64) -> String {
     const UNITS: [&str; 6] = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
     if bytes == 0 {
@@ -1527,8 +1394,7 @@ async fn cmd_move(
 ) -> Result<()> {
     let client = authed_client().await?;
 
-    // Steam rewrites appmanifests and libraryfolders.vdf on exit, so it must not be
-    // running while we move things.
+    // Stop Steam while editing manifests
     let managed = steam_guard_stop(restart_steam, json)?;
     let rx = client
         .move_install(app_id, library.clone())
@@ -1551,10 +1417,8 @@ async fn cmd_move(
     Ok(())
 }
 
-/// Steam edits to appmanifests / `libraryfolders.vdf` are clobbered if Steam is
-/// running (it rewrites them on exit). If Steam is up, either stop it (when
-/// `restart_steam`) — returning `true` so the caller restarts it afterward — or
-/// refuse. Returns whether Steam was stopped.
+// Steam needs to be stopped for appmanifest / `libraryfolders.vdf` edits
+// Stop steam
 fn steam_guard_stop(restart_steam: bool, json: bool) -> Result<bool> {
     let running = SteamClient::steam_is_running();
     if running && !restart_steam {
@@ -1618,7 +1482,7 @@ async fn cmd_import(
     json: bool,
 ) -> Result<()> {
     let client = authed_client().await?;
-    // Default to the OS we're running on for the depot/platform match.
+    // Default to the OS depot/platform match.
     let platform: DepotPlatform = platform.map(Into::into).unwrap_or(if cfg!(target_os = "windows") {
         DepotPlatform::Windows
     } else {
@@ -1644,12 +1508,8 @@ async fn cmd_import(
     Ok(())
 }
 
+// Check whether a game is available on disk
 async fn cmd_available(app_id: u32, json: bool) -> Result<()> {
-    // `is_game_available` only reads the local appmanifest and checks the files on
-    // disk, so we deliberately build a client *without* restoring the Steam session.
-    // A driver like Heroic calls `available` per game on every refresh; restoring
-    // the session here would mean one Steam CM logon per call (and Steam throttles
-    // repeated logons hard) for data we never fetch over the wire.
     let client = SteamClient::new()?;
     let (available, install_path) = client.is_game_available(app_id).await;
     if json {
@@ -1705,7 +1565,7 @@ async fn cmd_play(app_id: u32, proton: Option<String>, windows: bool, json: bool
     let mut client = authed_client().await?;
     let game = find_game(&mut client, app_id).await?;
 
-    // Proton/Wine is Linux-only; on Windows we always run the game natively.
+    // If Windows run the game natively.
     let force_windows = windows || cfg!(target_os = "windows");
 
     let launcher_config = load_launcher_config().await.unwrap_or_default();
@@ -1714,8 +1574,6 @@ async fn cmd_play(app_id: u32, proton: Option<String>, windows: bool, json: bool
     let prefers_windows =
         game_cfg.and_then(|c| c.platform_preference.as_deref()) == Some("windows");
 
-    // Resolution order: explicit `--proton` flag → the game's stored version →
-    // (when the game targets Windows) the global default. None means run natively.
     let proton_path = proton
         .or(forced_proton)
         .or_else(|| prefers_windows.then(|| launcher_config.proton_version.clone()));
@@ -1742,8 +1600,8 @@ async fn cmd_play(app_id: u32, proton: Option<String>, windows: bool, json: bool
     Ok(())
 }
 
+// Stop running games
 async fn cmd_stop(app_id: Option<u32>, json: bool) -> Result<()> {
-    // No app id: report what Aurelia currently tracks as running.
     let Some(app_id) = app_id else {
         let running = aurelia::running::list();
         if json {
@@ -1779,8 +1637,7 @@ async fn cmd_stop(app_id: Option<u32>, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// `aurelia kill`: terminate every running aurelia process (daemon and otherwise),
-/// except the current one.
+/// `aurelia kill`: terminate every running aurelia process
 fn cmd_kill(json: bool) -> Result<()> {
     let procs = proc_admin::find_aurelia_processes();
     let pids: Vec<u32> = procs.iter().map(|p| p.pid).collect();
@@ -1796,8 +1653,7 @@ fn cmd_kill(json: bool) -> Result<()> {
     Ok(())
 }
 
-/// `aurelia daemon stop [PID]`: terminate the session daemon(s). With a PID, stop
-/// only that daemon (erroring if it isn't a running aurelia daemon).
+/// `aurelia daemon stop [PID]`: terminate the session daemon(s).
 fn cmd_daemon_stop(pid: Option<u32>, json: bool) -> Result<()> {
     let daemons: Vec<_> = proc_admin::find_aurelia_processes()
         .into_iter()
@@ -1855,8 +1711,7 @@ fn cmd_daemon_list(json: bool) -> Result<()> {
 async fn cmd_set_dlc(app_id: u32, enable: bool, restart_steam: bool, json: bool) -> Result<()> {
     let client = restored_client().await?;
 
-    // Steam flushes its in-memory app state on exit, so the edit must happen while
-    // Steam is stopped to survive. With --restart-steam: stop → edit → start.
+    // Steam flushes its in-memory app state on exit.
     let manage_steam = restart_steam && SteamClient::steam_is_running();
     if manage_steam {
         if !json {
@@ -1900,7 +1755,7 @@ async fn cmd_set_dlc(app_id: u32, enable: bool, restart_steam: bool, json: bool)
 
     cli_println!("DLC {app_id} {action} for base game {base}.");
     if enable {
-        cli_println!("(Toggles the flag only — run `aurelia install {app_id}` if the content isn't downloaded.)");
+        cli_println!("(Toggles the flag only, run `aurelia install {app_id}` if the content isn't downloaded.)");
     }
     if restart_required {
         cli_eprintln!("Note: Steam is running and reads DLC state only at startup, so this won't apply");
@@ -1943,15 +1798,12 @@ async fn cmd_set_branch(app_id: u32, branch: String, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Storefront-only `--extended` data for one app: the HTTPS `AppDetails` plus the
-/// SteamSpy user tags.
+/// `--extended` data for one app
 type ExtendedInfo = (aurelia::store::AppDetails, Vec<String>);
 
 async fn cmd_info(app_ids: Vec<u32>, extended: bool, no_cache: bool, json: bool) -> Result<()> {
-    // The CM-sourced metadata (StoreBrowse + the DLC list) is effectively static
-    // for hours, and drivers like Heroic call `info` repeatedly. Serve it from a
-    // short-TTL disk cache so a repeat call avoids the Steam CM logon and the
-    // StoreBrowse/PICS round-trips entirely. `--no-cache` forces a fresh fetch.
+    // Serve it from a short-TTL disk cache 
+    // `--no-cache` forces a fresh fetch.
     let ttl = if no_cache {
         std::time::Duration::ZERO
     } else {
@@ -1959,10 +1811,7 @@ async fn cmd_info(app_ids: Vec<u32>, extended: bool, no_cache: bool, json: bool)
     };
     let single = app_ids.len() == 1;
 
-    // Partition the requested ids into cache hits and misses. Every miss is then
-    // fetched over a *single* Steam logon with one batched StoreBrowse call, so
-    // `info 1 2 3` costs one logon — not the three a caller spends running `info 1`,
-    // `info 2`, `info 3` separately.
+    // Partition the requested ids into cache hits and misses.
     let mut base: std::collections::HashMap<u32, (StoreAppInfo, Vec<(u32, Option<String>)>)> =
         std::collections::HashMap::new();
     let mut misses: Vec<u32> = Vec::new();
@@ -1976,8 +1825,6 @@ async fn cmd_info(app_ids: Vec<u32>, extended: bool, no_cache: bool, json: bool)
     }
 
     if !misses.is_empty() {
-        // Metadata comes from the StoreBrowse service over the Steam CM connection
-        // (no HTTPS storefront API), so a session is needed here.
         let client = authed_client().await?;
         let store = client
             .fetch_store_apps(&misses)
@@ -1985,9 +1832,6 @@ async fn cmd_info(app_ids: Vec<u32>, extended: bool, no_cache: bool, json: bool)
             .context("failed to fetch store information")?;
         for &id in &misses {
             let Some(details) = store.iter().find(|i| i.app_id == id).cloned() else {
-                // A single-id caller expects a hard error for an unknown app; in a
-                // batch we skip it (with a warning) so one delisted id doesn't sink
-                // the rest.
                 if single {
                     bail!("no store information available for app {id}");
                 }
@@ -2005,7 +1849,7 @@ async fn cmd_info(app_ids: Vec<u32>, extended: bool, no_cache: bool, json: bool)
                 .unwrap_or_default();
             let dlc = resolve_dlc_names_via_store(&client, &dlc_ids).await;
 
-            // Best-effort cache write — a failure here must not fail the command.
+            // Best-effort cache write.
             if let Err(e) = save_info_cache(id, &details, &dlc).await {
                 tracing::warn!("could not cache info for app {id}: {e:#}");
             }
@@ -2014,9 +1858,7 @@ async fn cmd_info(app_ids: Vec<u32>, extended: bool, no_cache: bool, json: bool)
     }
 
     // Storefront-only fields (system requirements, Metacritic, website, store
-    // genres/categories, SteamSpy user tags). These have no CM-protocol source, so
-    // `--extended` fetches them from the public HTTPS storefront, reusing one HTTP
-    // client across ids. Best-effort: any failure leaves them absent.
+    // genres/categories, SteamSpy user tags). 
     let mut extended_by_id: std::collections::HashMap<u32, ExtendedInfo> =
         std::collections::HashMap::new();
     if extended {
@@ -2046,8 +1888,6 @@ async fn cmd_info(app_ids: Vec<u32>, extended: bool, no_cache: bool, json: bool)
                     .map(|(details, dlc)| info_json_value(details, dlc, extended_by_id.get(id)))
             })
             .collect();
-        // One id keeps the original single-object shape (backward compatible);
-        // several ids produce an array.
         if single {
             match items.into_iter().next() {
                 Some(v) => cli_println!("{}", serde_json::to_string_pretty(&v)?),
@@ -2073,8 +1913,7 @@ async fn cmd_info(app_ids: Vec<u32>, extended: bool, no_cache: bool, json: bool)
     Ok(())
 }
 
-/// Build the `--json` object for one app from its CM metadata, DLC list and
-/// optional `--extended` storefront data.
+/// Build the `--json` object for one app
 fn info_json_value(
     details: &StoreAppInfo,
     dlc: &[(u32, Option<String>)],
@@ -2237,9 +2076,7 @@ fn print_info_human(
     }
 }
 
-/// Resolve DLC names via a single batched `StoreBrowse.GetItems` call (over the
-/// Steam CM connection — no storefront API), returning `(app_id, name)` pairs
-/// sorted by app id. A `None` name means the store didn't return that id.
+/// Resolve DLC names via a single batched `StoreBrowse.GetItems`.
 async fn resolve_dlc_names_via_store(
     client: &SteamClient,
     dlc_ids: &[u32],
@@ -2264,12 +2101,11 @@ async fn resolve_dlc_names_via_store(
 }
 
 async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
-    // Ownership status requires an authenticated connection; installed/disabled status
-    // is read from the local appmanifest.
+    // Ownership status requires an authenticated connection; 
+    // installed/disabled status is read from the local appmanifest.
     let steam = authed_client().await?;
 
-    // DLC ids come from PICS appinfo (`common.dlc`); names from a batched
-    // StoreBrowse call — both over the Steam CM connection, no storefront API.
+    // DLC ids come from PICS appinfo (`common.dlc`);
     let dlc_ids: Vec<u32> = steam
         .get_extended_app_info(app_id)
         .await
@@ -2477,7 +2313,7 @@ async fn cmd_image(app_id: u32, output: Option<PathBuf>, force: bool, json: bool
     let cache_path = cache_dir.join(format!("{app_id}_library.jpg"));
 
     if force || tokio::fs::metadata(&cache_path).await.is_err() {
-        // Steam CDN artwork variants, tried in order of preference.
+        // Steam CDN artwork variants
         let candidates = [
             format!("https://cdn.akamai.steamstatic.com/steam/apps/{app_id}/library_600x900_2x.jpg"),
             format!("https://cdn.akamai.steamstatic.com/steam/apps/{app_id}/header.jpg"),
@@ -2525,14 +2361,12 @@ async fn cmd_image(app_id: u32, output: Option<PathBuf>, force: bool, json: bool
 }
 
 async fn cmd_config_show(_json: bool) -> Result<()> {
-    // The launcher configuration is structured data; it always renders as JSON.
     let config = load_launcher_config().await.unwrap_or_default();
     cli_println!("{}", serde_json::to_string_pretty(&config)?);
     Ok(())
 }
 
 /// `config protons`: list the Proton/Wine runtimes actually installed on disk.
-/// Shares discovery with `proton list --installed` (no hardcoded placeholders).
 async fn cmd_config_protons(json: bool) -> Result<()> {
     let cfg = load_launcher_config().await.unwrap_or_default();
     let installed = aurelia::proton::list_installed(std::path::Path::new(&cfg.steam_library_path));
@@ -2678,8 +2512,7 @@ async fn cmd_proton_list(installed_only: bool, json: bool) -> Result<()> {
         }
         cli_println!("{:<10}  {:<28}  {:>10}  {}", pkg.label, pkg.name, size, status.trim());
     }
-    // Surface any installed runtime not present in the available list (e.g. an old GE
-    // build no longer in recent releases) so the user still sees everything on disk.
+    // Surface any installed runtime not present in the available list
     for i in &installed {
         if !available.iter().any(|p| p.name.eq_ignore_ascii_case(&i.name)) {
             let star = if i.name == default { " *default" } else { "" };
@@ -2770,8 +2603,8 @@ async fn cmd_proton_uninstall(version: String, json: bool) -> Result<()> {
         cli_println!("Uninstalled {version}.");
         if was_default {
             cli_eprintln!(
-                "Note: {version} was the global default — set a new one with \
-                 `aurelia proton default <NAME>`."
+                "Note: {version} was the global default. \
+                Set a new one with `aurelia proton default <NAME>`."
             );
         }
     }
@@ -2798,7 +2631,7 @@ async fn cmd_proton_default(version: String, json: bool) -> Result<()> {
         cli_println!("Global default Proton set to {version}.");
         if !present {
             cli_eprintln!(
-                "Note: '{version}' is not installed — run `aurelia proton install {version}`."
+                "Note: '{version}' is not installed, run `aurelia proton install {version}`."
             );
         }
     }
@@ -2828,7 +2661,8 @@ async fn cmd_cloud_sync(
     let resolver =
         aurelia::cloud_sync::CloudPathResolver::new(remote_root.clone(), install_path.map(PathBuf::from));
 
-    // No flag = full sync (down then up); `--down`/`--up` restrict the direction.
+    // No flag = full sync (down then up); 
+    // `--down`/`--up` restrict the direction.
     let mut downloaded = false;
     let mut uploaded = false;
     if !up {
@@ -2839,7 +2673,7 @@ async fn cmd_cloud_sync(
         downloaded = true;
     }
     if !down {
-        // UFS save rules let sync_up discover brand-new local saves; best-effort.
+        // UFS save rules let sync_up discover brand-new local saves
         let specs = client.fetch_ufs_save_specs(app_id).await.unwrap_or_default();
         cloud
             .sync_up(app_id, &resolver, &specs)
@@ -3309,203 +3143,6 @@ fn format_unix_timestamp(secs: u64) -> String {
     )
 }
 
-/// Consume a download/verify progress stream, rendering it to the terminal.
-/// In JSON mode each update is emitted as a compact NDJSON line (one object per
-/// line) on stdout; the caller still prints the final result object afterward.
-async fn drive_progress(
-    mut rx: tokio::sync::mpsc::Receiver<DownloadProgress>,
-    json: bool,
-) -> Result<()> {
-    // De-duplicate identical consecutive JSON events (the reporter ticks on a timer,
-    // so it would otherwise repeat e.g. "0/0" lines while a manifest is being fetched).
-    let mut last: Option<(u8, u64, u64)> = None;
-    let mut rate = RateTracker::new();
-    while let Some(p) = rx.recv().await {
-        match p.state {
-            DownloadProgressState::Queued => {
-                rate.reset();
-                if json {
-                    emit_progress_json("queued", &p, 0.0, None, &mut last);
-                } else {
-                    cli_println!("Queued ...");
-                }
-            }
-            DownloadProgressState::Downloading
-            | DownloadProgressState::Verifying
-            | DownloadProgressState::Moving => {
-                let (state, label) = match p.state {
-                    DownloadProgressState::Verifying => ("verifying", "Verifying"),
-                    DownloadProgressState::Moving => ("moving", "Moving"),
-                    _ => ("downloading", "Downloading"),
-                };
-                let (speed, eta) = rate.sample(p.bytes_downloaded, p.total_bytes);
-                if json {
-                    emit_progress_json(state, &p, speed, eta, &mut last);
-                } else {
-                    print_progress(label, &p, speed, eta);
-                }
-            }
-            DownloadProgressState::Completed => {
-                // The caller emits the terminal result object; nothing more here.
-                if !json {
-                    cli_println!("\nDone.");
-                }
-                return Ok(());
-            }
-            DownloadProgressState::Failed => {
-                if !json {
-                    cli_println!();
-                }
-                bail!("operation failed: {}", p.current_file);
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Percentage (one decimal) of `done` out of `total`, 0 when total is unknown.
-fn percent_of(done: u64, total: u64) -> f64 {
-    if total > 0 {
-        ((done as f64 / total as f64) * 1000.0).round() / 10.0
-    } else {
-        0.0
-    }
-}
-
-/// Emit one compact NDJSON progress event, skipping it if identical to the last.
-/// Reports the whole-app progress (`percent`), the current depot's progress
-/// (`depot_percent`), and the transfer rate (`speed_bps`, bytes/sec) and
-/// `eta_seconds` (null when not yet estimable).
-fn emit_progress_json(
-    state: &str,
-    p: &DownloadProgress,
-    speed_bps: f64,
-    eta_seconds: Option<u64>,
-    last: &mut Option<(u8, u64, u64)>,
-) {
-    // Cheap discriminator for the state so we can dedupe (state, overall, depot).
-    let state_key = match state {
-        "queued" => 0u8,
-        "downloading" => 1,
-        "verifying" => 2,
-        "moving" => 3,
-        _ => 4,
-    };
-    let key = (state_key, p.bytes_downloaded, p.depot_bytes_downloaded);
-    if *last == Some(key) {
-        return;
-    }
-    *last = Some(key);
-
-    let value = serde_json::json!({
-        "event": "progress",
-        "state": state,
-        // Whole-app (all depots) progress.
-        "bytes_downloaded": p.bytes_downloaded,
-        "total_bytes": p.total_bytes,
-        "percent": percent_of(p.bytes_downloaded, p.total_bytes),
-        // Current depot progress.
-        "depot_id": p.depot_id,
-        "depot_bytes_downloaded": p.depot_bytes_downloaded,
-        "depot_total_bytes": p.depot_total_bytes,
-        "depot_percent": percent_of(p.depot_bytes_downloaded, p.depot_total_bytes),
-        // Rate / time remaining (for a download-manager progress bar).
-        "speed_bps": speed_bps.round() as u64,
-        "eta_seconds": eta_seconds,
-        "file": p.current_file,
-    });
-    // Compact single line so the whole --json stream is valid NDJSON.
-    if let Ok(s) = serde_json::to_string(&value) {
-        cli_println!("{s}");
-    }
-}
-
-fn print_progress(phase: &str, p: &DownloadProgress, speed_bps: f64, eta_seconds: Option<u64>) {
-    let overall = percent_of(p.bytes_downloaded, p.total_bytes);
-    let rate = format_rate(speed_bps, eta_seconds);
-    if p.depot_id != 0 {
-        let depot = percent_of(p.depot_bytes_downloaded, p.depot_total_bytes);
-        cli_print!(
-            "\r{phase}: {overall:5.1}% overall  {}/{} bytes  | depot {}: {depot:5.1}%{rate}   ",
-            p.bytes_downloaded, p.total_bytes, p.depot_id
-        );
-    } else {
-        cli_print!(
-            "\r{phase}: {overall:5.1}%  {}/{} bytes{rate}  {}   ",
-            p.bytes_downloaded, p.total_bytes, p.current_file
-        );
-    }
-    let _ = std::io::stdout().flush();
-}
-
-/// Tracks the transfer rate across successive progress samples, deriving a lightly
-/// smoothed speed (bytes/sec) and an ETA. Used by `drive_progress` so every
-/// long-running op (download/verify/move) reports speed and time remaining.
-struct RateTracker {
-    last: Option<(std::time::Instant, u64)>,
-    speed_bps: f64,
-}
-
-impl RateTracker {
-    fn new() -> Self {
-        Self { last: None, speed_bps: 0.0 }
-    }
-
-    fn reset(&mut self) {
-        self.last = None;
-        self.speed_bps = 0.0;
-    }
-
-    /// Feed the latest cumulative `bytes` (out of `total`); returns
-    /// `(speed_bps, eta_seconds)`. Samples closer together than 100 ms are folded
-    /// into the next interval to keep the estimate stable.
-    fn sample(&mut self, bytes: u64, total: u64) -> (f64, Option<u64>) {
-        let now = std::time::Instant::now();
-        match self.last {
-            Some((t0, b0)) => {
-                let dt = now.duration_since(t0).as_secs_f64();
-                if dt >= 0.10 && bytes >= b0 {
-                    let inst = (bytes - b0) as f64 / dt;
-                    // Exponential moving average to damp jitter.
-                    self.speed_bps = if self.speed_bps <= 0.0 {
-                        inst
-                    } else {
-                        0.6 * self.speed_bps + 0.4 * inst
-                    };
-                    self.last = Some((now, bytes));
-                }
-            }
-            None => self.last = Some((now, bytes)),
-        }
-        let eta = if self.speed_bps > 1.0 && total > bytes {
-            Some(((total - bytes) as f64 / self.speed_bps).round() as u64)
-        } else {
-            None
-        };
-        (self.speed_bps, eta)
-    }
-}
-
-/// Human-readable ` 12.34 MiB/s  ETA 00:01:23` suffix (empty when no rate yet).
-fn format_rate(speed_bps: f64, eta_seconds: Option<u64>) -> String {
-    if speed_bps <= 0.0 {
-        return String::new();
-    }
-    let mib = speed_bps / (1024.0 * 1024.0);
-    match eta_seconds {
-        Some(s) => format!("  {mib:6.2} MiB/s  ETA {}", format_eta(s)),
-        None => format!("  {mib:6.2} MiB/s"),
-    }
-}
-
-/// Format a seconds count as `HH:MM:SS`.
-fn format_eta(secs: u64) -> String {
-    let h = secs / 3600;
-    let m = (secs % 3600) / 60;
-    let s = secs % 60;
-    format!("{h:02}:{m:02}:{s:02}")
-}
-
 /// Word-wrap text to a maximum line width, preserving existing line breaks.
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
     let mut lines = Vec::new();
@@ -3552,37 +3189,6 @@ mod tests {
         assert_eq!(human_bytes(5 * 1024 * 1024 * 1024), "5.00 GiB");
     }
 
-    #[test]
-    fn eta_formats_hms() {
-        assert_eq!(format_eta(0), "00:00:00");
-        assert_eq!(format_eta(83), "00:01:23");
-        assert_eq!(format_eta(3661), "01:01:01");
-    }
-
-    #[test]
-    fn rate_tracker_estimates_speed_and_eta() {
-        let mut r = RateTracker::new();
-        // First sample only primes the tracker (no prior point).
-        let (s0, e0) = r.sample(0, 1000);
-        assert_eq!(s0, 0.0);
-        assert!(e0.is_none());
-        // Force a measurable interval, then feed more bytes.
-        std::thread::sleep(std::time::Duration::from_millis(120));
-        let (s1, e1) = r.sample(200, 1000);
-        assert!(s1 > 0.0, "speed should be positive after progress");
-        assert!(e1.is_some(), "eta should be estimable once moving");
-    }
-
-    #[test]
-    fn rate_tracker_resets() {
-        let mut r = RateTracker::new();
-        let _ = r.sample(100, 1000);
-        r.reset();
-        let (s, e) = r.sample(0, 1000);
-        assert_eq!(s, 0.0);
-        assert!(e.is_none());
-    }
-
     /// Parse an argv into a `Cli` the way the binary does.
     fn parse(args: &[&str]) -> Cli {
         Cli::try_parse_from(args).expect("args should parse")
@@ -3590,8 +3196,6 @@ mod tests {
 
     #[test]
     fn interactive_login_runs_locally_not_forwarded() {
-        // The regression: these were forwarded to the daemon, where rpassword ran
-        // without a tty and the password was echoed in clear text.
         assert!(must_run_locally(&parse(&["aurelia", "login"])));
         assert!(must_run_locally(&parse(&["aurelia", "login", "-u", "me"])));
         assert!(must_run_locally(&parse(&["aurelia", "login", "--qr"])));
@@ -3601,7 +3205,6 @@ mod tests {
 
     #[test]
     fn daemon_oriented_and_json_login_still_forward() {
-        // These need the daemon (or are non-tty), so they must NOT be pinned local.
         assert!(!must_run_locally(&parse(&["aurelia", "login", "--health"])));
         assert!(!must_run_locally(&parse(&["aurelia", "login", "--reconnect"])));
         assert!(!must_run_locally(&parse(&["aurelia", "--json", "login", "-u", "me"])));
@@ -3612,11 +3215,8 @@ mod tests {
     fn ordinary_commands_forward_but_local_managers_do_not() {
         assert!(!must_run_locally(&parse(&["aurelia", "list"])));
         assert!(!must_run_locally(&parse(&["aurelia", "logout"])));
-        // Process/daemon managers must run in-process.
         assert!(must_run_locally(&parse(&["aurelia", "kill"])));
         assert!(must_run_locally(&parse(&["aurelia", "daemon", "stop"])));
-        // Bare `aurelia daemon` (becomes the server) is handled earlier, before the
-        // forward gate, so it is not flagged local here.
         assert!(!must_run_locally(&parse(&["aurelia", "daemon"])));
     }
 }
