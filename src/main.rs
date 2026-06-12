@@ -234,6 +234,11 @@ enum Command {
         #[command(subcommand)]
         command: CloudCommand,
     },
+    /// Manage Steam Workshop items (published files) for a game.
+    Workshop {
+        #[command(subcommand)]
+        command: WorkshopCommand,
+    },
     /// Kill all running aurelia processes, including the session daemon.
     Kill,
     /// Run the background session daemon: log in to Steam **once** and serve every
@@ -289,6 +294,55 @@ enum CloudCommand {
     },
     /// List a game's Steam Cloud files (name, size, modified time).
     List { app_id: u32 },
+}
+
+#[derive(Subcommand)]
+enum WorkshopCommand {
+    /// Show metadata for one or more Workshop items (or collections).
+    Info {
+        /// One or more Workshop published-file ids.
+        #[arg(required = true)]
+        ids: Vec<u64>,
+    },
+    /// List the Workshop items you're subscribed to for a game.
+    List { app_id: u32 },
+    /// Download one or more Workshop items (or collections) and register them.
+    Install {
+        #[arg(required = true)]
+        ids: Vec<u64>,
+        /// Install only the given ids; do not expand collections to their members.
+        #[arg(long)]
+        no_recurse: bool,
+    },
+    /// Remove one or more installed Workshop items (or collections).
+    Uninstall {
+        #[arg(required = true)]
+        ids: Vec<u64>,
+        /// Uninstall only the given ids; do not expand collections to their members.
+        #[arg(long)]
+        no_recurse: bool,
+    },
+    /// Subscribe to one or more Workshop items (or collections).
+    Subscribe {
+        #[arg(required = true)]
+        ids: Vec<u64>,
+        /// Also download the content after subscribing.
+        #[arg(long)]
+        install: bool,
+        /// Subscribe only to the given ids; do not expand collections to their members.
+        #[arg(long)]
+        no_recurse: bool,
+    },
+    /// Unsubscribe from one or more Workshop items (or collections).
+    Unsubscribe {
+        #[arg(required = true)]
+        ids: Vec<u64>,
+        /// Unsubscribe only from the given ids; do not expand collections.
+        #[arg(long)]
+        no_recurse: bool,
+    },
+    /// Show installed vs subscribed Workshop items for a game.
+    Status { app_id: u32 },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -507,6 +561,25 @@ async fn run(cli: Cli) -> Result<()> {
                 path,
             } => cmd_cloud_sync(app_id, up, down, path, json).await,
             CloudCommand::List { app_id } => cmd_cloud_list(app_id, json).await,
+        },
+        Command::Workshop { command } => match command {
+            WorkshopCommand::Info { ids } => cmd_workshop_info(ids, json).await,
+            WorkshopCommand::List { app_id } => cmd_workshop_list(app_id, json).await,
+            WorkshopCommand::Install { ids, no_recurse } => {
+                cmd_workshop_install(ids, no_recurse, json).await
+            }
+            WorkshopCommand::Uninstall { ids, no_recurse } => {
+                cmd_workshop_uninstall(ids, no_recurse, json).await
+            }
+            WorkshopCommand::Subscribe {
+                ids,
+                install,
+                no_recurse,
+            } => cmd_workshop_subscribe(ids, install, no_recurse, json).await,
+            WorkshopCommand::Unsubscribe { ids, no_recurse } => {
+                cmd_workshop_unsubscribe(ids, no_recurse, json).await
+            }
+            WorkshopCommand::Status { app_id } => cmd_workshop_status(app_id, json).await,
         },
         Command::Kill => cmd_kill(json),
         Command::Daemon {
@@ -2413,6 +2486,282 @@ async fn cmd_cloud_list(app_id: u32, json: bool) -> Result<()> {
         );
     }
     cli_println!("\n{} file(s), {}.", files.len(), human_bytes(total));
+    Ok(())
+}
+
+/// Human label for a Workshop entry kind.
+fn workshop_kind_label(kind: aurelia::models::WorkshopItemKind) -> &'static str {
+    match kind {
+        aurelia::models::WorkshopItemKind::Collection => "collection",
+        aurelia::models::WorkshopItemKind::Item => "item",
+    }
+}
+
+/// `workshop info`: show metadata for one or more published files.
+async fn cmd_workshop_info(ids: Vec<u64>, json: bool) -> Result<()> {
+    let client = authed_client().await?;
+    let items = client.fetch_published_file_details(&ids).await?;
+
+    if json {
+        cli_println!("{}", serde_json::to_string_pretty(&items)?);
+        return Ok(());
+    }
+    if items.is_empty() {
+        cli_println!("No Workshop items found.");
+        return Ok(());
+    }
+    for item in &items {
+        cli_println!("ID      : {}", item.id);
+        cli_println!("Title   : {}", item.title);
+        cli_println!("App     : {}", item.app_id);
+        cli_println!("Type    : {}", workshop_kind_label(item.kind));
+        if item.kind == aurelia::models::WorkshopItemKind::Collection {
+            cli_println!("Items   : {}", item.children.len());
+        } else {
+            cli_println!("Size    : {}", human_bytes(item.file_size));
+            cli_println!("Manifest: {}", item.hcontent_file);
+        }
+        cli_println!("Updated : {}", format_unix_timestamp(item.time_updated.max(0) as u64));
+        cli_println!();
+    }
+    Ok(())
+}
+
+/// `workshop list`: the items you're subscribed to for a game.
+async fn cmd_workshop_list(app_id: u32, json: bool) -> Result<()> {
+    let client = authed_client().await?;
+    let ids = client.fetch_subscribed_items(app_id).await?;
+    let items = client.fetch_published_file_details(&ids).await?;
+
+    if json {
+        cli_println!("{}", serde_json::to_string_pretty(&items)?);
+        return Ok(());
+    }
+    if items.is_empty() {
+        cli_println!("No subscribed Workshop items for app {app_id}.");
+        return Ok(());
+    }
+    cli_println!("{:>12}  {:>12}  TITLE", "ID", "SIZE");
+    for item in &items {
+        cli_println!("{:>12}  {:>12}  {}", item.id, human_bytes(item.file_size), item.title);
+    }
+    cli_println!("\n{} subscribed item(s).", items.len());
+    Ok(())
+}
+
+/// Expand collection ids to leaf item ids unless `no_recurse`.
+async fn workshop_resolve_ids(
+    client: &SteamClient,
+    ids: Vec<u64>,
+    no_recurse: bool,
+) -> Result<Vec<u64>> {
+    if no_recurse {
+        Ok(ids)
+    } else {
+        client.expand_collections(&ids).await
+    }
+}
+
+/// `workshop install`: download item(s)/collection(s) and register them.
+async fn cmd_workshop_install(ids: Vec<u64>, no_recurse: bool, json: bool) -> Result<()> {
+    let client = authed_client().await?;
+    let leaf_ids = workshop_resolve_ids(&client, ids, no_recurse).await?;
+    let items = client.fetch_published_file_details(&leaf_ids).await?;
+    if items.is_empty() {
+        bail!("no installable Workshop items resolved");
+    }
+
+    for item in &items {
+        if !json {
+            cli_println!("Installing Workshop item {} ({}) ...", item.id, item.title);
+        }
+        let state = Arc::new(RwLock::new(DownloadState::default()));
+        let rx = client
+            .install_workshop_item(item, state)
+            .await
+            .with_context(|| format!("failed to start install for Workshop item {}", item.id))?;
+        drive_progress(rx, json).await?;
+        if json {
+            print_json_line(&serde_json::json!({
+                "event": "result",
+                "id": item.id,
+                "app_id": item.app_id,
+                "status": "installed",
+            }));
+        }
+    }
+    Ok(())
+}
+
+/// `workshop uninstall`: remove installed item(s)/collection(s).
+async fn cmd_workshop_uninstall(ids: Vec<u64>, no_recurse: bool, json: bool) -> Result<()> {
+    let client = authed_client().await?;
+    let leaf_ids = workshop_resolve_ids(&client, ids, no_recurse).await?;
+    // GetDetails resolves each item's owning app id (needed to find its files).
+    let items = client.fetch_published_file_details(&leaf_ids).await?;
+
+    let mut removed = Vec::new();
+    for item in &items {
+        client
+            .uninstall_workshop_item(item.id, item.app_id)
+            .await
+            .with_context(|| format!("failed to uninstall Workshop item {}", item.id))?;
+        removed.push(item.id);
+        if !json {
+            cli_println!("Uninstalled Workshop item {} ({}).", item.id, item.title);
+        }
+    }
+    if json {
+        print_json(&serde_json::json!({ "uninstalled": removed }));
+    } else if removed.is_empty() {
+        cli_println!("Nothing to uninstall.");
+    }
+    Ok(())
+}
+
+/// `workshop subscribe`: subscribe (and optionally install) item(s)/collection(s).
+async fn cmd_workshop_subscribe(
+    ids: Vec<u64>,
+    install: bool,
+    no_recurse: bool,
+    json: bool,
+) -> Result<()> {
+    let client = authed_client().await?;
+    let leaf_ids = workshop_resolve_ids(&client, ids, no_recurse).await?;
+    let items = client.fetch_published_file_details(&leaf_ids).await?;
+
+    let mut subscribed = Vec::new();
+    for item in &items {
+        client
+            .subscribe_published_file(item.id, item.app_id)
+            .await
+            .with_context(|| format!("failed to subscribe to Workshop item {}", item.id))?;
+        subscribed.push(item.id);
+        if !json {
+            cli_println!("Subscribed to Workshop item {} ({}).", item.id, item.title);
+        }
+    }
+
+    if install {
+        for item in &items {
+            if !json {
+                cli_println!("Installing Workshop item {} ...", item.id);
+            }
+            let state = Arc::new(RwLock::new(DownloadState::default()));
+            let rx = client
+                .install_workshop_item(item, state)
+                .await
+                .with_context(|| format!("failed to start install for Workshop item {}", item.id))?;
+            drive_progress(rx, json).await?;
+        }
+    }
+
+    if json {
+        print_json(&serde_json::json!({ "subscribed": subscribed, "installed": install }));
+    }
+    Ok(())
+}
+
+/// `workshop unsubscribe`: unsubscribe from item(s)/collection(s).
+async fn cmd_workshop_unsubscribe(ids: Vec<u64>, no_recurse: bool, json: bool) -> Result<()> {
+    let client = authed_client().await?;
+    let leaf_ids = workshop_resolve_ids(&client, ids, no_recurse).await?;
+    let items = client.fetch_published_file_details(&leaf_ids).await?;
+
+    let mut unsubscribed = Vec::new();
+    for item in &items {
+        client
+            .unsubscribe_published_file(item.id, item.app_id)
+            .await
+            .with_context(|| format!("failed to unsubscribe from Workshop item {}", item.id))?;
+        unsubscribed.push(item.id);
+        if !json {
+            cli_println!("Unsubscribed from Workshop item {} ({}).", item.id, item.title);
+        }
+    }
+    if json {
+        print_json(&serde_json::json!({ "unsubscribed": unsubscribed }));
+    }
+    Ok(())
+}
+
+/// `workshop status`: installed vs subscribed (with update detection) for a game.
+async fn cmd_workshop_status(app_id: u32, json: bool) -> Result<()> {
+    let client = authed_client().await?;
+    let installed = client.read_installed_workshop(app_id).await?;
+    // Subscriptions and live manifests need the network; treat them as best-effort
+    // so `status` still reports the local install set when offline.
+    let subscribed = client.fetch_subscribed_items(app_id).await.unwrap_or_default();
+
+    // Union of installed + subscribed ids, to fetch current manifests for update detection.
+    let mut all_ids: Vec<u64> = installed.iter().map(|i| i.id).collect();
+    for &s in &subscribed {
+        if !all_ids.contains(&s) {
+            all_ids.push(s);
+        }
+    }
+    let details = client
+        .fetch_published_file_details(&all_ids)
+        .await
+        .unwrap_or_default();
+    let current_manifest = |id: u64| -> Option<u64> {
+        details.iter().find(|d| d.id == id).map(|d| d.hcontent_file)
+    };
+    let title_of = |id: u64| -> String {
+        details
+            .iter()
+            .find(|d| d.id == id)
+            .map(|d| d.title.clone())
+            .unwrap_or_default()
+    };
+
+    let is_installed = |id: u64| installed.iter().find(|i| i.id == id);
+
+    if json {
+        let arr: Vec<_> = all_ids
+            .iter()
+            .map(|&id| {
+                let inst = is_installed(id);
+                let update = match (inst, current_manifest(id)) {
+                    (Some(i), Some(cur)) => cur != 0 && cur != i.manifest_id,
+                    _ => false,
+                };
+                serde_json::json!({
+                    "id": id,
+                    "title": title_of(id),
+                    "installed": inst.is_some(),
+                    "subscribed": subscribed.contains(&id),
+                    "update_available": update,
+                })
+            })
+            .collect();
+        print_json(&serde_json::json!({ "app_id": app_id, "items": arr }));
+        return Ok(());
+    }
+
+    if all_ids.is_empty() {
+        cli_println!("No installed or subscribed Workshop items for app {app_id}.");
+        return Ok(());
+    }
+    cli_println!(
+        "{:>12}  {:<9}  {:<10}  {:<7}  TITLE",
+        "ID", "INSTALLED", "SUBSCRIBED", "UPDATE"
+    );
+    for &id in &all_ids {
+        let inst = is_installed(id);
+        let update = match (inst, current_manifest(id)) {
+            (Some(i), Some(cur)) => cur != 0 && cur != i.manifest_id,
+            _ => false,
+        };
+        cli_println!(
+            "{:>12}  {:<9}  {:<10}  {:<7}  {}",
+            id,
+            if inst.is_some() { "yes" } else { "no" },
+            if subscribed.contains(&id) { "yes" } else { "no" },
+            if update { "yes" } else { "-" },
+            title_of(id),
+        );
+    }
     Ok(())
 }
 

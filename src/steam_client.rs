@@ -338,6 +338,8 @@ mod library;
 mod launch;
 mod manifests;
 mod process;
+mod workshop;
+mod workshop_manifest;
 
 /// Terminate the process with `pid` and any children it spawned.
 ///

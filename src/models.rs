@@ -449,3 +449,46 @@ pub struct DepotManifests {
     #[serde(default)]
     pub public: Option<String>,
 }
+
+/// Distinguishes a standalone Workshop item from a collection (a Workshop entry
+/// whose "content" is a list of member item ids rather than downloadable files).
+#[derive(Debug, Clone, Copy, serde::Serialize, PartialEq)]
+pub enum WorkshopItemKind {
+    Item,
+    Collection,
+}
+
+/// Metadata for a single Steam Workshop published file, distilled from
+/// `PublishedFile.GetDetails`. For SteamPipe-backed items `hcontent_file` is the
+/// manifest gid used to download content; legacy UGC items instead expose a
+/// `file_url`. Collections carry their member ids in `children` and have no
+/// content of their own.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WorkshopItem {
+    /// `publishedfileid`.
+    pub id: u64,
+    /// `consumer_appid` — the game this item belongs to.
+    pub app_id: u32,
+    pub title: String,
+    /// SteamPipe manifest gid; `0` for legacy/collection entries.
+    pub hcontent_file: u64,
+    /// Legacy UGC download URL; empty when the item is SteamPipe-backed.
+    pub file_url: String,
+    pub file_size: u64,
+    pub time_updated: i64,
+    pub kind: WorkshopItemKind,
+    /// Collection member ids (empty for plain items).
+    pub children: Vec<u64>,
+}
+
+/// A Workshop item recorded as installed in `appworkshop_<appid>.acf` (local
+/// on-disk state, independent of the live Steam metadata in [`WorkshopItem`]).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WorkshopInstalledInfo {
+    pub id: u64,
+    /// The installed content manifest gid (`hcontent_file`). Comparing this to the
+    /// item's current `hcontent_file` tells you whether an update is available.
+    pub manifest_id: u64,
+    pub size: u64,
+    pub time_updated: i64,
+}

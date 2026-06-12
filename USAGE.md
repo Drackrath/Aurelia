@@ -43,6 +43,13 @@ of a specific command. `--version` prints the build version.
 - [Steam Cloud](#steam-cloud)
   - [`cloud sync`](#cloud-sync)
   - [`cloud list`](#cloud-list)
+- [Steam Workshop](#steam-workshop)
+  - [`workshop info`](#workshop-info)
+  - [`workshop list`](#workshop-list)
+  - [`workshop install`](#workshop-install)
+  - [`workshop uninstall`](#workshop-uninstall)
+  - [`workshop subscribe` / `unsubscribe`](#workshop-subscribe--unsubscribe)
+  - [`workshop status`](#workshop-status)
 - [Configuration](#configuration)
   - [`config show`](#config-show)
   - [`config protons`](#config-protons)
@@ -815,6 +822,101 @@ The `--json` output is `{ "app_id", "files": [{ "filename", "size", "timestamp",
 ```bash
 aurelia cloud list 1245620
 aurelia cloud list 1245620 --json
+```
+
+---
+
+## Steam Workshop
+
+Manage Steam Workshop items (published files) for a game. These commands require an
+active session. Workshop content is downloaded into
+`<library>/steamapps/workshop/content/<APP_ID>/<ID>/` and registered in
+`<library>/steamapps/workshop/appworkshop_<APP_ID>.acf`, so the Steam client recognises
+the items as installed.
+
+An `<ID>` is a Workshop **published-file id** (the numeric id in a Workshop page's URL).
+Wherever ids are accepted, a **collection** id may be given: by default it is expanded to
+its member items (recursively), which `--no-recurse` disables. v1 downloads **SteamPipe**
+items (the modern norm); legacy `file_url` UGC is not yet supported.
+
+### `workshop info`
+
+Show metadata for one or more items/collections (batched `PublishedFile.GetDetails`).
+
+```text
+aurelia workshop info <ID>... [--json]
+```
+
+```bash
+aurelia workshop info 1234567890
+aurelia workshop info 1234567890 2345678901 --json
+```
+
+### `workshop list`
+
+List the Workshop items you're subscribed to for a game.
+
+```text
+aurelia workshop list <APP_ID> [--json]
+```
+
+### `workshop install`
+
+Download one or more items/collections and register them in the workshop manifest. Progress
+is streamed (NDJSON with `--json`), like `install`.
+
+```text
+aurelia workshop install <ID>... [--no-recurse] [--json]
+```
+
+| Option | Description |
+| --- | --- |
+| `--no-recurse` | Install only the given ids; don't expand a collection to its members. |
+
+```bash
+aurelia workshop install 1234567890
+aurelia workshop install 9000000000 --no-recurse   # the collection entry only
+```
+
+### `workshop uninstall`
+
+Remove installed items/collections (their content directory and `appworkshop` entry).
+
+```text
+aurelia workshop uninstall <ID>... [--no-recurse] [--json]
+```
+
+### `workshop subscribe` / `unsubscribe`
+
+Subscribe to or unsubscribe from items/collections. `subscribe` registers only; add
+`--install` to also download the content.
+
+```text
+aurelia workshop subscribe   <ID>... [--install] [--no-recurse] [--json]
+aurelia workshop unsubscribe <ID>... [--no-recurse] [--json]
+```
+
+```bash
+aurelia workshop subscribe 1234567890 --install
+aurelia workshop unsubscribe 1234567890
+```
+
+### `workshop status`
+
+Show, per item, whether it's installed, subscribed, and whether an update is available
+(the installed content manifest differs from the current one). Installed state is read
+locally; subscription and update state are best-effort (they need the network).
+
+```text
+aurelia workshop status <APP_ID> [--json]
+```
+
+The `--json` output is `{ "app_id", "items": [{ "id", "title", "installed", "subscribed",
+"update_available" }] }`.
+
+```bash
+aurelia workshop status 1245620
+aurelia workshop status 1245620 --json
 ```
 
 ---

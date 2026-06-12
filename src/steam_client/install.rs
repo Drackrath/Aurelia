@@ -483,7 +483,8 @@ impl SteamClient {
                 }
             });
 
-            // 2. Fetch Content Servers via Service
+            // 2. Fetch Content Servers via Service (once for all depots, so we hit the
+            //    network only once regardless of how many depots are selected).
             tracing::info!("Fetching Content Servers for AppID: {}...", appid);
             let hosts = match client_clone.get_content_servers(connection.cell_id()).await {
                 Ok(h) => h,
@@ -499,7 +500,8 @@ impl SteamClient {
                 }
             };
 
-            // 3. Download Loop
+            // 3. Download Loop — delegates per-depot work to download_depot_to_with_hosts
+            //    so the same CDN flow can be reused by Workshop downloads.
             let mut success = true;
             let mut successful_depots = Vec::new();
             for selection in selections {
@@ -516,6 +518,9 @@ impl SteamClient {
                     state.depot_total_bytes = 0;
                 }
 
+                // Fetch the depot decryption key here so that a missing key
+                // (not owned) silently skips this depot and continues to the
+                // next — preserving the original install_game behavior.
                 let key = match client_clone.get_depot_key(appid, selection.depot_id).await {
                     Ok(k) => k,
                     Err(e) => {
@@ -537,156 +542,54 @@ impl SteamClient {
                     key.iter().all(|&b| b == 0)
                 );
 
-                let manifest_code = match client_clone
-                    .get_manifest_request_code(appid, selection.depot_id, selection.manifest_id)
+                match client_clone
+                    .download_depot_to_with_hosts(
+                        appid,
+                        selection.depot_id,
+                        selection.manifest_id,
+                        &install_dir,
+                        shared_state_clone.clone(),
+                        &hosts,
+                        grand_total_bytes,
+                        &connection,
+                        key,
+                    )
                     .await
                 {
-                    Ok(code) => Some(code),
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to get manifest request code for depot {}: {}",
-                            selection.depot_id,
-                            e
-                        );
-                        None
-                    }
-                };
-
-                let mut depot_success = false;
-                for host in &hosts {
-                    let token = match client_clone
-                        .get_cdn_auth_token(appid, selection.depot_id, host)
-                        .await
-                    {
-                        Ok(t) => Some(t),
-                        Err(e) => {
-                            tracing::warn!("Failed to get auth token for host {}: {}", host, e);
-                            None
-                        }
-                    };
-
-                    let (host_name, port) = if let Some(pos) = host.find(':') {
-                        (
-                            &host[..pos],
-                            host[pos + 1..].parse::<u16>().unwrap_or(80),
-                        )
-                    } else {
-                        (host.as_str(), 80)
-                    };
-
-                    let cdn_server = steam_cdn::web_api::content_service::CDNServer {
-                        r#type: "CDN".to_string(),
-                        https: port == 443,
-                        host: host_name.to_string(),
-                        vhost: host_name.to_string(),
-                        port,
-                        cell_id: connection.cell_id(),
-                        load: 0,
-                        weighted_load: 0,
-                        auth_token: token,
-                    };
-
-                    let cdn_client = steam_cdn::CDNClient::with_server(
-                        Arc::new(connection.clone()),
-                        cdn_server,
-                    );
-
-                let state_for_closure = shared_state_clone.clone();
-                let on_progress = Arc::new(move |bytes: u64| {
-                    if let Ok(mut state) = state_for_closure.write() {
-                        // Overall (whole app) and current-depot counters.
-                        state.downloaded_bytes += bytes;
-                        state.depot_downloaded_bytes += bytes;
-                    }
-                });
-
-                let state_for_manifest = shared_state_clone.clone();
-                let depot_size = Arc::new(std::sync::atomic::AtomicU64::new(0));
-                let size_clone = depot_size.clone();
-                let grand_total_fallback = grand_total_bytes;
-                let on_manifest = Arc::new(move |total_bytes: u64| {
-                    size_clone.store(total_bytes, std::sync::atomic::Ordering::SeqCst);
-                    if let Ok(mut state) = state_for_manifest.write() {
-                        // The manifest gives this depot's exact uncompressed size.
-                        state.depot_total_bytes = total_bytes;
-                        // If PICS carried no maxsize for the whole app, fall back to
-                        // accumulating per-depot totals so overall progress still has a
-                        // denominator.
-                        if grand_total_fallback == 0 {
-                            state.total_bytes += total_bytes;
-                        }
-                    }
-                });
-
-                let abort_signal = shared_state_clone
-                    .read()
-                    .ok()
-                    .map(|s| s.abort_signal.clone());
-
-                    match cdn_client
-                        .download_depot(
-                            appid,
+                    Ok(depot_size) => {
+                        successful_depots.push((
                             selection.depot_id,
                             selection.manifest_id,
-                            &key,
-                            &install_dir,
-                            manifest_code,
-                            false, // verify_mode: false
-                            abort_signal,
-                            Some(on_progress),
-                            Some(on_manifest.clone()),
-                        )
-                        .await
-                    {
-                        Ok(_) => {
-                            let aborted = shared_state_clone.read()
-                                .map(|s| s.abort_signal.load(std::sync::atomic::Ordering::Relaxed))
-                                .unwrap_or(false);
-                            if aborted {
-                                break;
-                            }
+                            depot_size,
+                        ));
+                    }
+                    Err(e) => {
+                        let aborted = shared_state_clone
+                            .read()
+                            .map(|s| {
+                                s.abort_signal
+                                    .load(std::sync::atomic::Ordering::Relaxed)
+                            })
+                            .unwrap_or(false);
 
-                            tracing::info!(
-                                "Depot {} download complete from {}!",
-                                selection.depot_id,
-                                host
-                            );
-                            depot_success = true;
-                            successful_depots.push((
-                                selection.depot_id,
-                                selection.manifest_id,
-                                depot_size.load(std::sync::atomic::Ordering::SeqCst),
-                            ));
+                        if aborted {
+                            success = false;
                             break;
                         }
-                        Err(e) => {
-                            tracing::error!("CDN Error from {}: {}", host, e);
-                        }
-                    }
-                }
 
-                if !depot_success {
-                    let aborted = shared_state_clone.read()
-                        .map(|s| s.abort_signal.load(std::sync::atomic::Ordering::Relaxed))
-                        .unwrap_or(false);
-
-                    if aborted {
+                        let _ = tx
+                            .send(DownloadProgress {
+                                state: DownloadProgressState::Failed,
+                                current_file: format!(
+                                    "Failed to download depot {}: {}",
+                                    selection.depot_id, e
+                                ),
+                                ..Default::default()
+                            })
+                            .await;
                         success = false;
                         break;
                     }
-
-                    let _ = tx
-                        .send(DownloadProgress {
-                            state: DownloadProgressState::Failed,
-                            current_file: format!(
-                                "Failed to download depot {} from all available servers",
-                                selection.depot_id
-                            ),
-                            ..Default::default()
-                        })
-                        .await;
-                    success = false;
-                    break;
                 }
             }
 
@@ -736,6 +639,208 @@ impl SteamClient {
         });
 
         Ok(rx)
+    }
+
+    /// Download a single depot's content (one manifest) into `dest`, reusing the
+    /// content-server / manifest-request-code / depot-key / CDN flow. Tries each CDN
+    /// host until one succeeds. Updates `shared_state` byte counters as it goes.
+    /// Returns the depot's downloaded (uncompressed) size on success.
+    ///
+    /// This public entry-point fetches content servers internally (one network round-trip).
+    /// It delegates to [`download_depot_to_with_hosts`] which accepts pre-fetched hosts
+    /// — use that internal variant when you want a single host-fetch across many depots
+    /// (as `install_game` does).
+    pub(crate) async fn download_depot_to(
+        &self,
+        app_id: u32,
+        depot_id: u32,
+        manifest_id: u64,
+        dest: &std::path::Path,
+        shared_state: Arc<std::sync::RwLock<crate::models::DownloadState>>,
+    ) -> anyhow::Result<u64> {
+        let connection = self
+            .connection
+            .as_ref()
+            .cloned()
+            .context("steam connection not initialized")?;
+
+        let hosts = self.get_content_servers(connection.cell_id()).await?;
+        let key = self.get_depot_key(app_id, depot_id).await
+            .with_context(|| format!("failed to get depot key for depot {depot_id}"))?;
+
+        // grand_total_bytes = 0: this standalone call has no whole-app total, so
+        // on_manifest will accumulate per-depot totals into state.total_bytes.
+        self.download_depot_to_with_hosts(
+            app_id,
+            depot_id,
+            manifest_id,
+            dest,
+            shared_state,
+            &hosts,
+            0,
+            &connection,
+            key,
+        )
+        .await
+    }
+
+    /// Internal variant of [`download_depot_to`] that accepts pre-fetched CDN hosts,
+    /// the whole-app grand total (for accurate overall progress), and a pre-fetched
+    /// depot decryption key. Used by `install_game` so that (a) content servers are
+    /// fetched only once for all depots and (b) a missing key can be handled as a
+    /// silent skip at the call site rather than an error.
+    ///
+    /// `grand_total_bytes`: the sum of all selected depots' sizes (0 when unknown),
+    /// used to decide whether to add this depot's size to `state.total_bytes`.
+    pub(crate) async fn download_depot_to_with_hosts(
+        &self,
+        app_id: u32,
+        depot_id: u32,
+        manifest_id: u64,
+        dest: &std::path::Path,
+        shared_state: Arc<std::sync::RwLock<crate::models::DownloadState>>,
+        hosts: &[String],
+        grand_total_bytes: u64,
+        connection: &Connection,
+        key: Vec<u8>,
+    ) -> anyhow::Result<u64> {
+        // A valid depot key is exactly 32 bytes; a short/all-zero key would
+        // decrypt chunks to garbage (the chunk path then fails the zip parse
+        // with "Could not find EOCD").
+        tracing::debug!(
+            "Depot {} key: {} bytes, all_zero={}",
+            depot_id,
+            key.len(),
+            key.iter().all(|&b| b == 0)
+        );
+
+        let manifest_code = match self
+            .get_manifest_request_code(app_id, depot_id, manifest_id)
+            .await
+        {
+            Ok(code) => Some(code),
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to get manifest request code for depot {}: {}",
+                    depot_id,
+                    e
+                );
+                None
+            }
+        };
+
+        let depot_size = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let mut depot_success = false;
+
+        for host in hosts {
+            let token = match self.get_cdn_auth_token(app_id, depot_id, host).await {
+                Ok(t) => Some(t),
+                Err(e) => {
+                    tracing::warn!("Failed to get auth token for host {}: {}", host, e);
+                    None
+                }
+            };
+
+            let (host_name, port) = if let Some(pos) = host.find(':') {
+                (
+                    &host[..pos],
+                    host[pos + 1..].parse::<u16>().unwrap_or(80),
+                )
+            } else {
+                (host.as_str(), 80)
+            };
+
+            let cdn_server = steam_cdn::web_api::content_service::CDNServer {
+                r#type: "CDN".to_string(),
+                https: port == 443,
+                host: host_name.to_string(),
+                vhost: host_name.to_string(),
+                port,
+                cell_id: connection.cell_id(),
+                load: 0,
+                weighted_load: 0,
+                auth_token: token,
+            };
+
+            let cdn_client =
+                steam_cdn::CDNClient::with_server(Arc::new(connection.clone()), cdn_server);
+
+            let state_for_closure = shared_state.clone();
+            let on_progress = Arc::new(move |bytes: u64| {
+                if let Ok(mut state) = state_for_closure.write() {
+                    // Overall (whole app) and current-depot counters.
+                    state.downloaded_bytes += bytes;
+                    state.depot_downloaded_bytes += bytes;
+                }
+            });
+
+            let state_for_manifest = shared_state.clone();
+            let size_clone = depot_size.clone();
+            let grand_total_fallback = grand_total_bytes;
+            let on_manifest = Arc::new(move |total_bytes: u64| {
+                size_clone.store(total_bytes, std::sync::atomic::Ordering::SeqCst);
+                if let Ok(mut state) = state_for_manifest.write() {
+                    // The manifest gives this depot's exact uncompressed size.
+                    state.depot_total_bytes = total_bytes;
+                    // If PICS carried no maxsize for the whole app, fall back to
+                    // accumulating per-depot totals so overall progress still has a
+                    // denominator.
+                    if grand_total_fallback == 0 {
+                        state.total_bytes += total_bytes;
+                    }
+                }
+            });
+
+            let abort_signal = shared_state
+                .read()
+                .ok()
+                .map(|s| s.abort_signal.clone());
+
+            match cdn_client
+                .download_depot(
+                    app_id,
+                    depot_id,
+                    manifest_id,
+                    &key,
+                    dest,
+                    manifest_code,
+                    false, // verify_mode: false
+                    abort_signal,
+                    Some(on_progress),
+                    Some(on_manifest.clone()),
+                )
+                .await
+            {
+                Ok(_) => {
+                    let aborted = shared_state
+                        .read()
+                        .map(|s| {
+                            s.abort_signal
+                                .load(std::sync::atomic::Ordering::Relaxed)
+                        })
+                        .unwrap_or(false);
+                    if aborted {
+                        anyhow::bail!("download aborted");
+                    }
+
+                    tracing::info!("Depot {} download complete from {}!", depot_id, host);
+                    depot_success = true;
+                    break;
+                }
+                Err(e) => {
+                    tracing::error!("CDN Error from {}: {}", host, e);
+                }
+            }
+        }
+
+        if depot_success {
+            Ok(depot_size.load(std::sync::atomic::Ordering::SeqCst))
+        } else {
+            anyhow::bail!(
+                "Failed to download depot {} from all available servers",
+                depot_id
+            );
+        }
     }
 
 }
