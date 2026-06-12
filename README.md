@@ -23,8 +23,8 @@
 Aurelia is a pure command-line Steam launcher and library manager — no CEF, no WebViews,
 no GUI. It talks to Steam's real network protocols through
 [`steam-vent`](https://codeberg.org/steam-vent/steam-vent), so you can log in, manage your
-library, install and update games, sync Steam Cloud saves, and launch titles (natively or
-through Proton/Wine) entirely from a terminal or a script.
+library, install and update games, sync Steam Cloud saves, manage Steam Workshop content,
+and launch titles (natively or through Proton/Wine) entirely from a terminal or a script.
 
 It is the modern successor to **OpenSteamClient**, rebuilt in Rust for a smaller footprint,
 memory safety, and a scriptable, headless-friendly workflow.
@@ -47,7 +47,8 @@ aurelia play 1245620
 - **Linux first.** 64-bit clean, with first-class Proton/Wine management — and it runs on
   Windows too.
 - **Deep Steam integration.** PICS metadata, the content CDN, Steam Cloud, app ownership
-  tickets, depot browsing, and DLC management — built on open, documented protocols.
+  tickets, depot browsing, DLC management, and Steam Workshop — built on open, documented
+  protocols.
 - **Open source.** GPL-3.0 licensed, with no dependency on opaque 32-bit legacy Steam binaries.
 
 ### How it compares
@@ -81,9 +82,10 @@ sync, and Proton/Wine launching all work today.
 - [x] **Steam Cloud** — enumerate, download, upload save data
 - [x] **Proton/Wine** — runtime discovery and launch integration
 - [x] **Depot browser** — list depots, inspect manifest trees, download single files
+- [x] **Workshop** — browse/search, install/uninstall, subscribe, collections, rate, and
+      read/post comments
 - [ ] Collections / categorization
 - [ ] Friends list & chat
-- [ ] Workshop management
 
 ---
 
@@ -168,6 +170,16 @@ aurelia play 1245620 --proton experimental   # force a specific Proton/Wine runn
 # Steam Cloud
 aurelia cloud sync 1245620           # sync saves (down then up)
 aurelia cloud list 1245620           # list a game's Cloud files
+
+# Steam Workshop
+aurelia workshop browse 1245620            # discover items (search / sort / paginate)
+aurelia workshop info 1234567890           # item or collection metadata
+aurelia workshop install 1234567890        # download an item (collections expand to members)
+aurelia workshop subscribe 1234567890 --install  # subscribe, then download
+aurelia workshop status 1245620            # installed vs subscribed (+ update detection)
+aurelia workshop rate 1234567890 up        # thumbs-up (or: down) an item
+aurelia workshop comments 1234567890       # read an item's comments
+aurelia workshop comment 1234567890 "Nice mod!"  # post a comment
 
 # Configuration
 aurelia config show                  # print launcher configuration
