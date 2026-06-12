@@ -696,7 +696,7 @@ async fn run(cli: Cli) -> Result<()> {
         } => cmd_image(app_id, output, force, json).await,
         Command::Config { command } => match command {
             ConfigCommand::Show => cmd_config_show(json).await,
-            ConfigCommand::Protons => cmd_config_protons(json),
+            ConfigCommand::Protons => cmd_config_protons(json).await,
             ConfigCommand::Game {
                 app_id,
                 proton,
@@ -2531,15 +2531,41 @@ async fn cmd_config_show(_json: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_config_protons(json: bool) -> Result<()> {
-    let (steam, custom) = scan_proton_runtimes();
+/// `config protons`: list the Proton/Wine runtimes actually installed on disk.
+/// Shares discovery with `proton list --installed` (no hardcoded placeholders).
+async fn cmd_config_protons(json: bool) -> Result<()> {
+    let cfg = load_launcher_config().await.unwrap_or_default();
+    let installed = aurelia::proton::list_installed(std::path::Path::new(&cfg.steam_library_path));
+    let steam: Vec<&str> = installed
+        .iter()
+        .filter(|i| i.location == "steam")
+        .map(|i| i.name.as_str())
+        .collect();
+    let custom: Vec<&str> = installed
+        .iter()
+        .filter(|i| i.location == "custom")
+        .map(|i| i.name.as_str())
+        .collect();
+
     if json {
-        print_json(&serde_json::json!({ "steam": steam, "custom": custom }));
+        print_json(&serde_json::json!({
+            "steam": steam,
+            "custom": custom,
+            "default": cfg.proton_version,
+        }));
         return Ok(());
     }
-    cli_println!("Steam runtimes:");
-    for s in &steam {
-        cli_println!("  {s}");
+
+    if installed.is_empty() {
+        cli_println!("No Proton/Wine runtimes installed.");
+        cli_println!("Install one with `aurelia proton install <NAME>` (see `aurelia proton list`).");
+        return Ok(());
+    }
+    if !steam.is_empty() {
+        cli_println!("Steam runtimes:");
+        for s in &steam {
+            cli_println!("  {s}");
+        }
     }
     if !custom.is_empty() {
         cli_println!("Custom (compatibilitytools.d):");
@@ -3513,41 +3539,6 @@ fn prompt_line(prompt: &str) -> Result<String> {
 }
 
 /// Discover Proton/Wine runtimes under the user's Steam directories.
-fn scan_proton_runtimes() -> (Vec<String>, Vec<String>) {
-    let mut steam = vec!["experimental".to_string()];
-    let mut custom = Vec::new();
-
-    if let Ok(home) = aurelia::config::home_dir() {
-        let steam_tools = home.join(".local/share/Steam/steamapps/common");
-        let custom_tools = home.join(".local/share/Steam/compatibilitytools.d");
-
-        if let Ok(entries) = std::fs::read_dir(steam_tools) {
-            for entry in entries.flatten() {
-                if entry.path().is_dir() {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    if name.to_ascii_lowercase().contains("proton") {
-                        steam.push(name);
-                    }
-                }
-            }
-        }
-
-        if let Ok(entries) = std::fs::read_dir(custom_tools) {
-            for entry in entries.flatten() {
-                if entry.path().is_dir() {
-                    custom.push(entry.file_name().to_string_lossy().to_string());
-                }
-            }
-        }
-    }
-
-    steam.sort();
-    steam.dedup();
-    custom.sort();
-    custom.dedup();
-    (steam, custom)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

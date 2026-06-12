@@ -51,7 +51,9 @@ pub struct InstalledProton {
 /// Curated set of official Valve Proton apps (name → Steam app id). These are free
 /// tools licensed to every account, installed like any other app.
 const VALVE_PROTONS: &[(&str, u32)] = &[
-    ("Proton Experimental", 1493710),
+    // Names must match Steam's on-disk install directory under steamapps/common so
+    // a selected runtime resolves at launch (Experimental uses a dashed dir name).
+    ("Proton - Experimental", 1493710),
     ("Proton 9.0", 2805730),
     ("Proton 8.0", 2348590),
     ("Proton 7.0", 1887720),
@@ -160,7 +162,7 @@ pub async fn list_available() -> Result<Vec<ProtonPackage>> {
 pub async fn resolve_package(name: &str) -> Result<ProtonPackage> {
     if let Some((vname, app_id)) = VALVE_PROTONS
         .iter()
-        .find(|(n, _)| n.eq_ignore_ascii_case(name))
+        .find(|(n, _)| normalize_name(n) == normalize_name(name))
     {
         return Ok(ProtonPackage {
             name: vname.to_string(),
@@ -388,11 +390,22 @@ pub fn remove(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Look up the app id of a curated Valve Proton by name (case-insensitive).
+/// Normalize a runtime name for tolerant matching: lowercase, alphanumerics only.
+/// Lets `Proton Experimental`, `proton experimental` and the canonical
+/// `Proton - Experimental` all match.
+fn normalize_name(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+/// Look up the app id of a curated Valve Proton by name (punctuation-insensitive).
 pub fn valve_app_id(name: &str) -> Option<u32> {
+    let needle = normalize_name(name);
     VALVE_PROTONS
         .iter()
-        .find(|(n, _)| n.eq_ignore_ascii_case(name))
+        .find(|(n, _)| normalize_name(n) == needle)
         .map(|(_, id)| *id)
 }
 

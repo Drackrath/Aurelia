@@ -37,32 +37,84 @@ pub fn build_runner_command(runner_path: &Path) -> Result<Command> {
     bail!("Failed to resolve a valid runner binary from {}", runner_path.display())
 }
 
+/// Normalize a runtime name for fuzzy matching: lowercase, alphanumerics only.
+/// So `experimental`, `Proton Experimental` and the on-disk `Proton - Experimental`
+/// all reduce to comparable forms.
+fn normalize_runner_name(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+/// Resolve a Proton/Wine runtime *name* (e.g. `Proton 9.0`, `GE-Proton9-20`, the
+/// legacy default `experimental`) or path to an on-disk runtime directory/binary.
+///
+/// Looks under the Steam library's `steamapps/common`, `compatibilitytools.d`
+/// (both the configured library and the detected Steam root), and Lutris. Falls
+/// back to a normalized fuzzy match so a configured name like `experimental`
+/// still finds Steam's `Proton - Experimental` directory. Returns the name as a
+/// path if nothing matches (the caller surfaces a clear error).
 pub fn resolve_runner(name: &str, library_root: &Path) -> PathBuf {
     let name_path = Path::new(name);
     if name_path.is_absolute() || name_path.exists() {
         return name_path.to_path_buf();
     }
 
-    // 1. Steam Library (steamapps/common)
-    let steam_path = library_root.join("steamapps/common").join(name);
-    if steam_path.exists() {
-        return steam_path;
-    }
-
-    // 2. compatibilitytools.d (Steam Custom)
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let compat_path = PathBuf::from(&home).join(".local/share/Steam/compatibilitytools.d").join(name);
-    if compat_path.exists() {
-        return compat_path;
+    let mut search_dirs: Vec<PathBuf> = vec![
+        library_root.join("steamapps/common"),
+        library_root.join("compatibilitytools.d"),
+    ];
+    // The Steam root's compatibilitytools.d (handles a non-standard / Flatpak Steam
+    // whose root differs from `library_root`).
+    if let Ok(compat) = crate::proton::compat_tools_dir() {
+        search_dirs.push(compat);
+    }
+    search_dirs.push(PathBuf::from(&home).join(".local/share/lutris/runners/wine"));
+
+    // 1. Exact directory-name match (fast path: "Proton 9.0", "GE-Proton9-20").
+    for dir in &search_dirs {
+        let exact = dir.join(name);
+        if exact.exists() {
+            return exact;
+        }
     }
 
-    // 3. Lutris Runners
-    let lutris_path = PathBuf::from(&home).join(".local/share/lutris/runners/wine").join(name);
-    if lutris_path.exists() {
-        return lutris_path;
+    // 2. Fuzzy match on normalized names ("experimental" → "Proton - Experimental").
+    let needle = normalize_runner_name(name);
+    if !needle.is_empty() {
+        let mut matches: Vec<PathBuf> = Vec::new();
+        for dir in &search_dirs {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    if !entry.path().is_dir() {
+                        continue;
+                    }
+                    let cand = normalize_runner_name(&entry.file_name().to_string_lossy());
+                    if !cand.is_empty()
+                        && (cand == needle || cand.contains(&needle) || needle.contains(&cand))
+                    {
+                        matches.push(entry.path());
+                    }
+                }
+            }
+        }
+        // Prefer an exact normalized match; otherwise the shortest (closest) name.
+        matches.sort_by_key(|p| {
+            p.file_name().map(|n| n.to_string_lossy().len()).unwrap_or(usize::MAX)
+        });
+        if let Some(exact) = matches.iter().find(|p| {
+            normalize_runner_name(&p.file_name().unwrap_or_default().to_string_lossy()) == needle
+        }) {
+            return exact.clone();
+        }
+        if let Some(first) = matches.into_iter().next() {
+            return first;
+        }
     }
 
-    // 4. Fallback to name as provided
+    // 3. Fallback to name as provided.
     name_path.to_path_buf()
 }
 
@@ -1184,5 +1236,46 @@ pub fn steam_wineprefix_for_game(
             .join("pfx")
     } else {
         resolve_master_wineprefix()
+    }
+}
+
+#[cfg(test)]
+mod resolve_runner_tests {
+    use super::*;
+
+    #[test]
+    fn normalize_strips_punctuation_and_case() {
+        assert_eq!(normalize_runner_name("Proton - Experimental"), "protonexperimental");
+        assert_eq!(normalize_runner_name("Proton Experimental"), "protonexperimental");
+        assert_eq!(normalize_runner_name("GE-Proton9-20"), "geproton920");
+    }
+
+    #[test]
+    fn exact_directory_name_resolves() {
+        let tmp = tempfile::tempdir().unwrap();
+        let common = tmp.path().join("steamapps/common/Proton 9.0");
+        std::fs::create_dir_all(&common).unwrap();
+        let got = resolve_runner("Proton 9.0", tmp.path());
+        assert_eq!(got, common);
+    }
+
+    #[test]
+    fn fuzzy_resolves_experimental_to_dashed_dir() {
+        // The legacy default `experimental` and curated `Proton Experimental` must
+        // both find Steam's on-disk `Proton - Experimental` directory.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("steamapps/common/Proton - Experimental");
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(resolve_runner("experimental", tmp.path()), dir);
+        assert_eq!(resolve_runner("Proton Experimental", tmp.path()), dir);
+    }
+
+    #[test]
+    fn unresolvable_name_falls_back_to_itself() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("steamapps/common")).unwrap();
+        // A name that matches nothing on disk is returned as-is (caller errors clearly).
+        let got = resolve_runner("NoSuchRuntimeXYZ", tmp.path());
+        assert_eq!(got, std::path::Path::new("NoSuchRuntimeXYZ"));
     }
 }

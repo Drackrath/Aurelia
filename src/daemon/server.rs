@@ -1,6 +1,8 @@
 //! Daemon server: accept forwarded commands and run them against the shared session.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, Result};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
@@ -9,6 +11,54 @@ use tokio::sync::{mpsc, Mutex};
 use super::transport::{self, Listener};
 use super::{proto, Header};
 use crate::output::{OutChunk, OutputCtx, Stream};
+
+/// Number of forwarded commands currently running, so the upgrade watcher only
+/// restarts the daemon while it is idle (never mid-request).
+static INFLIGHT: AtomicUsize = AtomicUsize::new(0);
+
+/// Increments [`INFLIGHT`] for its lifetime; decrements on drop (covers `?` early
+/// returns in [`handle`]).
+struct InflightGuard;
+
+impl InflightGuard {
+    fn new() -> Self {
+        INFLIGHT.fetch_add(1, Ordering::SeqCst);
+        Self
+    }
+}
+
+impl Drop for InflightGuard {
+    fn drop(&mut self) {
+        INFLIGHT.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// `(mtime, len)` of the running executable, used to detect an on-disk upgrade.
+fn exe_signature() -> Option<(SystemTime, u64)> {
+    let exe = std::env::current_exe().ok()?;
+    let meta = std::fs::metadata(&exe).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
+}
+
+/// Watch the daemon's own binary; when it changes on disk (an `aurelia` upgrade)
+/// exit once idle so the next forwarded command auto-spawns a daemon running the
+/// new code. Without this a long-lived daemon keeps serving stale code — e.g. it
+/// would reject a newly added subcommand with "unrecognized subcommand".
+async fn watch_for_upgrade(startup: Option<(SystemTime, u64)>) {
+    let Some(startup) = startup else { return };
+    loop {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        if let Some(current) = exe_signature() {
+            if current != startup && INFLIGHT.load(Ordering::SeqCst) == 0 {
+                tracing::info!(
+                    "daemon: binary changed on disk; exiting so the next command starts a \
+                     fresh daemon"
+                );
+                std::process::exit(0);
+            }
+        }
+    }
+}
 
 /// Run the daemon: bind the local endpoint, then serve forwarded commands against
 /// the shared session until killed. Never returns under normal operation.
@@ -45,6 +95,9 @@ pub async fn run_server() -> Result<()> {
     tokio::spawn(async move { state.ensure_session().await });
     tokio::spawn(async move { state.liveness_loop().await });
 
+    // Self-restart on binary upgrade so the daemon never serves stale code.
+    tokio::spawn(watch_for_upgrade(exe_signature()));
+
     loop {
         match listener.next().await {
             Ok(stream) => {
@@ -65,6 +118,9 @@ async fn handle<S>(stream: S) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
+    // Count this request as in-flight so the upgrade watcher won't restart mid-run.
+    let _inflight = InflightGuard::new();
+
     let (mut reader, writer) = tokio::io::split(stream);
     let writer = Arc::new(Mutex::new(writer));
 
