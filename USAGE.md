@@ -51,6 +51,9 @@ of a specific command. `--version` prints the build version.
   - [`workshop uninstall`](#workshop-uninstall)
   - [`workshop subscribe` / `unsubscribe`](#workshop-subscribe--unsubscribe)
   - [`workshop status`](#workshop-status)
+  - [`workshop rate`](#workshop-rate)
+  - [`workshop comments`](#workshop-comments)
+  - [`workshop comment`](#workshop-comment)
 - [Configuration](#configuration)
   - [`config show`](#config-show)
   - [`config protons`](#config-protons)
@@ -1013,6 +1016,62 @@ installed and subscribed items. The `--json` output is `{ "app_id", "items": [{ 
 ```bash
 aurelia workshop status 1245620
 aurelia workshop status 1245620 --json
+```
+
+### `workshop rate`
+
+Rate a Workshop item **thumbs-up** or **thumbs-down** (`PublishedFile.Vote`).
+
+```text
+aurelia workshop rate <ID> <up|down> [--json]
+```
+
+The `--json` output is `{ "id", "vote": "up"|"down", "status": "rated" }`.
+
+```bash
+aurelia workshop rate 1234567890 up
+aurelia workshop rate 1234567890 down --json
+```
+
+### `workshop comments`
+
+Read the comments on a Workshop item's public comment thread
+(`Community.GetCommentThread`).
+
+```text
+aurelia workshop comments <ID> [--count <N>] [--start <N>] [--json]
+```
+
+| Option | Description |
+| --- | --- |
+| `--count <N>` | How many comments to fetch, 1–100 (default 20). |
+| `--start <N>` | Index of the first comment to fetch, for paging (default 0). |
+
+The text view prints each comment's timestamp, author SteamID, upvote count, and body. The
+`--json` output is `{ "id", "comments": [{ "id", "author", "timestamp", "text", "upvotes"
+}] }` (`author` is a SteamID64; `id` is the comment's `gidcomment`).
+
+```bash
+aurelia workshop comments 1234567890
+aurelia workshop comments 1234567890 --count 50 --start 50
+aurelia workshop comments 1234567890 --json
+```
+
+### `workshop comment`
+
+Post a comment to a Workshop item's comment thread (`Community.PostCommentToThread`).
+
+```text
+aurelia workshop comment <ID> <TEXT> [--json]
+```
+
+Quote the text if it contains spaces. The `--json` output is
+`{ "id", "comment_id", "status": "posted" }` (`comment_id` is the new comment's
+`gidcomment`).
+
+```bash
+aurelia workshop comment 1234567890 "Great mod, thanks!"
+aurelia workshop comment 1234567890 "Works perfectly" --json
 ```
 
 ---

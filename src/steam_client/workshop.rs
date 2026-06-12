@@ -9,14 +9,19 @@
 //! and free helpers live in the parent module (in scope via `use super::*`).
 use super::*;
 
-use crate::models::{WorkshopItem, WorkshopItemKind};
+use crate::models::{WorkshopComment, WorkshopItem, WorkshopItemKind};
+use steam_vent_proto::enums::ECommentThreadType;
 use steam_vent_proto::steammessages_clientserver_ucm::CMsgClientUCMEnumerateUserSubscribedFilesWithUpdates;
+use steam_vent_proto::steammessages_community_steamclient::{
+    CCommunity_GetCommentThread_Request, CCommunity_GetCommentThread_Response,
+    CCommunity_PostCommentToThread_Request, CCommunity_PostCommentToThread_Response,
+};
 use steam_vent_proto::steammessages_publishedfile_steamclient::{
     CPublishedFile_GetDetails_Request, CPublishedFile_GetDetails_Response,
     CPublishedFile_QueryFiles_Request, CPublishedFile_QueryFiles_Response,
     CPublishedFile_Subscribe_Request, CPublishedFile_Subscribe_Response,
     CPublishedFile_Unsubscribe_Request, CPublishedFile_Unsubscribe_Response,
-    PublishedFileDetails,
+    CPublishedFile_Vote_Request, CPublishedFile_Vote_Response, PublishedFileDetails,
 };
 
 /// Maximum depth `expand_collections` will recurse into nested collections
@@ -47,6 +52,7 @@ fn detail_to_workshop_item(detail: &PublishedFileDetails, fallback_app_id: u32) 
     WorkshopItem {
         id: detail.publishedfileid(),
         app_id,
+        creator: detail.creator(),
         title: detail.title().to_string(),
         hcontent_file: detail.hcontent_file(),
         file_url: detail.file_url().to_string(),
@@ -290,6 +296,96 @@ impl SteamClient {
 
         tracing::info!("unsubscribed from Workshop item {id} (app {app_id})");
         Ok(())
+    }
+
+    /// Rate a Workshop item — `up` for thumbs-up, `false` for thumbs-down
+    /// (`PublishedFile.Vote`).
+    pub async fn vote_workshop_item(&self, id: u64, up: bool) -> Result<()> {
+        let connection = self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))?;
+
+        let mut request = CPublishedFile_Vote_Request::new();
+        request.set_publishedfileid(id);
+        request.set_vote_up(up);
+
+        let _response: CPublishedFile_Vote_Response = connection
+            .service_method(request)
+            .await
+            .with_context(|| format!("failed voting on Workshop item {id}"))?;
+
+        tracing::info!("voted {} on Workshop item {id}", if up { "up" } else { "down" });
+        Ok(())
+    }
+
+    /// Resolve the SteamID64 of a published file's creator — needed to address its
+    /// comment thread (the thread is keyed by owner steamid + publishedfileid).
+    async fn workshop_item_creator(&self, id: u64) -> Result<u64> {
+        let items = self.fetch_published_file_details(&[id]).await?;
+        let creator = items
+            .first()
+            .map(|i| i.creator)
+            .filter(|&c| c != 0)
+            .with_context(|| format!("could not resolve the creator of Workshop item {id}"))?;
+        Ok(creator)
+    }
+
+    /// Read a page of comments on a Workshop item's public comment thread
+    /// (`Community.GetCommentThread`). `start`/`count` page through the thread
+    /// (count is clamped to a sane range).
+    pub async fn workshop_comments(
+        &self,
+        id: u64,
+        start: i32,
+        count: i32,
+    ) -> Result<Vec<WorkshopComment>> {
+        let connection = self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))?;
+        let owner = self.workshop_item_creator(id).await?;
+
+        let mut request = CCommunity_GetCommentThread_Request::new();
+        request.set_steamid(owner);
+        request.set_comment_thread_type(ECommentThreadType::k_ECommentThreadTypePublishedFile_Public);
+        request.set_gidfeature(id);
+        request.set_start(start.max(0));
+        request.set_count(count.clamp(1, 100));
+
+        let response: CCommunity_GetCommentThread_Response = connection
+            .service_method(request)
+            .await
+            .with_context(|| format!("failed fetching comments for Workshop item {id}"))?;
+
+        let comments = response
+            .comments
+            .iter()
+            .map(|c| WorkshopComment {
+                id: c.gidcomment(),
+                author: c.steamid(),
+                timestamp: i64::from(c.timestamp()),
+                text: c.text().to_string(),
+                upvotes: c.upvotes(),
+            })
+            .collect();
+        Ok(comments)
+    }
+
+    /// Post a comment to a Workshop item's public comment thread
+    /// (`Community.PostCommentToThread`). Returns the new comment's `gidcomment`.
+    pub async fn post_workshop_comment(&self, id: u64, text: &str) -> Result<u64> {
+        let connection = self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))?;
+        let owner = self.workshop_item_creator(id).await?;
+
+        let mut request = CCommunity_PostCommentToThread_Request::new();
+        request.set_steamid(owner);
+        request.set_comment_thread_type(ECommentThreadType::k_ECommentThreadTypePublishedFile_Public);
+        request.set_gidfeature(id);
+        request.set_text(text.to_string());
+
+        let response: CCommunity_PostCommentToThread_Response = connection
+            .service_method(request)
+            .await
+            .with_context(|| format!("failed posting a comment to Workshop item {id}"))?;
+
+        let gid = response.gidcomment();
+        tracing::info!("posted comment {gid} to Workshop item {id}");
+        Ok(gid)
     }
 
     /// Download a Workshop item's content into

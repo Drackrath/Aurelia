@@ -469,6 +469,9 @@ pub struct WorkshopItem {
     pub id: u64,
     /// `consumer_appid` — the game this item belongs to.
     pub app_id: u32,
+    /// The creator's SteamID64 (`creator`). Needed to address the item's comment
+    /// thread; `0` if Steam didn't report it.
+    pub creator: u64,
     pub title: String,
     /// SteamPipe manifest gid; `0` for legacy/collection entries.
     pub hcontent_file: u64,
@@ -491,6 +494,18 @@ pub struct WorkshopInstalledInfo {
     pub manifest_id: u64,
     pub size: u64,
     pub time_updated: i64,
+}
+
+/// A single comment on a Workshop item's comment thread.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WorkshopComment {
+    /// `gidcomment` — the comment's unique id.
+    pub id: u64,
+    /// The author's SteamID64.
+    pub author: u64,
+    pub timestamp: i64,
+    pub text: String,
+    pub upvotes: i32,
 }
 
 /// One page of `PublishedFile.QueryFiles` results (browse/search). `next_cursor`

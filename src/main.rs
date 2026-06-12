@@ -362,6 +362,31 @@ enum WorkshopCommand {
     },
     /// Show installed vs subscribed Workshop items for a game.
     Status { app_id: u32 },
+    /// Rate a Workshop item thumbs-up or thumbs-down.
+    Rate {
+        /// The Workshop published-file id.
+        id: u64,
+        /// `up` or `down`.
+        vote: VoteArg,
+    },
+    /// Read the comments on a Workshop item.
+    Comments {
+        /// The Workshop published-file id.
+        id: u64,
+        /// How many comments to fetch (1–100).
+        #[arg(long, default_value_t = 20)]
+        count: i32,
+        /// Index of the first comment to fetch (for paging).
+        #[arg(long, default_value_t = 0)]
+        start: i32,
+    },
+    /// Post a comment to a Workshop item.
+    Comment {
+        /// The Workshop published-file id.
+        id: u64,
+        /// The comment text.
+        text: String,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -398,6 +423,13 @@ impl WorkshopSort {
             WorkshopSort::Text => 12,
         }
     }
+}
+
+/// Thumbs-up/down for `workshop rate`.
+#[derive(Clone, Copy, ValueEnum)]
+enum VoteArg {
+    Up,
+    Down,
 }
 
 impl From<PlatformArg> for DepotPlatform {
@@ -637,6 +669,13 @@ async fn run(cli: Cli) -> Result<()> {
                 cmd_workshop_unsubscribe(ids, no_recurse, json).await
             }
             WorkshopCommand::Status { app_id } => cmd_workshop_status(app_id, json).await,
+            WorkshopCommand::Rate { id, vote } => {
+                cmd_workshop_rate(id, matches!(vote, VoteArg::Up), json).await
+            }
+            WorkshopCommand::Comments { id, count, start } => {
+                cmd_workshop_comments_read(id, start, count, json).await
+            }
+            WorkshopCommand::Comment { id, text } => cmd_workshop_comment(id, text, json).await,
         },
         Command::Kill => cmd_kill(json),
         Command::Daemon {
@@ -2864,6 +2903,67 @@ async fn cmd_workshop_status(app_id: u32, json: bool) -> Result<()> {
             if update { "yes" } else { "-" },
             title_of(id),
         );
+    }
+    Ok(())
+}
+
+/// `workshop rate`: thumbs-up/down a Workshop item.
+async fn cmd_workshop_rate(id: u64, up: bool, json: bool) -> Result<()> {
+    let client = authed_client().await?;
+    client.vote_workshop_item(id, up).await?;
+    if json {
+        print_json(&serde_json::json!({
+            "id": id,
+            "vote": if up { "up" } else { "down" },
+            "status": "rated",
+        }));
+    } else {
+        cli_println!(
+            "Rated Workshop item {id} {}.",
+            if up { "thumbs-up" } else { "thumbs-down" }
+        );
+    }
+    Ok(())
+}
+
+/// `workshop comments`: read a page of a Workshop item's comments.
+async fn cmd_workshop_comments_read(id: u64, start: i32, count: i32, json: bool) -> Result<()> {
+    let client = authed_client().await?;
+    let comments = client.workshop_comments(id, start, count).await?;
+
+    if json {
+        print_json(&serde_json::json!({ "id": id, "comments": comments }));
+        return Ok(());
+    }
+    if comments.is_empty() {
+        cli_println!("No comments on Workshop item {id}.");
+        return Ok(());
+    }
+    for c in &comments {
+        cli_println!(
+            "[{}] {} (+{})",
+            format_unix_timestamp(c.timestamp.max(0) as u64),
+            c.author,
+            c.upvotes
+        );
+        cli_println!("  {}", c.text);
+    }
+    cli_println!("\n{} comment(s).", comments.len());
+    Ok(())
+}
+
+/// `workshop comment`: post a comment to a Workshop item.
+async fn cmd_workshop_comment(id: u64, text: String, json: bool) -> Result<()> {
+    let client = authed_client().await?;
+    let comment_id = client.post_workshop_comment(id, &text).await?;
+    if json {
+        print_json(&serde_json::json!({
+            "id": id,
+            "comment_id": comment_id,
+            "status": "posted",
+        }));
+    } else {
+        cli_println!("Posted comment {comment_id} to Workshop item {id}.");
     }
     Ok(())
 }
