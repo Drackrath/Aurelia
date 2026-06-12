@@ -30,26 +30,55 @@ impl SteamClient {
             .find(|entry| entry.appid() == appid)
             .ok_or_else(|| anyhow!("missing app info payload for app {appid}"))?;
 
-        let appinfo_vdf = String::from_utf8_lossy(app.buffer()).to_string();
-        let parsed: AppInfoRoot =
-            parse_appinfo(&appinfo_vdf).context("failed parsing appinfo VDF")?;
+        // PICS returns the appinfo as *binary* VDF; parse that first and only fall
+        // back to text (mirroring `get_available_platforms`). Parsing the binary
+        // buffer as text — as this used to — fails with "Expected a valid token for
+        // object start", which is why `branches` was broken.
+        let buffer = app.buffer().to_vec();
+        let appinfo_vdf_text = String::from_utf8_lossy(&buffer);
+        let vdf = steam_vdf_parser::parse_binary(&buffer)
+            .or_else(|_| steam_vdf_parser::parse_text(&appinfo_vdf_text).map(|v| v.into_owned()))
+            .context("failed parsing appinfo VDF")?;
 
-        let branches = parsed
-            .appinfo
-            .map(|node| node.branches)
-            .unwrap_or(parsed.branches);
+        let root_obj = vdf.as_obj().context("appinfo VDF root is not an object")?;
+        let depots = if vdf.key() == "appinfo" || vdf.key() == appid.to_string() {
+            root_obj.get("depots")
+        } else {
+            root_obj.get("depots").or_else(|| {
+                root_obj
+                    .values()
+                    .next()
+                    .and_then(|v| v.as_obj())
+                    .and_then(|o| o.get("depots"))
+            })
+        };
 
-        let mut names: Vec<String> = branches
-            .into_iter()
-            .filter(|(_, node)| node.pwdrequired.is_none()) // Ignore private
-            .map(|(name, _)| name)
-            .collect();
+        let mut names: Vec<String> = Vec::new();
+        if let Some(branches) = depots
+            .and_then(|v| v.as_obj())
+            .and_then(|d| d.get("branches"))
+            .and_then(|b| b.as_obj())
+        {
+            for (name, node) in branches.iter() {
+                // Skip private (password-protected) branches.
+                let private = node
+                    .as_obj()
+                    .and_then(|o| o.get("pwdrequired"))
+                    .and_then(|v| v.as_str())
+                    .map(|v| v != "0")
+                    .unwrap_or(false);
+                if !private {
+                    names.push(name.to_string());
+                }
+            }
+        }
 
-        if !names.contains(&"public".to_string()) {
+        if !names.iter().any(|n| n == "public") {
             names.push("public".to_string());
         }
 
         names.sort();
+        names.dedup();
         Ok(names)
     }
 

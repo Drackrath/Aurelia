@@ -213,10 +213,27 @@ impl SteamClient {
             }
 
             if selections.is_empty() {
+                // In verify mode the selections come from the local appmanifest's
+                // `InstalledDepots`. Empty means the app isn't fully installed (e.g.
+                // only staged/partially downloaded), which is otherwise reported with
+                // a confusing "no manifest/depot available" — spell it out instead.
+                let message = if verify_mode {
+                    format!(
+                        "app {appid} has no installed depots to verify — it is not fully \
+                         installed (its appmanifest lists no completed depots, e.g. a \
+                         staged or partial download). Run `aurelia install {appid}` to \
+                         complete the installation."
+                    )
+                } else {
+                    format!(
+                        "no manifest/depot available for app {appid} (no downloadable \
+                         depot was resolved for the active branch)"
+                    )
+                };
                 let _ = tx
                     .send(DownloadProgress {
                         state: DownloadProgressState::Failed,
-                        current_file: "no manifest/depot available for download".to_string(),
+                        current_file: message,
                         ..Default::default()
                     })
                     .await;

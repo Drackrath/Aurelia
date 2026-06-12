@@ -36,6 +36,12 @@ impl SteamClient {
             steamapps.join("common").join(appid.to_string())
         };
 
+        // Nothing to remove for an app that was never installed here — report it
+        // rather than silently claiming success.
+        if !appmanifest.exists() && !install_dir.exists() {
+            bail!("app {appid} is not installed (no appmanifest or install directory found)");
+        }
+
         if install_dir.exists() {
             std::fs::remove_dir_all(&install_dir)
                 .with_context(|| format!("failed deleting {}", install_dir.display()))?;
