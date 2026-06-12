@@ -4,7 +4,7 @@ Checklist for manually reviewing the project's source, test, and vendored files.
 Tick each file once you have read and approved it. Files marked **★** were changed
 in the latest code review (`git diff <file>` to see what changed).
 
-## src/ — top level
+## src/ top level
 
 - [ ] [src/lib.rs](src/lib.rs)
 - [ ] [src/main.rs](src/main.rs)
@@ -123,7 +123,4 @@ security hardening (zip-slip guard, `session.json` perms, daemon frame cap, appm
 sanitization, unified log redaction, unsafe-fn fix) plus deduplication, regex caching, and
 `tracing` cleanups.
 
-**Verification status:** `cargo build` clean; 119 tests pass. The only failing tests
-(`launch::verification_tests::*`, `symlink_deployment::*`) fail identically on un-modified
-`main` for environmental reasons (Unix `sh`/`sleep`; symlink privilege on Windows) and are
-not caused by these changes.
+**Verification status:** `cargo build` clean; 121 tests pass on Linux and 119 on Windows.
