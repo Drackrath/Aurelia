@@ -75,20 +75,26 @@ fn detach(cmd: &mut std::process::Command) {
     // (e.g. Heroic) handed us. The long-lived daemon would then keep those pipes
     // open forever and the parent would never see EOF. Clear the inherit flag on our
     // std handles before spawning so the daemon can't capture them.
-    unsafe { clear_std_handle_inheritance() };
+    clear_std_handle_inheritance();
 }
 
 #[cfg(windows)]
-unsafe fn clear_std_handle_inheritance() {
-    use windows_sys::Win32::Foundation::{SetHandleInformation, HANDLE_FLAG_INHERIT};
+fn clear_std_handle_inheritance() {
+    use windows_sys::Win32::Foundation::{
+        SetHandleInformation, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
+    };
     use windows_sys::Win32::System::Console::{
         GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
     };
     for id in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
-        let handle = GetStdHandle(id);
-        if !handle.is_null() {
-            // dwFlags = 0 clears HANDLE_FLAG_INHERIT for this handle.
-            SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
+        // SAFETY: GetStdHandle/SetHandleInformation are plain Win32 calls with no
+        // memory-safety preconditions; we only act on a valid, non-null handle.
+        unsafe {
+            let handle = GetStdHandle(id);
+            if !handle.is_null() && handle != INVALID_HANDLE_VALUE {
+                // dwFlags = 0 clears HANDLE_FLAG_INHERIT for this handle.
+                SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
+            }
         }
     }
 }

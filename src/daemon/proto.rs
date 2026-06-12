@@ -7,6 +7,11 @@
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
+/// Upper bound on a single frame's payload. Frames carry argv and stdio chunks,
+/// which are small; the cap stops a malformed length prefix from triggering a huge
+/// allocation in `read_frame`.
+const MAX_FRAME_LEN: u32 = 64 * 1024 * 1024;
+
 // Client → daemon.
 pub const C_HEADER: u8 = 0x01;
 pub const C_STDIN: u8 = 0x02;
@@ -22,8 +27,11 @@ pub async fn write_frame<W: AsyncWrite + Unpin>(
     channel: u8,
     payload: &[u8],
 ) -> std::io::Result<()> {
+    let len = u32::try_from(payload.len()).map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "frame payload exceeds u32")
+    })?;
     w.write_u8(channel).await?;
-    w.write_u32(payload.len() as u32).await?;
+    w.write_u32(len).await?;
     if !payload.is_empty() {
         w.write_all(payload).await?;
     }
@@ -40,7 +48,14 @@ pub async fn read_frame<R: AsyncRead + Unpin>(
         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
         Err(e) => return Err(e),
     };
-    let len = r.read_u32().await? as usize;
+    let len = r.read_u32().await?;
+    if len > MAX_FRAME_LEN {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "frame length exceeds maximum",
+        ));
+    }
+    let len = len as usize;
     let mut buf = vec![0u8; len];
     if len > 0 {
         r.read_exact(&mut buf).await?;

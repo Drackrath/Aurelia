@@ -366,7 +366,9 @@ impl SteamClient {
                 .with_context(|| format!("failed creating {}", parent.display()))?;
         }
 
-        let game_name = game_name.replace('"', "");
+        // Strip characters that are structurally significant in VDF text so a name
+        // cannot break out of its quoted value or inject extra keys/blocks.
+        let game_name = game_name.replace(['"', '\n', '\r', '{', '}', '\\'], "");
         let buildid = buildid.unwrap_or("0");
         let size_on_disk: u64 = installed_depots.iter().map(|(_, _, size)| *size).sum();
         // 4 = StateFullyInstalled, 2 = StateUpdateRequired.

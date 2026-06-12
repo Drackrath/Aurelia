@@ -74,13 +74,6 @@ impl EventLogger {
     }
 }
 
-fn redact_metadata(mut metadata: HashMap<String, String>) -> HashMap<String, String> {
-    let sensitive_keys = ["STEAM_TOKEN", "STEAM_PASSWORD", "TOKEN", "PASSWORD", "REFRESH_TOKEN"];
-    for (key, value) in metadata.iter_mut() {
-        let upper_key = key.to_uppercase();
-        if sensitive_keys.iter().any(|&sk| upper_key.contains(sk)) {
-            *value = "[REDACTED]".to_string();
-        }
-    }
-    metadata
+fn redact_metadata(metadata: HashMap<String, String>) -> HashMap<String, String> {
+    super::redact_sensitive(metadata)
 }

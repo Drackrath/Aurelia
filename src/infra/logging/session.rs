@@ -263,23 +263,8 @@ impl LaunchSession {
     }
 }
 
-pub fn redact_environment(mut env: HashMap<String, String>) -> HashMap<String, String> {
-    let sensitive_keys = [
-        "STEAM_TOKEN",
-        "STEAM_PASSWORD",
-        "TOKEN",
-        "PASSWORD",
-        "REFRESH_TOKEN",
-        "SESSION_TOKEN",
-        "SECRET",
-    ];
-    for (key, value) in env.iter_mut() {
-        let upper_key = key.to_uppercase();
-        if sensitive_keys.iter().any(|&sk| upper_key.contains(sk)) {
-            *value = "[REDACTED]".to_string();
-        }
-    }
-    env
+pub fn redact_environment(env: HashMap<String, String>) -> HashMap<String, String> {
+    super::redact_sensitive(env)
 }
 
 pub fn check_environment_sanity(

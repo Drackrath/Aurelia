@@ -252,9 +252,6 @@ NoSavePersonalInfo=1
         let _ = std::fs::write(&cfg_path, content);
     }
 
-    /// The single canonical entry point for launching a game process.
-    /// This function orchestrates the launch via a staged pipeline and the appropriate runner.
-    /// Bypassing this for production launches is strictly forbidden.
     /// Launch a Windows game's executable directly, with no Proton/Wine layer.
     /// Used on Windows hosts (and when `--windows` is forced), where the game's
     /// native `.exe` runs without a compatibility layer.

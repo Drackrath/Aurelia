@@ -359,15 +359,32 @@ fn extract_tarball(archive: &Path, ext: &str, dest_parent: &Path) -> Result<()> 
     let file = std::fs::File::open(archive)
         .with_context(|| format!("failed opening {}", archive.display()))?;
     match ext {
-        ".tar.gz" => {
-            let dec = flate2::read::GzDecoder::new(file);
-            tar::Archive::new(dec).unpack(dest_parent)?;
-        }
-        ".tar.xz" => {
-            let dec = xz2::read::XzDecoder::new(file);
-            tar::Archive::new(dec).unpack(dest_parent)?;
-        }
+        ".tar.gz" => unpack_guarded(flate2::read::GzDecoder::new(file), dest_parent),
+        ".tar.xz" => unpack_guarded(xz2::read::XzDecoder::new(file), dest_parent),
         other => bail!("unsupported runtime archive type '{other}'"),
+    }
+}
+
+/// Unpack a tar stream while refusing any entry whose path would escape
+/// `dest_parent` (absolute paths or `..` components). These runtimes are fetched
+/// from the network, so a crafted archive must not be able to write outside the
+/// target directory (zip-slip). Legitimate archives only contain relative paths,
+/// so this guard is transparent to them.
+fn unpack_guarded<R: std::io::Read>(reader: R, dest_parent: &Path) -> Result<()> {
+    use std::path::Component;
+    let mut archive = tar::Archive::new(reader);
+    for entry in archive.entries().context("reading runtime archive entries")? {
+        let mut entry = entry.context("reading runtime archive entry")?;
+        let path = entry.path().context("decoding archive entry path")?.into_owned();
+        if path
+            .components()
+            .any(|c| matches!(c, Component::ParentDir | Component::RootDir | Component::Prefix(_)))
+        {
+            bail!("refusing unsafe path '{}' in runtime archive", path.display());
+        }
+        entry
+            .unpack_in(dest_parent)
+            .with_context(|| format!("extracting '{}'", path.display()))?;
     }
     Ok(())
 }

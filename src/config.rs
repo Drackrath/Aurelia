@@ -2,8 +2,24 @@ use crate::models::{OwnedGame, SessionState, SteamPrefixMode, UserConfigStore};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::fs;
+
+/// Serialize `value` as pretty JSON and write it to `path`, creating the parent
+/// directory first. Shared by the `save_*` helpers so the create-dir / serialize /
+/// write / error-context sequence lives in one place.
+async fn write_json_pretty<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("failed creating {}", parent.display()))?;
+    }
+    let body = serde_json::to_string_pretty(value)?;
+    fs::write(path, body)
+        .await
+        .with_context(|| format!("failed writing {}", path.display()))?;
+    Ok(())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct GameConfig {
@@ -122,7 +138,7 @@ pub fn opensteam_image_cache_dir() -> Result<PathBuf> {
 }
 
 pub fn data_dir() -> Result<PathBuf> {
-    config_dir()  // or use XDG_DATA_HOME if you want proper separation
+    config_dir()
 }
 
 pub async fn load_session() -> Result<SessionState> {
@@ -140,16 +156,18 @@ pub async fn load_session() -> Result<SessionState> {
 }
 
 pub async fn save_session(session: &SessionState) -> Result<()> {
-    let config = config_dir()?;
-    fs::create_dir_all(&config)
-        .await
-        .with_context(|| format!("failed creating {}", config.display()))?;
+    let session_path = config_dir()?.join("session.json");
+    write_json_pretty(&session_path, session).await?;
 
-    let session_path = config.join("session.json");
-    let body = serde_json::to_string_pretty(session)?;
-    fs::write(&session_path, body)
-        .await
-        .with_context(|| format!("failed writing {}", session_path.display()))?;
+    // The session holds a long-lived Steam refresh token; keep it owner-only so it
+    // is not world-readable on shared Unix hosts.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&session_path, std::fs::Permissions::from_mode(0o600))
+            .await
+            .with_context(|| format!("failed securing {}", session_path.display()))?;
+    }
 
     Ok(())
 }
@@ -181,17 +199,8 @@ pub async fn load_launcher_config() -> Result<LauncherConfig> {
 }
 
 pub async fn save_launcher_config(config: &LauncherConfig) -> Result<()> {
-    let dir = config_dir()?;
-    fs::create_dir_all(&dir)
-        .await
-        .with_context(|| format!("failed creating {}", dir.display()))?;
-
-    let path = dir.join("config.json");
-    let body = serde_json::to_string_pretty(config)?;
-    fs::write(&path, body)
-        .await
-        .with_context(|| format!("failed writing {}", path.display()))?;
-    Ok(())
+    let path = config_dir()?.join("config.json");
+    write_json_pretty(&path, config).await
 }
 
 pub fn library_cache_path() -> Result<PathBuf> {
@@ -199,17 +208,7 @@ pub fn library_cache_path() -> Result<PathBuf> {
 }
 
 pub async fn save_library_cache(owned_games: &[OwnedGame]) -> Result<()> {
-    let dir = data_dir()?;
-    fs::create_dir_all(&dir)
-        .await
-        .with_context(|| format!("failed creating {}", dir.display()))?;
-
-    let path = library_cache_path()?;
-    let body = serde_json::to_string_pretty(owned_games)?;
-    fs::write(&path, body)
-        .await
-        .with_context(|| format!("failed writing {}", path.display()))?;
-    Ok(())
+    write_json_pretty(&library_cache_path()?, &owned_games).await
 }
 
 pub async fn load_library_cache() -> Result<Vec<OwnedGame>> {
@@ -290,22 +289,12 @@ pub async fn save_info_cache(
     details: &crate::steam_client::StoreAppInfo,
     dlc: &[(u32, Option<String>)],
 ) -> Result<()> {
-    let dir = info_cache_dir()?;
-    fs::create_dir_all(&dir)
-        .await
-        .with_context(|| format!("failed creating {}", dir.display()))?;
-
     let record = CachedAppInfo {
         fetched_at: now_unix(),
         details: details.clone(),
         dlc: dlc.to_vec(),
     };
-    let path = info_cache_path(app_id)?;
-    let body = serde_json::to_string_pretty(&record)?;
-    fs::write(&path, body)
-        .await
-        .with_context(|| format!("failed writing {}", path.display()))?;
-    Ok(())
+    write_json_pretty(&info_cache_path(app_id)?, &record).await
 }
 
 pub async fn load_user_configs() -> Result<UserConfigStore> {
@@ -323,15 +312,6 @@ pub async fn load_user_configs() -> Result<UserConfigStore> {
 }
 
 pub async fn save_user_configs(configs: &UserConfigStore) -> Result<()> {
-    let dir = config_dir()?;
-    fs::create_dir_all(&dir)
-        .await
-        .with_context(|| format!("failed creating {}", dir.display()))?;
-
-    let path = dir.join("user_apps.json");
-    let body = serde_json::to_string_pretty(configs)?;
-    fs::write(&path, body)
-        .await
-        .with_context(|| format!("failed writing {}", path.display()))?;
-    Ok(())
+    let path = config_dir()?.join("user_apps.json");
+    write_json_pretty(&path, configs).await
 }

@@ -101,14 +101,14 @@ pub async fn scan_installed_app_info() -> Result<HashMap<u32, InstalledAppInfo>>
     let root = config_path
         .or_else(detect_steam_path)
         .unwrap_or_else(default_steam_root);
-    eprintln!("Scanning Library Root: {:?}", root);
+    tracing::debug!("scanning library root: {:?}", root);
     let mut installed = scan_library_info(&root).await?;
 
     if let Some(cfg) = config {
         if cfg.windows_steam_discovery_enabled {
             let master_steam = crate::utils::get_master_steam_config();
             if master_steam.wine_prefix.exists() {
-                eprintln!("Scanning Windows Steam Root: {:?}", master_steam.wine_prefix);
+                tracing::debug!("scanning Windows Steam root: {:?}", master_steam.wine_prefix);
                 // Windows Steam layout is drive_c/Program Files (x86)/Steam
                 let windows_steam_root = master_steam.wine_prefix.join("drive_c/Program Files (x86)/Steam");
                 if windows_steam_root.exists() {
@@ -149,7 +149,7 @@ pub async fn scan_library_info(root_path: &Path) -> Result<HashMap<u32, Installe
     let extra_libraries = parse_library_folders(library_folders_path)
         .await
         .unwrap_or_else(|e| {
-            eprintln!("Warning: Could not parse libraryfolders.vdf: {}", e);
+            tracing::warn!("could not parse libraryfolders.vdf: {}", e);
             Vec::new()
         });
     libraries.extend(extra_libraries);
@@ -183,7 +183,7 @@ pub async fn scan_library_info(root_path: &Path) -> Result<HashMap<u32, Installe
                     installed.insert(app_id, info);
                 }
                 Ok(None) => {}
-                Err(e) => eprintln!("Skipping bad manifest {:?}: {}", path, e),
+                Err(e) => tracing::warn!("skipping bad manifest {:?}: {}", path, e),
             }
         }
     }

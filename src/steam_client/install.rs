@@ -391,7 +391,7 @@ impl SteamClient {
                     }
                 }
             } else {
-                println!("CRITICAL: VDF parse failed for {appid}");
+                tracing::error!("VDF parse failed for app {appid}");
             }
 
             if selections.is_empty() {

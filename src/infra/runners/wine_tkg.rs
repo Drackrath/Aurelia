@@ -228,9 +228,11 @@ impl Runner for WineTkgRunner {
                             .stdout(std::process::Stdio::null()) // silence CEF log spam
                             .stderr(std::process::Stdio::null());
 
-                        println!("Program: {:?}", steam_cmd.get_program());
-                        println!("Args: {:?}", steam_cmd.get_args().collect::<Vec<_>>());
-                        println!("--------------------------");
+                        tracing::debug!(
+                            program = ?steam_cmd.get_program(),
+                            args = ?steam_cmd.get_args().collect::<Vec<_>>(),
+                            "spawning background Steam",
+                        );
 
                         // Record Steam runtime diagnostics
                         unsafe {
@@ -714,8 +716,9 @@ impl Runner for WineTkgRunner {
                 } else if gpu.name.contains("AMD") || gpu.name.contains("Intel") || gpu.name.contains("Unknown") {
                     // Standard DRI_PRIME for non-NVIDIA discrete/specific GPUs
                     // Try to find "cardN" and extract N
-                    let re = regex::Regex::new(r"card(\d+)").unwrap();
-                    if let Some(caps) = re.captures(&gpu.name) {
+                    static CARD_RE: std::sync::LazyLock<regex::Regex> =
+                        std::sync::LazyLock::new(|| regex::Regex::new(r"card(\d+)").unwrap());
+                    if let Some(caps) = CARD_RE.captures(&gpu.name) {
                         if let Some(idx_match) = caps.get(1) {
                             if let Ok(card_idx) = idx_match.as_str().parse::<u32>() {
                                  // DRI_PRIME=1 is the most common way to select the second GPU
@@ -877,11 +880,12 @@ impl Runner for WineTkgRunner {
 
         cmd.stdout(std::process::Stdio::inherit());
 
-        println!("--- RUNNER LAUNCH ---");
-        println!("Program: {:?}", cmd.get_program());
-        println!("Args: {:?}", cmd.get_args().collect::<Vec<_>>());
-        println!("Working Dir: {:?}", cmd.get_current_dir());
-        println!("-------------------------");
+        tracing::debug!(
+            program = ?cmd.get_program(),
+            args = ?cmd.get_args().collect::<Vec<_>>(),
+            working_dir = ?cmd.get_current_dir(),
+            "runner launch",
+        );
 
         cmd.spawn().map_err(|e| LaunchError::new(LaunchErrorKind::Process, "failed to spawn runner process").with_source(anyhow!(e)))
     }

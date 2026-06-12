@@ -219,34 +219,12 @@ pub fn detect_prime_env() -> std::collections::HashMap<String, String> {
 
 fn detect_dxvk(root: &Path, prefix: Option<&Path>) -> Option<ComponentInfo> {
     // 1. Bundled inside runner (Modern Wine-TKG layout)
-    let comp_subdirs = ["lib/wine/dxvk", "files/lib/wine/dxvk", "dist/lib/wine/dxvk"];
-    let required = ["d3d11.dll", "dxgi.dll", "d3d9.dll", "d3d8.dll", "d3d10core.dll"];
-
-    for subdir in comp_subdirs {
-        let comp_path = root.join(subdir);
-        if comp_path.is_dir() {
-            // Check arch subfolders
-            for arch in ["x86_64-windows", "i386-windows"] {
-                let arch_path = comp_path.join(arch);
-                if required.iter().all(|dll| arch_path.join(dll).exists()) {
-                    let version = ["version", "../version"] // check in arch or component folder
-                        .iter()
-                        .filter_map(|v| {
-                            let p = arch_path.join(v);
-                            std::fs::read_to_string(p).ok()
-                        })
-                        .map(|s| parse_short_version(&s))
-                        .find(|s| s != "unknown")
-                        .unwrap_or_else(|| "found".to_string());
-
-                    return Some(ComponentInfo {
-                        version,
-                        source: ComponentSource::BundledWithRunner,
-                        path: Some(arch_path),
-                    });
-                }
-            }
-        }
+    if let Some(info) = detect_bundled_modern(
+        root,
+        &["lib/wine/dxvk", "files/lib/wine/dxvk", "dist/lib/wine/dxvk"],
+        |_| &["d3d11.dll", "dxgi.dll", "d3d9.dll", "d3d8.dll", "d3d10core.dll"],
+    ) {
+        return Some(info);
     }
 
     // Legacy/Proton fallback
@@ -295,33 +273,12 @@ fn detect_dxvk(root: &Path, prefix: Option<&Path>) -> Option<ComponentInfo> {
 
 fn detect_vkd3d_proton(root: &Path, prefix: Option<&Path>) -> Option<ComponentInfo> {
     // 1. Modern Wine-TKG layout
-    let comp_subdirs = ["lib/wine/vkd3d-proton", "files/lib/wine/vkd3d-proton", "dist/lib/wine/vkd3d-proton"];
-    let required = ["d3d12.dll", "d3d12core.dll"];
-
-    for subdir in comp_subdirs {
-        let comp_path = root.join(subdir);
-        if comp_path.is_dir() {
-            for arch in ["x86_64-windows", "i386-windows"] {
-                let arch_path = comp_path.join(arch);
-                if required.iter().all(|dll| arch_path.join(dll).exists()) {
-                    let version = ["version", "../version"]
-                        .iter()
-                        .filter_map(|v| {
-                            let p = arch_path.join(v);
-                            std::fs::read_to_string(p).ok()
-                        })
-                        .map(|s| parse_short_version(&s))
-                        .find(|s| s != "unknown")
-                        .unwrap_or_else(|| "found".to_string());
-
-                    return Some(ComponentInfo {
-                        version,
-                        source: ComponentSource::BundledWithRunner,
-                        path: Some(arch_path),
-                    });
-                }
-            }
-        }
+    if let Some(info) = detect_bundled_modern(
+        root,
+        &["lib/wine/vkd3d-proton", "files/lib/wine/vkd3d-proton", "dist/lib/wine/vkd3d-proton"],
+        |_| &["d3d12.dll", "d3d12core.dll"],
+    ) {
+        return Some(info);
     }
 
     // Legacy/Proton fallback
@@ -378,39 +335,18 @@ fn detect_vkd3d_proton(root: &Path, prefix: Option<&Path>) -> Option<ComponentIn
 
 fn detect_nvapi(root: &Path, prefix: Option<&Path>) -> Option<ComponentInfo> {
     // 1. Bundled inside runner (Modern Wine-TKG layout)
-    let comp_subdirs = ["lib/wine/nvapi", "files/lib/wine/nvapi", "dist/lib/wine/nvapi"];
-
-    for subdir in comp_subdirs {
-        let comp_path = root.join(subdir);
-        if comp_path.is_dir() {
-            // Check arch subfolders
-            for arch in ["x86_64-windows", "i386-windows"] {
-                let arch_path = comp_path.join(arch);
-                let dlls = if arch == "x86_64-windows" {
-                    vec!["nvapi64.dll"]
-                } else {
-                    vec!["nvapi.dll"]
-                };
-
-                if dlls.iter().all(|dll| arch_path.join(dll).exists()) {
-                    let version = ["version", "../version"]
-                        .iter()
-                        .filter_map(|v| {
-                            let p = arch_path.join(v);
-                            std::fs::read_to_string(p).ok()
-                        })
-                        .map(|s| parse_short_version(&s))
-                        .find(|s| s != "unknown")
-                        .unwrap_or_else(|| "found".to_string());
-
-                    return Some(ComponentInfo {
-                        version,
-                        source: ComponentSource::BundledWithRunner,
-                        path: Some(arch_path),
-                    });
-                }
+    if let Some(info) = detect_bundled_modern(
+        root,
+        &["lib/wine/nvapi", "files/lib/wine/nvapi", "dist/lib/wine/nvapi"],
+        |arch| {
+            if arch == "x86_64-windows" {
+                &["nvapi64.dll"]
+            } else {
+                &["nvapi.dll"]
             }
-        }
+        },
+    ) {
+        return Some(info);
     }
 
     // 2. Installed into WINEPREFIX
@@ -429,33 +365,12 @@ fn detect_nvapi(root: &Path, prefix: Option<&Path>) -> Option<ComponentInfo> {
 
 fn detect_vkd3d(root: &Path, prefix: Option<&Path>) -> Option<ComponentInfo> {
     // 1. Modern Wine-TKG layout
-    let comp_subdirs = ["lib/wine/vkd3d", "files/lib/wine/vkd3d", "dist/lib/wine/vkd3d"];
-    let required = ["libvkd3d-1.dll", "libvkd3d-shader-1.dll"];
-
-    for subdir in comp_subdirs {
-        let comp_path = root.join(subdir);
-        if comp_path.is_dir() {
-            for arch in ["x86_64-windows", "i386-windows"] {
-                let arch_path = comp_path.join(arch);
-                if required.iter().all(|dll| arch_path.join(dll).exists()) {
-                    let version = ["version", "../version"]
-                        .iter()
-                        .filter_map(|v| {
-                            let p = arch_path.join(v);
-                            std::fs::read_to_string(p).ok()
-                        })
-                        .map(|s| parse_short_version(&s))
-                        .find(|s| s != "unknown")
-                        .unwrap_or_else(|| "found".to_string());
-
-                    return Some(ComponentInfo {
-                        version,
-                        source: ComponentSource::BundledWithRunner,
-                        path: Some(arch_path),
-                    });
-                }
-            }
-        }
+    if let Some(info) = detect_bundled_modern(
+        root,
+        &["lib/wine/vkd3d", "files/lib/wine/vkd3d", "dist/lib/wine/vkd3d"],
+        |_| &["libvkd3d-1.dll", "libvkd3d-shader-1.dll"],
+    ) {
+        return Some(info);
     }
 
     // Legacy/Proton fallback
@@ -507,6 +422,41 @@ fn detect_vkd3d(root: &Path, prefix: Option<&Path>) -> Option<ComponentInfo> {
 }
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
+
+/// Detect a component bundled inside a runner using the modern Wine-TKG layout:
+/// `<root>/<subdir>/<arch>/<dlls>` with a `version` file in the arch or component
+/// folder. `required_for_arch` yields the DLLs that must all be present for a given
+/// arch (NVAPI ships arch-specific names, the rest share one list).
+fn detect_bundled_modern(
+    root: &Path,
+    subdirs: &[&str],
+    required_for_arch: impl Fn(&str) -> &'static [&'static str],
+) -> Option<ComponentInfo> {
+    for subdir in subdirs {
+        let comp_path = root.join(subdir);
+        if !comp_path.is_dir() {
+            continue;
+        }
+        for arch in ["x86_64-windows", "i386-windows"] {
+            let arch_path = comp_path.join(arch);
+            let required = required_for_arch(arch);
+            if required.iter().all(|dll| arch_path.join(dll).exists()) {
+                let version = ["version", "../version"] // check in arch or component folder
+                    .iter()
+                    .filter_map(|v| std::fs::read_to_string(arch_path.join(v)).ok())
+                    .map(|s| parse_short_version(&s))
+                    .find(|s| s != "unknown")
+                    .unwrap_or_else(|| "found".to_string());
+                return Some(ComponentInfo {
+                    version,
+                    source: ComponentSource::BundledWithRunner,
+                    path: Some(arch_path),
+                });
+            }
+        }
+    }
+    None
+}
 
 fn check_bundled(root: &Path, dll_candidates: &[&str], version_files: &[&str]) -> Option<ComponentInfo> {
     let found_dll = dll_candidates.iter().find(|rel| root.join(rel).exists());
@@ -680,12 +630,14 @@ fn extract_version_from_dll(dll_path: &Path) -> Option<String> {
 
     // Match semver-like patterns: optional 'v', digits, dots, optional suffix
     // e.g. "2.3.1", "v1.10.3", "2.4-dirty", "v2.0.0-alpha.1+git"
-    let semver_re = regex::Regex::new(r"^v?(\d{1,3})\.(\d{1,3})(\.\d{1,3})?([-.][a-zA-Z0-9._-]+)?$").ok()?;
+    static SEMVER_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"^v?(\d{1,3})\.(\d{1,3})(\.\d{1,3})?([-.][a-zA-Z0-9._-]+)?$").unwrap()
+    });
 
     // Prefer strings that look like "vX.Y.Z" over bare "X.Y"
     let mut candidates: Vec<String> = runs
         .into_iter()
-        .filter(|s| semver_re.is_match(s))
+        .filter(|s| SEMVER_RE.is_match(s))
         .filter(|s| {
             // Exclude obviously non-version strings (all zeros, single digit etc.)
             let parts: Vec<&str> = s.trim_start_matches('v').splitn(2, '.').collect();
@@ -711,8 +663,8 @@ pub fn build_dll_overrides(
     vkd3d_proton_active: bool,
     vkd3d_active: bool,
     no_overlay: bool,
-    force_builtin_d3d: bool, // NEW — for WineD3D policy
-    game_dir: Option<&std::path::Path>, // check for game-local DLLs
+    force_builtin_d3d: bool,
+    game_dir: Option<&std::path::Path>,
     strict_dxvk: bool,
 ) -> String {
     let mut overrides: Vec<String> = vec![

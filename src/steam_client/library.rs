@@ -443,7 +443,7 @@ impl SteamClient {
             .collect())
     }
 
-    pub async fn get_product_info(&mut self, appid: u32, prefer_proton: bool) -> Result<Vec<LaunchInfo>> {
+    pub async fn get_product_info(&mut self, appid: u32) -> Result<Vec<LaunchInfo>> {
         let connection = self
             .connection
             .as_ref()
@@ -473,7 +473,7 @@ impl SteamClient {
             bail!("empty appinfo payload returned for app {appid}")
         }
 
-        let launch_infos = parse_launch_info_from_vdf(appid, &raw_vdf, prefer_proton)
+        let launch_infos = parse_launch_info_from_vdf(appid, &raw_vdf)
             .context("failed to parse launch metadata from PICS appinfo")?;
 
         Ok(launch_infos)

@@ -25,7 +25,7 @@ impl SteamClient {
         }
 
         if hosts.is_empty() {
-            println!("ERROR: Service returned 0 valid CDN servers!");
+            tracing::error!("ContentServerDirectory returned 0 valid CDN servers");
         }
 
         Ok(hosts)

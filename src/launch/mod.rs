@@ -70,13 +70,8 @@ pub async fn install_master_steam(config: &LauncherConfig) -> Result<()> {
 
     let _child = cmd.spawn().context("Failed to spawn master steam process")?;
 
-    // We don't wait here because it's a background process or interactive installer
-    // But for the installer, maybe we should? The prompt doesn't specify.
-    // "Run SteamSetup.exe (Interactive, NO /S flag)."
-    // If it's interactive, we probably should NOT block the main thread.
-    // However, this is called from an async task in ui.rs, so it's fine to block that task if needed.
-    // But usually we want to let the user continue using the app.
-
+    // Spawned detached: this may be a long-running background Steam or an
+    // interactive installer, so we must not block the caller waiting on it.
     Ok(())
 }
 

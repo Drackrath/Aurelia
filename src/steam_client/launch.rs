@@ -12,8 +12,7 @@ impl SteamClient {
         user_config: Option<&crate::models::UserAppConfig>,
         force_windows: bool,
     ) -> Result<LaunchInfo> {
-        let prefer_proton = force_windows || proton_path.is_some();
-        let launch_options = self.get_product_info(app.app_id, prefer_proton).await?;
+        let launch_options = self.get_product_info(app.app_id).await?;
         // When forcing a Windows launch, prefer a Windows executable entry.
         let launch_info = if force_windows {
             launch_options

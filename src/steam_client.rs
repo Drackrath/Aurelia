@@ -437,8 +437,9 @@ fn steam_exe_path() -> Option<PathBuf> {
 /// Collect the DLC appids whose content is recorded as installed in an appmanifest.
 /// Steam tags each DLC depot under `InstalledDepots` with a `"dlcappid" "<id>"` line.
 fn parse_installed_dlc_appids(content: &str) -> HashSet<u32> {
-    let re = regex::Regex::new(r#""dlcappid"\s*"(\d+)""#).expect("valid dlcappid regex");
-    re.captures_iter(content)
+    static RE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r#""dlcappid"\s*"(\d+)""#).unwrap());
+    RE.captures_iter(content)
         .filter_map(|caps| caps[1].parse::<u32>().ok())
         .collect()
 }
@@ -446,8 +447,9 @@ fn parse_installed_dlc_appids(content: &str) -> HashSet<u32> {
 /// Collect the DLC appids listed in an appmanifest's `DisabledDLC` value(s).
 /// The value is a comma-separated list of appids; multiple blocks may each carry one.
 fn parse_disabled_dlc_appids(content: &str) -> HashSet<u32> {
-    let re = regex::Regex::new(r#""DisabledDLC"\s*"([^"]*)""#).expect("valid DisabledDLC regex");
-    re.captures_iter(content)
+    static RE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r#""DisabledDLC"\s*"([^"]*)""#).unwrap());
+    RE.captures_iter(content)
         .flat_map(|caps| {
             caps[1]
                 .split(',')
@@ -458,11 +460,12 @@ fn parse_disabled_dlc_appids(content: &str) -> HashSet<u32> {
 }
 
 fn apply_dlc_disabled(content: &str, dlc_appid: u32, disabled: bool) -> String {
+    static RE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r#""DisabledDLC"(\s*)"([^"]*)""#).unwrap());
     let dlc = dlc_appid.to_string();
-    let re = regex::Regex::new(r#""DisabledDLC"(\s*)"([^"]*)""#).expect("valid regex");
 
-    if re.is_match(content) {
-        return re
+    if RE.is_match(content) {
+        return RE
             .replace_all(content, |caps: &regex::Captures| {
                 let mut list: Vec<String> = caps[2]
                     .split(',')
@@ -902,11 +905,7 @@ fn parse_product_info_envelope(vdf: &str) -> Result<ProductInfoEnvelope> {
         .context("product info envelope was empty")
 }
 
-fn parse_launch_info_from_vdf(
-    appid: u32,
-    raw_vdf: &str,
-    _prefer_proton: bool,
-) -> Result<Vec<LaunchInfo>> {
+fn parse_launch_info_from_vdf(appid: u32, raw_vdf: &str) -> Result<Vec<LaunchInfo>> {
     let parsed: ProductInfoEnvelope =
         parse_product_info_envelope(raw_vdf).context("failed to parse product info VDF")?;
 
@@ -927,26 +926,24 @@ fn parse_launch_info_from_vdf(
         let os_list = entry.config.as_ref().and_then(|c| c.oslist.as_deref());
         let description = entry.description.as_deref().unwrap_or("Game");
 
-        // HEURISTIC: DETERMINE TARGET
+        // Pick the launch target from the entry's oslist, falling back to the
+        // executable extension and finally the host OS.
         let target = if let Some(os) = os_list {
             if os.contains("linux") {
                 LaunchTarget::NativeLinux
             } else if os.contains("windows") {
                 LaunchTarget::WindowsProton
             } else if os.contains("macos") {
-                continue;
-            } // Skip Mac on non-Mac
-            else {
+                continue; // we don't launch macOS builds
+            } else {
                 LaunchTarget::WindowsProton
-            } // Default to Windows
+            }
         } else {
-            // No OS specified? Check Extension.
             if exe.ends_with(".exe") || exe.ends_with(".bat") {
                 LaunchTarget::WindowsProton
             } else if exe.contains("linux") || exe.ends_with(".sh") {
                 LaunchTarget::NativeLinux
             } else {
-                // Default behavior
                 #[cfg(target_os = "linux")]
                 {
                     LaunchTarget::NativeLinux
@@ -1671,7 +1668,7 @@ mod tests {
   }
 }"#;
 
-        let launch_options = parse_launch_info_from_vdf(10, raw, false).expect("parse launch info");
+        let launch_options = parse_launch_info_from_vdf(10, raw).expect("parse launch info");
         let launch = &launch_options[0];
         assert_eq!(launch.target, LaunchTarget::NativeLinux);
         assert_eq!(launch.executable, "linux/game.sh");
