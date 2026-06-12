@@ -239,6 +239,11 @@ enum Command {
         #[command(subcommand)]
         command: WorkshopCommand,
     },
+    /// Download and manage Proton/Wine runtimes (official Valve Proton + GE builds).
+    Proton {
+        #[command(subcommand)]
+        command: ProtonCommand,
+    },
     /// Kill all running aurelia processes, including the session daemon.
     Kill,
     /// Run the background session daemon: log in to Steam **once** and serve every
@@ -274,6 +279,39 @@ enum ConfigCommand {
     Show,
     /// List detected Proton/Wine runtimes.
     Protons,
+    /// View or set per-game launch settings (Proton version, platform).
+    Game {
+        app_id: u32,
+        /// Set the Proton/Wine version this game launches with. Use a name from
+        /// `aurelia proton list` (installed). Overrides the global default.
+        #[arg(long)]
+        proton: Option<String>,
+        /// Clear the per-game Proton version (fall back to the global default).
+        #[arg(long, conflicts_with = "proton")]
+        clear_proton: bool,
+        /// Force the game's platform target (`windows` runs through Proton on Linux).
+        #[arg(long)]
+        platform: Option<PlatformArg>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProtonCommand {
+    /// List installable runtimes (Valve + GE) and what's already installed.
+    List {
+        /// Only show what's installed on disk (skips the GitHub/Valve lookup).
+        #[arg(long)]
+        installed: bool,
+    },
+    /// Download and install a runtime by name (from `proton list`).
+    Install {
+        /// Runtime name, e.g. `GE-Proton9-20` or `Proton 9.0`.
+        version: String,
+    },
+    /// Remove an installed custom (GE) runtime from compatibilitytools.d.
+    Remove { version: String },
+    /// Set the global default Proton/Wine version (used when a game has none set).
+    Default { version: String },
 }
 
 #[derive(Subcommand)]
@@ -659,6 +697,12 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Config { command } => match command {
             ConfigCommand::Show => cmd_config_show(json).await,
             ConfigCommand::Protons => cmd_config_protons(json),
+            ConfigCommand::Game {
+                app_id,
+                proton,
+                clear_proton,
+                platform,
+            } => cmd_config_game(app_id, proton, clear_proton, platform, json).await,
         },
         Command::Cloud { command } => match command {
             CloudCommand::Sync {
@@ -702,6 +746,12 @@ async fn run(cli: Cli) -> Result<()> {
                 cmd_workshop_comments_read(id, start, count, json).await
             }
             WorkshopCommand::Comment { id, text } => cmd_workshop_comment(id, text, json).await,
+        },
+        Command::Proton { command } => match command {
+            ProtonCommand::List { installed } => cmd_proton_list(installed, json).await,
+            ProtonCommand::Install { version } => cmd_proton_install(version, json).await,
+            ProtonCommand::Remove { version } => cmd_proton_remove(version, json).await,
+            ProtonCommand::Default { version } => cmd_proton_default(version, json).await,
         },
         Command::Kill => cmd_kill(json),
         Command::Daemon {
@@ -1659,19 +1709,16 @@ async fn cmd_play(app_id: u32, proton: Option<String>, windows: bool, json: bool
     let force_windows = windows || cfg!(target_os = "windows");
 
     let launcher_config = load_launcher_config().await.unwrap_or_default();
-    let prefers_windows = launcher_config
-        .game_configs
-        .get(&app_id)
-        .and_then(|c| c.platform_preference.as_deref())
-        == Some("windows");
+    let game_cfg = launcher_config.game_configs.get(&app_id);
+    let forced_proton = game_cfg.and_then(|c| c.forced_proton_version.clone());
+    let prefers_windows =
+        game_cfg.and_then(|c| c.platform_preference.as_deref()) == Some("windows");
 
-    let proton_path = if let Some(p) = proton {
-        Some(p)
-    } else if prefers_windows {
-        Some(launcher_config.proton_version.clone())
-    } else {
-        None
-    };
+    // Resolution order: explicit `--proton` flag → the game's stored version →
+    // (when the game targets Windows) the global default. None means run natively.
+    let proton_path = proton
+        .or(forced_proton)
+        .or_else(|| prefers_windows.then(|| launcher_config.proton_version.clone()));
 
     let user_configs = load_user_configs().await.unwrap_or_default();
     let user_config = user_configs.get(&app_id);
@@ -2498,6 +2545,235 @@ fn cmd_config_protons(json: bool) -> Result<()> {
         cli_println!("Custom (compatibilitytools.d):");
         for c in &custom {
             cli_println!("  {c}");
+        }
+    }
+    Ok(())
+}
+
+/// `config game`: view or set a game's per-game launch settings.
+async fn cmd_config_game(
+    app_id: u32,
+    proton: Option<String>,
+    clear_proton: bool,
+    platform: Option<PlatformArg>,
+    json: bool,
+) -> Result<()> {
+    let mut cfg = load_launcher_config().await.unwrap_or_default();
+    let mut changed = false;
+    {
+        let entry = cfg.game_configs.entry(app_id).or_default();
+        if clear_proton {
+            entry.forced_proton_version = None;
+            changed = true;
+        } else if let Some(p) = proton {
+            entry.forced_proton_version = Some(p);
+            changed = true;
+        }
+        if let Some(pl) = platform {
+            entry.platform_preference = Some(
+                match pl {
+                    PlatformArg::Windows => "windows",
+                    PlatformArg::Linux => "linux",
+                }
+                .to_string(),
+            );
+            changed = true;
+        }
+    }
+    if changed {
+        cfg.save().await.context("failed saving game config")?;
+    }
+
+    let entry = cfg.game_configs.get(&app_id).cloned().unwrap_or_default();
+    if json {
+        print_json(&serde_json::json!({
+            "app_id": app_id,
+            "forced_proton_version": entry.forced_proton_version,
+            "platform_preference": entry.platform_preference,
+        }));
+    } else {
+        cli_println!("App {app_id}:");
+        cli_println!(
+            "  Proton  : {}",
+            entry.forced_proton_version.as_deref().unwrap_or("(global default)")
+        );
+        cli_println!(
+            "  Platform: {}",
+            entry.platform_preference.as_deref().unwrap_or("(auto)")
+        );
+    }
+    Ok(())
+}
+
+/// `proton list`: show installable runtimes and what's installed.
+async fn cmd_proton_list(installed_only: bool, json: bool) -> Result<()> {
+    let cfg = load_launcher_config().await.unwrap_or_default();
+    let installed =
+        aurelia::proton::list_installed(std::path::Path::new(&cfg.steam_library_path));
+    let default = cfg.proton_version;
+    let is_installed = |name: &str| installed.iter().any(|i| i.name.eq_ignore_ascii_case(name));
+
+    if installed_only {
+        if json {
+            print_json(&serde_json::json!({ "default": default, "installed": installed }));
+            return Ok(());
+        }
+        if installed.is_empty() {
+            cli_println!("No Proton/Wine runtimes installed.");
+            return Ok(());
+        }
+        cli_println!("Installed runtimes:");
+        for i in &installed {
+            let star = if i.name == default { "  * default" } else { "" };
+            cli_println!("  {:<28} ({}){star}", i.name, i.location);
+        }
+        return Ok(());
+    }
+
+    let available = aurelia::proton::list_available().await.unwrap_or_default();
+    if json {
+        print_json(&serde_json::json!({
+            "default": default,
+            "installed": installed,
+            "available": available,
+        }));
+        return Ok(());
+    }
+
+    cli_println!("{:<10}  {:<28}  {:>10}  STATUS", "SOURCE", "NAME", "SIZE");
+    for pkg in &available {
+        let size = if pkg.size > 0 { human_bytes(pkg.size) } else { "-".to_string() };
+        let mut status = String::new();
+        if is_installed(&pkg.name) {
+            status.push_str("installed");
+        }
+        if pkg.name == default {
+            status.push_str(" *default");
+        }
+        cli_println!("{:<10}  {:<28}  {:>10}  {}", pkg.label, pkg.name, size, status.trim());
+    }
+    // Surface any installed runtime not present in the available list (e.g. an old GE
+    // build no longer in recent releases) so the user still sees everything on disk.
+    for i in &installed {
+        if !available.iter().any(|p| p.name.eq_ignore_ascii_case(&i.name)) {
+            let star = if i.name == default { " *default" } else { "" };
+            cli_println!("{:<10}  {:<28}  {:>10}  installed{star}", "(local)", i.name, "-");
+        }
+    }
+    cli_println!("\nInstall with `aurelia proton install <NAME>`.");
+    Ok(())
+}
+
+/// `proton install`: download/install a runtime and make it the global default.
+async fn cmd_proton_install(version: String, json: bool) -> Result<()> {
+    let pkg = aurelia::proton::resolve_package(&version).await?;
+
+    match &pkg.source {
+        aurelia::proton::ProtonSource::Valve { app_id } => {
+            let app_id = *app_id;
+            if !json {
+                cli_println!("Installing {} via Steam (app {app_id}) ...", pkg.name);
+            }
+            let client = authed_client().await?;
+            let state = Arc::new(RwLock::new(DownloadState::default()));
+            let rx = client
+                .install_game(app_id, DepotPlatform::Linux, None, None, state)
+                .await
+                .with_context(|| format!("failed to start installing {}", pkg.name))?;
+            drive_progress(rx, json).await?;
+        }
+        aurelia::proton::ProtonSource::Github { .. } => {
+            if !json {
+                cli_println!("Downloading {} ({}) ...", pkg.name, pkg.label);
+            }
+            let mut last_pct: i64 = -1;
+            let mut on_progress = |done: u64, total: u64| {
+                if json || total == 0 {
+                    return;
+                }
+                let pct = (done.saturating_mul(100) / total) as i64;
+                if pct != last_pct {
+                    last_pct = pct;
+                    cli_print!(
+                        "\r  {pct:>3}%  ({} / {})        ",
+                        human_bytes(done),
+                        human_bytes(total)
+                    );
+                }
+            };
+            let path = aurelia::proton::install_github_package(&pkg, &mut on_progress).await?;
+            if !json {
+                cli_println!("\n  Extracted to {}", path.display());
+            }
+        }
+    }
+
+    // The freshly installed runtime becomes the global default ("last downloaded").
+    let mut cfg = load_launcher_config().await.unwrap_or_default();
+    cfg.proton_version = pkg.name.clone();
+    cfg.save().await.context("failed saving the default Proton version")?;
+
+    if json {
+        print_json(&serde_json::json!({
+            "name": pkg.name,
+            "status": "installed",
+            "default": true,
+        }));
+    } else {
+        cli_println!("Installed {} and set it as the global default.", pkg.name);
+    }
+    Ok(())
+}
+
+/// `proton remove`: delete an installed custom (GE) runtime.
+async fn cmd_proton_remove(version: String, json: bool) -> Result<()> {
+    aurelia::proton::remove(&version)
+        .with_context(|| format!("failed to remove {version}"))?;
+
+    // If it was the global default, the default now points at something gone; warn.
+    let cfg = load_launcher_config().await.unwrap_or_default();
+    let was_default = cfg.proton_version.eq_ignore_ascii_case(&version);
+
+    if json {
+        print_json(&serde_json::json!({
+            "name": version,
+            "status": "removed",
+            "was_default": was_default,
+        }));
+    } else {
+        cli_println!("Removed {version}.");
+        if was_default {
+            cli_eprintln!(
+                "Note: {version} was the global default — set a new one with \
+                 `aurelia proton default <NAME>`."
+            );
+        }
+    }
+    Ok(())
+}
+
+/// `proton default`: set the global default Proton/Wine version.
+async fn cmd_proton_default(version: String, json: bool) -> Result<()> {
+    let cfg0 = load_launcher_config().await.unwrap_or_default();
+    let installed =
+        aurelia::proton::list_installed(std::path::Path::new(&cfg0.steam_library_path));
+    let present = installed.iter().any(|i| i.name.eq_ignore_ascii_case(&version));
+
+    let mut cfg = cfg0;
+    cfg.proton_version = version.clone();
+    cfg.save().await.context("failed saving the default Proton version")?;
+
+    if json {
+        print_json(&serde_json::json!({
+            "default": version,
+            "installed_present": present,
+        }));
+    } else {
+        cli_println!("Global default Proton set to {version}.");
+        if !present {
+            cli_eprintln!(
+                "Note: '{version}' is not installed — run `aurelia proton install {version}`."
+            );
         }
     }
     Ok(())

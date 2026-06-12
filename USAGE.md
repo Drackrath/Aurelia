@@ -57,6 +57,12 @@ of a specific command. `--version` prints the build version.
 - [Configuration](#configuration)
   - [`config show`](#config-show)
   - [`config protons`](#config-protons)
+  - [`config game`](#config-game)
+- [Proton & Wine runtimes](#proton--wine-runtimes)
+  - [`proton list`](#proton-list)
+  - [`proton install`](#proton-install)
+  - [`proton remove`](#proton-remove)
+  - [`proton default`](#proton-default)
 - [Session daemon](#session-daemon)
   - [`daemon`](#daemon)
   - [`daemon list` / `daemon stop`](#daemon)
@@ -1090,10 +1096,116 @@ aurelia config show
 ### `config protons`
 
 List detected Proton/Wine runtimes — both Steam-managed runtimes and custom ones under
-`compatibilitytools.d`.
+`compatibilitytools.d`. (See also [`proton list`](#proton-list), which adds runtimes
+available to **download**.)
 
 ```bash
 aurelia config protons
+```
+
+### `config game`
+
+View or set a game's **per-game launch settings** — the Proton/Wine version it runs with
+and its platform target. Run with no flags to print the current settings.
+
+```text
+aurelia config game <APP_ID> [--proton <VERSION>] [--clear-proton] [--platform <windows|linux>] [--json]
+```
+
+| Option | Description |
+| --- | --- |
+| `--proton <VERSION>` | Pin the Proton/Wine version for this game (a name from [`proton list`](#proton-list)). Overrides the global default at launch. |
+| `--clear-proton` | Remove the per-game version, so the game falls back to the [global default](#proton-default). |
+| `--platform <windows\|linux>` | Force the platform target. `windows` runs through Proton/Wine on Linux. |
+
+At launch, the Proton version is resolved in this order: an explicit `play --proton` flag →
+this per-game version → the global default (only when the game targets Windows). The
+`--json` output is `{ "app_id", "forced_proton_version", "platform_preference" }`.
+
+```bash
+aurelia config game 1245620                          # show current settings
+aurelia config game 1245620 --proton GE-Proton9-20   # pin a Proton version
+aurelia config game 1245620 --clear-proton           # back to the global default
+aurelia config game 1245620 --platform windows
+```
+
+---
+
+## Proton & Wine runtimes
+
+Download and manage the Proton/Wine runtimes games launch through. Two sources are
+supported:
+
+- **Official Valve Proton** — free Steam apps (Proton Experimental, 9.0, 8.0, …), installed
+  through the normal content pipeline into `steamapps/common` (needs an active session).
+- **GE community builds** — GloriousEggroll's **Proton-GE** and **Wine-GE**, downloaded from
+  GitHub releases and extracted into `compatibilitytools.d` (no session needed).
+
+The **global default** runtime is used when a game has no per-game version
+([`config game`](#config-game)) set. **Installing a runtime makes it the new default** (the
+"last downloaded" rule); change it explicitly with [`proton default`](#proton-default).
+
+### `proton list`
+
+List installable runtimes (Valve + GE, the latter fetched from GitHub) alongside what's
+already installed, with the current default marked.
+
+```text
+aurelia proton list [--installed] [--json]
+```
+
+| Option | Description |
+| --- | --- |
+| `--installed` | Only show runtimes installed on disk (skips the network lookup). |
+
+The text view is a `SOURCE / NAME / SIZE / STATUS` table; `--json` emits
+`{ "default", "installed": [...], "available": [...] }`. Set `GITHUB_TOKEN` to lift GitHub's
+unauthenticated rate limit if you hit it.
+
+```bash
+aurelia proton list
+aurelia proton list --installed
+aurelia proton list --json
+```
+
+### `proton install`
+
+Download and install a runtime by name, then set it as the global default. GE builds are
+fetched/extracted directly; an official Proton name installs via Steam (with streamed
+progress, like [`install`](#install)).
+
+```text
+aurelia proton install <VERSION>
+```
+
+```bash
+aurelia proton install GE-Proton9-20     # GE build from GitHub
+aurelia proton install "Proton 9.0"      # official Valve Proton via Steam
+```
+
+### `proton remove`
+
+Delete an installed **custom (GE)** runtime from `compatibilitytools.d`. Official Valve
+Proton is removed through Steam (or `aurelia uninstall <app_id>`), not here.
+
+```text
+aurelia proton remove <VERSION>
+```
+
+```bash
+aurelia proton remove GE-Proton9-19
+```
+
+### `proton default`
+
+Set the global default Proton/Wine version (used by any game without a per-game override).
+
+```text
+aurelia proton default <VERSION>
+```
+
+```bash
+aurelia proton default GE-Proton9-20
 ```
 
 ---

@@ -80,7 +80,8 @@ sync, and Proton/Wine launching all work today.
       folders (with Steam's `appmanifest`/`libraryfolders.vdf` kept in sync)
 - [x] **DLC** — install, enable/disable, and per-DLC ownership/install status
 - [x] **Steam Cloud** — enumerate, download, upload save data
-- [x] **Proton/Wine** — runtime discovery and launch integration
+- [x] **Proton/Wine** — runtime discovery, a download manager (official Valve Proton + GE
+      builds), per-game version pinning, and launch integration
 - [x] **Depot browser** — list depots, inspect manifest trees, download single files
 - [x] **Workshop** — browse/search, install/uninstall, subscribe, collections, rate, and
       read/post comments
@@ -184,6 +185,13 @@ aurelia workshop comment 1234567890 "Nice mod!"  # post a comment
 # Configuration
 aurelia config show                  # print launcher configuration
 aurelia config protons               # list detected Proton/Wine runtimes
+aurelia config game 1245620 --proton GE-Proton9-20  # pin a Proton version for one game
+
+# Proton / Wine runtimes (download manager)
+aurelia proton list                  # installable runtimes (Valve + GE) and what's installed
+aurelia proton install GE-Proton9-20 # download a GE build (or "Proton 9.0" via Steam)
+aurelia proton default GE-Proton9-20 # set the global default (used when a game has none set)
+aurelia proton remove GE-Proton9-19  # delete an installed GE build
 ```
 
 Add `--json` to any command for machine-readable output (errors included). It's a global
