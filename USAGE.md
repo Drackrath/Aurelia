@@ -61,7 +61,7 @@ of a specific command. `--version` prints the build version.
 - [Proton & Wine runtimes](#proton--wine-runtimes)
   - [`proton list`](#proton-list)
   - [`proton install`](#proton-install)
-  - [`proton remove`](#proton-remove)
+  - [`proton uninstall`](#proton-uninstall)
   - [`proton default`](#proton-default)
 - [Session daemon](#session-daemon)
   - [`daemon`](#daemon)
@@ -1183,17 +1183,17 @@ aurelia proton install GE-Proton9-20     # GE build from GitHub
 aurelia proton install "Proton 9.0"      # official Valve Proton via Steam
 ```
 
-### `proton remove`
+### `proton uninstall`
 
 Delete an installed **custom (GE)** runtime from `compatibilitytools.d`. Official Valve
 Proton is removed through Steam (or `aurelia uninstall <app_id>`), not here.
 
 ```text
-aurelia proton remove <VERSION>
+aurelia proton uninstall <VERSION>
 ```
 
 ```bash
-aurelia proton remove GE-Proton9-19
+aurelia proton uninstall GE-Proton9-19
 ```
 
 ### `proton default`

@@ -191,7 +191,7 @@ aurelia config game 1245620 --proton GE-Proton9-20  # pin a Proton version for o
 aurelia proton list                  # installable runtimes (Valve + GE) and what's installed
 aurelia proton install GE-Proton9-20 # download a GE build (or "Proton 9.0" via Steam)
 aurelia proton default GE-Proton9-20 # set the global default (used when a game has none set)
-aurelia proton remove GE-Proton9-19  # delete an installed GE build
+aurelia proton uninstall GE-Proton9-19  # delete an installed GE build
 ```
 
 Add `--json` to any command for machine-readable output (errors included). It's a global

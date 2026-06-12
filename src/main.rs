@@ -308,8 +308,8 @@ enum ProtonCommand {
         /// Runtime name, e.g. `GE-Proton9-20` or `Proton 9.0`.
         version: String,
     },
-    /// Remove an installed custom (GE) runtime from compatibilitytools.d.
-    Remove { version: String },
+    /// Uninstall an installed custom (GE) runtime from compatibilitytools.d.
+    Uninstall { version: String },
     /// Set the global default Proton/Wine version (used when a game has none set).
     Default { version: String },
 }
@@ -750,7 +750,7 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Proton { command } => match command {
             ProtonCommand::List { installed } => cmd_proton_list(installed, json).await,
             ProtonCommand::Install { version } => cmd_proton_install(version, json).await,
-            ProtonCommand::Remove { version } => cmd_proton_remove(version, json).await,
+            ProtonCommand::Uninstall { version } => cmd_proton_uninstall(version, json).await,
             ProtonCommand::Default { version } => cmd_proton_default(version, json).await,
         },
         Command::Kill => cmd_kill(json),
@@ -2725,10 +2725,10 @@ async fn cmd_proton_install(version: String, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// `proton remove`: delete an installed custom (GE) runtime.
-async fn cmd_proton_remove(version: String, json: bool) -> Result<()> {
+/// `proton uninstall`: delete an installed custom (GE) runtime.
+async fn cmd_proton_uninstall(version: String, json: bool) -> Result<()> {
     aurelia::proton::remove(&version)
-        .with_context(|| format!("failed to remove {version}"))?;
+        .with_context(|| format!("failed to uninstall {version}"))?;
 
     // If it was the global default, the default now points at something gone; warn.
     let cfg = load_launcher_config().await.unwrap_or_default();
@@ -2737,11 +2737,11 @@ async fn cmd_proton_remove(version: String, json: bool) -> Result<()> {
     if json {
         print_json(&serde_json::json!({
             "name": version,
-            "status": "removed",
+            "status": "uninstalled",
             "was_default": was_default,
         }));
     } else {
-        cli_println!("Removed {version}.");
+        cli_println!("Uninstalled {version}.");
         if was_default {
             cli_eprintln!(
                 "Note: {version} was the global default — set a new one with \
