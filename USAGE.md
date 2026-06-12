@@ -47,6 +47,8 @@ of a specific command. `--version` prints the build version.
   - [`config protons`](#config-protons)
 - [Session daemon](#session-daemon)
   - [`daemon`](#daemon)
+  - [`daemon list` / `daemon stop`](#daemon)
+  - [`kill`](#kill)
 - [Files & locations](#files--locations)
 - [Exit codes & logging](#exit-codes--logging)
 
@@ -747,7 +749,7 @@ These commands require an active session.
 
 ### `cloud sync`
 
-Synchronise a game's Steam Cloud saves with the local save directory.
+Synchronise a game's Steam Cloud saves with their real on-disk locations.
 
 ```
 aurelia cloud sync <APP_ID> [--up | --down] [--path <DIR>] [--json]
@@ -757,19 +759,46 @@ aurelia cloud sync <APP_ID> [--up | --down] [--path <DIR>] [--json]
 | --- | --- |
 | `--up` | Only upload local saves to Steam. Conflicts with `--down`. |
 | `--down` | Only download saves from Steam. Conflicts with `--up`. |
-| `--path <DIR>` | Local save directory. Defaults to Aurelia's managed cloud root for the account/app. |
+| `--path <DIR>` | Override the base directory for **classic** (token-less) remote-storage files. Defaults to `<userdata>/<account>/<appid>/remote`. Does **not** affect Auto-Cloud files (see below). |
 | `--json` | Emit a JSON result instead of text. |
 
 With **neither** flag it performs a full sync — **down then up** — matching what `play` does
 around a launch. `--down` or `--up` restrict it to one direction. The `--json` result is
-`{ "app_id", "direction": "both"|"down"|"up", "path", "downloaded", "uploaded" }`.
+`{ "app_id", "direction": "both"|"down"|"up", "remote_root", "downloaded", "uploaded" }`.
+
+**Path mapping (important).** Steam Auto-Cloud filenames embed the real save location as a
+leading root token, e.g. `%WinAppDataLocalLow%SadSocket/9Kings/save.json`. Aurelia resolves
+that token to the actual OS directory the game reads and writes — it does **not** copy saves
+into a folder under `userdata`. Supported tokens:
+
+- **Windows:** `%WinMyDocuments%`, `%WinAppDataLocal%`, `%WinAppDataLocalLow%`,
+  `%WinAppDataRoaming%`, `%WinSavedGames%`, `%GameInstall%`.
+- **Linux:** `%LinuxHome%`, `%LinuxXdgDataHome%`, `%LinuxXdgConfigHome%`, `%GameInstall%`.
+  (`%Win*%` tokens belong to a game's Proton prefix, which this layer doesn't track yet, so
+  they're skipped on Linux.)
+
+Token-less filenames are classic `ISteamRemoteStorage` files and live under the `--path`
+directory (default `<appid>/remote`). `%GameInstall%` resolves against the game's install
+directory when it is installed.
+
+**Direction logic.**
+
+- **down** — a cloud file is written to its mapped local path when it is newer than (or
+  missing) the local copy; the file is then stamped with the cloud's modification time so a
+  later sync doesn't see it as locally changed.
+- **up** — a save is uploaded when it is newer than, or differs in size from, its cloud copy.
+  The candidate set is the union of (a) files already in the cloud and (b) local files matched
+  by the app's UFS `savefiles` rules (read from appinfo), so a **brand-new** save that has
+  never been in the cloud still gets its first upload.
 
 ```bash
 aurelia cloud sync 1245620                 # download then upload
 aurelia cloud sync 1245620 --down          # pull saves from Steam only
-aurelia cloud sync 1245620 --up --path ./saves
+aurelia cloud sync 1245620 --up            # push local saves to Steam
 aurelia cloud sync 1245620 --json
 ```
+
+> Not yet handled: per-OS `ufs/rootoverrides` remapping, and `%Win*%` tokens on Linux/Proton.
 
 ### `cloud list`
 
@@ -821,11 +850,19 @@ connection instead of re-authenticating on each call.
 
 ```
 aurelia daemon [--socket <PATH>]
+aurelia daemon list [--json]
+aurelia daemon stop [PID] [--json]
 ```
 
 | Option | Description |
 | --- | --- |
 | `--socket <PATH>` | Override the socket/pipe path (also settable via `AURELIA_DAEMON_SOCKET`). |
+
+`aurelia daemon list` shows running daemons with their PID and command line; `aurelia daemon
+stop` terminates the daemon(s), or just one when given a `PID` from the list. These run
+locally and never forward to (or auto-spawn) the daemon they manage. See also
+[`kill`](#kill), which terminates **every** aurelia process. JSON shapes:
+`{ "daemons": [{ "pid", "command" }] }` and `{ "killed", "pids" }`.
 
 **Why:** Aurelia is otherwise a per-invocation CLI — each command opens a fresh Steam CM
 connection and re-authenticates with the stored refresh token. Steam throttles repeated
@@ -855,9 +892,30 @@ aurelia info 730 --json              # auto-connects to the daemon (or spawns on
 AURELIA_NO_DAEMON=1 aurelia info 730 # bypass the daemon, run standalone
 ```
 
-The daemon keeps its session alive with Steam's connection heartbeat. If the saved token is
-invalid or absent, commands needing auth still return a clean `not logged in` error — run
-`aurelia login` (which the daemon picks up) to establish the shared session.
+**Staying healthy.** The daemon keeps its session alive with Steam's connection heartbeat,
+and self-heals if it drops: a background liveness probe re-establishes the shared session if
+the connection dies, and a failed session restore is retried (after a short backoff) on a
+later command rather than wedging the daemon. `aurelia login --reconnect` forces an immediate
+re-establish. If the saved token is invalid or absent, commands needing auth still return a
+clean `not logged in` error — run `aurelia login` (which the daemon picks up) to establish the
+shared session.
+
+### `kill`
+
+Terminate **every** running aurelia process, including the session daemon. Useful after
+deploying a new binary (the long-lived daemon keeps running the old code until restarted).
+
+```
+aurelia kill [--json]
+```
+
+The invoking process is excluded, so the command lives long enough to report its result.
+To stop only daemons, use [`daemon stop`](#daemon) instead. The `--json` result is
+`{ "found", "killed", "pids" }`.
+
+```bash
+aurelia kill
+```
 
 ---
 
