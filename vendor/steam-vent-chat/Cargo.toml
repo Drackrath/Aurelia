@@ -1,0 +1,23 @@
+[package]
+name = "steam-vent-chat"
+version = "0.5.0"
+authors = ["Robin Appelman <robin@icewind.nl>"]
+edition = "2024"
+description = "Steam chat client library (vendored fork, ported to steam-vent 0.5)"
+license = "MIT"
+repository = "https://codeberg.org/steam-vent/chat"
+rust-version = "1.85.0"
+
+# Vendored fork of https://codeberg.org/steam-vent/chat (upstream depends on
+# steam-vent 0.4, whose `Connection` type does not unify with the 0.5 release
+# Aurelia pins). Ported to steam-vent 0.5: the proto crate is no longer
+# re-exported as `steam_vent::proto`, so we depend on `steam-vent-proto`
+# directly, and `steamid-ng` is bumped to 3.x to match steam-vent so `SteamID`
+# is the same type Aurelia hands us. The root manifest's `[patch.crates-io]`
+# entry redirects this `steam-vent` to the same git tag Aurelia uses, unifying
+# the shared `Connection`.
+[dependencies]
+steam-vent = "0.5"
+steam-vent-proto = "=0.5.2"
+steamid-ng = { version = "3", features = ["serde"] }
+tokio-stream = "0.1"
