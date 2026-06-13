@@ -99,6 +99,25 @@ pub async fn read_line() -> std::io::Result<String> {
     Ok(line.trim_end_matches(['\n', '\r']).to_string())
 }
 
+/// Like [`read_line`] but distinguishes end-of-input (`Ok(None)`) from an empty
+/// line (`Ok(Some(String::new()))`). Interactive loops use this to stop when the
+/// input stream closes (client disconnect / Ctrl-D / Ctrl-Z) instead of spinning
+/// on a stream of empty strings.
+pub async fn read_line_opt() -> std::io::Result<Option<String>> {
+    if let Ok(stdin) = CTX.try_with(|ctx| ctx.stdin.clone()) {
+        let mut guard = stdin.lock().await;
+        return guard.read_line_opt().await;
+    }
+    use tokio::io::AsyncBufReadExt;
+    let mut line = String::new();
+    let mut reader = tokio::io::BufReader::new(tokio::io::stdin());
+    let n = reader.read_line(&mut line).await?;
+    if n == 0 {
+        return Ok(None);
+    }
+    Ok(Some(line.trim_end_matches(['\n', '\r']).to_string()))
+}
+
 /// Buffers the client's forwarded stdin bytes and yields whole lines.
 struct DaemonStdin {
     rx: mpsc::UnboundedReceiver<Vec<u8>>,
@@ -119,6 +138,33 @@ impl DaemonStdin {
                 let rest = String::from_utf8_lossy(&self.buf).trim().to_string();
                 self.buf.clear();
                 return Ok(rest);
+            }
+            match self.rx.recv().await {
+                Some(chunk) => self.buf.extend_from_slice(&chunk),
+                None => self.eof = true,
+            }
+        }
+    }
+
+    /// Like [`DaemonStdin::read_line`] but returns `Ok(None)` once the client's
+    /// stdin is closed and fully consumed, so callers can detect EOF.
+    async fn read_line_opt(&mut self) -> std::io::Result<Option<String>> {
+        loop {
+            if let Some(pos) = self.buf.iter().position(|&b| b == b'\n') {
+                let line: Vec<u8> = self.buf.drain(..=pos).collect();
+                return Ok(Some(
+                    String::from_utf8_lossy(&line)
+                        .trim_end_matches(['\n', '\r'])
+                        .to_string(),
+                ));
+            }
+            if self.eof {
+                if self.buf.is_empty() {
+                    return Ok(None);
+                }
+                let rest = String::from_utf8_lossy(&self.buf).trim().to_string();
+                self.buf.clear();
+                return Ok(Some(rest));
             }
             match self.rx.recv().await {
                 Some(chunk) => self.buf.extend_from_slice(&chunk),

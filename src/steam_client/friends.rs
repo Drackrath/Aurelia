@@ -183,8 +183,9 @@ impl SteamClient {
 
     /// Announce the presence configured in `LauncherConfig::chat_presence`
     /// (defaults to invisible/"offline"). Falls back to invisible if the config
-    /// can't be read.
-    async fn announce_configured_presence(&self) -> Result<()> {
+    /// can't be read. Public so an interactive chat session can announce presence
+    /// when running standalone (the daemon's friends watcher already does so).
+    pub async fn announce_configured_presence(&self) -> Result<()> {
         let persona_state = crate::config::load_launcher_config()
             .await
             .map(|c| c.chat_presence.persona_state())

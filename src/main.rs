@@ -343,6 +343,10 @@ enum ChatCommand {
         #[arg(long, default_value_t = 20)]
         count: u32,
     },
+    /// Open an interactive live chat with a friend: type lines to send, incoming
+    /// messages stream in. End with Ctrl-D (Ctrl-Z on Windows). With `--json`,
+    /// emits one JSON event per line and reads message text from stdin lines.
+    Open { steamid: u64 },
 }
 
 #[derive(Subcommand)]
@@ -689,6 +693,7 @@ async fn run(cli: Cli) -> Result<()> {
             ChatCommand::History { steamid, count } => {
                 cmd_chat_history(steamid, count, json).await
             }
+            ChatCommand::Open { steamid } => cmd_chat_open(steamid, json).await,
         },
         Command::Install {
             app_id,
@@ -1508,6 +1513,122 @@ async fn cmd_chat_history(steamid: u64, count: u32, json: bool) -> Result<()> {
     for m in &messages {
         let who = if m.from_self { "me" } else { "them" };
         cli_println!("[{}] {:>4}: {}", m.timestamp, who, m.message);
+    }
+    Ok(())
+}
+
+/// Render one incoming chat event for `aurelia chat open`, filtered to the
+/// conversation with `target`. Plain mode prints a friendly line; `--json` emits
+/// one NDJSON event for GUI drivers.
+fn render_chat_event(target: u64, event: steam_vent_chat::ChatEvent, json: bool) {
+    use steam_vent_chat::ChatEvent;
+    // Every event carries the conversation partner's SteamID; ignore events for
+    // other conversations sharing this connection's notification stream.
+    let source = match &event {
+        ChatEvent::Message(e) | ChatEvent::EchoMessage(e) => u64::from(e.source),
+        ChatEvent::Typing(e) => u64::from(e.source),
+    };
+    if source != target {
+        return;
+    }
+    match event {
+        ChatEvent::Message(e) => {
+            let text = e.message_no_bbcode.unwrap_or(e.message);
+            if json {
+                print_json_line(&serde_json::json!({
+                    "event": "message", "from": target, "text": text,
+                    "timestamp": e.server_timestamp,
+                }));
+            } else {
+                cli_println!("them: {text}");
+            }
+        }
+        ChatEvent::EchoMessage(e) => {
+            let text = e.message_no_bbcode.unwrap_or(e.message);
+            if json {
+                print_json_line(&serde_json::json!({
+                    "event": "echo", "to": target, "text": text,
+                    "timestamp": e.server_timestamp,
+                }));
+            } else {
+                cli_println!("me (sent elsewhere): {text}");
+            }
+        }
+        ChatEvent::Typing(e) => {
+            if json {
+                print_json_line(&serde_json::json!({
+                    "event": "typing", "from": target, "timestamp": e.server_timestamp,
+                }));
+            } else {
+                cli_println!("* {target} is typing...");
+            }
+        }
+    }
+}
+
+/// `aurelia chat open <steamid>`: interactive live chat. Incoming messages stream
+/// to stdout while lines read from stdin are sent to the friend; the session ends
+/// on stdin EOF (Ctrl-D / Ctrl-Z) or when the notification stream closes.
+///
+/// Runs naturally over the daemon — the thin client streams stdin and relays
+/// stdout in real time — so it reuses the shared, already-online connection.
+async fn cmd_chat_open(steamid: u64, json: bool) -> Result<()> {
+    use tokio_stream::StreamExt;
+
+    let client = authed_client().await?;
+    // Ensure the session is announced online so Steam delivers incoming messages
+    // (a no-op effect if the daemon's watcher already did this).
+    if let Err(e) = client.announce_configured_presence().await {
+        tracing::warn!("could not announce presence: {e:#}");
+    }
+
+    let chat = client.chat_client()?;
+    let mut events = chat.listen();
+
+    if json {
+        print_json_line(&serde_json::json!({ "event": "ready", "with": steamid }));
+    } else {
+        cli_println!(
+            "Chat with {steamid}. Type a message and press Enter to send; Ctrl-D (Ctrl-Z on \
+             Windows) to quit."
+        );
+    }
+
+    loop {
+        tokio::select! {
+            incoming = events.next() => {
+                match incoming {
+                    Some(Ok(event)) => render_chat_event(steamid, event, json),
+                    Some(Err(_)) => continue, // dropped/lagged notification — keep going
+                    None => break,            // connection closed
+                }
+            }
+            line = output::read_line_opt() => {
+                match line {
+                    Ok(Some(text)) => {
+                        let text = text.trim();
+                        if text.is_empty() {
+                            continue;
+                        }
+                        if let Err(e) = client.send_chat_message(steamid, text.to_string()).await {
+                            if json {
+                                print_json_line(&serde_json::json!({
+                                    "event": "error", "message": format!("{e:#}"),
+                                }));
+                            } else {
+                                cli_eprintln!("send failed: {e:#}");
+                            }
+                        }
+                    }
+                    Ok(None) => break, // stdin closed
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+
+    if json {
+        print_json_line(&serde_json::json!({ "event": "closed", "with": steamid }));
     }
     Ok(())
 }
