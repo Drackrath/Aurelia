@@ -84,8 +84,11 @@ enum Command {
     },
     /// Show account details for the logged-in user.
     Account,
-    /// List your Steam friends (name, status, and current game).
-    Friends,
+    /// List friends, search for a SteamID, or add/remove friends.
+    Friends {
+        #[command(subcommand)]
+        command: Option<FriendsCommand>,
+    },
     /// Send and read direct (friend) chat messages.
     Chat {
         #[command(subcommand)]
@@ -325,6 +328,19 @@ enum ProtonCommand {
     Uninstall { version: String },
     /// Set the global default Proton/Wine version (used when a game has none set).
     Default { version: String },
+}
+
+#[derive(Subcommand)]
+enum FriendsCommand {
+    /// List your friends (the default when no subcommand is given).
+    List,
+    /// Resolve a SteamID from a SteamID64, profile URL, or custom (vanity) URL/name.
+    /// Read-only; no login required.
+    Search { query: String },
+    /// Send a friend request. Accepts a SteamID64, profile URL, or custom URL/name.
+    Add { query: String },
+    /// Remove a friend, or cancel/decline a pending request (by SteamID64).
+    Remove { steamid: u64 },
 }
 
 #[derive(Subcommand)]
@@ -685,7 +701,12 @@ async fn run(cli: Cli) -> Result<()> {
             online,
         } => cmd_list(installed, search, online, json).await,
         Command::Account => cmd_account(json).await,
-        Command::Friends => cmd_friends(json).await,
+        Command::Friends { command } => match command {
+            None | Some(FriendsCommand::List) => cmd_friends(json).await,
+            Some(FriendsCommand::Search { query }) => cmd_friends_search(query, json).await,
+            Some(FriendsCommand::Add { query }) => cmd_friends_add(query, json).await,
+            Some(FriendsCommand::Remove { steamid }) => cmd_friends_remove(steamid, json).await,
+        },
         Command::Chat { command } => match command {
             ChatCommand::Send { steamid, message } => {
                 cmd_chat_send(steamid, message.join(" "), json).await
@@ -1478,6 +1499,62 @@ async fn cmd_friends(json: bool) -> Result<()> {
         );
     }
     cli_println!("\n{} friend(s).", friends.len());
+    Ok(())
+}
+
+/// `aurelia friends search <query>`: resolve a SteamID from a SteamID64, profile
+/// URL, or custom (vanity) URL/name. No Steam session required (uses the public
+/// Steam Community profile data).
+async fn cmd_friends_search(query: String, json: bool) -> Result<()> {
+    let user = aurelia::steam_client::resolve_steam_id(&query).await?;
+    if json {
+        print_json(&serde_json::json!({
+            "steam_id": user.steam_id,
+            "persona_name": user.persona_name,
+            "profile_url": user.profile_url,
+        }));
+    } else {
+        cli_println!("SteamID : {}", user.steam_id);
+        cli_println!("Name    : {}", user.persona_name.as_deref().unwrap_or("(unknown)"));
+        cli_println!("Profile : {}", user.profile_url);
+    }
+    Ok(())
+}
+
+/// `aurelia friends add <query>`: send a friend request. The query is resolved to
+/// a SteamID (accepts a SteamID64, profile URL, or custom URL/name) first.
+async fn cmd_friends_add(query: String, json: bool) -> Result<()> {
+    let client = authed_client().await?;
+    let target = aurelia::steam_client::resolve_steam_id(&query)
+        .await
+        .with_context(|| format!("could not resolve '{query}' to a Steam account"))?;
+    let added = client.add_friend(target.steam_id).await?;
+    let name = added.persona_name.or(target.persona_name);
+
+    if json {
+        print_json(&serde_json::json!({
+            "steam_id": added.steam_id,
+            "persona_name": name,
+            "status": "request_sent",
+        }));
+    } else {
+        match &name {
+            Some(n) => cli_println!("Friend request sent to {n} ({}).", added.steam_id),
+            None => cli_println!("Friend request sent to {}.", added.steam_id),
+        }
+    }
+    Ok(())
+}
+
+/// `aurelia friends remove <steamid>`: remove a friend or cancel a pending request.
+async fn cmd_friends_remove(steamid: u64, json: bool) -> Result<()> {
+    let client = authed_client().await?;
+    client.remove_friend(steamid).await?;
+    if json {
+        print_json(&serde_json::json!({ "steam_id": steamid, "status": "removed" }));
+    } else {
+        cli_println!("Removed {steamid} from your friends.");
+    }
     Ok(())
 }
 

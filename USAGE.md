@@ -56,6 +56,8 @@ of a specific command. `--version` prints the build version.
   - [`workshop comment`](#workshop-comment)
 - [Friends & chat](#friends--chat)
   - [`friends`](#friends)
+  - [`friends search`](#friends-search)
+  - [`friends add` / `remove`](#friends-add--remove)
   - [`chat send`](#chat-send)
   - [`chat history`](#chat-history)
   - [`chat open`](#chat-open)
@@ -1091,7 +1093,8 @@ aurelia workshop comment 1234567890 "Works perfectly" --json
 ## Friends & chat
 
 Manage your Steam friends and exchange direct (friend-to-friend) messages. These commands
-require an active session.
+require an active session — **except** [`friends search`](#friends-search), which only reads
+public profile data and needs no login.
 
 To receive friend data and incoming messages, the session must announce a Steam
 **presence** — Steam treats a refresh-token logon as *offline* and withholds friend persona
@@ -1126,6 +1129,69 @@ does a short best-effort collection over a fresh connection.
 aurelia friends
 aurelia friends --json
 ```
+
+`aurelia friends` is shorthand for `aurelia friends list`.
+
+### `friends search`
+
+Resolve a Steam account to its **SteamID64** from a flexible identifier. **No login
+required** — it reads the public Steam Community profile data (`?xml=1`), so it works as a
+standalone lookup. Steam exposes no free-text people search over the protocol, so this
+resolves a specific identifier rather than searching by display name.
+
+```text
+aurelia friends search <QUERY> [--json]
+```
+
+`<QUERY>` may be any of:
+
+- a 17-digit **SteamID64** (validated and echoed back, with the name looked up),
+- a **profile URL** — `https://steamcommunity.com/profiles/<id>`,
+- a **custom (vanity) URL** — `https://steamcommunity.com/id/<name>`, or
+- a bare **vanity name** (the custom-URL slug).
+
+The text view prints the SteamID, display name, and profile URL. The `--json` output is
+`{ "steam_id", "persona_name", "profile_url" }` (`persona_name` is `null` if the profile
+hides it). Feed the resulting SteamID to [`friends add`](#friends-add--remove) or the
+[`chat`](#chat-send) commands. Resolution fails with a clear error if no such profile or
+custom URL exists.
+
+```bash
+aurelia friends search gabelogannewell
+aurelia friends search https://steamcommunity.com/id/gabelogannewell
+aurelia friends search 76561197960287930 --json
+```
+
+### `friends add` / `remove`
+
+Send a friend request, or remove a friend / cancel a pending request. Both require an active
+session.
+
+```text
+aurelia friends add <QUERY> [--json]
+aurelia friends remove <STEAMID> [--json]
+```
+
+`add` accepts the **same flexible `<QUERY>`** as [`friends search`](#friends-search) (a
+SteamID64, profile URL, custom URL, or vanity name); it is resolved to a SteamID and a
+request is sent. Aurelia waits for Steam's confirmation and reports the target (and its name,
+when Steam returns one); a non-OK result is surfaced as a clear error (e.g. friend-list full,
+rate-limited, or access denied). The `--json` output is
+`{ "steam_id", "persona_name", "status": "request_sent" }`.
+
+`remove` takes a **SteamID64** (as listed by [`friends`](#friends)) and removes that friend
+or withdraws a request you sent. It is fire-and-forget — Steam returns no acknowledgement —
+so it reports success once the message is sent. The `--json` output is
+`{ "steam_id", "status": "removed" }`.
+
+```bash
+aurelia friends add 76561197960287930
+aurelia friends add https://steamcommunity.com/id/someone   # resolve, then request
+aurelia friends remove 76561197960287930
+```
+
+> Friend requests are visible to the recipient. Sending many in a short time can trip Steam's
+> rate limits (surfaced as an `EResult 84` error).
 
 ### `chat send`
 

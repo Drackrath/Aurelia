@@ -8,11 +8,12 @@
 //! helper. As with the other `SteamClient` submodules, the struct and shared
 //! imports live in the parent module and are pulled in via `use super::*`.
 use super::*;
-use std::sync::RwLock;
+use regex::Regex;
+use std::sync::{LazyLock, RwLock};
 use steam_vent::NetMessage;
 use steam_vent_proto::steammessages_clientserver_friends::{
-    CMsgClientChangeStatus, CMsgClientFriendsList, CMsgClientPersonaState,
-    CMsgClientRequestFriendData,
+    CMsgClientAddFriend, CMsgClientAddFriendResponse, CMsgClientChangeStatus, CMsgClientFriendsList,
+    CMsgClientPersonaState, CMsgClientRemoveFriend, CMsgClientRequestFriendData,
 };
 use tokio_stream::StreamExt;
 
@@ -59,6 +60,138 @@ pub struct Friend {
 
 /// The friends roster, keyed by SteamID64.
 pub type Roster = HashMap<u64, Friend>;
+
+/// A user resolved from a search query (see [`resolve_steam_id`]).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ResolvedUser {
+    /// SteamID64.
+    pub steam_id: u64,
+    /// Display (persona) name, if the profile exposed one.
+    pub persona_name: Option<String>,
+    /// Canonical Steam Community profile URL.
+    pub profile_url: String,
+}
+
+/// The result of sending a friend request (see [`SteamClient::add_friend`]).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AddedFriend {
+    /// SteamID64 the request was sent to.
+    pub steam_id: u64,
+    /// The target's display name, if Steam returned one.
+    pub persona_name: Option<String>,
+}
+
+/// SteamID64 base for an individual account (`0x0110000100000000`). Any 64-bit id
+/// at or above this is treated as a ready-to-use SteamID rather than a vanity name.
+const STEAMID64_INDIVIDUAL_BASE: u64 = 76_561_197_960_265_728;
+
+static RE_PROFILE_ID: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"steamcommunity\.com/profiles/(\d{17})").unwrap());
+static RE_VANITY: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"steamcommunity\.com/id/([^/?#\s]+)").unwrap());
+static RE_STEAMID64: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"<steamID64>(\d+)</steamID64>").unwrap());
+static RE_STEAM_NAME: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)<steamID>(.*?)</steamID>").unwrap());
+
+fn nonempty(s: &str) -> Option<String> {
+    let s = s.trim();
+    (!s.is_empty()).then(|| s.to_string())
+}
+
+/// Fetch a Steam Community profile XML document (the `?xml=1` view, which needs no
+/// API key) with a short timeout.
+async fn fetch_community_xml(url: &str) -> Result<String> {
+    let client = reqwest::Client::builder()
+        .user_agent("aurelia")
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .context("failed to build HTTP client")?;
+    client
+        .get(url)
+        .send()
+        .await
+        .context("request to Steam Community failed")?
+        .text()
+        .await
+        .context("failed reading the Steam Community response")
+}
+
+/// Pull the persona name out of a profile XML (`<steamID>` element, possibly
+/// CDATA-wrapped).
+fn parse_community_name(xml: &str) -> Option<String> {
+    let raw = RE_STEAM_NAME.captures(xml)?.get(1)?.as_str().trim();
+    let inner = raw
+        .strip_prefix("<![CDATA[")
+        .and_then(|s| s.strip_suffix("]]>"))
+        .unwrap_or(raw);
+    nonempty(inner)
+}
+
+/// Resolve a free-form `query` to a Steam account, **without** a Steam session.
+///
+/// Steam exposes no people-search over the CM connection, so this resolves an
+/// *identifier* via the public Steam Community `?xml=1` endpoint. Accepts:
+/// - a 17-digit **SteamID64** (returned as-is, name looked up best-effort),
+/// - a **profile URL** (`steamcommunity.com/profiles/<id>`),
+/// - a **custom/vanity URL** (`steamcommunity.com/id/<name>`), or
+/// - a bare **vanity name** (the custom-URL slug).
+pub async fn resolve_steam_id(query: &str) -> Result<ResolvedUser> {
+    let q = query.trim();
+    if q.is_empty() {
+        bail!("empty search query");
+    }
+
+    // A profile URL, or a bare SteamID64.
+    let direct_id = RE_PROFILE_ID
+        .captures(q)
+        .and_then(|c| c[1].parse::<u64>().ok())
+        .or_else(|| match q.parse::<u64>() {
+            Ok(v) if v >= STEAMID64_INDIVIDUAL_BASE => Some(v),
+            _ => None,
+        });
+    if let Some(steam_id) = direct_id {
+        let xml = fetch_community_xml(&format!(
+            "https://steamcommunity.com/profiles/{steam_id}/?xml=1"
+        ))
+        .await
+        .unwrap_or_default();
+        return Ok(ResolvedUser {
+            steam_id,
+            persona_name: parse_community_name(&xml),
+            profile_url: format!("https://steamcommunity.com/profiles/{steam_id}"),
+        });
+    }
+
+    // Otherwise treat it as a vanity (custom-URL) name, whether a full URL or bare slug.
+    let slug = RE_VANITY
+        .captures(q)
+        .map(|c| c[1].to_string())
+        .unwrap_or_else(|| q.trim_matches('/').to_string());
+    let xml = fetch_community_xml(&format!("https://steamcommunity.com/id/{slug}/?xml=1")).await?;
+    let steam_id = RE_STEAMID64
+        .captures(&xml)
+        .and_then(|c| c[1].parse::<u64>().ok())
+        .ok_or_else(|| {
+            anyhow!("could not resolve '{slug}' to a Steam account (no such profile or custom URL)")
+        })?;
+    Ok(ResolvedUser {
+        steam_id,
+        persona_name: parse_community_name(&xml),
+        profile_url: format!("https://steamcommunity.com/id/{slug}"),
+    })
+}
+
+/// A friendlier message for a non-OK `EResult` from a friend request.
+fn add_friend_error(eresult: i32) -> String {
+    match eresult {
+        15 => "access denied — the account may have blocked you or restricts who can add it"
+            .to_string(),
+        25 => "your friends list is full (Steam friend limit reached)".to_string(),
+        84 => "Steam is rate-limiting friend requests — wait a while and try again".to_string(),
+        other => format!("Steam rejected the friend request (EResult {other})"),
+    }
+}
 
 /// Fold a `CMsgClientFriendsList` into the roster.
 ///
@@ -361,6 +494,53 @@ impl SteamClient {
             (None, None) => a.steam_id.cmp(&b.steam_id),
         });
         Ok(friends)
+    }
+}
+
+impl SteamClient {
+    /// Send a friend request to `steam_id`. Waits for Steam's response and reports
+    /// the resolved account (and its display name) on success.
+    pub async fn add_friend(&self, steam_id: u64) -> Result<AddedFriend> {
+        let connection = self
+            .connection
+            .as_ref()
+            .context("steam connection not initialized")?;
+        let mut req = CMsgClientAddFriend::new();
+        req.set_steamid_to_add(steam_id);
+
+        let resp: CMsgClientAddFriendResponse =
+            tokio::time::timeout(std::time::Duration::from_secs(15), connection.job(req))
+                .await
+                .map_err(|_| anyhow!("timed out waiting for Steam to confirm the friend request"))?
+                .map_err(|e| anyhow!("friend request failed: {e}"))?;
+
+        if resp.eresult() != 1 {
+            bail!("{}", add_friend_error(resp.eresult()));
+        }
+        let added_id = match resp.steam_id_added() {
+            0 => steam_id,
+            id => id,
+        };
+        Ok(AddedFriend {
+            steam_id: added_id,
+            persona_name: nonempty(resp.persona_name_added()),
+        })
+    }
+
+    /// Remove a friend, or cancel/decline a pending request, by SteamID64.
+    /// Fire-and-forget — Steam sends no acknowledgement.
+    pub async fn remove_friend(&self, steam_id: u64) -> Result<()> {
+        let connection = self
+            .connection
+            .as_ref()
+            .context("steam connection not initialized")?;
+        let mut req = CMsgClientRemoveFriend::new();
+        req.set_friendid(steam_id);
+        connection
+            .send(req)
+            .await
+            .map_err(|e| anyhow!("failed to remove friend: {e}"))?;
+        Ok(())
     }
 }
 

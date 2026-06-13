@@ -343,7 +343,7 @@ mod process;
 mod workshop;
 mod workshop_manifest;
 
-pub use friends::{Friend, Roster};
+pub use friends::{resolve_steam_id, AddedFriend, Friend, ResolvedUser, Roster};
 
 /// Terminate the process with `pid` and any children it spawned.
 ///

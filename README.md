@@ -59,16 +59,26 @@ aurelia play 1245620
 
 ### How it compares
 
-| Feature | Official Steam | OpenSteamClient | **Aurelia** |
-|---|---|---|---|
-| **Architecture** | Electron + C++ | C++ / Qt | Pure Rust |
-| **Idle RAM** | ~400–800 MB | ~100–200 MB | < 50 MB |
-| **Interface** | Desktop GUI | Desktop GUI | CLI (scriptable) |
-| **Download engine** | CDN + P2P LAN | Standard CDN | Multi-threaded CDN |
-| **Authentication** | Full | Core | Full (tokens, mobile app, Guard) |
-| **Steam integration** | Native | Partial | Deep (PICS, CDN, Cloud, tickets) |
-| **Platforms** | Windows, Linux, macOS | Windows, Linux | Linux (first), Windows |
-| **Open source** | No | Yes | Yes (GPL-3.0) |
+| Feature | Official Steam | OpenSteamClient | SteamCMD | **Aurelia** |
+|---|---|---|---|---|
+| **Architecture** | Electron + C++ | C++ / Qt | C++ (proprietary) | Pure Rust |
+| **Idle RAM** | ~400–800 MB | ~100–200 MB | ~50 MB (per run) | < 50 MB |
+| **Interface** | Desktop GUI | Desktop GUI | CLI (scriptable) | CLI (scriptable) |
+| **Scope** | Everything | Library + launch | Install/update + Workshop | Library, install, launch, Cloud, Workshop, DLC, friends/chat |
+| **Download engine** | CDN + P2P LAN | Standard CDN | Standard CDN | Multi-threaded CDN |
+| **Authentication** | Full | Core | Full (+ anonymous) | Full (tokens, mobile app, Guard) |
+| **Steam integration** | Native | Partial | Content only | Deep (PICS, CDN, Cloud, tickets) |
+| **Platforms** | Windows, Linux, macOS | Windows, Linux | Windows, Linux, macOS | Linux (first), Windows |
+| **Open source** | No | Yes | No | Yes (GPL-3.0) |
+
+**vs. SteamCMD.** [SteamCMD](https://developer.valvesoftware.com/wiki/SteamCMD) is Valve's
+official command-line tool and the closest analog to Aurelia, but it is **content-only**: it
+downloads and updates app and Workshop files (often anonymously, for dedicated servers) and
+little else. Aurelia is a full launcher and library manager — on top of installing and
+updating, it lists and searches your library, **launches** games (natively or via
+Proton/Wine), syncs Steam Cloud saves, manages DLC and Workshop subscriptions, reads
+achievements, and does friends & chat — every command scriptable with `--json`. SteamCMD is
+proprietary and ships only as a prebuilt binary; Aurelia is open source (GPL-3.0).
 
 ---
 
@@ -91,7 +101,8 @@ sync, and Proton/Wine launching all work today.
 - [x] **Depot browser** — list depots, inspect manifest trees, download single files
 - [x] **Workshop** — browse/search, install/uninstall, subscribe, collections, rate, and
       read/post comments
-- [x] **Friends & chat** — friends roster with live persona status and current game, plus
+- [x] **Friends & chat** — friends roster with live persona status and current game,
+      resolve a SteamID from a profile/vanity URL and send/cancel friend requests, plus
       direct messaging (send, history, and an interactive live session); presence is
       configurable (defaults to invisible)
 - [ ] Collections / categorization
@@ -192,6 +203,9 @@ aurelia workshop comment 1234567890 "Nice mod!"  # post a comment
 
 # Friends & chat
 aurelia friends                              # list friends (name, status, current game)
+aurelia friends search gabelogannewell       # resolve a SteamID (id / profile URL / vanity)
+aurelia friends add 76561197960287930        # send a friend request (accepts a URL too)
+aurelia friends remove 76561197960287930     # remove a friend / cancel a request
 aurelia chat send 76561198042323314 "hi!"    # send a direct message to a friend
 aurelia chat history 76561198042323314       # show recent messages with a friend
 aurelia chat open 76561198042323314          # interactive live chat (type to send; Ctrl-D quits)
