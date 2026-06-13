@@ -4,6 +4,7 @@ mod tests {
     use crate::models::LibraryGame;
     use crate::steam_client::{LaunchInfo, LaunchTarget};
     use crate::config::LauncherConfig;
+    use std::collections::HashMap;
     use std::path::PathBuf;
 
     fn mock_context() -> LaunchContext {
@@ -48,10 +49,12 @@ mod tests {
 
     #[test]
     fn test_command_spec_construction() {
-        let mut spec = CommandSpec::default();
-        spec.program = PathBuf::from("/usr/bin/wine");
-        spec.args.push("game.exe".to_string());
-        spec.env.insert("WINEPREFIX".to_string(), "/tmp/prefix".to_string());
+        let spec = CommandSpec {
+            program: PathBuf::from("/usr/bin/wine"),
+            args: vec!["game.exe".to_string()],
+            env: HashMap::from([("WINEPREFIX".to_string(), "/tmp/prefix".to_string())]),
+            ..Default::default()
+        };
 
         assert_eq!(spec.program, PathBuf::from("/usr/bin/wine"));
         assert_eq!(spec.args[0], "game.exe");
@@ -60,14 +63,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_wine_tkg_runner_graphics_policy_autodetect() {
-        use crate::infra::runners::wine_tkg::WineTkgRunner;
-        use crate::models::GraphicsBackendPolicy;
-        use crate::config::LauncherConfig;
-        use crate::steam_client::{LaunchInfo, LaunchTarget};
-        use crate::models::{LibraryGame, UserAppConfig};
+        use crate::models::{GraphicsBackendPolicy, UserAppConfig};
         use tempfile::tempdir;
         use std::fs;
-        use std::collections::HashMap;
 
         let tmp = tempdir().unwrap();
         let lib = tmp.path().join("library");

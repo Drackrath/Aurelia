@@ -69,18 +69,13 @@ pub fn list() -> Vec<RunningGame> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
-    let mut games = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
-            continue;
-        }
-        if let Ok(raw) = std::fs::read_to_string(&path) {
-            if let Ok(game) = serde_json::from_str::<RunningGame>(&raw) {
-                games.push(game);
-            }
-        }
-    }
+    let mut games: Vec<RunningGame> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("json"))
+        .filter_map(|path| std::fs::read_to_string(path).ok())
+        .filter_map(|raw| serde_json::from_str(&raw).ok())
+        .collect();
     games.sort_by(|a, b| a.name.cmp(&b.name));
     games
 }

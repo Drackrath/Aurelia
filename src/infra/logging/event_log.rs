@@ -38,19 +38,13 @@ impl EventLogger {
     }
 
     pub fn log(&self, level: LogLevel, event_type: &str, message: String, stage: Option<String>, metadata: HashMap<String, String>) -> Result<()> {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)?
-            .as_secs();
-
-        let redacted_metadata = redact_metadata(metadata);
-
         let event = LogEvent {
-            timestamp,
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             level,
             event_type: event_type.to_string(),
             message,
             stage,
-            metadata: redacted_metadata,
+            metadata: super::redact_sensitive(metadata),
         };
 
         let mut file = OpenOptions::new()
@@ -58,9 +52,7 @@ impl EventLogger {
             .append(true)
             .open(&self.file_path)?;
 
-        let mut line = serde_json::to_string(&event)?;
-        line.push('\n');
-        file.write_all(line.as_bytes())?;
+        writeln!(file, "{}", serde_json::to_string(&event)?)?;
 
         Ok(())
     }
@@ -72,8 +64,4 @@ impl EventLogger {
     pub fn error(&self, event_type: &str, message: String, stage: Option<String>, metadata: HashMap<String, String>) -> Result<()> {
         self.log(LogLevel::Error, event_type, message, stage, metadata)
     }
-}
-
-fn redact_metadata(metadata: HashMap<String, String>) -> HashMap<String, String> {
-    super::redact_sensitive(metadata)
 }

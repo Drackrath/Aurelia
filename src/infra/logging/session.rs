@@ -1,5 +1,8 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LaunchSessionId(String);
@@ -20,9 +23,6 @@ impl std::fmt::Display for LaunchSessionId {
         write!(f, "{}", self.0)
     }
 }
-
-use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct LaunchSummary {
@@ -218,12 +218,12 @@ impl LaunchSession {
     pub fn write_effective_env_txt(&self, env: &HashMap<String, String>) -> anyhow::Result<()> {
         std::fs::create_dir_all(&self.log_dir)?;
         let redacted = redact_environment(env.clone());
-        let mut keys: Vec<_> = redacted.keys().collect();
-        keys.sort();
+        let mut entries: Vec<_> = redacted.iter().collect();
+        entries.sort_by(|a, b| a.0.cmp(b.0));
 
         let mut content = String::new();
-        for key in keys {
-            content.push_str(&format!("{}={}\n", key, redacted.get(key).unwrap()));
+        for (key, value) in entries {
+            content.push_str(&format!("{}={}\n", key, value));
         }
         std::fs::write(self.effective_env_txt_path(), content)?;
         Ok(())
@@ -354,14 +354,12 @@ pub fn check_environment_sanity(
     }
 
     // 3. Proton specific checks
-    if runner_name.to_lowercase().contains("proton") {
-        if !env_vars.contains_key("STEAM_COMPAT_DATA_PATH") {
-             warnings.push(crate::launch::pipeline::CompatibilityWarning {
-                code: "SANITY_MISSING_PROTON_DATA_PATH".to_string(),
-                message: "Proton runner detected but STEAM_COMPAT_DATA_PATH is missing.".to_string(),
-                context: HashMap::new(),
-            });
-        }
+    if runner_name.to_lowercase().contains("proton") && !env_vars.contains_key("STEAM_COMPAT_DATA_PATH") {
+        warnings.push(crate::launch::pipeline::CompatibilityWarning {
+            code: "SANITY_MISSING_PROTON_DATA_PATH".to_string(),
+            message: "Proton runner detected but STEAM_COMPAT_DATA_PATH is missing.".to_string(),
+            context: HashMap::new(),
+        });
     }
 
     warnings

@@ -244,7 +244,6 @@ pub fn map_io_error(err: &std::io::Error, dup_info: Option<&DuplicateInstanceInf
         ErrorKind::NotFound => LaunchErrorKind::GameData,
         ErrorKind::PermissionDenied => LaunchErrorKind::Permission,
         ErrorKind::InvalidInput => LaunchErrorKind::Validation,
-        ErrorKind::AlreadyExists => LaunchErrorKind::Process,
         _ => LaunchErrorKind::Process,
     };
 
@@ -275,38 +274,32 @@ pub fn map_io_error(err: &std::io::Error, dup_info: Option<&DuplicateInstanceInf
         launch_err = launch_err.with_context("os_errno", code.to_string());
     }
 
-    if let Some(info) = dup_info {
-        launch_err = launch_err.with_context("duplicate_instance_detected", info.detected.to_string());
-        launch_err = launch_err.with_context("duplicate_detection_source", info.source.clone());
-    } else {
-        launch_err = launch_err.with_context("duplicate_instance_detected", "false");
-        launch_err = launch_err.with_context("duplicate_detection_source", "none");
-    }
+    let (detected, source) = match dup_info {
+        Some(info) => (info.detected.to_string(), info.source.clone()),
+        None => ("false".to_string(), "none".to_string()),
+    };
+    launch_err = launch_err.with_context("duplicate_instance_detected", detected);
+    launch_err = launch_err.with_context("duplicate_detection_source", source);
 
     launch_err
 }
 
 pub fn detect_duplicate_instance(ctx: &PipelineContext) -> DuplicateInstanceInfo {
-    // 1. Check for explicit lockfile in the game directory or prefix
     if let Some(spec) = &ctx.command_spec {
+        // 1. Check for explicit lockfile in the game directory or prefix
         if let Some(cwd) = &spec.cwd {
-            let lockfile = cwd.join(".aurelia_launch.lock");
-            if lockfile.exists() {
+            if cwd.join(".aurelia_launch.lock").exists() {
                 return DuplicateInstanceInfo {
                     detected: true,
                     source: "lockfile".to_string(),
                 };
             }
         }
-    }
 
-
-    // 2. Check for tracked PID if we had a mechanism to store it
-    // For now, check if steam.pid exists in the prefix (if applicable)
-    if let Some(spec) = &ctx.command_spec {
+        // 2. Check for tracked PID if we had a mechanism to store it
+        // For now, check if steam.pid exists in the prefix (if applicable)
         if let Some(prefix) = spec.env.get("WINEPREFIX") {
-            let pid_path = std::path::Path::new(prefix).join("steam.pid");
-            if pid_path.exists() {
+            if std::path::Path::new(prefix).join("steam.pid").exists() {
                  // Note: Ideally we'd check if the PID is still alive,
                  // but existence of the file in WINEPREFIX is a strong hint.
                  return DuplicateInstanceInfo {
@@ -450,8 +443,6 @@ impl LaunchPipeline {
             err.to_string()
         } else if ctx.verification.steam_running_before_launch && ctx.verification.steam_client_exposed {
             "steam_sensitive_game_failed_after_spawn".to_string()
-        } else if !ctx.verification.log_growth_observed {
-            "game_failed_after_spawn".to_string()
         } else {
             "game_failed_after_spawn".to_string()
         });
@@ -746,22 +737,17 @@ impl LaunchPipeline {
     async fn scan_logs_for_graphics_evidence(&self, ctx: &mut PipelineContext) {
         let scan_start = std::time::Instant::now();
         if let Some(session) = &ctx.session {
-            let log_path = if let Some(spec) = &ctx.command_spec {
-                spec.env.get("WINE_LOG_OUTPUT").map(std::path::PathBuf::from).unwrap_or_else(|| session.stderr_path())
-            } else {
-                session.stderr_path()
-            };
+            let log_path = ctx.command_spec.as_ref()
+                .and_then(|spec| spec.env.get("WINE_LOG_OUTPUT"))
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| session.stderr_path());
             ctx.graphics_stack.runtime_evidence.scan_metadata.log_path = log_path.to_string_lossy().to_string();
 
             let mut retries = 0;
             let max_retries = 3;
             let mut content = String::new();
 
-            let initial_file_size = if log_path.exists() {
-                std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0)
-            } else {
-                0
-            };
+            let initial_file_size = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
 
             while retries <= max_retries {
                 if log_path.exists() {
@@ -838,10 +824,10 @@ impl LaunchPipeline {
                     ];
 
                     for (family, patterns) in families_to_scan {
-                        if patterns.iter().any(|p| line_lower.contains(p)) {
-                            if !ctx.verification.dependency_families_detected.contains(&family.to_string()) {
-                                ctx.verification.dependency_families_detected.push(family.to_string());
-                            }
+                        if patterns.iter().any(|p| line_lower.contains(p))
+                            && !ctx.verification.dependency_families_detected.contains(&family.to_string())
+                        {
+                            ctx.verification.dependency_families_detected.push(family.to_string());
                         }
                     }
 
@@ -897,7 +883,6 @@ impl LaunchPipeline {
                     }
 
                     // Robust Path & Module Matching
-                    let line_lower = line.to_lowercase();
 
                     // DXVK Path Match
                     if let Some(path) = component_paths.get("dxvk") {
@@ -1028,11 +1013,8 @@ impl LaunchPipeline {
             if ctx.graphics_stack.graphics_stack_evidence.is_empty() {
                 ctx.graphics_stack.graphics_stack_confidence = "low".to_string();
             } else {
-                let has_expected = if ctx.graphics_stack.runtime_evidence.dxvk.expected {
-                    ctx.graphics_stack.runtime_evidence.dxvk.evidence_found
-                } else {
-                    true
-                };
+                let has_expected = !ctx.graphics_stack.runtime_evidence.dxvk.expected
+                    || ctx.graphics_stack.runtime_evidence.dxvk.evidence_found;
 
                 if has_expected {
                     ctx.graphics_stack.graphics_stack_confidence = "high".to_string();
@@ -1061,20 +1043,18 @@ impl LaunchPipeline {
                     if let Ok(entries) = std::fs::read_dir(&users_dir) {
                         let mut usernames = Vec::new();
                         for entry in entries.flatten() {
-                            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                            if entry.file_type().is_ok_and(|t| t.is_dir()) {
                                 let name = entry.file_name().to_string_lossy().to_string();
                                 if name != "Public" && name != "All Users" && name != "Default User" {
                                     usernames.push(name);
                                 }
                             }
                         }
-                        if !usernames.is_empty() {
-                            // Sort and pick first (most likely primary)
-                            usernames.sort();
-                            let primary = usernames[0].clone();
-                            ctx.verification.windows_username = Some(primary.clone());
+                        // Pick the alphabetically first (most likely primary)
+                        if let Some(primary) = usernames.into_iter().min() {
                             ctx.verification.windows_user_path = Some(format!("C:\\users\\{}", primary));
-                            metadata.insert("detected_windows_username".to_string(), primary);
+                            metadata.insert("detected_windows_username".to_string(), primary.clone());
+                            ctx.verification.windows_username = Some(primary);
                         }
                     }
                 }
@@ -1102,7 +1082,7 @@ impl LaunchPipeline {
                 }
 
                 // Title-Specific Dependency Detection
-                let mut families = ctx.verification.dependency_families_detected.clone();
+                let families = &mut ctx.verification.dependency_families_detected;
                 let families_to_check = [
                     ("Batman (PhysX/APEX)", vec!["drive_c/windows/system32/PhysXLoader.dll", "drive_c/windows/syswow64/PhysXLoader.dll"]),
                     ("Amnesia (SDL2/Newton)", vec!["drive_c/windows/system32/SDL2.dll", "drive_c/windows/syswow64/SDL2.dll"]),
@@ -1110,13 +1090,12 @@ impl LaunchPipeline {
                 ];
 
                 for (family, paths) in families_to_check {
-                    if paths.iter().any(|p| prefix_path.join(p).exists()) {
-                        if !families.contains(&family.to_string()) {
-                            families.push(family.to_string());
-                        }
+                    if paths.iter().any(|p| prefix_path.join(p).exists())
+                        && !families.contains(&family.to_string())
+                    {
+                        families.push(family.to_string());
                     }
                 }
-                ctx.verification.dependency_families_detected = families;
 
                 // Check steam client exposure
                 ctx.verification.steam_client_exposed = spec.env.contains_key("STEAM_COMPAT_CLIENT_INSTALL_PATH") ||

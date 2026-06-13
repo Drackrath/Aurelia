@@ -19,8 +19,7 @@ impl SteamClient {
                     .and_then(|h| u32::from_str_radix(h, 16).ok())
                     .or_else(|| v.parse::<u32>().ok())
             })
-            .map(|pid| pid != 0)
-            .unwrap_or(false)
+            .is_some_and(|pid| pid != 0)
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -202,8 +201,7 @@ impl SteamClient {
                 if !pid_path
                     .file_name()
                     .and_then(|n| n.to_str())
-                    .map(|n| n.chars().all(|c| c.is_ascii_digit()))
-                    .unwrap_or(false)
+                    .is_some_and(|n| n.chars().all(|c| c.is_ascii_digit()))
                 {
                     continue;
                 }
@@ -261,15 +259,9 @@ NoSavePersonalInfo=1
         launch_info: &LaunchInfo,
         user_config: Option<&crate::models::UserAppConfig>,
     ) -> Result<std::process::Child> {
-        let install_dir = if let Some(p) = &app.install_path {
-            let p = PathBuf::from(p);
-            if p.exists() {
-                p
-            } else {
-                self.install_root_for_app(app.app_id).await?
-            }
-        } else {
-            self.install_root_for_app(app.app_id).await?
+        let install_dir = match app.install_path.as_ref().map(PathBuf::from) {
+            Some(p) if p.exists() => p,
+            _ => self.install_root_for_app(app.app_id).await?,
         };
 
         // Steam VDF stores Windows paths with backslashes; normalize for the host separator.
@@ -358,15 +350,9 @@ NoSavePersonalInfo=1
         _launcher_config: &crate::config::LauncherConfig,
         user_config: Option<&crate::models::UserAppConfig>,
     ) -> Result<std::process::Child> {
-        let install_dir = if let Some(p) = &app.install_path {
-            let p = PathBuf::from(p);
-            if p.exists() {
-                p
-            } else {
-                self.install_root_for_app(app.app_id).await?
-            }
-        } else {
-            self.install_root_for_app(app.app_id).await?
+        let install_dir = match app.install_path.as_ref().map(PathBuf::from) {
+            Some(p) if p.exists() => p,
+            _ => self.install_root_for_app(app.app_id).await?,
         };
 
         // Steam VDF stores Windows paths with backslashes; normalize for Linux
@@ -376,8 +362,7 @@ NoSavePersonalInfo=1
 
         if let Some(config) = user_config {
             if !config.launch_options.trim().is_empty() {
-                let custom_args = split_args(&config.launch_options);
-                args.extend(custom_args);
+                args.extend(split_args(&config.launch_options));
             }
         }
 

@@ -95,7 +95,6 @@ impl DllProviderResolver {
              report.warnings.push("Runner root derivation failed or resulted in empty path".into());
         } else {
              // Derive all potential runner scan roots
-             let mut roots = Vec::new();
              let subdirs = [
                  "files/lib/wine/dxvk/x86_64-windows",
                  "files/lib/wine/dxvk/i386-windows",
@@ -131,8 +130,7 @@ impl DllProviderResolver {
                  "lib64/wine/vkd3d",
                  "lib64/wine/vkd3d-proton",
              ];
-             for s in subdirs { roots.push(runner_root.join(s)); }
-             report.scan_roots = roots;
+             report.scan_roots = subdirs.iter().map(|s| runner_root.join(s)).collect();
         }
 
         let resolutions: Vec<DllResolution> = self.target_dlls
@@ -150,38 +148,20 @@ impl DllProviderResolver {
             ))
             .collect();
 
-        if let Some(ref c) = runner_components.dxvk {
-            report.components_found.insert("dxvk".into(), ComponentFoundInfo {
-                family: "dxvk".into(),
-                version: c.version.clone(),
-                source: format!("{:?}", c.source),
-                matched_dll: None,
-            });
-        }
-        if let Some(ref c) = runner_components.nvapi {
-            report.components_found.insert("nvapi".into(), ComponentFoundInfo {
-                family: "nvapi".into(),
-                version: c.version.clone(),
-                source: format!("{:?}", c.source),
-                matched_dll: None,
-            });
-        }
-        if let Some(ref c) = runner_components.vkd3d_proton {
-            report.components_found.insert("vkd3d-proton".into(), ComponentFoundInfo {
-                family: "vkd3d-proton".into(),
-                version: c.version.clone(),
-                source: format!("{:?}", c.source),
-                matched_dll: None,
-            });
-        }
-        if let Some(ref c) = runner_components.vkd3d {
-            report.components_found.insert("vkd3d".into(), ComponentFoundInfo {
-                family: "vkd3d".into(),
-                version: c.version.clone(),
-                source: format!("{:?}", c.source),
-                matched_dll: None,
-            });
-        }
+        let mut record_component = |family: &str, component: &Option<crate::utils::ComponentInfo>| {
+            if let Some(c) = component {
+                report.components_found.insert(family.into(), ComponentFoundInfo {
+                    family: family.into(),
+                    version: c.version.clone(),
+                    source: format!("{:?}", c.source),
+                    matched_dll: None,
+                });
+            }
+        };
+        record_component("dxvk", &runner_components.dxvk);
+        record_component("nvapi", &runner_components.nvapi);
+        record_component("vkd3d-proton", &runner_components.vkd3d_proton);
+        record_component("vkd3d", &runner_components.vkd3d);
 
         for res in &resolutions {
             let game_local_count = res.candidates.iter().filter(|c| c.provider == DllProvider::GameLocal && c.exists).count();
@@ -194,7 +174,7 @@ impl DllProviderResolver {
             );
 
             if res.chosen_provider == DllProvider::Runner {
-                if let Some(ref path) = res.chosen_path {
+                if let Some(path) = &res.chosen_path {
                      // Try to match back to component
                      let family = if res.name.starts_with("d3d12") || res.name.contains("vkd3d") {
                          if path.to_string_lossy().contains("vkd3d-proton") { "vkd3d-proton" } else { "vkd3d" }
@@ -298,15 +278,13 @@ impl DllProviderResolver {
         }
 
         let chosen = candidates.iter().find(|c| c.exists).cloned();
-        let fallback_reason = if chosen.is_none() {
-            Some("no candidate files found in GameLocal, Custom, Runner, or System paths".to_string())
-        } else {
-            None
-        };
+        let fallback_reason = chosen.is_none().then(||
+            "no candidate files found in GameLocal, Custom, Runner, or System paths".to_string()
+        );
 
         DllResolution {
             name: dll_name.to_string(),
-            chosen_provider: chosen.as_ref().map(|c| c.provider).unwrap_or(DllProvider::None),
+            chosen_provider: chosen.as_ref().map_or(DllProvider::None, |c| c.provider),
             chosen_path: chosen.as_ref().map(|c| c.path.clone()),
             fallback_reason,
             candidates,
@@ -367,6 +345,35 @@ impl DllProviderResolver {
         None
     }
 
+    /// Filters candidate relative paths by architecture, then returns the first
+    /// `<runner_root>/<rel>/<dll_filename>` that exists on disk.
+    fn find_in_runner_paths(
+        runner_root: &Path,
+        dll_filename: &str,
+        target_arch: &crate::models::ExecutableArchitecture,
+        relative_paths: Vec<&str>,
+    ) -> Option<PathBuf> {
+        let mut relative_paths = relative_paths;
+        match target_arch {
+            crate::models::ExecutableArchitecture::X86 => {
+                relative_paths.retain(|p| p.contains("i386") || !p.contains("windows"));
+            }
+            crate::models::ExecutableArchitecture::X86_64 => {
+                relative_paths.retain(|p| p.contains("x86_64") || !p.contains("windows"));
+            }
+            _ => {}
+        }
+
+        for rel in relative_paths {
+            let p = runner_root.join(rel).join(dll_filename);
+            if p.exists() {
+                tracing::trace!("Found runner component DLL at: {}", p.display());
+                return Some(p);
+            }
+        }
+        None
+    }
+
     fn get_runner_dll_path(
         &self,
         dll_name: &str,
@@ -382,7 +389,7 @@ impl DllProviderResolver {
         // Match DLL to component and look for it in runner root
         let is_dxvk = matches!(dll_name, "d3d8" | "d3d9" | "d3d10core" | "d3d11" | "dxgi");
         if is_dxvk && components.dxvk.is_some() {
-            let mut relative_paths = vec![
+            let found = Self::find_in_runner_paths(&runner_root, &dll_filename, target_arch, vec![
                 "lib/wine/dxvk/x86_64-windows",
                 "lib/wine/dxvk/i386-windows",
                 "files/lib/wine/dxvk/x86_64-windows",
@@ -395,32 +402,15 @@ impl DllProviderResolver {
                 "files/lib64/wine/dxvk",
                 "lib64/wine/dxvk",
                 "dist/lib64/wine/dxvk",
-            ];
-
-            // Strictly filter by architecture
-            match target_arch {
-                crate::models::ExecutableArchitecture::X86 => {
-                    relative_paths.retain(|p| p.contains("i386") || !p.contains("windows"));
-                }
-                crate::models::ExecutableArchitecture::X86_64 => {
-                    relative_paths.retain(|p| p.contains("x86_64") || !p.contains("windows"));
-                }
-                _ => {}
-            }
-
-            for rel in relative_paths {
-                let root = runner_root.join(rel);
-                let p = root.join(&dll_filename);
-                if p.exists() {
-                    tracing::trace!("Found runner component DLL at: {}", p.display());
-                    return Some(p);
-                }
+            ]);
+            if found.is_some() {
+                return found;
             }
         }
 
         let is_nvapi = matches!(dll_name, "nvapi" | "nvapi64" | "nvofapi64");
         if is_nvapi && components.nvapi.is_some() {
-             let mut relative_paths = vec![
+            let found = Self::find_in_runner_paths(&runner_root, &dll_filename, target_arch, vec![
                 "lib/wine/nvapi/x86_64-windows",
                 "lib/wine/nvapi/i386-windows",
                 "files/lib/wine/nvapi/x86_64-windows",
@@ -430,38 +420,21 @@ impl DllProviderResolver {
                 "lib/wine/nvapi",
                 "files/lib/wine/nvapi",
                 "dist/lib/wine/nvapi",
-            ];
-
-            match target_arch {
-                crate::models::ExecutableArchitecture::X86 => {
-                    relative_paths.retain(|p| p.contains("i386") || !p.contains("windows"));
-                }
-                crate::models::ExecutableArchitecture::X86_64 => {
-                    relative_paths.retain(|p| p.contains("x86_64") || !p.contains("windows"));
-                }
-                _ => {}
-            }
-
-            for rel in relative_paths {
-                let root = runner_root.join(rel);
-                let p = root.join(&dll_filename);
-                if p.exists() {
-                    tracing::trace!("Found runner component DLL at: {}", p.display());
-                    return Some(p);
-                }
+            ]);
+            if found.is_some() {
+                return found;
             }
         }
 
         let is_vkd3d_any = matches!(dll_name, "d3d12" | "d3d12core" | "libvkd3d-1" | "libvkd3d-shader-1");
         if is_vkd3d_any {
-            let use_proton = match d3d12_policy {
-                crate::models::D3D12ProviderPolicy::Auto => true,
-                crate::models::D3D12ProviderPolicy::Vkd3dProton => true,
-                crate::models::D3D12ProviderPolicy::Vkd3dWine => false,
-            };
+            let use_proton = matches!(
+                d3d12_policy,
+                crate::models::D3D12ProviderPolicy::Auto | crate::models::D3D12ProviderPolicy::Vkd3dProton
+            );
 
             if use_proton && components.vkd3d_proton.is_some() {
-                let mut relative_paths = vec![
+                let found = Self::find_in_runner_paths(&runner_root, &dll_filename, target_arch, vec![
                     "lib/wine/vkd3d-proton/x86_64-windows",
                     "lib/wine/vkd3d-proton/i386-windows",
                     "files/lib/wine/vkd3d-proton/x86_64-windows",
@@ -474,30 +447,14 @@ impl DllProviderResolver {
                     "lib64/wine/vkd3d-proton",
                     "files/lib64/wine/vkd3d-proton",
                     "dist/lib64/wine/vkd3d-proton",
-                ];
-
-                match target_arch {
-                    crate::models::ExecutableArchitecture::X86 => {
-                        relative_paths.retain(|p| p.contains("i386") || !p.contains("windows"));
-                    }
-                    crate::models::ExecutableArchitecture::X86_64 => {
-                        relative_paths.retain(|p| p.contains("x86_64") || !p.contains("windows"));
-                    }
-                    _ => {}
-                }
-
-                for rel in relative_paths {
-                    let root = runner_root.join(rel);
-                    let p = root.join(&dll_filename);
-                    if p.exists() {
-                        tracing::trace!("Found runner component DLL at: {}", p.display());
-                        return Some(p);
-                    }
+                ]);
+                if found.is_some() {
+                    return found;
                 }
             }
 
             if (!use_proton || d3d12_policy == &crate::models::D3D12ProviderPolicy::Auto) && components.vkd3d.is_some() {
-                let mut relative_paths = vec![
+                let found = Self::find_in_runner_paths(&runner_root, &dll_filename, target_arch, vec![
                     "lib/wine/vkd3d/x86_64-windows",
                     "lib/wine/vkd3d/i386-windows",
                     "files/lib/wine/vkd3d/x86_64-windows",
@@ -510,25 +467,9 @@ impl DllProviderResolver {
                     "lib64/wine/vkd3d",
                     "files/lib64/wine/vkd3d",
                     "dist/lib64/wine/vkd3d",
-                ];
-
-                match target_arch {
-                    crate::models::ExecutableArchitecture::X86 => {
-                        relative_paths.retain(|p| p.contains("i386") || !p.contains("windows"));
-                    }
-                    crate::models::ExecutableArchitecture::X86_64 => {
-                        relative_paths.retain(|p| p.contains("x86_64") || !p.contains("windows"));
-                    }
-                    _ => {}
-                }
-
-                for rel in relative_paths {
-                    let root = runner_root.join(rel);
-                    let p = root.join(&dll_filename);
-                    if p.exists() {
-                        tracing::trace!("Found runner component DLL at: {}", p.display());
-                        return Some(p);
-                    }
+                ]);
+                if found.is_some() {
+                    return found;
                 }
             }
         }

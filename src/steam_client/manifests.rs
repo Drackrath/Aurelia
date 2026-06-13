@@ -78,18 +78,14 @@ impl SteamClient {
 
         let appid_str = appid.to_string();
 
-        if let Ok(entries) = std::fs::read_dir(common) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    // Check for steam_appid.txt
-                    let appid_txt = path.join("steam_appid.txt");
-                    if appid_txt.exists() {
-                        if let Ok(content) = std::fs::read_to_string(appid_txt) {
-                            if content.trim() == appid_str {
-                                return Some(path);
-                            }
-                        }
+        let entries = std::fs::read_dir(common).ok()?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            // Check for steam_appid.txt
+            if path.is_dir() {
+                if let Ok(content) = std::fs::read_to_string(path.join("steam_appid.txt")) {
+                    if content.trim() == appid_str {
+                        return Some(path);
                     }
                 }
             }
@@ -138,12 +134,11 @@ impl SteamClient {
             if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
                 for (key, value) in depots.iter() {
                     if let Ok(d_id) = key.parse::<u64>() {
-                        if let Some(m_id) = extract_manifest_id_robust(value, branch) {
+                        let m_id = extract_manifest_id_robust(value, branch).or_else(|| {
+                            (branch != "public").then(|| extract_manifest_id_robust(value, "public")).flatten()
+                        });
+                        if let Some(m_id) = m_id {
                             manifests.insert(d_id, m_id);
-                        } else if branch != "public" {
-                            if let Some(m_id) = extract_manifest_id_robust(value, "public") {
-                                manifests.insert(d_id, m_id);
-                            }
                         }
                     }
                 }
@@ -303,25 +298,23 @@ impl SteamClient {
 
         if let Some(conn) = self.connection.as_ref() {
             let res: Result<CMsgClientPICSProductInfoResponse, _> = conn.job(request).await;
-            if let Ok(response) = res {
-                if let Some(app) = response.apps.iter().find(|entry| entry.appid() == appid) {
-                    if let Ok(raw_vdf) = String::from_utf8(app.buffer().to_vec()) {
-                        if let Ok(parsed) = parse_appinfo(&raw_vdf) {
-                            let common = parsed
-                                .appinfo
-                                .as_ref()
-                                .and_then(|a| a.common.as_ref())
-                                .or(parsed.common.as_ref());
-                            if let Some(common) = common {
-                                if let Some(name) = &common.name {
-                                    display_name = name.clone();
-                                }
-                                if let Some(dir) = &common.installdir {
-                                    installdir = Some(dir.clone());
-                                }
-                            }
-                        }
-                    }
+            let names = res.ok().and_then(|response| {
+                let app = response.apps.iter().find(|entry| entry.appid() == appid)?;
+                let raw_vdf = String::from_utf8(app.buffer().to_vec()).ok()?;
+                let parsed = parse_appinfo(&raw_vdf).ok()?;
+                let common = parsed
+                    .appinfo
+                    .as_ref()
+                    .and_then(|a| a.common.as_ref())
+                    .or(parsed.common.as_ref())?;
+                Some((common.name.clone(), common.installdir.clone()))
+            });
+            if let Some((name, dir)) = names {
+                if let Some(name) = name {
+                    display_name = name;
+                }
+                if dir.is_some() {
+                    installdir = dir;
                 }
             }
         }

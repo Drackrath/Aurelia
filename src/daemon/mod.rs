@@ -100,10 +100,8 @@ impl Slot {
             return true; // healthy session already established.
         }
         // No client: retry, unless a failure is still inside the backoff window.
-        match self.last_failure {
-            Some(at) => at.elapsed() < RESTORE_RETRY_BACKOFF,
-            None => false,
-        }
+        self.last_failure
+            .is_some_and(|at| at.elapsed() < RESTORE_RETRY_BACKOFF)
     }
 }
 
@@ -192,10 +190,8 @@ impl DaemonState {
     /// for just the inspect/replace; the spawn and `.await` happen on the task itself.
     fn spawn_watcher(&self, client: &SteamClient) {
         let mut guard = self.watcher.lock().unwrap();
-        if let Some(handle) = guard.as_ref() {
-            if !handle.is_finished() {
-                return; // a watcher is already live on this (or a prior) connection.
-            }
+        if guard.as_ref().is_some_and(|h| !h.is_finished()) {
+            return; // a watcher is already live on this (or a prior) connection.
         }
         // Both the client (cheap Arc-backed clone over the shared connection) and the
         // roster Arc are moved into the task so it can outlive this call.
@@ -365,11 +361,9 @@ async fn maybe_refresh_after(argv: &[String]) {
         return;
     }
     let touches_session = argv.iter().any(|a| a == "login" || a == "logout");
-    if touches_session {
-        if let Some(state) = DAEMON.get() {
-            state.invalidate().await;
-            state.ensure_session().await;
-        }
+    if let Some(state) = DAEMON.get().filter(|_| touches_session) {
+        state.invalidate().await;
+        state.ensure_session().await;
     }
 }
 

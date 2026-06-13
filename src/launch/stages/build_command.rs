@@ -10,13 +10,11 @@ impl PipelineStage for BuildCommandStage {
         use crate::infra::runners::LaunchContext;
 
         if let Some(runner) = &ctx.runner {
+            let missing = |field: &str| LaunchError::new(LaunchErrorKind::Validation, format!("{field} missing"));
             let runner_ctx = LaunchContext {
-                app: ctx.app.as_ref()
-                    .ok_or_else(|| LaunchError::new(LaunchErrorKind::Validation, "app missing"))?.clone(),
-                launch_info: ctx.launch_info.as_ref()
-                    .ok_or_else(|| LaunchError::new(LaunchErrorKind::Validation, "launch_info missing"))?.clone(),
-                launcher_config: ctx.launcher_config.as_ref()
-                    .ok_or_else(|| LaunchError::new(LaunchErrorKind::Validation, "launcher_config missing"))?.clone(),
+                app: ctx.app.as_ref().ok_or_else(|| missing("app"))?.clone(),
+                launch_info: ctx.launch_info.as_ref().ok_or_else(|| missing("launch_info"))?.clone(),
+                launcher_config: ctx.launcher_config.as_ref().ok_or_else(|| missing("launcher_config"))?.clone(),
                 user_config: ctx.user_config.clone(),
                 proton_path: ctx.proton_path.clone(),
                 target_architecture: ctx.target_architecture,

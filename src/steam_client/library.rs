@@ -25,9 +25,10 @@ impl SteamClient {
             .context("failed calling Player.GetOwnedGames")?;
         tracing::debug!("Player.GetOwnedGames returned {} games", response.games.len());
 
-        let mut owned = Vec::new();
-        for game in response.games {
-            owned.push(OwnedGame {
+        let owned: Vec<OwnedGame> = response
+            .games
+            .iter()
+            .map(|game| OwnedGame {
                 app_id: game.appid() as u32,
                 name: if game.name().is_empty() {
                     format!("App {}", game.appid())
@@ -37,8 +38,8 @@ impl SteamClient {
                 playtime_forever_minutes: game.playtime_forever() as u32,
                 local_manifest_ids: HashMap::new(),
                 update_available: false,
-            });
-        }
+            })
+            .collect();
 
         save_library_cache(&owned).await.ok();
         Ok(owned)
@@ -86,19 +87,22 @@ impl SteamClient {
             .await
             .context("failed calling FamilyGroups.GetSharedLibraryApps")?;
 
-        let mut shared = Vec::new();
-        for app in apps_resp.apps {
-            let app_id = app.appid();
-            shared.push(SharedApp {
-                app_id,
-                name: if app.name().is_empty() {
-                    format!("App {app_id}")
-                } else {
-                    app.name().to_string()
-                },
-                owner_steamid: app.owner_steamids.first().copied(),
-            });
-        }
+        let shared = apps_resp
+            .apps
+            .iter()
+            .map(|app| {
+                let app_id = app.appid();
+                SharedApp {
+                    app_id,
+                    name: if app.name().is_empty() {
+                        format!("App {app_id}")
+                    } else {
+                        app.name().to_string()
+                    },
+                    owner_steamid: app.owner_steamids.first().copied(),
+                }
+            })
+            .collect();
         Ok(shared)
     }
 
@@ -205,7 +209,8 @@ impl SteamClient {
         })
     }
 
-    pub async fn get_extended_app_info(&self, appid: u32) -> Result<ExtendedAppInfo> {
+    /// Fetch one app's raw PICS product-info buffer (usually *binary* VDF).
+    async fn fetch_pics_buffer(&self, appid: u32, request_context: &'static str) -> Result<Vec<u8>> {
         let connection = self
             .connection
             .as_ref()
@@ -222,13 +227,20 @@ impl SteamClient {
         let response: CMsgClientPICSProductInfoResponse = connection
             .job(request)
             .await
-            .context("failed requesting appinfo product info for extended metadata")?;
+            .context(request_context)?;
 
         let app = response
             .apps
             .iter()
             .find(|entry| entry.appid() == appid)
             .ok_or_else(|| anyhow!("missing appinfo payload for app {appid}"))?;
+        Ok(app.buffer().to_vec())
+    }
+
+    pub async fn get_extended_app_info(&self, appid: u32) -> Result<ExtendedAppInfo> {
+        let buffer = self
+            .fetch_pics_buffer(appid, "failed requesting appinfo product info for extended metadata")
+            .await?;
 
         // PICS product-info buffers are usually *binary* VDF (text only for some
         // apps), so parse via `find_vdf_in_pics` rather than the text-only
@@ -236,7 +248,7 @@ impl SteamClient {
         // Extract everything in a block so the borrowed VDF tree is dropped before
         // the later `.await`.
         let (name, dlcs, depots, launch_options) = {
-            let vdf = find_vdf_in_pics(app.buffer())
+            let vdf = find_vdf_in_pics(&buffer)
                 .context("failed to parse product info VDF")?;
             let section = pics_app_section(vdf.value());
 
@@ -304,31 +316,11 @@ impl SteamClient {
     /// upload brand-new local saves (not just files already in the cloud). Returns
     /// an empty list for apps with no UFS config.
     pub async fn fetch_ufs_save_specs(&self, appid: u32) -> Result<Vec<UfsSaveSpec>> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let buffer = self
+            .fetch_pics_buffer(appid, "failed requesting appinfo product info for UFS save specs")
+            .await?;
 
-        let mut request = CMsgClientPICSProductInfoRequest::new();
-        request
-            .apps
-            .push(cmsg_client_picsproduct_info_request::AppInfo {
-                appid: Some(appid),
-                ..Default::default()
-            });
-
-        let response: CMsgClientPICSProductInfoResponse = connection
-            .job(request)
-            .await
-            .context("failed requesting appinfo product info for UFS save specs")?;
-
-        let app = response
-            .apps
-            .iter()
-            .find(|entry| entry.appid() == appid)
-            .ok_or_else(|| anyhow!("missing appinfo payload for app {appid}"))?;
-
-        let vdf = find_vdf_in_pics(app.buffer()).context("failed to parse product info VDF")?;
+        let vdf = find_vdf_in_pics(&buffer).context("failed to parse product info VDF")?;
         Ok(ufs_save_specs_from_section(pics_app_section(vdf.value())))
     }
 
@@ -337,35 +329,15 @@ impl SteamClient {
     /// the answer is derived from the app's store categories — see
     /// [`category_online_required`]. Requires an active Steam connection.
     pub async fn fetch_online_required(&self, appid: u32) -> Result<bool> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
-
-        let mut request = CMsgClientPICSProductInfoRequest::new();
-        request
-            .apps
-            .push(cmsg_client_picsproduct_info_request::AppInfo {
-                appid: Some(appid),
-                ..Default::default()
-            });
-
-        let response: CMsgClientPICSProductInfoResponse = connection
-            .job(request)
-            .await
-            .context("failed requesting appinfo product info for online-required check")?;
-
-        let app = response
-            .apps
-            .iter()
-            .find(|entry| entry.appid() == appid)
-            .ok_or_else(|| anyhow!("missing appinfo payload for app {appid}"))?;
+        let buffer = self
+            .fetch_pics_buffer(appid, "failed requesting appinfo product info for online-required check")
+            .await?;
 
         // PICS product-info buffers are usually *binary* VDF (text only for some
         // apps), so go through `find_vdf_in_pics` rather than the text-only
         // `parse_appinfo`. The category map lives at `<root>/common/category`,
         // where the root key is either "appinfo" or the numeric appid.
-        let vdf = find_vdf_in_pics(app.buffer()).context("failed to parse product info VDF")?;
+        let vdf = find_vdf_in_pics(&buffer).context("failed to parse product info VDF")?;
         let root_obj = vdf.as_obj().context("PICS root is not an object")?;
         let common = if vdf.key() == "appinfo" || vdf.key() == appid.to_string() {
             root_obj.get("common")
@@ -444,39 +416,17 @@ impl SteamClient {
     }
 
     pub async fn get_product_info(&mut self, appid: u32) -> Result<Vec<LaunchInfo>> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let buffer = self
+            .fetch_pics_buffer(appid, "failed requesting appinfo product info for launch metadata")
+            .await?;
 
-        let mut request = CMsgClientPICSProductInfoRequest::new();
-        request
-            .apps
-            .push(cmsg_client_picsproduct_info_request::AppInfo {
-                appid: Some(appid),
-                ..Default::default()
-            });
-
-        let response: CMsgClientPICSProductInfoResponse = connection
-            .job(request)
-            .await
-            .context("failed requesting appinfo product info for launch metadata")?;
-
-        let app = response
-            .apps
-            .iter()
-            .find(|entry| entry.appid() == appid)
-            .ok_or_else(|| anyhow!("missing appinfo payload for app {appid}"))?;
-
-        let raw_vdf = String::from_utf8_lossy(app.buffer()).to_string();
+        let raw_vdf = String::from_utf8_lossy(&buffer);
         if raw_vdf.trim().is_empty() {
             bail!("empty appinfo payload returned for app {appid}")
         }
 
-        let launch_infos = parse_launch_info_from_vdf(appid, &raw_vdf)
-            .context("failed to parse launch metadata from PICS appinfo")?;
-
-        Ok(launch_infos)
+        parse_launch_info_from_vdf(appid, &raw_vdf)
+            .context("failed to parse launch metadata from PICS appinfo")
     }
 
 }

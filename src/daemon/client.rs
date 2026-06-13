@@ -19,9 +19,8 @@ const SPAWN_ATTEMPTS: u32 = 50; // ~5s total
 /// Try to run this command via the daemon. `Ok(Some(code))` — handled by the daemon
 /// (relayed); `Ok(None)` — no daemon and none could be started, run locally.
 pub async fn try_forward() -> Result<Option<i32>> {
-    let stream = match connect_or_spawn().await {
-        Some(stream) => stream,
-        None => return Ok(None),
+    let Some(stream) = connect_or_spawn().await else {
+        return Ok(None);
     };
     let argv: Vec<String> = std::env::args().collect();
     forward(stream, argv).await.map(Some)
@@ -32,9 +31,7 @@ async fn connect_or_spawn() -> Option<impl AsyncRead + AsyncWrite + Unpin + Send
     if let Ok(stream) = transport::connect().await {
         return Some(stream);
     }
-    if spawn_daemon().is_err() {
-        return None;
-    }
+    spawn_daemon().ok()?;
     for _ in 0..SPAWN_ATTEMPTS {
         tokio::time::sleep(SPAWN_WAIT).await;
         if let Ok(stream) = transport::connect().await {

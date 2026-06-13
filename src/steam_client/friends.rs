@@ -58,6 +58,21 @@ pub struct Friend {
     pub game_name: Option<String>,
 }
 
+impl Friend {
+    /// A bare entry with only its id and relationship set; persona fields are
+    /// filled in later from `CMsgClientPersonaState`.
+    fn new(steam_id: u64, relationship: u32) -> Self {
+        Friend {
+            steam_id,
+            relationship,
+            persona_name: None,
+            persona_state: None,
+            game_app_id: None,
+            game_name: None,
+        }
+    }
+}
+
 /// The friends roster, keyed by SteamID64.
 pub type Roster = HashMap<u64, Friend>;
 
@@ -193,6 +208,16 @@ fn add_friend_error(eresult: i32) -> String {
     }
 }
 
+/// SteamID64s of every entry that is an accepted friend (the ones worth
+/// requesting persona data for).
+fn friend_ids(roster: &Roster) -> Vec<u64> {
+    roster
+        .values()
+        .filter(|f| f.relationship == RELATIONSHIP_FRIEND)
+        .map(|f| f.steam_id)
+        .collect()
+}
+
 /// Fold a `CMsgClientFriendsList` into the roster.
 ///
 /// A non-incremental message is a full snapshot, so the roster is cleared first.
@@ -212,17 +237,7 @@ pub fn apply_friends_list(roster: &mut Roster, msg: &CMsgClientFriendsList) {
         match roster.get_mut(&id) {
             Some(existing) => existing.relationship = rel,
             None => {
-                roster.insert(
-                    id,
-                    Friend {
-                        steam_id: id,
-                        relationship: rel,
-                        persona_name: None,
-                        persona_state: None,
-                        game_app_id: None,
-                        game_name: None,
-                    },
-                );
+                roster.insert(id, Friend::new(id, rel));
             }
         }
     }
@@ -236,28 +251,19 @@ pub fn apply_friends_list(roster: &mut Roster, msg: &CMsgClientFriendsList) {
 pub fn apply_persona_state(roster: &mut Roster, msg: &CMsgClientPersonaState) {
     for fr in &msg.friends {
         let id = fr.friendid();
-        let entry = roster.entry(id).or_insert_with(|| Friend {
-            steam_id: id,
-            relationship: 0,
-            persona_name: None,
-            persona_state: None,
-            game_app_id: None,
-            game_name: None,
-        });
+        let entry = roster.entry(id).or_insert_with(|| Friend::new(id, 0));
 
         let name = fr.player_name();
         if !name.is_empty() {
             entry.persona_name = Some(name.to_string());
         }
         entry.persona_state = Some(fr.persona_state());
-        let g = fr.game_played_app_id();
-        entry.game_app_id = if g != 0 { Some(g) } else { None };
-        let game_name = fr.game_name();
-        entry.game_name = if !game_name.is_empty() {
-            Some(game_name.to_string())
-        } else {
-            None
+        entry.game_app_id = match fr.game_played_app_id() {
+            0 => None,
+            app_id => Some(app_id),
         };
+        let game_name = fr.game_name();
+        entry.game_name = (!game_name.is_empty()).then(|| game_name.to_string());
     }
 }
 
@@ -377,11 +383,7 @@ impl SteamClient {
         let initial_ids: Vec<u64> = {
             let mut guard = roster.write().expect("roster lock poisoned");
             drain_unprocessed_into(&connection, &mut guard);
-            guard
-                .values()
-                .filter(|f| f.relationship == RELATIONSHIP_FRIEND)
-                .map(|f| f.steam_id)
-                .collect()
+            friend_ids(&guard)
         };
 
         // Pull persona data (names/status/games) for the initial friends in small
@@ -413,11 +415,7 @@ impl SteamClient {
                     let ids: Vec<u64> = {
                         let mut guard = roster.write().expect("roster lock poisoned");
                         apply_friends_list(&mut guard, &list);
-                        guard
-                            .values()
-                            .filter(|f| f.relationship == RELATIONSHIP_FRIEND)
-                            .map(|f| f.steam_id)
-                            .collect()
+                        friend_ids(&guard)
                     };
                     if let Err(e) = self.request_friend_data(&ids).await {
                         tracing::warn!("failed to request friend data: {e}");
@@ -463,11 +461,7 @@ impl SteamClient {
         // small chunks, draining each chunk's response burst before the next so it
         // never overflows steam-vent's 16-slot notification buffer.
         drain_unprocessed_into(&connection, &mut roster);
-        let ids: Vec<u64> = roster
-            .values()
-            .filter(|f| f.relationship == RELATIONSHIP_FRIEND)
-            .map(|f| f.steam_id)
-            .collect();
+        let ids = friend_ids(&roster);
         for chunk in ids.chunks(PERSONA_REQUEST_CHUNK) {
             if tokio::time::Instant::now() >= deadline {
                 break;

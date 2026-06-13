@@ -24,7 +24,7 @@ fn is_aurelia_name(name: &str) -> bool {
 /// `aurelia daemon [--socket ...]`; a `daemon stop|list` invocation also contains
 /// "daemon" but carries a further subcommand, so those are excluded.
 fn cmd_is_daemon(cmd: &[String]) -> bool {
-    cmd.get(1).map(String::as_str) == Some("daemon")
+    cmd.get(1).is_some_and(|a| a == "daemon")
         && !cmd.iter().any(|a| a == "stop" || a == "list")
 }
 

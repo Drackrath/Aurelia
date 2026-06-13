@@ -183,11 +183,12 @@ async fn resolve_manifest_id(
     depot_id: u32,
     manifest_ref: &str,
 ) -> Result<u64> {
-    if let Ok(id) = manifest_ref.trim().parse::<u64>() {
+    let trimmed = manifest_ref.trim();
+    if let Ok(id) = trimmed.parse::<u64>() {
         return Ok(id);
     }
 
-    if manifest_ref.trim().is_empty() || manifest_ref.eq_ignore_ascii_case("public") {
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("public") {
         let depots = fetch_depots(connection, appid).await?;
         return depots
             .into_iter()
@@ -219,6 +220,6 @@ async fn fetch_appinfo(connection: &Connection, appid: u32) -> Result<AppInfoRoo
         .find(|entry| entry.appid() == appid)
         .ok_or_else(|| anyhow!("missing appinfo payload for app {appid}"))?;
 
-    let raw_vdf = String::from_utf8_lossy(app.buffer()).to_string();
+    let raw_vdf = String::from_utf8_lossy(app.buffer());
     keyvalues_serde::from_str(&raw_vdf).context("failed parsing appinfo VDF")
 }

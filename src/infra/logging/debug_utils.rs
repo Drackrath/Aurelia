@@ -6,16 +6,14 @@ pub fn load_launch_summary(log_dir: &Path) -> Result<LaunchSummary> {
     let summary_path = log_dir.join("summary.json");
     let content = std::fs::read_to_string(&summary_path)
         .with_context(|| format!("Failed to read summary at {}", summary_path.display()))?;
-    let summary: LaunchSummary = serde_json::from_str(&content)?;
-    Ok(summary)
+    Ok(serde_json::from_str(&content)?)
 }
 
 pub fn load_effective_env(log_dir: &Path) -> Result<EffectiveEnv> {
     let env_path = log_dir.join("effective_env.json");
     let content = std::fs::read_to_string(&env_path)
         .with_context(|| format!("Failed to read effective env at {}", env_path.display()))?;
-    let env: EffectiveEnv = serde_json::from_str(&content)?;
-    Ok(env)
+    Ok(serde_json::from_str(&content)?)
 }
 
 pub fn print_launch_summary(summary: &LaunchSummary) {
@@ -49,11 +47,10 @@ pub fn print_effective_env(env: &EffectiveEnv) {
         println!("DLL Overrides: {}", overrides);
     }
     println!("Environment Variables:");
-    let mut sorted_keys: Vec<_> = env.env_vars.keys().collect();
-    sorted_keys.sort();
-
-    for key in sorted_keys {
-        println!("  {}={}", key, env.env_vars.get(key).unwrap());
+    let mut sorted_vars: Vec<_> = env.env_vars.iter().collect();
+    sorted_vars.sort_by_key(|(key, _)| *key);
+    for (key, value) in sorted_vars {
+        println!("  {}={}", key, value);
     }
     println!("-----------------------------");
 }

@@ -38,14 +38,12 @@ async fn fetch_dynamic_cm_list() -> Result<Vec<SocketAddr>> {
         .await
         .context("failed decoding Steam CM list")?;
 
-    let mut out = Vec::new();
-    for entry in payload.response.serverlist {
-        if let Ok(addr) = entry.parse::<SocketAddr>() {
-            out.push(addr);
-        }
-    }
-
-    Ok(out)
+    Ok(payload
+        .response
+        .serverlist
+        .iter()
+        .filter_map(|entry| entry.parse::<SocketAddr>().ok())
+        .collect())
 }
 
 pub fn fallback_cm_endpoints() -> Vec<SocketAddr> {

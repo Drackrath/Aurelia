@@ -62,10 +62,7 @@ fn copy_dir(src: &Path, dst: &Path, on_progress: &mut impl FnMut(u64, &str)) -> 
     std::fs::create_dir_all(dst)?;
 
     for entry in WalkDir::new(src).into_iter().filter_map(|e| e.ok()) {
-        let rel = entry
-            .path()
-            .strip_prefix(src)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let rel = entry.path().strip_prefix(src).map_err(io::Error::other)?;
         let target = dst.join(rel);
 
         if entry.file_type().is_dir() {
@@ -89,10 +86,7 @@ fn copy_file_chunked(
 
     let mut reader = std::fs::File::open(src)?;
     let mut writer = std::fs::File::create(dst)?;
-    let name = src
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    let name = src.file_name().unwrap_or_default().to_string_lossy().into_owned();
 
     let mut buf = vec![0u8; 4 * 1024 * 1024];
     loop {
@@ -111,21 +105,17 @@ fn copy_file_chunked(
 /// Locate the single `libraryfolders.vdf` (it lives in the main Steam install's
 /// `steamapps/`, listing every library folder) among the given candidate roots.
 pub fn find_libraryfolders_vdf(roots: &[PathBuf]) -> Option<PathBuf> {
-    for root in roots {
-        let candidate = root.join("steamapps").join("libraryfolders.vdf");
-        if candidate.exists() {
-            return Some(candidate);
-        }
-    }
-    None
+    roots
+        .iter()
+        .map(|root| root.join("steamapps").join("libraryfolders.vdf"))
+        .find(|candidate| candidate.exists())
 }
 
 /// Normalise a Steam library path for comparison: unescape VDF's doubled
 /// backslashes, unify separators, drop a trailing separator, and lowercase on
 /// case-insensitive platforms.
 fn normalize_path(p: &str) -> String {
-    let unescaped = p.replace("\\\\", "\\");
-    let unified = unescaped.replace('\\', "/");
+    let unified = p.replace("\\\\", "\\").replace('\\', "/");
     let trimmed = unified.trim_end_matches('/');
     if cfg!(windows) {
         trimmed.to_lowercase()
@@ -184,17 +174,16 @@ pub fn update_libraryfolders_apps(
 
         if apps_pending && trimmed == "{" {
             apps_pending = false;
-            let which = match &current_path {
-                Some(p) if *p == to_norm => Some(Folder::To),
-                Some(p) if *p == from_norm => Some(Folder::From),
+            in_apps_of = match current_path.as_deref() {
+                Some(p) if p == to_norm => Some(Folder::To),
+                Some(p) if p == from_norm => Some(Folder::From),
                 _ => None,
             };
-            in_apps_of = which;
             out.push(line.to_string());
 
             // Insert the moved app at the top of the destination's apps block,
             // matching the surrounding indentation (one level deeper than `{`).
-            if matches!(which, Some(Folder::To)) {
+            if matches!(in_apps_of, Some(Folder::To)) {
                 let indent = leading_ws(line);
                 out.push(format!("{indent}\t{appid_key}\t\t\"{size}\""));
                 found_to = true;

@@ -340,8 +340,7 @@ impl SteamClient {
         let connection = match login_result {
             Ok(connection) => connection,
             Err(ConnectionError::UnsupportedConfirmationAction(methods)) => {
-                self.pending_confirmations =
-                    methods.iter().map(map_confirmation).collect::<Vec<_>>();
+                self.pending_confirmations = methods.iter().map(map_confirmation).collect();
                 bail!("Steam Guard confirmation required")
             }
             Err(other) => return Err(anyhow!(other)).context("steam-vent login flow failed"),

@@ -72,30 +72,23 @@ pub struct InstalledAppInfo {
 
 pub async fn find_local_games() -> Result<Vec<LocalGame>> {
     let installed_info = scan_installed_app_info().await?;
-    let mut all_games = Vec::new();
-
-    for (app_id, info) in installed_info {
-        all_games.push(LocalGame {
+    Ok(installed_info
+        .into_iter()
+        .map(|(app_id, info)| LocalGame {
             app_id,
             name: info.name.unwrap_or_else(|| format!("App {app_id}")),
             install_dir: info.install_path,
             proton_version: None,
             active_branch: info.active_branch,
-        });
-    }
-
-    Ok(all_games)
+        })
+        .collect())
 }
 
 pub async fn scan_installed_app_info() -> Result<HashMap<u32, InstalledAppInfo>> {
     let config = load_launcher_config().await.ok();
     let config_path = config.as_ref().and_then(|cfg| {
         let p = PathBuf::from(&cfg.steam_library_path);
-        if p.join("steamapps").exists() || p.join("Steam").join("steamapps").exists() {
-            Some(p)
-        } else {
-            None
-        }
+        (p.join("steamapps").exists() || p.join("Steam").join("steamapps").exists()).then_some(p)
     });
 
     let root = config_path
@@ -104,19 +97,17 @@ pub async fn scan_installed_app_info() -> Result<HashMap<u32, InstalledAppInfo>>
     tracing::debug!("scanning library root: {:?}", root);
     let mut installed = scan_library_info(&root).await?;
 
-    if let Some(cfg) = config {
-        if cfg.windows_steam_discovery_enabled {
-            let master_steam = crate::utils::get_master_steam_config();
-            if master_steam.wine_prefix.exists() {
-                tracing::debug!("scanning Windows Steam root: {:?}", master_steam.wine_prefix);
-                // Windows Steam layout is drive_c/Program Files (x86)/Steam
-                let windows_steam_root = master_steam.wine_prefix.join("drive_c/Program Files (x86)/Steam");
-                if windows_steam_root.exists() {
-                    let windows_installed = scan_library_info(&windows_steam_root).await.unwrap_or_default();
-                    for (app_id, info) in windows_installed {
-                        // Prefer native/standard Linux Steam if duplicate
-                        installed.entry(app_id).or_insert(info);
-                    }
+    if config.is_some_and(|cfg| cfg.windows_steam_discovery_enabled) {
+        let master_steam = crate::utils::get_master_steam_config();
+        if master_steam.wine_prefix.exists() {
+            tracing::debug!("scanning Windows Steam root: {:?}", master_steam.wine_prefix);
+            // Windows Steam layout is drive_c/Program Files (x86)/Steam
+            let windows_steam_root = master_steam.wine_prefix.join("drive_c/Program Files (x86)/Steam");
+            if windows_steam_root.exists() {
+                let windows_installed = scan_library_info(&windows_steam_root).await.unwrap_or_default();
+                for (app_id, info) in windows_installed {
+                    // Prefer native/standard Linux Steam if duplicate
+                    installed.entry(app_id).or_insert(info);
                 }
             }
         }
@@ -364,42 +355,36 @@ async fn parse_app_manifest_info(path: &Path) -> Result<Option<(u32, InstalledAp
             let value = &parts[1];
 
             if !in_user_config {
-                if key == "appid" {
-                    app_id = value.parse::<u32>().ok();
-                } else if key == "installdir" {
-                    install_dir_name = Some(value.to_string());
-                } else if key == "name" {
-                    name = Some(value.to_string());
-                } else if key == "lastowner" {
+                match key.as_str() {
+                    "appid" => app_id = value.parse::<u32>().ok(),
+                    "installdir" => install_dir_name = Some(value.to_string()),
+                    "name" => name = Some(value.to_string()),
                     // "0" means no owner recorded; treat as unknown.
-                    last_owner = value.parse::<u64>().ok().filter(|&id| id != 0);
+                    "lastowner" => last_owner = value.parse::<u64>().ok().filter(|&id| id != 0),
+                    _ => {}
                 }
-            } else if key == "betakey" {
-                if !value.trim().is_empty() {
-                    active_branch = value.to_string();
-                }
+            } else if key == "betakey" && !value.trim().is_empty() {
+                active_branch = value.to_string();
             }
         }
     }
 
-    match (app_id, install_dir_name) {
-        (Some(id), Some(dir)) => {
-            let install_path = path
-                .parent()
-                .map(|p| p.join("common").join(dir))
-                .unwrap_or_default();
-            Ok(Some((
-                id,
-                InstalledAppInfo {
-                    install_path,
-                    active_branch,
-                    name,
-                    last_owner,
-                },
-            )))
-        }
-        _ => Ok(None),
-    }
+    let (Some(id), Some(dir)) = (app_id, install_dir_name) else {
+        return Ok(None);
+    };
+    let install_path = path
+        .parent()
+        .map(|p| p.join("common").join(dir))
+        .unwrap_or_default();
+    Ok(Some((
+        id,
+        InstalledAppInfo {
+            install_path,
+            active_branch,
+            name,
+            last_owner,
+        },
+    )))
 }
 
 fn extract_quoted_values(line: &str) -> Vec<String> {
@@ -471,10 +456,7 @@ pub fn build_game_library(
         // Only claim Family Sharing when we positively know the install belongs to
         // a different account. If we can't determine the owner (e.g. not logged in,
         // or the manifest has no LastOwner), don't guess — avoid false positives.
-        let family_shared = match (info.last_owner, steam_id) {
-            (Some(owner), Some(me)) => owner != me,
-            _ => false,
-        };
+        let family_shared = matches!((info.last_owner, steam_id), (Some(owner), Some(me)) if owner != me);
 
         games.push(LibraryGame {
             app_id,

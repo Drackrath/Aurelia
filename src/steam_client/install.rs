@@ -65,8 +65,7 @@ impl SteamClient {
                     .as_obj()
                     .and_then(|o| o.get("pwdrequired"))
                     .and_then(|v| v.as_str())
-                    .map(|v| v != "0")
-                    .unwrap_or(false);
+                    .is_some_and(|v| v != "0");
                 if !private {
                     names.push(name.to_string());
                 }
@@ -244,7 +243,6 @@ impl SteamClient {
                 })
                 .await;
 
-
             let appinfo_vdf_bytes_owned;
             let appinfo_vdf_bytes = if let Some(cached) = cached_vdf {
                 appinfo_vdf_bytes_owned = cached;
@@ -290,7 +288,6 @@ impl SteamClient {
 
             let appinfo_vdf_text = String::from_utf8_lossy(appinfo_vdf_bytes).to_string();
 
-
             let mut selections = Vec::new();
             // Build id of the installed content (from PICS), recorded in the appmanifest
             // so the Steam launcher sees the install as current and doesn't re-download.
@@ -331,10 +328,7 @@ impl SteamClient {
                                     .and_then(|c| c.get("oslist"))
                                     .and_then(|o| o.as_str());
 
-                                if oslist
-                                    .map(|os| os.to_lowercase().contains("windows"))
-                                    .unwrap_or(false)
-                                {
+                                if oslist.is_some_and(|os| os.to_lowercase().contains("windows")) {
                                     has_windows = true;
                                 }
 
@@ -355,10 +349,9 @@ impl SteamClient {
 
                                 if match_os {
                                     let depot_id_u64 = d_id as u64;
-                                    let is_allowed = match &filter_depots {
-                                        Some(list) => list.contains(&depot_id_u64),
-                                        None => true,
-                                    };
+                                    let is_allowed = filter_depots
+                                        .as_ref()
+                                        .is_none_or(|list| list.contains(&depot_id_u64));
 
                                     if is_allowed {
                                         if let Some(m_id) = map.get(&depot_id_u64) {
@@ -395,7 +388,6 @@ impl SteamClient {
             }
 
             if selections.is_empty() {
-
                 let msg = if has_windows && matches!(platform, DepotPlatform::Linux) {
                     "No native Linux depots found. This game may only support Windows (Proton)."
                 } else {
@@ -871,5 +863,4 @@ impl SteamClient {
             );
         }
     }
-
 }

@@ -249,7 +249,7 @@ impl CloudClient {
                 filename: file.filename().to_string(),
                 timestamp: file.timestamp(),
                 size: u64::from(file.file_size()),
-                sha_hash: file.file_sha.clone(),
+                sha_hash: file.file_sha,
             })
             .collect())
     }
@@ -267,11 +267,11 @@ impl CloudClient {
                 }
             };
 
-            let needs_download = match file_modified_epoch_secs(&local_path).await.ok() {
-                None => true,
-                Some(ts) => remote.timestamp > ts,
-            };
-            if !needs_download {
+            // Skip when a local copy exists and is at least as new as the cloud copy.
+            let up_to_date = file_modified_epoch_secs(&local_path)
+                .await
+                .is_ok_and(|ts| remote.timestamp <= ts);
+            if up_to_date {
                 continue;
             }
 
@@ -335,9 +335,9 @@ impl CloudClient {
         }
 
         for (cloud_name, local_path) in candidates {
-            let metadata = match tokio::fs::metadata(&local_path).await {
-                Ok(m) => m,
-                Err(_) => continue, // not present locally — nothing to upload
+            // Not present locally — nothing to upload.
+            let Ok(metadata) = tokio::fs::metadata(&local_path).await else {
+                continue;
             };
             let local_timestamp = metadata
                 .modified()
@@ -381,11 +381,7 @@ impl CloudClient {
             .await
             .context("failed calling Cloud.ClientFileDownload")?;
 
-        let scheme = if response.use_https() {
-            "https"
-        } else {
-            "http"
-        };
+        let scheme = if response.use_https() { "https" } else { "http" };
         let host = response.url_host();
         let path = response.url_path();
         if host.is_empty() || path.is_empty() {
@@ -427,11 +423,12 @@ impl CloudClient {
         let mut sha = Sha1::new();
         sha.update(&data);
         let file_sha = sha.finalize().to_vec();
+        let file_size = u32::try_from(data.len()).context("cloud upload larger than u32")?;
 
         let begin_request = CCloud_ClientBeginFileUpload_Request {
             appid: Some(appid),
-            file_size: Some(u32::try_from(data.len()).context("cloud upload larger than u32")?),
-            raw_file_size: Some(u32::try_from(data.len()).context("cloud upload larger than u32")?),
+            file_size: Some(file_size),
+            raw_file_size: Some(file_size),
             file_sha: Some(file_sha.clone()),
             time_stamp: Some(timestamp),
             filename: Some(filename.to_string()),
@@ -532,11 +529,10 @@ fn build_header_map<'a>(headers: impl Iterator<Item = (&'a str, &'a str)>) -> Re
 async fn file_modified_epoch_secs(path: &Path) -> Result<u64> {
     let metadata = tokio::fs::metadata(path).await?;
     let modified = metadata.modified()?;
-    let seconds = modified
+    Ok(modified
         .duration_since(UNIX_EPOCH)
         .context("invalid file modified timestamp")?
-        .as_secs();
-    Ok(seconds)
+        .as_secs())
 }
 
 pub fn default_cloud_root(steam_id: u64, appid: u32) -> Result<PathBuf> {

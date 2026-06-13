@@ -16,13 +16,12 @@ impl SteamClient {
             .await
             .context("failed calling ContentServerDirectory.GetServersForSteamPipe")?;
 
-        let mut hosts = Vec::new();
-        for server in &response.servers {
-            if server.type_() == "SteamCache" || server.type_() == "CDN" {
-                let host = server.host().to_string();
-                hosts.push(host);
-            }
-        }
+        let hosts: Vec<String> = response
+            .servers
+            .iter()
+            .filter(|server| matches!(server.type_(), "SteamCache" | "CDN"))
+            .map(|server| server.host().to_string())
+            .collect();
 
         if hosts.is_empty() {
             tracing::error!("ContentServerDirectory returned 0 valid CDN servers");
@@ -139,23 +138,21 @@ impl SteamClient {
 
             if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
                 for (key, value) in depots.iter() {
-                    if let Ok(d_id) = key.parse::<u64>() {
-                        let name = value
-                            .as_obj()
-                            .and_then(|o| o.get("name"))
+                    if let (Ok(d_id), Some(obj)) = (key.parse::<u64>(), value.as_obj()) {
+                        let name = obj
+                            .get("name")
                             .and_then(|v| v.as_str())
-                            .unwrap_or(&format!("Depot {d_id}"))
-                            .to_string();
+                            .map(str::to_string)
+                            .unwrap_or_else(|| format!("Depot {d_id}"));
 
-                        let size = value
-                            .as_obj()
-                            .and_then(|o| o.get("maxsize"))
+                        let size = obj
+                            .get("maxsize")
                             .and_then(|v| v.as_str())
                             .and_then(|s| s.parse::<u64>().ok())
                             .unwrap_or(0);
 
                         let mut config_parts = Vec::new();
-                        if let Some(config) = value.as_obj().and_then(|o| o.get("config")).and_then(|v| v.as_obj()) {
+                        if let Some(config) = obj.get("config").and_then(|v| v.as_obj()) {
                             if let Some(os) = config.get("oslist").and_then(|v| v.as_str()) {
                                 config_parts.push(format!("os: {}", os));
                             }
@@ -488,12 +485,9 @@ impl SteamClient {
         tracing::info!("Verifying ownership for {} depots...", depot_ids.len());
         let mut results = HashMap::new();
 
-        let connection = match self.connection.as_ref() {
-            Some(c) => c,
-            None => {
-                for id in depot_ids { results.insert(id, false); }
-                return results;
-            }
+        let Some(connection) = self.connection.as_ref() else {
+            results.extend(depot_ids.into_iter().map(|id| (id, false)));
+            return results;
         };
 
         // 1. Ensure we have an App Ticket (Warm up session)
@@ -504,19 +498,11 @@ impl SteamClient {
             request.set_depot_id(depot_id as u32);
             request.set_app_id(app_id);
 
-            match connection.job(request).await {
-                Ok(response) => {
-                    let response: CMsgClientGetDepotDecryptionKeyResponse = response;
-                    if response.eresult() == 1 { // EResult::OK
-                        results.insert(depot_id, true);
-                    } else {
-                        results.insert(depot_id, false);
-                    }
-                }
-                Err(_) => {
-                    results.insert(depot_id, false);
-                }
-            }
+            let response: std::result::Result<CMsgClientGetDepotDecryptionKeyResponse, _> =
+                connection.job(request).await;
+            // EResult::OK == 1
+            let owned = matches!(response, Ok(r) if r.eresult() == 1);
+            results.insert(depot_id, owned);
         }
         results
     }

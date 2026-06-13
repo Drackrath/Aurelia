@@ -127,23 +127,7 @@ struct DaemonStdin {
 
 impl DaemonStdin {
     async fn read_line(&mut self) -> std::io::Result<String> {
-        loop {
-            if let Some(pos) = self.buf.iter().position(|&b| b == b'\n') {
-                let line: Vec<u8> = self.buf.drain(..=pos).collect();
-                return Ok(String::from_utf8_lossy(&line)
-                    .trim_end_matches(['\n', '\r'])
-                    .to_string());
-            }
-            if self.eof {
-                let rest = String::from_utf8_lossy(&self.buf).trim().to_string();
-                self.buf.clear();
-                return Ok(rest);
-            }
-            match self.rx.recv().await {
-                Some(chunk) => self.buf.extend_from_slice(&chunk),
-                None => self.eof = true,
-            }
-        }
+        Ok(self.read_line_opt().await?.unwrap_or_default())
     }
 
     /// Like [`DaemonStdin::read_line`] but returns `Ok(None)` once the client's

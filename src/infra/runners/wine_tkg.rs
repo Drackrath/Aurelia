@@ -527,7 +527,6 @@ impl Runner for WineTkgRunner {
         // WITHOUT THIS, d3d12=n,b finds whatever is in the prefix's system32 instead.
         // CONSERVATIVE: only include paths for DLLs that are actually requested to be native.
         let mut wine_dll_dirs: Vec<String> = Vec::new();
-        let use_symlinks = glc.use_symlinks_in_prefix;
 
         for res in &ctx.dll_resolutions {
             if (res.chosen_provider == crate::launch::dll_provider_resolver::DllProvider::Runner ||
@@ -623,11 +622,9 @@ impl Runner for WineTkgRunner {
             env.insert("WINEDLLPATH".to_string(), combined);
         }
 
-        let mut wine_path = vec!["C:\\Program Files (x86)\\Steam".to_string()];
         // Append runner DLL directories to WINEPATH to aid native PE loading
-        for dir in &wine_dll_dirs {
-            wine_path.push(dir.clone());
-        }
+        let mut wine_path = vec!["C:\\Program Files (x86)\\Steam".to_string()];
+        wine_path.extend(wine_dll_dirs.iter().cloned());
         env.insert("WINEPATH".to_string(), wine_path.join(";"));
 
         let (use_steam_runtime, _runtime_source) = match ctx.user_config.as_ref().map(|c| &c.steam_runtime_policy) {
@@ -718,18 +715,14 @@ impl Runner for WineTkgRunner {
                     // Try to find "cardN" and extract N
                     static CARD_RE: std::sync::LazyLock<regex::Regex> =
                         std::sync::LazyLock::new(|| regex::Regex::new(r"card(\d+)").unwrap());
-                    if let Some(caps) = CARD_RE.captures(&gpu.name) {
-                        if let Some(idx_match) = caps.get(1) {
-                            if let Ok(card_idx) = idx_match.as_str().parse::<u32>() {
-                                 // DRI_PRIME=1 is the most common way to select the second GPU
-                                 // For now we use the standard PRIME offload if it's not card0.
-                                 if card_idx > 0 {
-                                     env.insert("DRI_PRIME".to_string(), "1".to_string());
-                                 } else {
-                                     env.insert("DRI_PRIME".to_string(), "0".to_string());
-                                 }
-                            }
-                        }
+                    if let Some(card_idx) = CARD_RE.captures(&gpu.name)
+                        .and_then(|caps| caps.get(1))
+                        .and_then(|m| m.as_str().parse::<u32>().ok())
+                    {
+                        // DRI_PRIME=1 is the most common way to select the second GPU
+                        // For now we use the standard PRIME offload if it's not card0.
+                        let dri_prime = if card_idx > 0 { "1" } else { "0" };
+                        env.insert("DRI_PRIME".to_string(), dri_prime.to_string());
                     }
                 }
             }
@@ -741,15 +734,11 @@ impl Runner for WineTkgRunner {
             }
 
             // Add debug toggles
-            if effective_dxvk {
-                if !env.contains_key("DXVK_HUD") {
-                    env.insert("DXVK_HUD".to_string(), "compiler".to_string());
-                }
+            if effective_dxvk && !env.contains_key("DXVK_HUD") {
+                env.insert("DXVK_HUD".to_string(), "compiler".to_string());
             }
-            if effective_vkd3d_proton || effective_vkd3d {
-                 if !env.contains_key("VKD3D_DEBUG") {
-                    env.insert("VKD3D_DEBUG".to_string(), "warn".to_string());
-                }
+            if (effective_vkd3d_proton || effective_vkd3d) && !env.contains_key("VKD3D_DEBUG") {
+                env.insert("VKD3D_DEBUG".to_string(), "warn".to_string());
             }
         }
 
@@ -763,8 +752,7 @@ impl Runner for WineTkgRunner {
             .unwrap_or(false);
 
         if wants_mangohud {
-            let lib_path = SteamClient::find_mangohud_lib();
-            match lib_path {
+            match SteamClient::find_mangohud_lib() {
                 Some(lib) => {
                     let existing = std::env::var("LD_PRELOAD").unwrap_or_default();
                     let new_preload = if existing.is_empty() {

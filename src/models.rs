@@ -301,7 +301,7 @@ pub struct DownloadProgress {
     pub depot_total_bytes: u64,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct DownloadState {
     pub is_downloading: bool,
     pub is_paused: bool,
@@ -319,24 +319,6 @@ pub struct DownloadState {
     /// Bytes downloaded for the current depot.
     pub depot_downloaded_bytes: u64,
     pub abort_signal: Arc<AtomicBool>,
-}
-
-impl Default for DownloadState {
-    fn default() -> Self {
-        Self {
-            is_downloading: false,
-            is_paused: false,
-            app_id: 0,
-            app_name: String::new(),
-            total_bytes: 0,
-            downloaded_bytes: 0,
-            status_text: String::new(),
-            depot_id: 0,
-            depot_total_bytes: 0,
-            depot_downloaded_bytes: 0,
-            abort_signal: Arc::new(AtomicBool::new(false)),
-        }
-    }
 }
 
 #[derive(Debug, serde::Deserialize)]

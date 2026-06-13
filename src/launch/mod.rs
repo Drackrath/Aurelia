@@ -56,14 +56,10 @@ pub async fn install_master_steam(config: &LauncherConfig) -> Result<()> {
     cmd.env("STEAM_COMPAT_CLIENT_INSTALL_PATH", &fake_env);
     cmd.env("WINEDLLOVERRIDES", "vstdlib_s=n;tier0_s=n;steamclient=n;steamclient64=n;steam_api=n;steam_api64=n;lsteamclient=");
 
-    if let Ok(display) = std::env::var("DISPLAY") {
-        cmd.env("DISPLAY", display);
-    }
-    if let Ok(wayland) = std::env::var("WAYLAND_DISPLAY") {
-        cmd.env("WAYLAND_DISPLAY", wayland);
-    }
-    if let Ok(xdg_runtime) = std::env::var("XDG_RUNTIME_DIR") {
-        cmd.env("XDG_RUNTIME_DIR", xdg_runtime);
+    for var in ["DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR"] {
+        if let Ok(value) = std::env::var(var) {
+            cmd.env(var, value);
+        }
     }
 
     tracing::info!("Launching Master Steam: {:?}", cmd);

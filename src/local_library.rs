@@ -67,20 +67,19 @@ pub async fn discover_from_root(root: &Path) -> Vec<OwnedGame> {
 
     let mut games = Vec::new();
     for app_id in candidates {
-        match meta.get(&app_id) {
-            // Keep only titles Steam classifies as games (drops DLC, tools,
-            // soundtracks, config apps, runtimes, …).
-            Some(info) if info.app_type.eq_ignore_ascii_case("game") => {
-                games.push(OwnedGame {
-                    app_id,
-                    name: info.name.clone(),
-                    playtime_forever_minutes: playtime.get(&app_id).copied().unwrap_or(0),
-                    local_manifest_ids: HashMap::new(),
-                    update_available: false,
-                });
-            }
-            _ => {}
-        }
+        // Keep only titles Steam classifies as games (drops DLC, tools,
+        // soundtracks, config apps, runtimes, …).
+        let Some(info) = meta.get(&app_id).filter(|i| i.app_type.eq_ignore_ascii_case("game"))
+        else {
+            continue;
+        };
+        games.push(OwnedGame {
+            app_id,
+            name: info.name.clone(),
+            playtime_forever_minutes: playtime.get(&app_id).copied().unwrap_or(0),
+            local_manifest_ids: HashMap::new(),
+            update_available: false,
+        });
     }
 
     games.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
@@ -186,11 +185,7 @@ fn parse_localconfig_apps(text: &str) -> HashMap<u32, u32> {
         if line == "{" {
             let key = pending_key.take().unwrap_or_default();
             // An app id is any direct child key of an "apps" object.
-            if path
-                .last()
-                .map(|p| p.eq_ignore_ascii_case("apps"))
-                .unwrap_or(false)
-            {
+            if path.last().is_some_and(|p| p.eq_ignore_ascii_case("apps")) {
                 if let Ok(id) = key.parse::<u32>() {
                     result.entry(id).or_insert(0);
                 }

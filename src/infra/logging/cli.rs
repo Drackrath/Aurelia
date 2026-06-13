@@ -40,13 +40,9 @@ pub fn init_cli_logging(verbosity: u8) {
 fn resolve_filter(verbosity: u8) -> EnvFilter {
     // `AURELIA_LOG` is checked first as an Aurelia-specific override, then the
     // conventional `RUST_LOG`.
-    if let Ok(filter) = EnvFilter::try_from_env("AURELIA_LOG") {
-        return filter;
-    }
-    if let Ok(filter) = EnvFilter::try_from_default_env() {
-        return filter;
-    }
-    EnvFilter::new(default_directives(verbosity))
+    EnvFilter::try_from_env("AURELIA_LOG")
+        .or_else(|_| EnvFilter::try_from_default_env())
+        .unwrap_or_else(|_| EnvFilter::new(default_directives(verbosity)))
 }
 
 /// Map a `-v` count to a set of env-filter directives.

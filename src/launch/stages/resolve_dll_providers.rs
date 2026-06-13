@@ -16,8 +16,7 @@ impl PipelineStage for ResolveDllProvidersStage {
         let mut game_exe_dir = PathBuf::from(install_path);
 
         let nvapi_enabled = ctx.user_config.as_ref()
-            .map(|c| c.graphics_layers.nvapi_enabled)
-            .unwrap_or(true);
+            .map_or(true, |c| c.graphics_layers.nvapi_enabled);
 
         // If we have launch info, we can be more precise about the exe dir
         if let Some(info) = &ctx.launch_info {
@@ -37,16 +36,11 @@ impl PipelineStage for ResolveDllProvidersStage {
 
         // Resolve WINEPREFIX for component detection
         let wineprefix = if let (Some(config), Some(app)) = (&ctx.launcher_config, &ctx.app) {
-            Some(crate::utils::steam_wineprefix_for_game(
-                config,
-                app.app_id,
-                &ctx.user_config.as_ref().map(|_| {
-                    // This is a bit circular, but we just need it for detection
-                    let mut store = std::collections::HashMap::new();
-                    store.insert(app.app_id, ctx.user_config.clone().unwrap());
-                    store
-                }).unwrap_or_default().into()
-            ))
+            let mut store = std::collections::HashMap::new();
+            if let Some(user_config) = &ctx.user_config {
+                store.insert(app.app_id, user_config.clone());
+            }
+            Some(crate::utils::steam_wineprefix_for_game(config, app.app_id, &store))
         } else {
             None
         };
@@ -114,14 +108,13 @@ impl PipelineStage for ResolveDllProvidersStage {
                 let mut missing_capabilities = Vec::new();
 
                 let has_capability = |name: &str| -> bool {
+                    use crate::launch::dll_provider_resolver::DllProvider;
                     ctx.dll_resolutions.iter()
                         .find(|r| r.name == name)
-                        .map(|r| {
-                            r.chosen_provider == crate::launch::dll_provider_resolver::DllProvider::Runner ||
-                            r.chosen_provider == crate::launch::dll_provider_resolver::DllProvider::GameLocal ||
-                            r.chosen_provider == crate::launch::dll_provider_resolver::DllProvider::Internal
-                        })
-                        .unwrap_or(false)
+                        .is_some_and(|r| matches!(
+                            r.chosen_provider,
+                            DllProvider::Runner | DllProvider::GameLocal | DllProvider::Internal
+                        ))
                 };
 
                 let has_dx11_dxgi = has_capability("d3d11") && has_capability("dxgi");
@@ -141,11 +134,11 @@ impl PipelineStage for ResolveDllProvidersStage {
                     missing_capabilities.push("DX9 (requires d3d9.dll)");
                 }
                 if !has_dx8 {
-                    if has_dx9 {
-                        missing_capabilities.push("DX8 (requires d3d8.dll)");
+                    missing_capabilities.push(if has_dx9 {
+                        "DX8 (requires d3d8.dll)"
                     } else {
-                        missing_capabilities.push("DX8 (requires d3d8.dll and DX9)");
-                    }
+                        "DX8 (requires d3d8.dll and DX9)"
+                    });
                 }
 
                 if !missing_capabilities.is_empty() {
@@ -179,13 +172,14 @@ impl PipelineStage for ResolveDllProvidersStage {
                     metadata.insert("path".into(), path.to_string_lossy().to_string());
                 }
 
-                let game_local_count = res.candidates.iter().filter(|c| c.provider == crate::launch::dll_provider_resolver::DllProvider::GameLocal && c.exists).count();
-                let runner_count = res.candidates.iter().filter(|c| c.provider == crate::launch::dll_provider_resolver::DllProvider::Runner && c.exists).count();
-                let system_count = res.candidates.iter().filter(|c| c.provider == crate::launch::dll_provider_resolver::DllProvider::System && c.exists).count();
+                use crate::launch::dll_provider_resolver::DllProvider;
+                let count_existing = |provider: DllProvider| {
+                    res.candidates.iter().filter(|c| c.provider == provider && c.exists).count()
+                };
 
-                metadata.insert("count_gamelocal".into(), game_local_count.to_string());
-                metadata.insert("count_runner".into(), runner_count.to_string());
-                metadata.insert("count_system".into(), system_count.to_string());
+                metadata.insert("count_gamelocal".into(), count_existing(DllProvider::GameLocal).to_string());
+                metadata.insert("count_runner".into(), count_existing(DllProvider::Runner).to_string());
+                metadata.insert("count_system".into(), count_existing(DllProvider::System).to_string());
 
                 let _ = logger.info("dll_resolved", format!("Resolved {} to {:?}", res.name, res.chosen_provider), Some("ResolveDllProviders".into()), metadata);
             }

@@ -20,13 +20,13 @@ impl PipelineStage for SpawnProcessStage {
                 }
 
                 let child = runner.launch(spec).map_err(|e| {
-                    if let Some(source) = &e.source {
-                        if let Some(io_err) = source.downcast_ref::<std::io::Error>() {
+                    match e.source.as_ref().and_then(|s| s.downcast_ref::<std::io::Error>()) {
+                        Some(io_err) => {
                             let dup_info = crate::launch::pipeline::detect_duplicate_instance(ctx);
-                            return crate::launch::pipeline::map_io_error(io_err, Some(&dup_info));
+                            crate::launch::pipeline::map_io_error(io_err, Some(&dup_info))
                         }
+                        None => e,
                     }
-                    e
                 })?;
                 ctx.child = Some(child);
             }

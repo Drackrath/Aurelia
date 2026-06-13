@@ -173,9 +173,7 @@ pub async fn load_session() -> Result<SessionState> {
     let raw = fs::read_to_string(&session_path)
         .await
         .with_context(|| format!("failed reading {}", session_path.display()))?;
-    let state = serde_json::from_str(&raw)
-        .with_context(|| format!("failed parsing {}", session_path.display()))?;
-    Ok(state)
+    serde_json::from_str(&raw).with_context(|| format!("failed parsing {}", session_path.display()))
 }
 
 pub async fn save_session(session: &SessionState) -> Result<()> {
@@ -216,9 +214,8 @@ pub async fn load_launcher_config() -> Result<LauncherConfig> {
     let raw = fs::read_to_string(&path)
         .await
         .with_context(|| format!("failed reading {}", path.display()))?;
-    let parsed = serde_json::from_str::<LauncherConfig>(&raw)
-        .with_context(|| format!("failed parsing {}", path.display()))?;
-    Ok(parsed)
+    serde_json::from_str::<LauncherConfig>(&raw)
+        .with_context(|| format!("failed parsing {}", path.display()))
 }
 
 pub async fn save_launcher_config(config: &LauncherConfig) -> Result<()> {
@@ -243,9 +240,8 @@ pub async fn load_library_cache() -> Result<Vec<OwnedGame>> {
     let raw = fs::read_to_string(&path)
         .await
         .with_context(|| format!("failed reading {}", path.display()))?;
-    let cached = serde_json::from_str::<Vec<OwnedGame>>(&raw)
-        .with_context(|| format!("failed parsing {}", path.display()))?;
-    Ok(cached)
+    serde_json::from_str::<Vec<OwnedGame>>(&raw)
+        .with_context(|| format!("failed parsing {}", path.display()))
 }
 
 /// Default lifetime of a cached `aurelia info` record before it is re-fetched
@@ -329,9 +325,8 @@ pub async fn load_user_configs() -> Result<UserConfigStore> {
     let raw = fs::read_to_string(&path)
         .await
         .with_context(|| format!("failed reading {}", path.display()))?;
-    let parsed = serde_json::from_str::<UserConfigStore>(&raw)
-        .with_context(|| format!("failed parsing {}", path.display()))?;
-    Ok(parsed)
+    serde_json::from_str::<UserConfigStore>(&raw)
+        .with_context(|| format!("failed parsing {}", path.display()))
 }
 
 pub async fn save_user_configs(configs: &UserConfigStore) -> Result<()> {

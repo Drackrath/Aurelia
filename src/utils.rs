@@ -138,30 +138,23 @@ pub fn setup_fake_steam_trap(config_dir: &Path) -> Result<PathBuf> {
 
     let dummy_script = "#!/bin/sh\nexit 0\n";
 
-    let steam_path = trap_dir.join("steam");
-    let steam_sh_path = trap_dir.join("steam.sh");
-
-    if !steam_path.exists() {
-        std::fs::write(&steam_path, dummy_script)?;
+    let write_executable = |path: &Path| -> Result<()> {
+        if path.exists() {
+            return Ok(());
+        }
+        std::fs::write(path, dummy_script)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mut perms = std::fs::metadata(&steam_path)?.permissions();
+            let mut perms = std::fs::metadata(path)?.permissions();
             perms.set_mode(0o755);
-            std::fs::set_permissions(&steam_path, perms)?;
+            std::fs::set_permissions(path, perms)?;
         }
-    }
+        Ok(())
+    };
 
-    if !steam_sh_path.exists() {
-        std::fs::write(&steam_sh_path, dummy_script)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = std::fs::metadata(&steam_sh_path)?.permissions();
-            perms.set_mode(0o755);
-            std::fs::set_permissions(&steam_sh_path, perms)?;
-        }
-    }
+    write_executable(&trap_dir.join("steam"))?;
+    write_executable(&trap_dir.join("steam.sh"))?;
 
     Ok(trap_dir)
 }
@@ -205,7 +198,7 @@ pub fn derive_runner_root(binary_path: &Path) -> PathBuf {
         binary_path
     };
     // If it's in a 'bin' directory (like wine-tkg), the root is one level up
-    if parent.file_name().map(|n| n == "bin").unwrap_or(false) {
+    if parent.file_name().is_some_and(|n| n == "bin") {
         return parent.parent().unwrap_or(parent).to_path_buf();
     }
 
@@ -219,19 +212,11 @@ pub fn detect_runner_components(
 ) -> RunnerComponents {
     let root = derive_runner_root(runner_path);
 
-    let (dxvk, vkd3d_proton, vkd3d, nvapi) = (
-        detect_dxvk(&root, wineprefix),
-        detect_vkd3d_proton(&root, wineprefix),
-        detect_vkd3d(&root, wineprefix),
-        detect_nvapi(&root, wineprefix),
-    );
-
-
     RunnerComponents {
-        dxvk,
-        vkd3d_proton,
-        vkd3d,
-        nvapi,
+        dxvk: detect_dxvk(&root, wineprefix),
+        vkd3d_proton: detect_vkd3d_proton(&root, wineprefix),
+        vkd3d: detect_vkd3d(&root, wineprefix),
+        nvapi: detect_nvapi(&root, wineprefix),
     }
 }
 
@@ -362,15 +347,13 @@ fn detect_vkd3d_proton(root: &Path, prefix: Option<&Path>) -> Option<ComponentIn
         ];
         for rel in prefix_dlls {
             let p = pfx.join(rel);
-            if p.exists() {
-                if dll_contains_string(&p, "vkd3d-proton") {
-                    let version = extract_version_from_dll(&p).unwrap_or_else(|| "unknown".to_string());
-                    return Some(ComponentInfo {
-                        version,
-                        source: ComponentSource::InstalledInPrefix,
-                        path: Some(p),
-                    });
-                }
+            if p.exists() && dll_contains_string(&p, "vkd3d-proton") {
+                let version = extract_version_from_dll(&p).unwrap_or_else(|| "unknown".to_string());
+                return Some(ComponentInfo {
+                    version,
+                    source: ComponentSource::InstalledInPrefix,
+                    path: Some(p),
+                });
             }
         }
     }
@@ -511,12 +494,10 @@ fn detect_bundled_modern(
 }
 
 fn check_bundled(root: &Path, dll_candidates: &[&str], version_files: &[&str]) -> Option<ComponentInfo> {
-    let found_dll = dll_candidates.iter().find(|rel| root.join(rel).exists());
-    if let Some(rel) = found_dll {
-        tracing::debug!("Found bundled component DLL at: {}", root.join(rel).display());
-    } else {
+    let Some(found_dll) = dll_candidates.iter().find(|rel| root.join(rel).exists()) else {
         return None;
-    }
+    };
+    tracing::debug!("Found bundled component DLL at: {}", root.join(found_dll).display());
 
     let version = version_files
         .iter()
@@ -543,7 +524,7 @@ fn check_bundled(root: &Path, dll_candidates: &[&str], version_files: &[&str]) -
     Some(ComponentInfo {
         version,
         source: ComponentSource::BundledWithRunner,
-        path: root.join(found_dll.unwrap()).parent().map(|p| p.to_path_buf()),
+        path: root.join(found_dll).parent().map(|p| p.to_path_buf()),
     })
 }
 
@@ -621,8 +602,8 @@ pub fn parse_short_version(s: &str) -> String {
 
     // Strip component name prefixes (like 'dxvk-', 'vkd3d-proton-', 'vkd3d-')
     for prefix in &["vkd3d-proton-", "vkd3d-", "dxvk-"] {
-        if v.starts_with(prefix) {
-            v = &v[prefix.len()..];
+        if let Some(stripped) = v.strip_prefix(prefix) {
+            v = stripped;
             break;
         }
     }
@@ -635,8 +616,7 @@ pub fn parse_short_version(s: &str) -> String {
     // Strip trailing git hash suffix: -g[0-9a-f]{7,10}
     if let Some(hyphen_idx) = v.rfind("-g") {
         let suffix = &v[hyphen_idx + 2..];
-        if !suffix.is_empty()
-            && suffix.len() >= 7
+        if suffix.len() >= 7
             && suffix.len() <= 10
             && suffix.chars().all(|c| c.is_ascii_hexdigit())
         {
@@ -758,7 +738,7 @@ pub fn build_dll_overrides(
         // Wine searches exe-dir before system32, so "n,b" is fine UNLESS
         // a foreign dll landed in system32. We skip the override entirely
         // for DLLs the game already provides locally.
-        let game_has = |dll: &str| -> bool { game_dir.map(|d| d.join(dll).exists()).unwrap_or(false) };
+        let game_has = |dll: &str| -> bool { game_dir.is_some_and(|d| d.join(dll).exists()) };
 
         for dll in &[
             "d3d8.dll",
@@ -881,10 +861,10 @@ pub fn list_available_gpus() -> Vec<DetectedGpu> {
 
                 // Heuristic for discrete vs integrated
                 // This is a bit simplified, but often works on Linux
-                let is_discrete = pci_id.as_ref().map(|id| {
+                let is_discrete = pci_id.as_ref().is_some_and(|id| {
                     // NVIDIA, AMD (discrete), etc.
                     id.starts_with("10de") || id.starts_with("1002")
-                }).unwrap_or(false);
+                });
 
                 let gpu_name = match pci_id.as_deref() {
                     Some(id) if id.starts_with("10de") => format!("NVIDIA GPU ({})", name),
@@ -903,14 +883,12 @@ pub fn list_available_gpus() -> Vec<DetectedGpu> {
     }
 
     // Fallback if /sys scan failed but we have NVIDIA tools or similar
-    if gpus.is_empty() {
-        if Path::new("/dev/nvidia0").exists() {
-             gpus.push(DetectedGpu {
-                 name: "NVIDIA Discrete GPU".to_string(),
-                 pci_id: Some("10de:unknown".to_string()),
-                 is_discrete: true,
-             });
-        }
+    if gpus.is_empty() && Path::new("/dev/nvidia0").exists() {
+        gpus.push(DetectedGpu {
+            name: "NVIDIA Discrete GPU".to_string(),
+            pci_id: Some("10de:unknown".to_string()),
+            is_discrete: true,
+        });
     }
 
     gpus.sort_by(|a, b| b.is_discrete.cmp(&a.is_discrete));
@@ -966,18 +944,11 @@ pub fn detect_exe_architecture(exe_path: &Path) -> crate::models::ExecutableArch
 }
 
 pub fn detect_custom_components(path: &Path) -> crate::utils::RunnerComponents {
-    let (dxvk, vkd3d_proton, vkd3d, nvapi) = (
-        detect_dxvk(path, None),
-        detect_vkd3d_proton(path, None),
-        detect_vkd3d(path, None),
-        detect_nvapi(path, None),
-    );
-
     crate::utils::RunnerComponents {
-        dxvk,
-        vkd3d_proton,
-        vkd3d,
-        nvapi,
+        dxvk: detect_dxvk(path, None),
+        vkd3d_proton: detect_vkd3d_proton(path, None),
+        vkd3d: detect_vkd3d(path, None),
+        nvapi: detect_nvapi(path, None),
     }
 }
 
@@ -1168,15 +1139,17 @@ pub fn steam_wineprefix_for_game(
     app_id: u32,
     user_configs: &crate::models::UserConfigStore,
 ) -> std::path::PathBuf {
-    let use_steam_runtime = match user_configs.get(&app_id).map(|c| &c.steam_runtime_policy) {
+    let user_config = user_configs.get(&app_id);
+
+    let use_steam_runtime = match user_config.map(|c| &c.steam_runtime_policy) {
         Some(crate::models::SteamRuntimePolicy::Enabled) => true,
         Some(crate::models::SteamRuntimePolicy::Disabled) => false,
         Some(crate::models::SteamRuntimePolicy::Auto) | None => {
-            user_configs.get(&app_id).map(|c| c.use_steam_runtime).unwrap_or(false)
+            user_config.map(|c| c.use_steam_runtime).unwrap_or(false)
         }
     };
 
-    let use_per_game_compat_data = user_configs.get(&app_id)
+    let use_per_game_compat_data = user_config
         .map(|c| use_steam_runtime && c.steam_prefix_mode == crate::models::SteamPrefixMode::PerGame)
         .unwrap_or(config.use_shared_compat_data);
 

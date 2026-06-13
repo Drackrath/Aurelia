@@ -318,12 +318,12 @@ fn parse_installed_items(raw: &str) -> Vec<InstalledWorkshopItem> {
 
     // Merge: prefer `WorkshopItemsInstalled` as the authoritative source for
     // size/timeupdated; use `WorkshopItemDetails` as a fallback for manifest_id.
-    let mut all_ids: Vec<u64> = items_installed.keys().cloned().collect();
-    for id in items_details.keys() {
-        if !items_installed.contains_key(id) {
-            all_ids.push(*id);
-        }
-    }
+    let mut all_ids: Vec<u64> = items_installed.keys().copied().collect();
+    all_ids.extend(
+        items_details
+            .keys()
+            .filter(|id| !items_installed.contains_key(id)),
+    );
     all_ids.sort_unstable();
 
     all_ids
@@ -337,7 +337,7 @@ fn parse_installed_items(raw: &str) -> Vec<InstalledWorkshopItem> {
                     .map(|i| i.manifest_id)
                     .or_else(|| det.map(|d| d.manifest_id))
                     .unwrap_or(0),
-                size: inst.map(|i| i.size).unwrap_or(0),
+                size: inst.map_or(0, |i| i.size),
                 time_updated: inst
                     .map(|i| i.time_updated)
                     .or_else(|| det.map(|d| d.time_updated))
@@ -373,8 +373,7 @@ fn extract_quoted_values(line: &str) -> Vec<String> {
     for ch in line.chars() {
         if ch == '"' {
             if in_quote {
-                out.push(current.clone());
-                current.clear();
+                out.push(std::mem::take(&mut current));
             }
             in_quote = !in_quote;
             continue;

@@ -60,25 +60,18 @@ impl PipelineStage for PreflightStage {
                 }
                 ctx.resolved_executable_path = Some(game_exe_path.to_path_buf());
 
-                if game_exe_path.is_absolute() || (game_exe_path.components().count() > 1 && !game_exe.starts_with('-')) {
+                let looks_like_path = game_exe_path.is_absolute()
+                    || (game_exe_path.components().count() > 1 && !game_exe.starts_with('-'));
+                if looks_like_path {
                      if !game_exe_path.exists() {
-                         let mut resolved_path = game_exe_path.to_path_buf();
-                         let mut resolved = false;
-                         let mut fallback_used = false;
+                         let fallback_path = ctx.app.as_ref()
+                             .and_then(|app| app.install_path.as_ref())
+                             .map(|install_path| Path::new(install_path).join(game_exe.replace('\\', "/")))
+                             .filter(|alt_path| alt_path.exists() && alt_path.is_file());
+                         let fallback_used = fallback_path.is_some();
 
-                         if let Some(app) = &ctx.app {
-                             if let Some(install_path) = &app.install_path {
-                                 let alt_path = Path::new(install_path).join(game_exe.replace('\\', "/"));
-                                 if alt_path.exists() && alt_path.is_file() {
-                                     resolved = true;
-                                     fallback_used = true;
-                                     resolved_path = alt_path;
-                                 }
-                             }
-                         }
-
-                         ctx.executable_exists = resolved;
-                         if !resolved {
+                         ctx.executable_exists = fallback_used;
+                         if !fallback_used {
                              check.status = false;
                              check.details = format!("Game executable not found: {}", game_exe);
 
@@ -95,7 +88,7 @@ impl PipelineStage for PreflightStage {
 
                              final_res = Err(err);
                          } else {
-                             ctx.resolved_executable_path = Some(resolved_path);
+                             ctx.resolved_executable_path = fallback_path;
                          }
                      } else if !game_exe_path.is_file() {
                           check.status = false;

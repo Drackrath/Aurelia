@@ -201,15 +201,15 @@ impl SteamClient {
                     .unwrap_or_default()
             };
 
-            let mut selections = Vec::new();
-            for (depot_id, manifest_id) in &remote_manifests {
-                selections.push(ManifestSelection {
+            let selections: Vec<ManifestSelection> = remote_manifests
+                .iter()
+                .map(|(depot_id, manifest_id)| ManifestSelection {
                     app_id: appid,
                     depot_id: *depot_id as u32,
                     manifest_id: *manifest_id,
                     appinfo_vdf: String::new(),
-                });
-            }
+                })
+                .collect();
 
             if selections.is_empty() {
                 // In verify mode the selections come from the local appmanifest's
@@ -281,13 +281,9 @@ impl SteamClient {
                         .await
                         .ok();
 
-                    let (host_name, port) = if let Some(pos) = host.find(':') {
-                        (
-                            &host[..pos],
-                            host[pos + 1..].parse::<u16>().unwrap_or(80),
-                        )
-                    } else {
-                        (host.as_str(), 80)
+                    let (host_name, port) = match host.split_once(':') {
+                        Some((name, port)) => (name, port.parse::<u16>().unwrap_or(80)),
+                        None => (host.as_str(), 80),
                     };
 
                     let cdn_server = steam_cdn::web_api::content_service::CDNServer {
@@ -433,11 +429,9 @@ impl SteamClient {
                         ..Default::default()
                     })
                     .await;
-            } else {
-                if let Ok(mut state) = shared_state_clone.write() {
-                    state.is_downloading = false;
-                    state.status_text = "Operation failed or paused".to_string();
-                }
+            } else if let Ok(mut state) = shared_state_clone.write() {
+                state.is_downloading = false;
+                state.status_text = "Operation failed or paused".to_string();
             }
         });
 

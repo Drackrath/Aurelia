@@ -128,10 +128,8 @@ impl SteamClient {
         request.set_query_type(query_type);
         request.set_cursor(cursor.to_string());
         request.set_numperpage(numperpage.clamp(1, 100));
-        if let Some(text) = search_text {
-            if !text.is_empty() {
-                request.set_search_text(text.to_string());
-            }
+        if let Some(text) = search_text.filter(|t| !t.is_empty()) {
+            request.set_search_text(text.to_string());
         }
         if !required_tags.is_empty() {
             request.requiredtags = required_tags.to_vec();
@@ -452,8 +450,8 @@ impl SteamClient {
                 let mut ticker = tokio::time::interval(std::time::Duration::from_millis(250));
                 loop {
                     ticker.tick().await;
-                    let snapshot = match progress_state.read() {
-                        Ok(s) => Some((
+                    let snapshot = progress_state.read().ok().map(|s| {
+                        (
                             s.is_downloading,
                             s.downloaded_bytes,
                             s.total_bytes,
@@ -461,9 +459,8 @@ impl SteamClient {
                             s.depot_id,
                             s.depot_downloaded_bytes,
                             s.depot_total_bytes,
-                        )),
-                        Err(_) => None,
-                    };
+                        )
+                    });
                     let Some((downloading, downloaded, total, status, depot_id, depot_dl, depot_total)) =
                         snapshot
                     else {

@@ -17,9 +17,7 @@ impl Runner for NativeRunner {
         let mut env = HashMap::new();
         env.insert("SteamAppId".to_string(), ctx.app.app_id.to_string());
         if let Some(config) = &ctx.user_config {
-            for (k, v) in &config.env_variables {
-                env.insert(k.clone(), v.clone());
-            }
+            env.extend(config.env_variables.iter().map(|(k, v)| (k.clone(), v.clone())));
         }
         Ok(env)
     }
@@ -27,16 +25,13 @@ impl Runner for NativeRunner {
         let install_path = ctx.app.install_path.as_ref()
             .ok_or_else(|| LaunchError::new(LaunchErrorKind::GameData, "Install path missing"))?;
 
-        let mut spec = CommandSpec::default();
         let exe_rel = ctx.launch_info.executable.replace('\\', "/");
-        let executable = PathBuf::from(install_path).join(&exe_rel);
-
-        spec.program = executable;
-        spec.args = ctx.launch_info.arguments.split_whitespace().map(|s| s.to_string()).collect();
-        spec.cwd = Some(PathBuf::from(install_path));
-        spec.env = self.build_env(ctx).await?;
-
-        Ok(spec)
+        Ok(CommandSpec {
+            program: PathBuf::from(install_path).join(&exe_rel),
+            args: ctx.launch_info.arguments.split_whitespace().map(str::to_string).collect(),
+            cwd: Some(PathBuf::from(install_path)),
+            env: self.build_env(ctx).await?,
+        })
     }
     fn launch(&self, spec: &CommandSpec) -> std::result::Result<std::process::Child, LaunchError> {
         let mut cmd = std::process::Command::new(&spec.program);
@@ -55,18 +50,13 @@ impl PipelineStage for ResolveComponentsStage {
         use crate::steam_client::LaunchTarget;
 
         if ctx.runner.is_none() {
-            if let Some(info) = &ctx.launch_info {
-                match info.target {
-                    LaunchTarget::NativeLinux => {
-                        ctx.runner = Some(Box::new(NativeRunner));
-                    }
-                    LaunchTarget::WindowsProton => {
-                        ctx.runner = Some(Box::new(WineTkgRunner));
-                    }
-                }
-            } else {
-                 return Err(LaunchError::new(LaunchErrorKind::Validation, "LaunchInfo missing in ResolveComponentsStage"));
-            }
+            let Some(info) = &ctx.launch_info else {
+                return Err(LaunchError::new(LaunchErrorKind::Validation, "LaunchInfo missing in ResolveComponentsStage"));
+            };
+            ctx.runner = Some(match info.target {
+                LaunchTarget::NativeLinux => Box::new(NativeRunner) as Box<dyn Runner>,
+                LaunchTarget::WindowsProton => Box::new(WineTkgRunner),
+            });
         }
         Ok(())
     }

@@ -440,9 +440,6 @@ fn steam_exe_path() -> Option<PathBuf> {
     fallback.exists().then_some(fallback)
 }
 
-/// Add or remove a DLC appid from every `DisabledDLC` list in an appmanifest's text.
-/// When `disabled` is true and no `DisabledDLC` key exists, one is inserted into the
-/// `UserConfig` and `MountedConfig` blocks.
 /// Collect the DLC appids whose content is recorded as installed in an appmanifest.
 /// Steam tags each DLC depot under `InstalledDepots` with a `"dlcappid" "<id>"` line.
 fn parse_installed_dlc_appids(content: &str) -> HashSet<u32> {
@@ -468,6 +465,9 @@ fn parse_disabled_dlc_appids(content: &str) -> HashSet<u32> {
         .collect()
 }
 
+/// Add or remove a DLC appid from every `DisabledDLC` list in an appmanifest's text.
+/// When `disabled` is true and no `DisabledDLC` key exists, one is inserted into the
+/// `UserConfig` and `MountedConfig` blocks.
 fn apply_dlc_disabled(content: &str, dlc_appid: u32, disabled: bool) -> String {
     static RE: std::sync::LazyLock<regex::Regex> =
         std::sync::LazyLock::new(|| regex::Regex::new(r#""DisabledDLC"(\s*)"([^"]*)""#).unwrap());
@@ -947,24 +947,22 @@ fn parse_launch_info_from_vdf(appid: u32, raw_vdf: &str) -> Result<Vec<LaunchInf
             } else {
                 LaunchTarget::WindowsProton
             }
+        } else if exe.ends_with(".exe") || exe.ends_with(".bat") {
+            LaunchTarget::WindowsProton
+        } else if exe.contains("linux") || exe.ends_with(".sh") {
+            LaunchTarget::NativeLinux
         } else {
-            if exe.ends_with(".exe") || exe.ends_with(".bat") {
-                LaunchTarget::WindowsProton
-            } else if exe.contains("linux") || exe.ends_with(".sh") {
+            #[cfg(target_os = "linux")]
+            {
                 LaunchTarget::NativeLinux
-            } else {
-                #[cfg(target_os = "linux")]
-                {
-                    LaunchTarget::NativeLinux
-                }
-                #[cfg(target_os = "windows")]
-                {
-                    LaunchTarget::WindowsProton
-                }
-                #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-                {
-                    LaunchTarget::WindowsProton
-                }
+            }
+            #[cfg(target_os = "windows")]
+            {
+                LaunchTarget::WindowsProton
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+            {
+                LaunchTarget::WindowsProton
             }
         };
 
@@ -1103,38 +1101,35 @@ fn parse_text_vdf(data: &[u8]) -> Result<HashMap<u64, u64>> {
     let text = String::from_utf8_lossy(data);
     let mut depot_map = HashMap::new();
 
-    match steam_vdf_parser::parse_text(&text) {
-        Ok(vdf) => {
-            let root_obj = vdf.as_obj().unwrap();
-            let depots_val = root_obj.get("depots").or_else(|| {
-                root_obj
-                    .get("appinfo")
-                    .and_then(|v| v.as_obj())
-                    .and_then(|o| o.get("depots"))
-            });
+    if let Ok(vdf) = steam_vdf_parser::parse_text(&text) {
+        let root_obj = vdf.as_obj().unwrap();
+        let depots_val = root_obj.get("depots").or_else(|| {
+            root_obj
+                .get("appinfo")
+                .and_then(|v| v.as_obj())
+                .and_then(|o| o.get("depots"))
+        });
 
-            if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
-                for (key, value) in depots.iter() {
-                    if let Ok(depot_id) = key.parse::<u64>() {
-                        // Language check for library-parsed VDF
-                        let lang = value
-                            .get_obj(&["config"])
-                            .and_then(|c| c.get("language"))
-                            .and_then(|l| l.as_str());
-                        if let Some(lang) = lang {
-                            if lang != "english" && !lang.is_empty() {
-                                continue;
-                            }
+        if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
+            for (key, value) in depots.iter() {
+                if let Ok(depot_id) = key.parse::<u64>() {
+                    // Language check for library-parsed VDF
+                    let lang = value
+                        .get_obj(&["config"])
+                        .and_then(|c| c.get("language"))
+                        .and_then(|l| l.as_str());
+                    if let Some(lang) = lang {
+                        if lang != "english" && !lang.is_empty() {
+                            continue;
                         }
+                    }
 
-                        if let Some(m_id) = extract_manifest_id_robust(value, "public") {
-                            depot_map.insert(depot_id, m_id);
-                        }
+                    if let Some(m_id) = extract_manifest_id_robust(value, "public") {
+                        depot_map.insert(depot_id, m_id);
                     }
                 }
             }
         }
-        Err(_) => {}
     }
 
     if depot_map.is_empty() {
@@ -1378,9 +1373,9 @@ fn parse_installed_depots_from_acf(raw: &str) -> HashMap<u64, u64> {
             if let Ok(depot_id) = u64::from_str(&quoted[0]) {
                 current_depot = Some(depot_id);
             }
-        } else if quoted.len() >= 2 && quoted[0] == "manifest" && current_depot.is_some() {
-            if let Ok(manifest) = u64::from_str(&quoted[1]) {
-                manifests.insert(current_depot.unwrap_or_default(), manifest);
+        } else if quoted.len() >= 2 && quoted[0] == "manifest" {
+            if let (Some(depot), Ok(manifest)) = (current_depot, u64::from_str(&quoted[1])) {
+                manifests.insert(depot, manifest);
             }
         }
     }

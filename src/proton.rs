@@ -104,11 +104,9 @@ pub fn list_installed(steam_library_path: &Path) -> Vec<InstalledProton> {
     if let Ok(entries) = std::fs::read_dir(&common) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name.to_ascii_lowercase().contains("proton") {
-                    out.push(InstalledProton { name, location: "steam", path });
-                }
+            let name = entry.file_name().to_string_lossy().to_string();
+            if path.is_dir() && name.to_ascii_lowercase().contains("proton") {
+                out.push(InstalledProton { name, location: "steam", path });
             }
         }
     }
@@ -160,9 +158,10 @@ pub async fn list_available() -> Result<Vec<ProtonPackage>> {
 /// Resolve a single package by name (case-insensitive). Checks the Valve set first,
 /// then each GE repo's release tags.
 pub async fn resolve_package(name: &str) -> Result<ProtonPackage> {
+    let needle = normalize_name(name);
     if let Some((vname, app_id)) = VALVE_PROTONS
         .iter()
-        .find(|(n, _)| normalize_name(n) == normalize_name(name))
+        .find(|(n, _)| normalize_name(n) == needle)
     {
         return Ok(ProtonPackage {
             name: vname.to_string(),
@@ -206,14 +205,12 @@ struct GhAsset {
 /// optional `GITHUB_TOKEN` to lift the unauthenticated rate limit.
 fn github_client() -> Result<reqwest::Client> {
     let mut builder = reqwest::Client::builder().user_agent("aurelia-proton-manager");
-    if let Ok(token) = std::env::var("GITHUB_TOKEN") {
-        if !token.is_empty() {
-            let mut headers = reqwest::header::HeaderMap::new();
-            if let Ok(value) = format!("Bearer {token}").parse() {
-                headers.insert(reqwest::header::AUTHORIZATION, value);
-            }
-            builder = builder.default_headers(headers);
+    if let Some(token) = std::env::var("GITHUB_TOKEN").ok().filter(|t| !t.is_empty()) {
+        let mut headers = reqwest::header::HeaderMap::new();
+        if let Ok(value) = format!("Bearer {token}").parse() {
+            headers.insert(reqwest::header::AUTHORIZATION, value);
         }
+        builder = builder.default_headers(headers);
     }
     builder.build().context("failed to build the GitHub HTTP client")
 }

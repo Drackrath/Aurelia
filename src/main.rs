@@ -3360,12 +3360,11 @@ async fn cmd_proton_uninstall(version: String, json: bool) -> Result<()> {
 
 /// `proton default`: set the global default Proton/Wine version.
 async fn cmd_proton_default(version: String, json: bool) -> Result<()> {
-    let cfg0 = load_launcher_config().await.unwrap_or_default();
+    let mut cfg = load_launcher_config().await.unwrap_or_default();
     let installed =
-        aurelia::proton::list_installed(std::path::Path::new(&cfg0.steam_library_path));
+        aurelia::proton::list_installed(std::path::Path::new(&cfg.steam_library_path));
     let present = installed.iter().any(|i| i.name.eq_ignore_ascii_case(&version));
 
-    let mut cfg = cfg0;
     cfg.proton_version = version.clone();
     cfg.save().await.context("failed saving the default Proton version")?;
 

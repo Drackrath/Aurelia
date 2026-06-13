@@ -26,15 +26,16 @@ impl SteamClient {
         let steamapps = PathBuf::from(cfg.steam_library_path).join("steamapps");
         let appmanifest = steamapps.join(format!("appmanifest_{appid}.acf"));
 
-        let install_dir = if appmanifest.exists() {
+        let installdir = if appmanifest.exists() {
             let raw = std::fs::read_to_string(&appmanifest)
                 .with_context(|| format!("failed reading {}", appmanifest.display()))?;
             parse_installdir_from_acf(&raw)
-                .map(|dir| steamapps.join("common").join(dir))
-                .unwrap_or_else(|| steamapps.join("common").join(appid.to_string()))
         } else {
-            steamapps.join("common").join(appid.to_string())
+            None
         };
+        let install_dir = steamapps
+            .join("common")
+            .join(installdir.unwrap_or_else(|| appid.to_string()));
 
         // Nothing to remove for an app that was never installed here — report it
         // rather than silently claiming success.
@@ -248,10 +249,7 @@ impl SteamClient {
             return (false, None);
         }
         match self.install_root_for_app(appid).await {
-            Ok(path) => {
-                let exists = path.exists();
-                (exists, Some(path.to_string_lossy().to_string()))
-            }
+            Ok(path) => (path.exists(), Some(path.to_string_lossy().into_owned())),
             Err(_) => (false, None),
         }
     }

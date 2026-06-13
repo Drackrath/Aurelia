@@ -12,6 +12,35 @@ struct MockRunner {
     exit_immediately: bool,
 }
 
+/// Builds a pipeline + context wired with a `MockRunner`, returning both along
+/// with the `tempdir` guard (kept alive so the session dir is not removed).
+fn setup(exit_immediately: bool) -> (LaunchPipeline, PipelineContext, tempfile::TempDir) {
+    let mut pipeline = LaunchPipeline::new();
+    pipeline.add_stage(Box::new(crate::launch::stages::spawn_process::SpawnProcessStage));
+
+    let tmp = tempdir().unwrap();
+    let session = LaunchSession::new(tmp.path());
+    let logger = EventLogger::new(&session).unwrap();
+
+    let cmd = if exit_immediately { "exit 0" } else { "sleep 10" };
+    let mut ctx = PipelineContext::new(123);
+    ctx.logger = Some(logger);
+    ctx.session = Some(session);
+    ctx.runner = Some(Box::new(MockRunner { exit_immediately }));
+    ctx.command_spec = Some(CommandSpec {
+        program: PathBuf::from("sh"),
+        args: vec!["-c".to_string(), cmd.to_string()],
+        ..Default::default()
+    });
+
+    (pipeline, ctx, tmp)
+}
+
+fn summary_content(ctx: &PipelineContext) -> String {
+    let summary_path = ctx.session.as_ref().unwrap().summary_path();
+    std::fs::read_to_string(summary_path).unwrap()
+}
+
 #[async_trait]
 impl Runner for MockRunner {
     fn name(&self) -> &str { "MockRunner" }
@@ -37,22 +66,7 @@ impl Runner for MockRunner {
 
 #[tokio::test]
 async fn test_launch_verification_early_exit() {
-    let mut pipeline = LaunchPipeline::new();
-    pipeline.add_stage(Box::new(crate::launch::stages::spawn_process::SpawnProcessStage));
-
-    let tmp = tempdir().unwrap();
-    let session = LaunchSession::new(tmp.path());
-    let logger = EventLogger::new(&session).unwrap();
-
-    let mut ctx = PipelineContext::new(123);
-    ctx.logger = Some(logger);
-    ctx.session = Some(session);
-    ctx.runner = Some(Box::new(MockRunner { exit_immediately: true }));
-    ctx.command_spec = Some(CommandSpec {
-        program: PathBuf::from("sh"),
-        args: vec!["-c".to_string(), "exit 0".to_string()],
-        ..Default::default()
-    });
+    let (pipeline, mut ctx, _tmp) = setup(true);
 
     let _ = pipeline.run(&mut ctx).await;
 
@@ -60,42 +74,23 @@ async fn test_launch_verification_early_exit() {
     assert!(ctx.verification.process_lifetime_ms.is_some());
     assert_eq!(ctx.verification.exit_code, Some(0));
 
-    // Check summary for failure
-    let summary_path = ctx.session.as_ref().unwrap().summary_path();
-    let summary_content = std::fs::read_to_string(summary_path).unwrap();
-    assert!(summary_content.contains("\"result\": \"Failure\""));
-    assert!(summary_content.contains("\"status\": \"failed_after_spawn\""));
+    let summary = summary_content(&ctx);
+    assert!(summary.contains("\"result\": \"Failure\""));
+    assert!(summary.contains("\"status\": \"failed_after_spawn\""));
 }
 
 #[tokio::test]
 async fn test_launch_verification_success() {
-    let mut pipeline = LaunchPipeline::new();
-    pipeline.add_stage(Box::new(crate::launch::stages::spawn_process::SpawnProcessStage));
-
-    let tmp = tempdir().unwrap();
-    let session = LaunchSession::new(tmp.path());
-    let logger = EventLogger::new(&session).unwrap();
-
-    let mut ctx = PipelineContext::new(123);
-    ctx.logger = Some(logger);
-    ctx.session = Some(session);
-    ctx.runner = Some(Box::new(MockRunner { exit_immediately: false }));
-    ctx.command_spec = Some(CommandSpec {
-        program: PathBuf::from("sh"),
-        args: vec!["-c".to_string(), "sleep 10".to_string()],
-        ..Default::default()
-    });
+    let (pipeline, mut ctx, _tmp) = setup(false);
 
     let _ = pipeline.run(&mut ctx).await;
 
     assert_eq!(ctx.verification.status, "verified");
     assert!(ctx.verification.process_lifetime_ms.is_some());
 
-    // Check summary for success
-    let summary_path = ctx.session.as_ref().unwrap().summary_path();
-    let summary_content = std::fs::read_to_string(summary_path).unwrap();
-    assert!(summary_content.contains("\"result\": \"Success\""));
-    assert!(summary_content.contains("\"status\": \"verified\""));
+    let summary = summary_content(&ctx);
+    assert!(summary.contains("\"result\": \"Success\""));
+    assert!(summary.contains("\"status\": \"verified\""));
 
     // Cleanup the sleep process
     if let Some(mut child) = ctx.child.take() {

@@ -10,78 +10,74 @@ impl LaunchValidator for LaunchInvariantValidator {
         let mut warnings = Vec::new();
 
         // Invariant A: If effective GPU is unset/default, there must be no forced GPU-selection env vars.
-        if ctx.graphics_stack.effective_gpu.is_none() {
-            if let Some(spec) = &ctx.command_spec {
-                for key in &[
-                    "DRI_PRIME",
-                    "__NV_PRIME_RENDER_OFFLOAD",
-                    "__NV_PRIME_RENDER_OFFLOAD_PROVIDER",
-                    "__GLX_VENDOR_LIBRARY_NAME",
-                    "__VK_LAYER_NV_optimus",
-                ] {
-                    if spec.env.contains_key(*key) {
-                        warnings.push((
-                            "INVARIANT_A_VIOLATION",
-                            format!("Effective GPU is unset but found GPU-forcing env var: {}", key),
-                        ));
-                    }
+        if ctx.graphics_stack.effective_gpu.is_none()
+            && let Some(spec) = &ctx.command_spec
+        {
+            for key in [
+                "DRI_PRIME",
+                "__NV_PRIME_RENDER_OFFLOAD",
+                "__NV_PRIME_RENDER_OFFLOAD_PROVIDER",
+                "__GLX_VENDOR_LIBRARY_NAME",
+                "__VK_LAYER_NV_optimus",
+            ] {
+                if spec.env.contains_key(key) {
+                    warnings.push((
+                        "INVARIANT_A_VIOLATION",
+                        format!("Effective GPU is unset but found GPU-forcing env var: {}", key),
+                    ));
                 }
             }
         }
 
         // Invariant B: If effective backend is not DXVK, there must be no DXVK-forcing overrides or DXVK-only DLL path injection.
-        if ctx.graphics_stack.effective_backend != "DXVK" {
-            if let Some(spec) = &ctx.command_spec {
-                if let Some(overrides) = spec.env.get("WINEDLLOVERRIDES") {
-                    let dxvk_dlls = ["d3d8", "d3d9", "d3d10core", "d3d11", "dxgi"];
-                    for part in overrides.split(';') {
-                        if let Some((dll, mode)) = part.split_once('=') {
-                            let dll_trimmed = dll.trim().to_lowercase();
-                            if dxvk_dlls.contains(&dll_trimmed.as_str()) && mode.contains('n') {
-                                warnings.push((
-                                    "INVARIANT_B_VIOLATION",
-                                    format!("Effective backend is not DXVK but found native override for DXVK DLL: {}", dll),
-                                ));
-                            }
-                        }
-                    }
-                }
-                if let Some(dll_path) = spec.env.get("WINEDLLPATH") {
-                    if dll_path.contains("dxvk") {
+        if ctx.graphics_stack.effective_backend != "DXVK"
+            && let Some(spec) = &ctx.command_spec
+        {
+            if let Some(overrides) = spec.env.get("WINEDLLOVERRIDES") {
+                let dxvk_dlls = ["d3d8", "d3d9", "d3d10core", "d3d11", "dxgi"];
+                for part in overrides.split(';') {
+                    if let Some((dll, mode)) = part.split_once('=')
+                        && dxvk_dlls.contains(&dll.trim().to_lowercase().as_str())
+                        && mode.contains('n')
+                    {
                         warnings.push((
                             "INVARIANT_B_VIOLATION",
-                            "Effective backend is not DXVK but WINEDLLPATH contains 'dxvk'".into(),
+                            format!("Effective backend is not DXVK but found native override for DXVK DLL: {}", dll),
                         ));
                     }
                 }
             }
+            if spec.env.get("WINEDLLPATH").is_some_and(|p| p.contains("dxvk")) {
+                warnings.push((
+                    "INVARIANT_B_VIOLATION",
+                    "Effective backend is not DXVK but WINEDLLPATH contains 'dxvk'".into(),
+                ));
+            }
         }
 
         // Invariant C: If effective D3D12 provider is unset/default/not-selected, there must be no forced D3D12 provider injection.
-        if ctx.graphics_stack.effective_d3d12_provider == "None" {
-            if let Some(spec) = &ctx.command_spec {
-                if let Some(overrides) = spec.env.get("WINEDLLOVERRIDES") {
-                    let d3d12_dlls = ["d3d12", "d3d12core"];
-                    for part in overrides.split(';') {
-                        if let Some((dll, mode)) = part.split_once('=') {
-                            let dll_trimmed = dll.trim().to_lowercase();
-                            if d3d12_dlls.contains(&dll_trimmed.as_str()) && mode.contains('n') {
-                                warnings.push((
-                                    "INVARIANT_C_VIOLATION",
-                                    format!("Effective D3D12 provider is None but found native override for DLL: {}", dll),
-                                ));
-                            }
-                        }
-                    }
-                }
-                if let Some(dll_path) = spec.env.get("WINEDLLPATH") {
-                    if dll_path.contains("vkd3d") {
+        if ctx.graphics_stack.effective_d3d12_provider == "None"
+            && let Some(spec) = &ctx.command_spec
+        {
+            if let Some(overrides) = spec.env.get("WINEDLLOVERRIDES") {
+                let d3d12_dlls = ["d3d12", "d3d12core"];
+                for part in overrides.split(';') {
+                    if let Some((dll, mode)) = part.split_once('=')
+                        && d3d12_dlls.contains(&dll.trim().to_lowercase().as_str())
+                        && mode.contains('n')
+                    {
                         warnings.push((
                             "INVARIANT_C_VIOLATION",
-                            "Effective D3D12 provider is None but WINEDLLPATH contains 'vkd3d'".into(),
+                            format!("Effective D3D12 provider is None but found native override for DLL: {}", dll),
                         ));
                     }
                 }
+            }
+            if spec.env.get("WINEDLLPATH").is_some_and(|p| p.contains("vkd3d")) {
+                warnings.push((
+                    "INVARIANT_C_VIOLATION",
+                    "Effective D3D12 provider is None but WINEDLLPATH contains 'vkd3d'".into(),
+                ));
             }
         }
 
@@ -89,25 +85,25 @@ impl LaunchValidator for LaunchInvariantValidator {
         // If effective is "vkd3d-proton", we expect to see it in the path.
         // If effective is "vkd3d", we expect to see vkd3d but NOT vkd3d-proton in the path.
         if ctx.graphics_stack.effective_d3d12_provider != "None" {
-             let provider = &ctx.graphics_stack.effective_d3d12_provider;
-             for res in &ctx.dll_resolutions {
-                 if res.name == "d3d12" || res.name == "d3d12core" {
-                     if let Some(path) = &res.chosen_path {
-                         let path_str = path.to_string_lossy().to_lowercase();
-                         if provider == "vkd3d-proton" && !path_str.contains("vkd3d-proton") && path_str.contains("vkd3d") {
-                              warnings.push((
-                                 "INVARIANT_C_MISMATCH",
-                                 format!("Effective provider is vkd3d-proton but resolved path points to plain vkd3d: {}", path.display())
-                             ));
-                         } else if provider == "vkd3d" && path_str.contains("vkd3d-proton") {
-                              warnings.push((
-                                 "INVARIANT_C_MISMATCH",
-                                 format!("Effective provider is vkd3d but resolved path points to vkd3d-proton: {}", path.display())
-                             ));
-                         }
-                     }
-                 }
-             }
+            let provider = &ctx.graphics_stack.effective_d3d12_provider;
+            for res in &ctx.dll_resolutions {
+                if (res.name == "d3d12" || res.name == "d3d12core")
+                    && let Some(path) = &res.chosen_path
+                {
+                    let path_str = path.to_string_lossy().to_lowercase();
+                    if provider == "vkd3d-proton" && !path_str.contains("vkd3d-proton") && path_str.contains("vkd3d") {
+                        warnings.push((
+                            "INVARIANT_C_MISMATCH",
+                            format!("Effective provider is vkd3d-proton but resolved path points to plain vkd3d: {}", path.display())
+                        ));
+                    } else if provider == "vkd3d" && path_str.contains("vkd3d-proton") {
+                        warnings.push((
+                            "INVARIANT_C_MISMATCH",
+                            format!("Effective provider is vkd3d but resolved path points to vkd3d-proton: {}", path.display())
+                        ));
+                    }
+                }
+            }
         }
 
         // Invariant D: explicit user setting must not be silently overwritten
@@ -134,26 +130,24 @@ impl LaunchValidator for LaunchInvariantValidator {
             }
         }
 
-        if !ctx.graphics_stack.effective_d3d12_provider.is_empty() && !ctx.graphics_stack.requested_d3d12_provider.is_empty() && ctx.graphics_stack.requested_d3d12_provider != "Auto" {
-            if ctx.graphics_stack.requested_d3d12_provider != ctx.graphics_stack.effective_d3d12_provider {
-                 let reason = ctx.graphics_stack.fallback_reasons.get("d3d12_provider").cloned().unwrap_or_else(|| "unknown".into());
-                 warnings.push((
-                    "INVARIANT_D_D3D12_MISMATCH",
-                    format!("Requested D3D12 provider '{}' differs from effective '{}'. Reason: {}",
-                        ctx.graphics_stack.requested_d3d12_provider, ctx.graphics_stack.effective_d3d12_provider, reason)
-                ));
-            }
+        if !ctx.graphics_stack.effective_d3d12_provider.is_empty()
+            && !ctx.graphics_stack.requested_d3d12_provider.is_empty()
+            && ctx.graphics_stack.requested_d3d12_provider != "Auto"
+            && ctx.graphics_stack.requested_d3d12_provider != ctx.graphics_stack.effective_d3d12_provider
+        {
+            let reason = ctx.graphics_stack.fallback_reasons.get("d3d12_provider").cloned().unwrap_or_else(|| "unknown".into());
+            warnings.push((
+                "INVARIANT_D_D3D12_MISMATCH",
+                format!("Requested D3D12 provider '{}' differs from effective '{}'. Reason: {}",
+                    ctx.graphics_stack.requested_d3d12_provider, ctx.graphics_stack.effective_d3d12_provider, reason)
+            ));
         }
 
-        if let (Some(requested_gpu), Some(effective_gpu_val)) = (&ctx.graphics_stack.requested_gpu, &ctx.graphics_stack.effective_gpu) {
-            if effective_gpu_val.is_empty() { return; }
-            let mut mismatch = true;
-            if let Some(effective_gpu) = &ctx.graphics_stack.effective_gpu {
-                 // Check for partial match since effective names are synthesized
-                 if effective_gpu.contains(requested_gpu) || requested_gpu.contains("NVIDIA") && effective_gpu.contains("NVIDIA") {
-                     mismatch = false;
-                 }
-            }
+        if let (Some(requested_gpu), Some(effective_gpu)) = (&ctx.graphics_stack.requested_gpu, &ctx.graphics_stack.effective_gpu) {
+            if effective_gpu.is_empty() { return; }
+            // Check for partial match since effective names are synthesized
+            let mismatch = !(effective_gpu.contains(requested_gpu)
+                || requested_gpu.contains("NVIDIA") && effective_gpu.contains("NVIDIA"));
 
             if mismatch {
                 let reason = ctx.graphics_stack.fallback_reasons.get("gpu").cloned().unwrap_or_else(|| "unknown".into());
@@ -210,34 +204,35 @@ impl LaunchValidator for LaunchInvariantValidator {
         // Check for DLL Load Failures in strict mode
         if !ctx.graphics_stack.requested_backend.is_empty() && ctx.graphics_stack.requested_backend != "Auto" {
             for evidence in &ctx.graphics_stack.graphics_stack_evidence {
-                if evidence.contains("DLL Load Failure") || evidence.contains("DLL Dependency Missing") {
-                    let code = if ctx.graphics_stack.requested_backend == "DXVK" { "STRICT_DXVK_LOAD_FAILURE" } else { "STRICT_POLICY_LOAD_FAILURE" };
-
-                    // Try to extract DLL name for more precise error reporting
-                    let dll_name = if evidence.contains("L\"") {
-                         evidence.split("L\"").nth(1).and_then(|s| s.split('\"').next()).unwrap_or("unknown")
-                    } else if evidence.contains("Library ") {
-                         evidence.split("Library ").nth(1).and_then(|s| s.split(' ').next()).unwrap_or("unknown")
-                    } else {
-                         "unknown"
-                    };
-
-                    // Noise filter for common non-fatal middleware/bootstrap DLLs
-                    if dll_name.contains("winemac.drv") || dll_name.contains("steam_api") {
-                        continue;
-                    }
-
-                    let stem = dll_name.trim_end_matches(".dll");
-                    let resolution = ctx.dll_resolutions.iter().find(|r| r.name == stem || r.name == dll_name);
-                    let provider = resolution.map(|r| format!("{:?}", r.chosen_provider)).unwrap_or_else(|| "Unknown".into());
-                    let path = resolution.and_then(|r| r.chosen_path.as_ref()).map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| "Unknown".into());
-
-                    warnings.push((
-                        code,
-                        format!("Strict policy violation: a required native DLL failed to load: {}. [DLL: {}, Provider: {}, Path: {}, Arch: {:?}]",
-                            evidence, dll_name, provider, path, ctx.graphics_stack.target_architecture),
-                    ));
+                if !(evidence.contains("DLL Load Failure") || evidence.contains("DLL Dependency Missing")) {
+                    continue;
                 }
+                let code = if ctx.graphics_stack.requested_backend == "DXVK" { "STRICT_DXVK_LOAD_FAILURE" } else { "STRICT_POLICY_LOAD_FAILURE" };
+
+                // Try to extract DLL name for more precise error reporting
+                let dll_name = if evidence.contains("L\"") {
+                    evidence.split("L\"").nth(1).and_then(|s| s.split('\"').next()).unwrap_or("unknown")
+                } else if evidence.contains("Library ") {
+                    evidence.split("Library ").nth(1).and_then(|s| s.split(' ').next()).unwrap_or("unknown")
+                } else {
+                    "unknown"
+                };
+
+                // Noise filter for common non-fatal middleware/bootstrap DLLs
+                if dll_name.contains("winemac.drv") || dll_name.contains("steam_api") {
+                    continue;
+                }
+
+                let stem = dll_name.trim_end_matches(".dll");
+                let resolution = ctx.dll_resolutions.iter().find(|r| r.name == stem || r.name == dll_name);
+                let provider = resolution.map(|r| format!("{:?}", r.chosen_provider)).unwrap_or_else(|| "Unknown".into());
+                let path = resolution.and_then(|r| r.chosen_path.as_ref()).map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| "Unknown".into());
+
+                warnings.push((
+                    code,
+                    format!("Strict policy violation: a required native DLL failed to load: {}. [DLL: {}, Provider: {}, Path: {}, Arch: {:?}]",
+                        evidence, dll_name, provider, path, ctx.graphics_stack.target_architecture),
+                ));
             }
         }
 
@@ -249,7 +244,6 @@ impl LaunchValidator for LaunchInvariantValidator {
                 format!("VKD3D-Proton was requested/effective but no runtime evidence was found in logs{}.", suffix)
             ));
         }
-
 
         for (code, msg) in warnings {
             ctx.add_warning(code, msg);

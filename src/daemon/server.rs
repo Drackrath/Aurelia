@@ -48,14 +48,13 @@ async fn watch_for_upgrade(startup: Option<(SystemTime, u64)>) {
     let Some(startup) = startup else { return };
     loop {
         tokio::time::sleep(Duration::from_secs(5)).await;
-        if let Some(current) = exe_signature() {
-            if current != startup && INFLIGHT.load(Ordering::SeqCst) == 0 {
-                tracing::info!(
-                    "daemon: binary changed on disk; exiting so the next command starts a \
-                     fresh daemon"
-                );
-                std::process::exit(0);
-            }
+        let changed = exe_signature().is_some_and(|current| current != startup);
+        if changed && INFLIGHT.load(Ordering::SeqCst) == 0 {
+            tracing::info!(
+                "daemon: binary changed on disk; exiting so the next command starts a \
+                 fresh daemon"
+            );
+            std::process::exit(0);
         }
     }
 }
@@ -77,12 +76,12 @@ pub async fn run_server() -> Result<()> {
 
     let mut listener = match Listener::bind().await {
         Ok(listener) => listener,
+        // Lost a bind race with a concurrently-started daemon — fine if one is up.
+        Err(_) if transport::connect().await.is_ok() => {
+            tracing::info!("another daemon won the bind race; exiting");
+            return Ok(());
+        }
         Err(e) => {
-            // Lost a bind race with a concurrently-started daemon — fine if one is up.
-            if transport::connect().await.is_ok() {
-                tracing::info!("another daemon won the bind race; exiting");
-                return Ok(());
-            }
             return Err(e)
                 .with_context(|| format!("failed to bind daemon endpoint {}", transport::endpoint()));
         }

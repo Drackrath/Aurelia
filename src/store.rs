@@ -171,19 +171,14 @@ pub async fn fetch_app_details(client: &reqwest::Client, app_id: u32) -> Result<
     .into_iter()
     .find(|v| v.get("minimum").is_some() || v.get("recommended").is_some());
 
-    let (requirements_minimum, requirements_recommended) = match requirements {
-        Some(req) => (
-            req.get("minimum")
-                .and_then(|v| v.as_str())
-                .map(requirements_lines)
-                .unwrap_or_default(),
-            req.get("recommended")
-                .and_then(|v| v.as_str())
-                .map(requirements_lines)
-                .unwrap_or_default(),
-        ),
-        None => (Vec::new(), Vec::new()),
+    let lines = |key| {
+        requirements
+            .and_then(|req| req.get(key))
+            .and_then(|v| v.as_str())
+            .map(requirements_lines)
+            .unwrap_or_default()
     };
+    let (requirements_minimum, requirements_recommended) = (lines("minimum"), lines("recommended"));
 
     Ok(Some(AppDetails {
         app_id,
@@ -198,7 +193,7 @@ pub async fn fetch_app_details(client: &reqwest::Client, app_id: u32) -> Result<
             .as_ref()
             .map(|r| r.date.clone())
             .filter(|d| !d.is_empty()),
-        coming_soon: data.release_date.as_ref().map(|r| r.coming_soon).unwrap_or(false),
+        coming_soon: data.release_date.as_ref().is_some_and(|r| r.coming_soon),
         price: if data.is_free {
             Some("Free".to_string())
         } else {
@@ -231,10 +226,10 @@ fn requirements_lines(html: &str) -> Vec<String> {
 
     strip_html(&normalized)
         .lines()
-        .map(|line| line.trim())
+        .map(str::trim)
         .filter(|line| !line.is_empty())
         .filter(|line| !line.eq_ignore_ascii_case("Minimum:") && !line.eq_ignore_ascii_case("Recommended:"))
-        .map(|line| line.to_string())
+        .map(String::from)
         .collect()
 }
 

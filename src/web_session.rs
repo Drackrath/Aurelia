@@ -49,7 +49,8 @@ impl WebSession {
         let sessionid = random_sessionid();
         let mut cookie = format!("steamLoginSecure={login_secure}; sessionid={sessionid}");
         if let Some(cc) = country.filter(|c| !c.is_empty()) {
-            cookie.push_str(&format!("; steamCountry={cc}"));
+            cookie.push_str("; steamCountry=");
+            cookie.push_str(cc);
         }
 
         Ok(Self {
@@ -106,8 +107,7 @@ async fn read_checked(resp: reqwest::Response) -> Result<String> {
             .headers()
             .get(reqwest::header::LOCATION)
             .and_then(|v| v.to_str().ok())
-            .unwrap_or("(unknown)")
-            .to_string();
+            .unwrap_or("(unknown)");
         // Steam redirects authenticated-but-ineligible accounts to an eligibility
         // check; an actually-rejected session goes to the login page. Distinguish them.
         if location.contains("eligibilitycheck") {
