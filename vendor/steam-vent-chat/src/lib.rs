@@ -17,7 +17,7 @@ impl ChatClient {
     }
 
     /// Listen for incoming events
-    pub fn listen(&self) -> impl Stream<Item = Result<ChatEvent, NetworkError>> + 'static {
+    pub fn listen(&self) -> impl Stream<Item = Result<ChatEvent, NetworkError>> + '_ {
         self.connection
             .on_notification::<CFriendMessages_IncomingMessage_Notification>()
             .filter_map(|notification| {

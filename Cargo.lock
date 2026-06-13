@@ -151,7 +151,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "aurelia"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "aes",
  "anyhow",
@@ -177,11 +177,14 @@ dependencies = [
  "steam-cdn",
  "steam-vdf-parser",
  "steam-vent",
+ "steam-vent-chat",
  "steam-vent-proto",
+ "steamid-ng",
  "sysinfo",
  "tar",
  "tempfile",
  "tokio",
+ "tokio-stream",
  "tracing",
  "tracing-subscriber",
  "walkdir",
@@ -2838,6 +2841,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "steam-vent-chat"
+version = "0.5.0"
+dependencies = [
+ "steam-vent",
+ "steam-vent-proto",
+ "steamid-ng",
+ "tokio-stream",
+]
+
+[[package]]
 name = "steam-vent-crypto"
 version = "0.2.1"
 source = "git+https://codeberg.org/steam-vent/steam-vent.git?tag=v0.5.0#1325a4a0235a22c3604ea943b4362148afc13276"
@@ -2886,6 +2899,9 @@ name = "steamid-ng"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3ed9aa559d0d2d286dfe34f728d00232281da08f2c6a2eaf09f67f4899cfdb3"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "strsim"

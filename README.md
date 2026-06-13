@@ -243,6 +243,7 @@ vendored, modified `steam-cdn` and the `zip` crate.
 
 - [steam-vent](https://codeberg.org/steam-vent/steam-vent) — Steam protocol implementation
 - [SteamFlow](https://github.com/weter11/SteamFlow) — earlier project work that Aurelia is derived from; thank you!
+- [steam-vent-chat](https://codeberg.org/steam-vent/chat) — Steam Chat protocol implementation 
 
 ---
 

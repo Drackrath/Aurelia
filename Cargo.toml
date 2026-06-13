@@ -24,6 +24,7 @@ steam-vent-proto = "=0.5.2" # proto is no longer re-exported as steam_vent::prot
 steam-vent-chat = { path = "vendor/steam-vent-chat" } # Vendored fork (ported to steam-vent 0.5) for friend chat; see vendor/steam-vent-chat/Cargo.toml
 steamid-ng = "3" # Construct SteamIDs (from u64 / string) to pass to steam-vent-chat; matches steam-vent's steamid-ng
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "time", "net", "io-util", "sync", "io-std", "process"] }
+tokio-stream = "0.1" # Consume steam-vent's notification broadcast streams (friend chat events)
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 walkdir = "2"

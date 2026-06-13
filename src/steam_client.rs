@@ -331,6 +331,7 @@ pub struct SteamClient {
 
 // SteamClient methods are implemented across these submodules.
 mod client;
+mod chat;
 mod install;
 mod manage;
 mod content;
