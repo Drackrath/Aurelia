@@ -54,9 +54,15 @@ of a specific command. `--version` prints the build version.
   - [`workshop rate`](#workshop-rate)
   - [`workshop comments`](#workshop-comments)
   - [`workshop comment`](#workshop-comment)
+- [Friends & chat](#friends--chat)
+  - [`friends`](#friends)
+  - [`chat send`](#chat-send)
+  - [`chat history`](#chat-history)
+  - [`chat open`](#chat-open)
 - [Configuration](#configuration)
   - [`config show`](#config-show)
   - [`config protons`](#config-protons)
+  - [`config presence`](#config-presence)
   - [`config game`](#config-game)
 - [Proton & Wine runtimes](#proton--wine-runtimes)
   - [`proton list`](#proton-list)
@@ -1082,6 +1088,119 @@ aurelia workshop comment 1234567890 "Works perfectly" --json
 
 ---
 
+## Friends & chat
+
+Manage your Steam friends and exchange direct (friend-to-friend) messages. These commands
+require an active session.
+
+To receive friend data and incoming messages, the session must announce a Steam
+**presence** — Steam treats a refresh-token logon as *offline* and withholds friend persona
+state and chat until a presence is declared. The [`daemon`](#daemon) does this automatically
+on connect using the configured [`config presence`](#config-presence); a standalone session
+announces it on demand. Presence **defaults to offline**, which is an *invisible* presence:
+you appear offline to friends but still sync your friends list and receive messages. Change
+it with [`config presence`](#config-presence).
+
+A `<STEAMID>` below is a friend's **SteamID64** — the 17-digit id shown by [`friends`](#friends).
+
+### `friends`
+
+List your Steam friends with display name, online status, and current game.
+
+```text
+aurelia friends [--json]
+```
+
+The text view is a `STATUS / STEAMID / NAME / GAME` table, where `STATUS` is the persona
+state (`online`, `offline`, `busy`, `away`, `snooze`, `looking to trade`, `looking to
+play`). The `--json` output is an array of `{ "steam_id", "relationship", "persona_name",
+"persona_state", "game_app_id", "game_name" }` (only accepted friends — `relationship` 3 —
+are listed; `persona_state` is the raw EPersonaState integer).
+
+Through the [`daemon`](#daemon) the roster is served from a background watcher that keeps it
+live as Steam pushes friend/persona updates, so a call **right after the daemon starts** may
+be briefly empty until the initial list arrives — run it again a moment later. Standalone it
+does a short best-effort collection over a fresh connection.
+
+```bash
+aurelia friends
+aurelia friends --json
+```
+
+### `chat send`
+
+Send a direct message to a friend.
+
+```text
+aurelia chat send <STEAMID> <MESSAGE>...
+```
+
+All words after the SteamID form the message (quote it to be safe). The `--json` output is
+`{ "steamid", "sent", "server_timestamp", "modified_message" }` (`modified_message` is set
+only when Steam rewrites the text, e.g. applying bbcode).
+
+```bash
+aurelia chat send 76561198042323314 "on my way"
+aurelia chat send 76561198042323314 "ggwp" --json
+```
+
+### `chat history`
+
+Show recent messages exchanged with a friend, most recent first.
+
+```text
+aurelia chat history <STEAMID> [--count <N>] [--json]
+```
+
+| Option | Description |
+| --- | --- |
+| `--count <N>` | How many recent messages to fetch (default 20). |
+
+The text view prints `[<timestamp>]  me/them: <text>`. The `--json` output is an array of
+`{ "sender", "from_self", "message", "timestamp" }` (`sender` a SteamID64, `timestamp` a
+Unix time).
+
+```bash
+aurelia chat history 76561198042323314
+aurelia chat history 76561198042323314 --count 50 --json
+```
+
+### `chat open`
+
+Open an **interactive live chat** with a friend: incoming messages stream to stdout while
+each line you type on stdin is sent. The session ends on stdin EOF — **Ctrl-D** (or
+**Ctrl-Z** then Enter on Windows) — or if the connection closes.
+
+```text
+aurelia chat open <STEAMID> [--json]
+```
+
+In plain mode it prints `them: <text>` for incoming messages, `me (sent elsewhere): <text>`
+for messages you sent from another device, and a typing indicator. With `--json` it becomes
+an **NDJSON event stream** for front-ends, reading message text from stdin lines and
+emitting one event per line:
+
+| Event line | When |
+| --- | --- |
+| `{"event":"ready","with":<steamid>}` | Session established. |
+| `{"event":"message","from":<steamid>,"text":"…","timestamp":<unix>}` | A message arrived from the friend. |
+| `{"event":"echo","to":<steamid>,"text":"…","timestamp":<unix>}` | A message you sent from another device. |
+| `{"event":"typing","from":<steamid>,"timestamp":<unix>}` | The friend is typing. |
+| `{"event":"error","message":"…"}` | A send failed. |
+| `{"event":"closed","with":<steamid>}` | Terminal — the session ended. |
+
+It runs naturally over the [`daemon`](#daemon): the thin client streams your stdin and
+relays the daemon's stdout in real time, so the live session reuses the shared, already-online
+connection.
+
+```bash
+aurelia chat open 76561198042323314
+echo "brb" | aurelia chat open 76561198042323314      # send one line, then exit on EOF
+aurelia chat open 76561198042323314 --json            # NDJSON event stream
+```
+
+---
+
 ## Configuration
 
 ### `config show`
@@ -1101,6 +1220,31 @@ available to **download**.)
 
 ```bash
 aurelia config protons
+```
+
+### `config presence`
+
+View or set the Steam **presence** the session daemon announces so it can sync your friends
+list and receive chat (see [Friends & chat](#friends--chat)). Run with no argument to print
+the current value.
+
+```text
+aurelia config presence [online|offline] [--json]
+```
+
+| Value | Meaning |
+| --- | --- |
+| `offline` (default) | An **invisible** presence: you appear offline to friends, but the daemon still receives your friends list and incoming messages. |
+| `online` | You appear **online** to friends while the daemon is running. |
+
+The setting is read when the daemon establishes its session, so after changing it **restart
+the daemon** for it to take effect (`aurelia daemon stop`, or `aurelia kill`). The `--json`
+output is `{ "chat_presence": "online"|"offline" }`.
+
+```bash
+aurelia config presence                 # print the current presence
+aurelia config presence online          # appear online to friends
+aurelia config presence offline --json  # back to invisible; {"chat_presence":"offline"}
 ```
 
 ### `config game`

@@ -29,7 +29,8 @@ Aurelia is a pure command-line Steam launcher and library manager — no CEF, no
 no GUI. It talks to Steam's real network protocols through
 [`steam-vent`](https://codeberg.org/steam-vent/steam-vent), so you can log in, manage your
 library, install and update games, sync Steam Cloud saves, manage Steam Workshop content,
-and launch titles (natively or through Proton/Wine) entirely from a terminal or a script.
+see your friends and chat with them, and launch titles (natively or through Proton/Wine)
+entirely from a terminal or a script.
 
 It is the modern successor to **OpenSteamClient**, rebuilt in Rust for a smaller footprint,
 memory safety, and a scriptable, headless-friendly workflow.
@@ -90,8 +91,10 @@ sync, and Proton/Wine launching all work today.
 - [x] **Depot browser** — list depots, inspect manifest trees, download single files
 - [x] **Workshop** — browse/search, install/uninstall, subscribe, collections, rate, and
       read/post comments
+- [x] **Friends & chat** — friends roster with live persona status and current game, plus
+      direct messaging (send, history, and an interactive live session); presence is
+      configurable (defaults to invisible)
 - [ ] Collections / categorization
-- [ ] Friends list & chat
 
 ---
 
@@ -187,9 +190,16 @@ aurelia workshop rate 1234567890 up        # thumbs-up (or: down) an item
 aurelia workshop comments 1234567890       # read an item's comments
 aurelia workshop comment 1234567890 "Nice mod!"  # post a comment
 
+# Friends & chat
+aurelia friends                              # list friends (name, status, current game)
+aurelia chat send 76561198042323314 "hi!"    # send a direct message to a friend
+aurelia chat history 76561198042323314       # show recent messages with a friend
+aurelia chat open 76561198042323314          # interactive live chat (type to send; Ctrl-D quits)
+
 # Configuration
 aurelia config show                  # print launcher configuration
 aurelia config protons               # list detected Proton/Wine runtimes
+aurelia config presence online       # appear online for chat (default: offline/invisible)
 aurelia config game 1245620 --proton GE-Proton9-20  # pin a Proton version for one game
 
 # Proton / Wine runtimes (download manager)
