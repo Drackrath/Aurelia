@@ -105,6 +105,9 @@ sync, and Proton/Wine launching all work today.
       resolve a SteamID from a profile/vanity URL and send/cancel friend requests, plus
       direct messaging (send, history, and an interactive live session); presence is
       configurable (defaults to invisible)
+- [x] **Inventory & market (read-only)** — view your inventory, look up item prices, search
+      the Community Market, and see your wallet and listings (buying & selling are planned —
+      see [docs/community-market-plan.md](docs/community-market-plan.md))
 - [ ] Collections / categorization
 
 ---
@@ -210,6 +213,13 @@ aurelia chat send 76561198042323314 "hi!"    # send a direct message to a friend
 aurelia chat history 76561198042323314       # show recent messages with a friend
 aurelia chat open 76561198042323314          # interactive live chat (type to send; Ctrl-D quits)
 
+# Inventory & market
+aurelia inventory 753 --context 6            # your Steam cards / gems / backgrounds
+aurelia market price 440 "Mann Co. Supply Crate Key"   # item price (no login needed)
+aurelia market search "Sticker" --app-id 730 # search the Community Market
+aurelia market listings                      # your active listings & buy orders
+aurelia wallet                               # Steam Wallet balance
+
 # Configuration
 aurelia config show                  # print launcher configuration
 aurelia config protons               # list detected Proton/Wine runtimes
@@ -249,6 +259,7 @@ Aurelia stores its configuration and local data under `~/.config/Aurelia`
 | Document | Contents |
 |---|---|
 | [USAGE.md](USAGE.md) | Full reference for every command and flag |
+| [docs/community-market-plan.md](docs/community-market-plan.md) | Design & roadmap for Steam Community Market support |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
 
 ---

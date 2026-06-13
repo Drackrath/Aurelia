@@ -12,4 +12,5 @@ pub mod running;
 pub mod steam_client;
 pub mod store;
 pub mod utils;
+pub mod web_session;
 pub mod infra;

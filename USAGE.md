@@ -61,6 +61,12 @@ of a specific command. `--version` prints the build version.
   - [`chat send`](#chat-send)
   - [`chat history`](#chat-history)
   - [`chat open`](#chat-open)
+- [Inventory, wallet & market](#inventory-wallet--market)
+  - [`inventory`](#inventory)
+  - [`wallet`](#wallet)
+  - [`market price`](#market-price)
+  - [`market search`](#market-search)
+  - [`market listings`](#market-listings)
 - [Configuration](#configuration)
   - [`config show`](#config-show)
   - [`config protons`](#config-protons)
@@ -1263,6 +1269,120 @@ connection.
 aurelia chat open 76561198042323314
 echo "brb" | aurelia chat open 76561198042323314      # send one line, then exit on EOF
 aurelia chat open 76561198042323314 --json            # NDJSON event stream
+```
+
+---
+
+## Inventory, wallet & market
+
+Read-only access to your Steam **inventory**, **wallet** balance, and the **Community
+Market** (item prices, search, and your own listings). Item price and market search are
+**public** and need no login; inventory, wallet, and your listings require an active session.
+
+> **Market eligibility.** Wallet and market features require the account to be eligible for
+> the Steam Community Market — Steam mandates the Steam Guard Mobile Authenticator enabled for
+> 15+ days (and no recent new-device holds). Ineligible accounts get a clear error rather than
+> data. (Buying/selling are not implemented yet — see
+> [docs/community-market-plan.md](docs/community-market-plan.md).)
+
+### `inventory`
+
+List the logged-in account's inventory for a game.
+
+```text
+aurelia inventory <APP_ID> [--context <ID>] [--json]
+```
+
+| Option | Description |
+| --- | --- |
+| `--context <ID>` | Inventory context id (default `2`). Steam community items (cards, gems, backgrounds) live under **app `753`, context `6`**. |
+
+The text view is an `AMOUNT / TRADE / MKT / NAME` table (TRADE = tradable, MKT = marketable).
+The `--json` output is an array of `{ "asset_id", "class_id", "name", "market_hash_name",
+"item_type", "amount", "tradable", "marketable", "icon_url" }`.
+
+```bash
+aurelia inventory 753 --context 6      # your Steam cards / gems / backgrounds
+aurelia inventory 730                  # CS2 items (context 2)
+aurelia inventory 753 --context 6 --json
+```
+
+### `wallet`
+
+Show your Steam Wallet balance. Requires an active, market-eligible session.
+
+```text
+aurelia wallet [--json]
+```
+
+The `--json` output is `{ "balance_cents", "currency", "country", "formatted" }`
+(`balance_cents` in the currency's minor units; `currency` is the Steam currency id).
+
+```bash
+aurelia wallet
+aurelia wallet --json
+```
+
+### `market price`
+
+Look up an item's Community Market price. **Public** — no login required.
+
+```text
+aurelia market price <APP_ID> <NAME> [--currency <ID>] [--json]
+```
+
+| Option | Description |
+| --- | --- |
+| `<NAME>` | The exact **market hash name** (case-sensitive), e.g. `"Mann Co. Supply Crate Key"`. Quote it. |
+| `--currency <ID>` | Steam currency id (`1`=USD, `2`=GBP, `3`=EUR, …). Default `1`. |
+
+The text view prints the lowest price, median price, and 24-hour volume. The `--json` output
+is `{ "market_hash_name", "lowest_price", "median_price", "volume" }` (prices are
+Steam-formatted strings; any may be `null` if Steam has no data).
+
+```bash
+aurelia market price 440 "Mann Co. Supply Crate Key"
+aurelia market price 730 "AK-47 | Redline (Field-Tested)" --currency 3 --json
+```
+
+### `market search`
+
+Search the Community Market. **Public** — no login required.
+
+```text
+aurelia market search [QUERY] [--app-id <ID>] [--count <N>] [--json]
+```
+
+| Option | Description |
+| --- | --- |
+| `QUERY` | Free-text query (optional). |
+| `--app-id <ID>` | Restrict to one game. |
+| `--count <N>` | Maximum results (default 20). |
+
+The text view is a `PRICE / LIST / NAME` table (LIST = number of active sell listings). The
+`--json` output is `{ "total_count", "results": [ { "name", "market_hash_name", "app_id",
+"app_name", "sell_listings", "sell_price", "sell_price_text" } ] }` (`sell_price` in minor units).
+
+```bash
+aurelia market search "Sticker" --app-id 730 --count 10
+aurelia market search --app-id 753 --json
+```
+
+### `market listings`
+
+Show your own active market listings and open buy orders. Requires an active session.
+
+```text
+aurelia market listings [--json]
+```
+
+The `--json` output is `{ "listings": [ { "listing_id", "market_hash_name", "price" } ],
+"buy_orders": [ { "buy_order_id", "market_hash_name", "price", "quantity" } ] }` (prices in
+minor units).
+
+```bash
+aurelia market listings
+aurelia market listings --json
 ```
 
 ---

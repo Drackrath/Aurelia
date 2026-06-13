@@ -333,6 +333,7 @@ pub struct SteamClient {
 mod client;
 mod chat;
 mod friends;
+mod market;
 mod install;
 mod manage;
 mod content;
@@ -344,6 +345,10 @@ mod workshop;
 mod workshop_manifest;
 
 pub use friends::{resolve_steam_id, AddedFriend, Friend, ResolvedUser, Roster};
+pub use market::{
+    market_price, market_search, InventoryItem, MarketPrice, MarketSearchResult, MyMarketState,
+    WalletBalance,
+};
 
 /// Terminate the process with `pid` and any children it spawned.
 ///

@@ -94,6 +94,20 @@ enum Command {
         #[command(subcommand)]
         command: ChatCommand,
     },
+    /// View your Steam inventory for a game.
+    Inventory {
+        app_id: u32,
+        /// Inventory context id (default 2; Steam community items use 6).
+        #[arg(long, default_value_t = 2)]
+        context: u32,
+    },
+    /// Show your Steam Wallet balance.
+    Wallet,
+    /// Steam Community Market: prices, search, and your listings.
+    Market {
+        #[command(subcommand)]
+        command: MarketCommand,
+    },
     /// Download and install a game.
     Install {
         app_id: u32,
@@ -341,6 +355,32 @@ enum FriendsCommand {
     Add { query: String },
     /// Remove a friend, or cancel/decline a pending request (by SteamID64).
     Remove { steamid: u64 },
+}
+
+#[derive(Subcommand)]
+enum MarketCommand {
+    /// Look up an item's market price (no login required).
+    Price {
+        app_id: u32,
+        /// Exact market hash name (case-sensitive), e.g. "Mann Co. Supply Crate Key".
+        name: String,
+        /// Steam currency id (1=USD, 2=GBP, 3=EUR, …).
+        #[arg(long, default_value_t = 1)]
+        currency: u32,
+    },
+    /// Search the Community Market (no login required).
+    Search {
+        /// Free-text query (optional).
+        query: Option<String>,
+        /// Restrict to one game by app id.
+        #[arg(long)]
+        app_id: Option<u32>,
+        /// Maximum results to return.
+        #[arg(long, default_value_t = 20)]
+        count: u32,
+    },
+    /// Show your active market listings and open buy orders.
+    Listings,
 }
 
 #[derive(Subcommand)]
@@ -715,6 +755,21 @@ async fn run(cli: Cli) -> Result<()> {
                 cmd_chat_history(steamid, count, json).await
             }
             ChatCommand::Open { steamid } => cmd_chat_open(steamid, json).await,
+        },
+        Command::Inventory { app_id, context } => cmd_inventory(app_id, context, json).await,
+        Command::Wallet => cmd_wallet(json).await,
+        Command::Market { command } => match command {
+            MarketCommand::Price {
+                app_id,
+                name,
+                currency,
+            } => cmd_market_price(app_id, name, currency, json).await,
+            MarketCommand::Search {
+                query,
+                app_id,
+                count,
+            } => cmd_market_search(query, app_id, count, json).await,
+            MarketCommand::Listings => cmd_market_listings(json).await,
         },
         Command::Install {
             app_id,
@@ -1706,6 +1761,148 @@ async fn cmd_chat_open(steamid: u64, json: bool) -> Result<()> {
 
     if json {
         print_json_line(&serde_json::json!({ "event": "closed", "with": steamid }));
+    }
+    Ok(())
+}
+
+fn yesno(b: bool) -> &'static str {
+    if b {
+        "yes"
+    } else {
+        "no"
+    }
+}
+
+/// `aurelia inventory <appid>`: list the logged-in account's inventory for a game.
+async fn cmd_inventory(app_id: u32, context: u32, json: bool) -> Result<()> {
+    let client = authed_client().await?;
+    let items = client.inventory(app_id, context).await?;
+    if json {
+        cli_println!("{}", serde_json::to_string_pretty(&items)?);
+        return Ok(());
+    }
+    if items.is_empty() {
+        cli_println!("No items in your inventory for app {app_id} (context {context}).");
+        return Ok(());
+    }
+    cli_println!("{:>6}  {:<5}  {:<5}  NAME", "AMOUNT", "TRADE", "MKT");
+    for it in &items {
+        cli_println!(
+            "{:>6}  {:<5}  {:<5}  {}",
+            it.amount,
+            yesno(it.tradable),
+            yesno(it.marketable),
+            it.name
+        );
+    }
+    cli_println!("\n{} item stack(s).", items.len());
+    Ok(())
+}
+
+/// `aurelia wallet`: show the account's Steam Wallet balance.
+async fn cmd_wallet(json: bool) -> Result<()> {
+    let client = authed_client().await?;
+    let w = client.wallet().await?;
+    if json {
+        print_json(&serde_json::json!({
+            "balance_cents": w.balance_cents,
+            "currency": w.currency,
+            "country": w.country,
+            "formatted": w.formatted,
+        }));
+    } else {
+        cli_println!("Wallet : {}", w.formatted);
+        if !w.country.is_empty() {
+            cli_println!("Country: {}", w.country);
+        }
+    }
+    Ok(())
+}
+
+/// `aurelia market price <appid> <name>`: look up an item's price (no login needed).
+async fn cmd_market_price(app_id: u32, name: String, currency: u32, json: bool) -> Result<()> {
+    let price = aurelia::steam_client::market_price(app_id, &name, currency).await?;
+    if json {
+        print_json(&serde_json::json!({
+            "market_hash_name": price.market_hash_name,
+            "lowest_price": price.lowest_price,
+            "median_price": price.median_price,
+            "volume": price.volume,
+        }));
+    } else {
+        cli_println!("Item   : {}", price.market_hash_name);
+        cli_println!("Lowest : {}", price.lowest_price.as_deref().unwrap_or("—"));
+        cli_println!("Median : {}", price.median_price.as_deref().unwrap_or("—"));
+        cli_println!("Volume : {} sold in 24h", price.volume.as_deref().unwrap_or("0"));
+    }
+    Ok(())
+}
+
+/// `aurelia market search [query]`: search the Community Market (no login needed).
+async fn cmd_market_search(
+    query: Option<String>,
+    app_id: Option<u32>,
+    count: u32,
+    json: bool,
+) -> Result<()> {
+    let (total, results) =
+        aurelia::steam_client::market_search(query.as_deref(), app_id, count).await?;
+    if json {
+        cli_println!(
+            "{}",
+            serde_json::to_string_pretty(
+                &serde_json::json!({ "total_count": total, "results": results })
+            )?
+        );
+        return Ok(());
+    }
+    if results.is_empty() {
+        cli_println!("No market results.");
+        return Ok(());
+    }
+    cli_println!("{:>12}  {:>5}  NAME", "PRICE", "LIST");
+    for r in &results {
+        cli_println!(
+            "{:>12}  {:>5}  {} [{}]",
+            r.sell_price_text,
+            r.sell_listings,
+            r.name,
+            r.app_name
+        );
+    }
+    cli_println!("\nShowing {} of {} result(s).", results.len(), total);
+    Ok(())
+}
+
+/// `aurelia market listings`: the account's active listings and open buy orders.
+async fn cmd_market_listings(json: bool) -> Result<()> {
+    let client = authed_client().await?;
+    let state = client.my_market_listings().await?;
+    if json {
+        cli_println!("{}", serde_json::to_string_pretty(&state)?);
+        return Ok(());
+    }
+    if state.listings.is_empty() && state.buy_orders.is_empty() {
+        cli_println!("No active listings or open buy orders.");
+        return Ok(());
+    }
+    if !state.listings.is_empty() {
+        cli_println!("Active listings:");
+        for l in &state.listings {
+            cli_println!("  [{}] {} — {} (minor units)", l.listing_id, l.market_hash_name, l.price);
+        }
+    }
+    if !state.buy_orders.is_empty() {
+        cli_println!("Buy orders:");
+        for b in &state.buy_orders {
+            cli_println!(
+                "  [{}] {} x{} @ {} (minor units)",
+                b.buy_order_id,
+                b.market_hash_name,
+                b.quantity,
+                b.price
+            );
+        }
     }
     Ok(())
 }
