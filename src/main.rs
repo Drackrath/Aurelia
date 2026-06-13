@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use aurelia::config::{
     info_cache_ttl, load_info_cache, load_launcher_config, load_library_cache, load_session,
-    load_user_configs, save_info_cache,
+    load_user_configs, save_info_cache, save_launcher_config,
 };
 use aurelia::library::{build_game_library, scan_installed_app_info};
 use aurelia::models::{
@@ -84,6 +84,13 @@ enum Command {
     },
     /// Show account details for the logged-in user.
     Account,
+    /// List your Steam friends (name, status, and current game).
+    Friends,
+    /// Send and read direct (friend) chat messages.
+    Chat {
+        #[command(subcommand)]
+        command: ChatCommand,
+    },
     /// Download and install a game.
     Install {
         app_id: u32,
@@ -279,6 +286,12 @@ enum ConfigCommand {
     Show,
     /// List detected Proton/Wine runtimes.
     Protons,
+    /// View or set the Steam presence the daemon announces for friends/chat.
+    Presence {
+        /// `online`, or `offline` (invisible: you appear offline but still sync
+        /// friends and receive chat). Omit to print the current setting.
+        mode: Option<ChatPresenceArg>,
+    },
     /// View or set per-game launch settings (Proton version, platform).
     Game {
         app_id: u32,
@@ -312,6 +325,24 @@ enum ProtonCommand {
     Uninstall { version: String },
     /// Set the global default Proton/Wine version (used when a game has none set).
     Default { version: String },
+}
+
+#[derive(Subcommand)]
+enum ChatCommand {
+    /// Send a direct message to a friend (by SteamID64).
+    Send {
+        steamid: u64,
+        /// The message text (all remaining words are joined with spaces).
+        #[arg(required = true, trailing_var_arg = true)]
+        message: Vec<String>,
+    },
+    /// Show recent messages exchanged with a friend (by SteamID64).
+    History {
+        steamid: u64,
+        /// How many recent messages to fetch.
+        #[arg(long, default_value_t = 20)]
+        count: u32,
+    },
 }
 
 #[derive(Subcommand)]
@@ -431,6 +462,21 @@ enum WorkshopCommand {
 enum PlatformArg {
     Windows,
     Linux,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum ChatPresenceArg {
+    Online,
+    Offline,
+}
+
+impl From<ChatPresenceArg> for aurelia::config::ChatPresence {
+    fn from(value: ChatPresenceArg) -> Self {
+        match value {
+            ChatPresenceArg::Online => aurelia::config::ChatPresence::Online,
+            ChatPresenceArg::Offline => aurelia::config::ChatPresence::Offline,
+        }
+    }
 }
 
 /// Sort order for `workshop browse`, mapped to an `EPublishedFileQueryType`.
@@ -635,6 +681,15 @@ async fn run(cli: Cli) -> Result<()> {
             online,
         } => cmd_list(installed, search, online, json).await,
         Command::Account => cmd_account(json).await,
+        Command::Friends => cmd_friends(json).await,
+        Command::Chat { command } => match command {
+            ChatCommand::Send { steamid, message } => {
+                cmd_chat_send(steamid, message.join(" "), json).await
+            }
+            ChatCommand::History { steamid, count } => {
+                cmd_chat_history(steamid, count, json).await
+            }
+        },
         Command::Install {
             app_id,
             platform,
@@ -697,6 +752,7 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Config { command } => match command {
             ConfigCommand::Show => cmd_config_show(json).await,
             ConfigCommand::Protons => cmd_config_protons(json).await,
+            ConfigCommand::Presence { mode } => cmd_config_presence(mode, json).await,
             ConfigCommand::Game {
                 app_id,
                 proton,
@@ -1352,6 +1408,107 @@ async fn cmd_account(json: bool) -> Result<()> {
     );
     cli_println!("Devices : {}", data.authed_machines);
     cli_println!("VAC bans: {}", data.vac_bans);
+    Ok(())
+}
+
+/// Human label for a raw EPersonaState value.
+fn persona_state_label(state: Option<u32>) -> &'static str {
+    match state {
+        Some(0) | None => "offline",
+        Some(1) => "online",
+        Some(2) => "busy",
+        Some(3) => "away",
+        Some(4) => "snooze",
+        Some(5) => "looking to trade",
+        Some(6) => "looking to play",
+        Some(_) => "online",
+    }
+}
+
+/// `aurelia friends`: list the logged-in user's friends with status and game.
+///
+/// Inside the daemon the roster is served from the background watcher's cache;
+/// standalone it does a short best-effort collection over a fresh connection
+/// (which may be partial — see `SteamClient::collect_friends`).
+async fn cmd_friends(json: bool) -> Result<()> {
+    let friends = if daemon::in_daemon() {
+        daemon::shared_roster().await
+    } else {
+        let client = authed_client().await?;
+        let mut all = client
+            .collect_friends(std::time::Duration::from_secs(3))
+            .await?;
+        // Match the daemon view: only actual friends (relationship 3).
+        all.retain(|f| f.relationship == 3);
+        all
+    };
+
+    if json {
+        cli_println!("{}", serde_json::to_string_pretty(&friends)?);
+        return Ok(());
+    }
+
+    if friends.is_empty() {
+        cli_println!(
+            "No friends to show yet. (If you just started a session, the roster fills a moment \
+             after connecting — try again.)"
+        );
+        return Ok(());
+    }
+
+    cli_println!("{:<20}  {:<17}  {:<12}  GAME", "STATUS", "STEAMID", "NAME");
+    for f in &friends {
+        let name = f.persona_name.as_deref().unwrap_or("?");
+        let game = match (&f.game_name, f.game_app_id) {
+            (Some(g), _) => g.clone(),
+            (None, Some(id)) => format!("app {id}"),
+            (None, None) => String::new(),
+        };
+        cli_println!(
+            "{:<20}  {:<17}  {:<12}  {}",
+            persona_state_label(f.persona_state),
+            f.steam_id,
+            name,
+            game
+        );
+    }
+    cli_println!("\n{} friend(s).", friends.len());
+    Ok(())
+}
+
+/// `aurelia chat send <steamid> <message>`: send a direct message to a friend.
+async fn cmd_chat_send(steamid: u64, message: String, json: bool) -> Result<()> {
+    let client = authed_client().await?;
+    let sent = client.send_chat_message(steamid, message).await?;
+    if json {
+        print_json(&serde_json::json!({
+            "steamid": steamid,
+            "sent": true,
+            "server_timestamp": sent.server_timestamp,
+            "modified_message": sent.modified_message,
+        }));
+    } else {
+        cli_println!("Message sent to {steamid}.");
+    }
+    Ok(())
+}
+
+/// `aurelia chat history <steamid>`: show recent messages with a friend.
+async fn cmd_chat_history(steamid: u64, count: u32, json: bool) -> Result<()> {
+    let client = authed_client().await?;
+    let messages = client.recent_chat_messages(steamid, count).await?;
+    if json {
+        cli_println!("{}", serde_json::to_string_pretty(&messages)?);
+        return Ok(());
+    }
+    if messages.is_empty() {
+        cli_println!("No messages with {steamid}.");
+        return Ok(());
+    }
+    for m in &messages {
+        let who = if m.from_self { "me" } else { "them" };
+        cli_println!("[{}] {:>4}: {}", m.timestamp, who, m.message);
+    }
     Ok(())
 }
 
@@ -2528,6 +2685,34 @@ async fn cmd_config_show(_json: bool) -> Result<()> {
     // The launcher configuration is structured data; it always renders as JSON.
     let config = load_launcher_config().await.unwrap_or_default();
     cli_println!("{}", serde_json::to_string_pretty(&config)?);
+    Ok(())
+}
+
+/// `config presence [online|offline]`: view or set the presence the daemon
+/// announces for friends/chat. `offline` is an invisible presence — you appear
+/// offline to friends but still sync your friends list and receive chat.
+async fn cmd_config_presence(mode: Option<ChatPresenceArg>, json: bool) -> Result<()> {
+    use aurelia::config::ChatPresence;
+    let mut config = load_launcher_config().await.unwrap_or_default();
+    let changed = mode.is_some();
+    if let Some(mode) = mode {
+        config.chat_presence = mode.into();
+        save_launcher_config(&config).await?;
+    }
+    let current = match config.chat_presence {
+        ChatPresence::Online => "online",
+        ChatPresence::Offline => "offline",
+    };
+    if json {
+        print_json(&serde_json::json!({ "chat_presence": current }));
+    } else {
+        cli_println!("Chat presence: {current}");
+        if changed {
+            cli_println!(
+                "Restart the session daemon for this to take effect (`aurelia daemon stop` or `aurelia kill`)."
+            );
+        }
+    }
     Ok(())
 }
 

@@ -17,13 +17,16 @@ mod proto;
 mod server;
 mod transport;
 
+use std::sync::Arc;
 use std::sync::OnceLock;
+// The roster cache is shared with the (synchronous) friends watcher
+use std::sync::RwLock as StdRwLock;
 use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use aurelia::steam_client::SteamClient;
+use aurelia::steam_client::{Friend, Roster, SteamClient};
 
 pub use server::run_server;
 
@@ -58,6 +61,17 @@ const LIVENESS_RECHECK_DELAY: Duration = Duration::from_secs(2);
 
 struct DaemonState {
     slot: RwLock<Slot>,
+    /// The shared friends cache. Populated asynchronously by the single watcher task
+    /// (see [`DaemonState::spawn_watcher`]) from Steam friend/persona broadcasts, and
+    /// read by [`shared_roster`]. An `Arc` so the watcher task can own a handle to the
+    /// same map that survives session teardown (the Arc outlives any one watcher).
+    roster: Arc<StdRwLock<Roster>>,
+    /// Handle to the single in-flight watcher task. Kept so we never spawn a duplicate
+    /// watcher while one is still running, and so [`invalidate`](Self::invalidate) can
+    /// abort it when the session is torn down. A std `Mutex` (not tokio) because it is
+    /// only locked for the instant it takes to inspect/replace the handle, never across
+    /// an `.await`.
+    watcher: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 struct Slot {
@@ -105,6 +119,8 @@ fn init_state() -> &'static DaemonState {
             session_mtime: None,
             last_failure: None,
         }),
+        roster: Arc::new(StdRwLock::new(Roster::new())),
+        watcher: std::sync::Mutex::new(None),
     })
 }
 
@@ -139,6 +155,12 @@ impl DaemonState {
                     tracing::info!("daemon: shared Steam session established");
                     s.client = Some(client);
                     s.last_failure = None;
+                    // Start (or re-confirm) the background friends watcher on the freshly
+                    // established connection so the roster cache fills without a request
+                    // having to drive it. `spawn_watcher` is idempotent — if one is still
+                    // running (e.g. this restore ran without a prior invalidate) it's a
+                    // no-op. `s.client` was just set, so the unwrap cannot fail.
+                    self.spawn_watcher(s.client.as_ref().unwrap());
                 }
                 Ok(_) => {
                     tracing::warn!("daemon: session restore did not authenticate");
@@ -160,13 +182,53 @@ impl DaemonState {
         s.session_mtime = mtime;
     }
 
+    /// Spawn the background friends watcher on `client`, unless one is already running.
+    ///
+    /// The watcher runs forever against the client's connection, populating the shared
+    /// [`roster`](Self::roster) from Steam friend/persona broadcasts, and returns only
+    /// when that connection's streams end (i.e. the session died). We keep exactly one
+    /// running at a time: a stale-but-not-yet-cleaned handle (the task already finished,
+    /// e.g. its connection dropped) is treated as "no watcher" so we replace it. Locked
+    /// for just the inspect/replace; the spawn and `.await` happen on the task itself.
+    fn spawn_watcher(&self, client: &SteamClient) {
+        let mut guard = self.watcher.lock().unwrap();
+        if let Some(handle) = guard.as_ref() {
+            if !handle.is_finished() {
+                return; // a watcher is already live on this (or a prior) connection.
+            }
+        }
+        // Both the client (cheap Arc-backed clone over the shared connection) and the
+        // roster Arc are moved into the task so it can outlive this call.
+        let client = client.clone();
+        let roster = Arc::clone(&self.roster);
+        let handle = tokio::spawn(async move {
+            if let Err(e) = client.run_friends_watcher(roster).await {
+                tracing::warn!("daemon: friends watcher exited: {e:#}");
+            }
+        });
+        tracing::info!("daemon: friends watcher started");
+        *guard = Some(handle);
+    }
+
     /// Drop the shared session and clear the failure backoff so the next
-    /// [`ensure_session`] re-attempts immediately (used after login/logout).
+    /// [`ensure_session`] re-attempts immediately (used after login/logout). Also tears
+    /// down the friends watcher and empties the roster: the watcher is bound to the dead
+    /// connection, so a reconnect must start a fresh one over the new connection rather
+    /// than leave a defunct task and stale friends data behind.
     async fn invalidate(&self) {
         let mut s = self.slot.write().await;
         s.client = None;
         s.last_failure = None;
         s.session_mtime = None;
+        // Abort the watcher bound to the now-dead connection and drop its handle so the
+        // next `ensure_session` spawns a fresh one. (A held std lock, but no `.await`
+        // occurs while it is held.)
+        if let Some(handle) = self.watcher.lock().unwrap().take() {
+            handle.abort();
+        }
+        // Clear stale friends data so a read between teardown and the next watcher's
+        // first broadcast doesn't return friends from the previous session.
+        self.roster.write().unwrap().clear();
     }
 
     /// Periodically verify the shared connection is still alive and re-establish it if
@@ -219,6 +281,37 @@ pub async fn shared_restored_client() -> SteamClient {
         Some(connection) => SteamClient::from_shared(connection),
         None => SteamClient::new().expect("SteamClient::new is infallible"),
     }
+}
+
+/// The daemon's shared friends list: every actual friend (`relationship == 3`) in the
+/// roster cache, sorted by persona name (those without a name last) then steam id.
+///
+/// Ensures the shared session — and therefore the background watcher — is running, but
+/// the roster is populated **asynchronously**: the watcher fills it as Steam pushes the
+/// friends list and persona states over the connection. A call made immediately after
+/// the daemon (re)establishes a session may therefore return an empty or partial list
+/// until those broadcasts arrive; a slightly later call returns the full roster.
+pub async fn shared_roster() -> Vec<Friend> {
+    let state = init_state();
+    state.ensure_session().await;
+    // Brief read lock: clone out the friends we care about, then release before sorting.
+    let mut friends: Vec<Friend> = {
+        let roster = state.roster.read().unwrap();
+        roster
+            .values()
+            .filter(|f| f.relationship == 3)
+            .cloned()
+            .collect()
+    };
+    // Stable, predictable ordering for callers/CLI output: by name (unnamed entries —
+    // personas not yet received — sort last), tie-broken by the always-present steam id.
+    friends.sort_by(|a, b| match (&a.persona_name, &b.persona_name) {
+        (Some(x), Some(y)) => x.cmp(y).then(a.steam_id.cmp(&b.steam_id)),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.steam_id.cmp(&b.steam_id),
+    });
+    friends
 }
 
 /// Snapshot of the daemon's shared session, for `login --health` / `--reconnect`.

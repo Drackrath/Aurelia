@@ -332,6 +332,7 @@ pub struct SteamClient {
 // SteamClient methods are implemented across these submodules.
 mod client;
 mod chat;
+mod friends;
 mod install;
 mod manage;
 mod content;
@@ -341,6 +342,8 @@ mod manifests;
 mod process;
 mod workshop;
 mod workshop_manifest;
+
+pub use friends::{Friend, Roster};
 
 /// Terminate the process with `pid` and any children it spawned.
 ///

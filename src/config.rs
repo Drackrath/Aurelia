@@ -27,10 +27,32 @@ pub struct GameConfig {
     pub platform_preference: Option<String>,
 }
 
+/// Steam presence the session daemon
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ChatPresence {
+    #[default]
+    Offline,
+    Online,
+}
+
+impl ChatPresence {
+    /// The raw EPersonaState
+    pub fn persona_state(self) -> u32 {
+        match self {
+            ChatPresence::Offline => 7,
+            ChatPresence::Online => 1,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LauncherConfig {
     pub steam_library_path: String,
     pub proton_version: String,
+    // (default: offline).
+    #[serde(default)]
+    pub chat_presence: ChatPresence,
     #[serde(default)]
     pub steam_runtime_runner: PathBuf,
     #[serde(default)]
@@ -71,6 +93,7 @@ impl Default for LauncherConfig {
         Self {
             steam_library_path,
             proton_version: "experimental".to_string(),
+            chat_presence: ChatPresence::default(),
             steam_runtime_runner: PathBuf::new(),
             steam_prefix_mode: SteamPrefixMode::default(),
             enable_cloud_sync: true,
