@@ -143,15 +143,19 @@ async fn most_recent_account_id(root: &Path) -> Option<u32> {
             }
             [key, value] if key.eq_ignore_ascii_case("MostRecent") && value == "1" => {
                 if let Some(id64) = current_id64 {
-                    return id64.checked_sub(STEAMID64_BASE).map(|v| v as u32);
+                    return account_id_from_id64(id64);
                 }
             }
             _ => {}
         }
     }
-    fallback
-        .and_then(|id64| id64.checked_sub(STEAMID64_BASE))
-        .map(|v| v as u32)
+    fallback.and_then(account_id_from_id64)
+}
+
+/// Convert a public-universe SteamID64 to its 32-bit account id (the value used
+/// for `userdata/<id>` directories). `None` if the id predates the base.
+fn account_id_from_id64(id64: u64) -> Option<u32> {
+    id64.checked_sub(STEAMID64_BASE).map(|v| v as u32)
 }
 
 /// List app ids that have an `appcache/librarycache/<appid>` directory.
@@ -362,30 +366,37 @@ fn walk_object(
                     }
                 }
             }
-            0x02 => {
-                // int32
-                if read_key(buf, pos, strings).is_none() {
+            0x02 | 0x03 => {
+                // int32 / float32 — keyed 4-byte scalar, value unused.
+                if !skip_keyed_value(buf, pos, strings, 4) {
                     return;
                 }
-                *pos += 4;
-            }
-            0x03 => {
-                // float32
-                if read_key(buf, pos, strings).is_none() {
-                    return;
-                }
-                *pos += 4;
             }
             0x07 | 0x0b => {
-                // uint64 / int64
-                if read_key(buf, pos, strings).is_none() {
+                // uint64 / int64 — keyed 8-byte scalar, value unused.
+                if !skip_keyed_value(buf, pos, strings, 8) {
                     return;
                 }
-                *pos += 8;
             }
             _ => return, // unknown type; bail out of this app
         }
     }
+}
+
+/// Consume a keyed fixed-width scalar whose value is not needed: skip the key,
+/// then advance `pos` past `value_len` value bytes. Returns `false` if the key
+/// could not be read (caller should bail out of the object).
+fn skip_keyed_value(
+    buf: &[u8],
+    pos: &mut usize,
+    strings: Option<&[String]>,
+    value_len: usize,
+) -> bool {
+    if read_key(buf, pos, strings).is_none() {
+        return false;
+    }
+    *pos += value_len;
+    true
 }
 
 /// Read a field key: a string-table index (v0x29) or an inline NUL-terminated

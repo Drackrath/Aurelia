@@ -241,12 +241,17 @@ pub async fn market_search(
     }
     let v: Value = resp.json().await.context("invalid market-search response")?;
     let total = v.get("total_count").and_then(Value::as_u64).unwrap_or(0) as u32;
-    let results = v
-        .get("results")
-        .and_then(Value::as_array)
-        .map(|arr| arr.iter().filter_map(parse_search_result).collect())
-        .unwrap_or_default();
+    let results = parse_json_array(&v, "results", parse_search_result);
     Ok((total, results))
+}
+
+/// Read `key` as a JSON array and map each element through `f`, dropping `None`s.
+/// A missing key or non-array value yields an empty `Vec`.
+fn parse_json_array<T>(v: &Value, key: &str, f: impl FnMut(&Value) -> Option<T>) -> Vec<T> {
+    v.get(key)
+        .and_then(Value::as_array)
+        .map(|arr| arr.iter().filter_map(f).collect())
+        .unwrap_or_default()
 }
 
 fn parse_search_result(v: &Value) -> Option<MarketSearchResult> {
@@ -344,16 +349,8 @@ fn parse_my_listings(body: &str) -> Result<MyMarketState> {
              `aurelia login --reconnect`."
         );
     }
-    let listings = v
-        .get("listings")
-        .and_then(Value::as_array)
-        .map(|arr| arr.iter().filter_map(parse_my_listing).collect())
-        .unwrap_or_default();
-    let buy_orders = v
-        .get("buy_orders")
-        .and_then(Value::as_array)
-        .map(|arr| arr.iter().filter_map(parse_my_buy_order).collect())
-        .unwrap_or_default();
+    let listings = parse_json_array(&v, "listings", parse_my_listing);
+    let buy_orders = parse_json_array(&v, "buy_orders", parse_my_buy_order);
     Ok(MyMarketState { listings, buy_orders })
 }
 

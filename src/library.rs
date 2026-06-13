@@ -413,12 +413,16 @@ pub fn build_game_library(
     steam_id: Option<u64>,
 ) -> GameLibrary {
     let mut games = Vec::new();
+    // App ids already emitted from the owned list, so the installed-only pass
+    // below can skip them in O(1) instead of rescanning `games` each iteration.
+    let mut owned_app_ids = std::collections::HashSet::new();
 
     // Games returned by the owned-games list are licensed to this account.
     for owned_game in owned {
         if is_ignored_steam_app(owned_game.app_id, &owned_game.name) {
             continue;
         }
+        owned_app_ids.insert(owned_game.app_id);
         let info = installed_info.get(&owned_game.app_id);
         let install_path = info.map(|i| i.install_path.to_string_lossy().to_string());
         let active_branch = info
@@ -444,7 +448,7 @@ pub fn build_game_library(
     // Anything installed but absent from the owned list is not licensed to this
     // account. If its appmanifest records a different owner, it's Family-Shared.
     for (app_id, info) in installed_info {
-        if games.iter().any(|g| g.app_id == app_id) {
+        if owned_app_ids.contains(&app_id) {
             continue;
         }
         // Skip Steam tooling (runtimes, Proton, redistributables) installed on disk.

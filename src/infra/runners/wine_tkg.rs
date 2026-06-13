@@ -14,34 +14,12 @@ impl Runner for WineTkgRunner {
     async fn prepare_prefix(&self, ctx: &LaunchContext) -> std::result::Result<(), LaunchError> {
         let library_root = PathBuf::from(&ctx.launcher_config.steam_library_path);
 
-        let (use_steam_runtime, runtime_source) = match ctx.user_config.as_ref().map(|c| &c.steam_runtime_policy) {
-            Some(crate::models::SteamRuntimePolicy::Enabled) => (true, "override"),
-            Some(crate::models::SteamRuntimePolicy::Disabled) => (false, "override"),
-            Some(crate::models::SteamRuntimePolicy::Auto) | None => {
-                // Fallback to deprecated boolean if policy is Auto/None for backward compat
-                let manual_toggle = ctx.user_config.as_ref().map(|c| c.use_steam_runtime).unwrap_or(false);
-                if manual_toggle {
-                    (true, "override_legacy")
-                } else {
-                    (false, "default")
-                }
-            }
-        };
+        let (use_steam_runtime, runtime_source) = resolve_steam_runtime(ctx);
         let steam_prefix_mode = ctx.user_config.as_ref()
             .map(|c| c.steam_prefix_mode.clone())
             .unwrap_or(ctx.launcher_config.steam_prefix_mode.clone());
 
-        let user_config_store: crate::models::UserConfigStore = ctx.user_config.as_ref().map(|c| {
-            let mut store = HashMap::new();
-            store.insert(ctx.app.app_id, c.clone());
-            store
-        }).unwrap_or_default().into();
-
-        let effective_game_prefix = crate::utils::steam_wineprefix_for_game(
-            &ctx.launcher_config,
-            ctx.app.app_id,
-            &user_config_store
-        );
+        let effective_game_prefix = effective_game_prefix(ctx);
         std::fs::create_dir_all(&effective_game_prefix)
             .map_err(|e| LaunchError::new(LaunchErrorKind::Permission, format!("failed creating {}", effective_game_prefix.display())).with_source(anyhow!(e)))?;
 
@@ -194,17 +172,7 @@ impl Runner for WineTkgRunner {
                     if steam_running {
                         println!("✅ Steam already running in prefix — skipping spawn");
                     } else {
-                        let proton = if let Some(forced) = ctx.launcher_config
-                            .game_configs
-                            .get(&ctx.app.app_id)
-                            .and_then(|c| c.forced_proton_version.as_ref())
-                        {
-                            forced.as_str()
-                        } else {
-                            ctx.proton_path.as_deref()
-                                .filter(|p| !p.is_empty())
-                                .ok_or_else(|| LaunchError::new(LaunchErrorKind::Environment, "proton path is required for Windows launch"))?
-                        };
+                        let proton = resolve_proton_required(ctx)?;
                         let active_runner = crate::utils::resolve_runner(proton, &library_root);
 
                         let mut steam_cmd = crate::utils::build_runner_command(&active_runner)
@@ -336,24 +304,7 @@ impl Runner for WineTkgRunner {
         }
 
         // Write steam_appid.txt to the game working directory
-        let install_dir = PathBuf::from(
-            ctx.app.install_path
-                .clone()
-                .ok_or_else(|| LaunchError::new(LaunchErrorKind::GameData, format!("game {} is not installed", ctx.app.app_id)))?,
-        );
-
-        let exe_rel = ctx.launch_info.executable.replace('\\', "/");
-        let executable = if Path::new(&exe_rel).is_absolute() {
-            PathBuf::from(&exe_rel)
-        } else {
-            install_dir.join(&exe_rel)
-        };
-        let game_working_dir: PathBuf = ctx.launch_info.workingdir
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .map(|wd| install_dir.join(wd.replace('\\', "/")))
-            .or_else(|| executable.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| install_dir.clone());
+        let (_install_dir, _executable, game_working_dir) = resolve_game_paths(ctx)?;
 
         let app_id_str = ctx.app.app_id.to_string();
         let app_id_path = game_working_dir.join("steam_appid.txt");
@@ -372,17 +323,7 @@ impl Runner for WineTkgRunner {
             .join("compatdata")
             .join(&app_id_str);
 
-        let user_config_store: crate::models::UserConfigStore = ctx.user_config.as_ref().map(|c| {
-            let mut store = HashMap::new();
-            store.insert(ctx.app.app_id, c.clone());
-            store
-        }).unwrap_or_default().into();
-
-        let effective_game_prefix = crate::utils::steam_wineprefix_for_game(
-            &ctx.launcher_config,
-            ctx.app.app_id,
-            &user_config_store
-        );
+        let effective_game_prefix = effective_game_prefix(ctx);
 
         env.insert("SteamAppId".to_string(), app_id_str.clone());
         env.insert("SteamGameId".to_string(), app_id_str.clone());
@@ -407,39 +348,12 @@ impl Runner for WineTkgRunner {
             .map(|c| c.steam_launch_config.no_overlay)
             .unwrap_or(true);
 
-        let game_working_dir: PathBuf = {
-            let install_dir = PathBuf::from(
-                ctx.app.install_path
-                    .clone()
-                    .ok_or_else(|| LaunchError::new(LaunchErrorKind::GameData, format!("game {} is not installed", ctx.app.app_id)))?,
-            );
-
-            let exe_rel = ctx.launch_info.executable.replace('\\', "/");
-            let executable = if Path::new(&exe_rel).is_absolute() {
-                PathBuf::from(&exe_rel)
-            } else {
-                install_dir.join(&exe_rel)
-            };
-            ctx.launch_info.workingdir
-                .as_deref()
-                .filter(|s| !s.is_empty())
-                .map(|wd| install_dir.join(wd.replace('\\', "/")))
-                .or_else(|| executable.parent().map(|p| p.to_path_buf()))
-                .unwrap_or_else(|| install_dir.clone())
-        };
+        let (_install_dir, _executable, game_working_dir) = resolve_game_paths(ctx)?;
 
         // Resolve proton version for component detection and DLL path building
-        let proton = if let Some(forced) = ctx.launcher_config
-            .game_configs
-            .get(&ctx.app.app_id)
-            .and_then(|c| c.forced_proton_version.as_ref())
-        {
-            forced.as_str()
-        } else {
-            ctx.proton_path.as_deref()
-                .filter(|p| !p.is_empty())
-                .unwrap_or("wine")
-        };
+        let proton = forced_proton(ctx)
+            .or_else(|| ctx.proton_path.as_deref().filter(|p| !p.is_empty()))
+            .unwrap_or("wine");
 
         let active_runner_path = crate::utils::resolve_runner(proton, &library_root);
         let _components = crate::utils::detect_runner_components(
@@ -627,18 +541,7 @@ impl Runner for WineTkgRunner {
         wine_path.extend(wine_dll_dirs.iter().cloned());
         env.insert("WINEPATH".to_string(), wine_path.join(";"));
 
-        let (use_steam_runtime, _runtime_source) = match ctx.user_config.as_ref().map(|c| &c.steam_runtime_policy) {
-            Some(crate::models::SteamRuntimePolicy::Enabled) => (true, "override"),
-            Some(crate::models::SteamRuntimePolicy::Disabled) => (false, "override"),
-            Some(crate::models::SteamRuntimePolicy::Auto) | None => {
-                let manual_toggle = ctx.user_config.as_ref().map(|c| c.use_steam_runtime).unwrap_or(false);
-                if manual_toggle {
-                    (true, "override_legacy")
-                } else {
-                    (false, "default")
-                }
-            }
-        };
+        let (use_steam_runtime, _runtime_source) = resolve_steam_runtime(ctx);
 
         if use_steam_runtime {
             let steam_cfg = crate::utils::get_master_steam_config();
@@ -784,17 +687,7 @@ impl Runner for WineTkgRunner {
     async fn build_command(&self, ctx: &LaunchContext) -> std::result::Result<CommandSpec, LaunchError> {
         let library_root = PathBuf::from(&ctx.launcher_config.steam_library_path);
 
-        let proton = if let Some(forced) = ctx.launcher_config
-            .game_configs
-            .get(&ctx.app.app_id)
-            .and_then(|c| c.forced_proton_version.as_ref())
-        {
-            forced.as_str()
-        } else {
-            ctx.proton_path.as_deref()
-                .filter(|p| !p.is_empty())
-                .ok_or_else(|| LaunchError::new(LaunchErrorKind::Environment, "proton path is required for Windows launch"))?
-        };
+        let proton = resolve_proton_required(ctx)?;
         let active_runner = crate::utils::resolve_runner(proton, &library_root);
 
         let mut spec = CommandSpec::default();
@@ -805,24 +698,7 @@ impl Runner for WineTkgRunner {
         spec.program = base_cmd.get_program().into();
         spec.args = base_cmd.get_args().map(|s| s.to_string_lossy().to_string()).collect();
 
-        let install_dir = PathBuf::from(
-            ctx.app.install_path
-                .clone()
-                .ok_or_else(|| LaunchError::new(LaunchErrorKind::GameData, format!("game {} is not installed", ctx.app.app_id)))?,
-        );
-
-        let exe_rel = ctx.launch_info.executable.replace('\\', "/");
-        let executable = if Path::new(&exe_rel).is_absolute() {
-            PathBuf::from(&exe_rel)
-        } else {
-            install_dir.join(&exe_rel)
-        };
-        let game_working_dir: PathBuf = ctx.launch_info.workingdir
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .map(|wd| install_dir.join(wd.replace('\\', "/")))
-            .or_else(|| executable.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| install_dir.clone());
+        let (_install_dir, executable, game_working_dir) = resolve_game_paths(ctx)?;
 
         spec.cwd = Some(game_working_dir);
         spec.args.push(executable.to_string_lossy().to_string());
@@ -877,5 +753,94 @@ impl Runner for WineTkgRunner {
 
         cmd.spawn().map_err(|e| LaunchError::new(LaunchErrorKind::Process, "failed to spawn runner process").with_source(anyhow!(e)))
     }
+}
+
+/// Build the effective Wine prefix for the game from the launch context.
+///
+/// Wraps this game's per-app config (if any) in a single-entry `UserConfigStore`
+/// and resolves the prefix the same way the launcher does globally.
+fn effective_game_prefix(ctx: &LaunchContext) -> PathBuf {
+    let user_config_store: crate::models::UserConfigStore = ctx.user_config.as_ref().map(|c| {
+        let mut store = HashMap::new();
+        store.insert(ctx.app.app_id, c.clone());
+        store
+    }).unwrap_or_default().into();
+
+    crate::utils::steam_wineprefix_for_game(
+        &ctx.launcher_config,
+        ctx.app.app_id,
+        &user_config_store,
+    )
+}
+
+/// Resolve whether the Windows Steam runtime should be used, plus the source
+/// label recorded in launch diagnostics.
+///
+/// Honours the `SteamRuntimePolicy` and falls back to the deprecated
+/// `use_steam_runtime` boolean when the policy is `Auto`/absent.
+fn resolve_steam_runtime(ctx: &LaunchContext) -> (bool, &'static str) {
+    match ctx.user_config.as_ref().map(|c| &c.steam_runtime_policy) {
+        Some(crate::models::SteamRuntimePolicy::Enabled) => (true, "override"),
+        Some(crate::models::SteamRuntimePolicy::Disabled) => (false, "override"),
+        Some(crate::models::SteamRuntimePolicy::Auto) | None => {
+            // Fallback to deprecated boolean if policy is Auto/None for backward compat
+            let manual_toggle = ctx.user_config.as_ref().map(|c| c.use_steam_runtime).unwrap_or(false);
+            if manual_toggle {
+                (true, "override_legacy")
+            } else {
+                (false, "default")
+            }
+        }
+    }
+}
+
+/// Per-game forced Proton/runner override, if one is configured.
+fn forced_proton(ctx: &LaunchContext) -> Option<&str> {
+    ctx.launcher_config
+        .game_configs
+        .get(&ctx.app.app_id)
+        .and_then(|c| c.forced_proton_version.as_ref())
+        .map(|s| s.as_str())
+}
+
+/// Resolve the Proton/runner identifier, erroring if none is available.
+///
+/// Prefers a per-game forced version, then the context's `proton_path`.
+fn resolve_proton_required(ctx: &LaunchContext) -> std::result::Result<&str, LaunchError> {
+    if let Some(forced) = forced_proton(ctx) {
+        Ok(forced)
+    } else {
+        ctx.proton_path.as_deref()
+            .filter(|p| !p.is_empty())
+            .ok_or_else(|| LaunchError::new(LaunchErrorKind::Environment, "proton path is required for Windows launch"))
+    }
+}
+
+/// Resolve `(install_dir, executable, game_working_dir)` for the game.
+///
+/// Errors if the game is not installed. The executable is resolved relative to
+/// the install dir unless it is absolute; the working dir honours an explicit
+/// `workingdir`, then the executable's parent, then the install dir.
+fn resolve_game_paths(ctx: &LaunchContext) -> std::result::Result<(PathBuf, PathBuf, PathBuf), LaunchError> {
+    let install_dir = PathBuf::from(
+        ctx.app.install_path
+            .clone()
+            .ok_or_else(|| LaunchError::new(LaunchErrorKind::GameData, format!("game {} is not installed", ctx.app.app_id)))?,
+    );
+
+    let exe_rel = ctx.launch_info.executable.replace('\\', "/");
+    let executable = if Path::new(&exe_rel).is_absolute() {
+        PathBuf::from(&exe_rel)
+    } else {
+        install_dir.join(&exe_rel)
+    };
+    let game_working_dir: PathBuf = ctx.launch_info.workingdir
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(|wd| install_dir.join(wd.replace('\\', "/")))
+        .or_else(|| executable.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| install_dir.clone());
+
+    Ok((install_dir, executable, game_working_dir))
 }
 

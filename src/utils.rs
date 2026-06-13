@@ -952,6 +952,45 @@ pub fn detect_custom_components(path: &Path) -> crate::utils::RunnerComponents {
     }
 }
 
+/// Place a single DLL at `dest` as a symlink to `src` (a plain copy on non-unix),
+/// first clearing any existing entry: a real (non-symlink) file is moved aside to
+/// `*.dll.bak` (or removed if a backup already exists), and a stale symlink is
+/// removed. When `log` is set the backup and symlink steps emit info-level traces;
+/// the sibling-arch deploy passes `log = false` to stay quiet, preserving prior
+/// behavior exactly.
+fn deploy_one_dll_symlink(src: &Path, dest: &Path, log: bool) -> Result<()> {
+    // Safety check: if it exists and is not a symlink, back it up or skip?
+    // Usually we want to replace it if it's a Wine builtin.
+    if dest.exists() {
+        let meta = std::fs::symlink_metadata(dest)?;
+        if !meta.file_type().is_symlink() {
+            let backup = dest.with_extension("dll.bak");
+            if !backup.exists() {
+                if log {
+                    tracing::info!("Backing up original DLL: {} -> {}", dest.display(), backup.display());
+                }
+                std::fs::rename(dest, &backup)?;
+            } else {
+                // Backup already exists, just remove the original to make room for symlink
+                std::fs::remove_file(dest)?;
+            }
+        } else {
+            // It's already a symlink, remove it to update
+            std::fs::remove_file(dest)?;
+        }
+    }
+
+    if log {
+        tracing::info!("Symlinking {} -> {}", src.display(), dest.display());
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(src, dest)?;
+    #[cfg(not(unix))]
+    std::fs::copy(src, dest)?;
+
+    Ok(())
+}
+
 pub fn deploy_dll_symlinks(
     prefix: &Path,
     resolutions: &[crate::launch::dll_provider_resolver::DllResolution],
@@ -990,30 +1029,7 @@ pub fn deploy_dll_symlinks(
 
             let dest_path = dest_dir.join(&dll_name);
 
-            // Safety check: if it exists and is not a symlink, back it up or skip?
-            // Usually we want to replace it if it's a Wine builtin.
-            if dest_path.exists() {
-                let meta = std::fs::symlink_metadata(&dest_path)?;
-                if !meta.file_type().is_symlink() {
-                    let backup = dest_path.with_extension("dll.bak");
-                    if !backup.exists() {
-                        tracing::info!("Backing up original DLL: {} -> {}", dest_path.display(), backup.display());
-                        std::fs::rename(&dest_path, &backup)?;
-                    } else {
-                        // Backup already exists, just remove the original to make room for symlink
-                        std::fs::remove_file(&dest_path)?;
-                    }
-                } else {
-                    // It's already a symlink, remove it to update
-                    std::fs::remove_file(&dest_path)?;
-                }
-            }
-
-            tracing::info!("Symlinking {} -> {}", src_path.display(), dest_path.display());
-            #[cfg(unix)]
-            std::os::unix::fs::symlink(src_path, &dest_path)?;
-            #[cfg(not(unix))]
-            std::fs::copy(src_path, &dest_path)?;
+            deploy_one_dll_symlink(src_path, &dest_path, true)?;
 
             deployed.push(dest_path);
 
@@ -1036,23 +1052,7 @@ pub fn deploy_dll_symlinks(
                 // But we can guess based on common layouts.
                 if let Some(other_src) = find_sibling_dll(src_path, target_arch, &other_arch) {
                     let other_dest = other_dir.join(&dll_name);
-                    if other_dest.exists() {
-                        let meta = std::fs::symlink_metadata(&other_dest)?;
-                        if !meta.file_type().is_symlink() {
-                            let backup = other_dest.with_extension("dll.bak");
-                            if !backup.exists() {
-                                std::fs::rename(&other_dest, &backup)?;
-                            } else {
-                                std::fs::remove_file(&other_dest)?;
-                            }
-                        } else {
-                            std::fs::remove_file(&other_dest)?;
-                        }
-                    }
-                    #[cfg(unix)]
-                    std::os::unix::fs::symlink(&other_src, &other_dest)?;
-                    #[cfg(not(unix))]
-                    std::fs::copy(&other_src, &other_dest)?;
+                    deploy_one_dll_symlink(&other_src, &other_dest, false)?;
                     deployed.push(other_dest);
                 }
             }

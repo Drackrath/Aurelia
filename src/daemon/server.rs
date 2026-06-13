@@ -111,45 +111,57 @@ pub async fn run_server() -> Result<()> {
     }
 }
 
-/// Handle one forwarded command: read the header, run it with stdio routed over the
-/// socket, then send the exit code.
-async fn handle<S>(stream: S) -> Result<()>
+/// The write half of a connection, shared between the exit-frame writer and the
+/// background stdout/stderr pump.
+type SharedWriter<W> = Arc<Mutex<W>>;
+
+/// Read the opening frame and parse the argv header. The first frame on a connection
+/// must be the [`proto::C_HEADER`] frame carrying the request's argv.
+async fn read_header<R>(reader: &mut R) -> Result<Vec<String>>
 where
-    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    R: AsyncRead + Unpin,
 {
-    // Count this request as in-flight so the upgrade watcher won't restart mid-run.
-    let _inflight = InflightGuard::new();
-
-    let (mut reader, writer) = tokio::io::split(stream);
-    let writer = Arc::new(Mutex::new(writer));
-
-    // First frame must be the argv header.
-    let (channel, payload) = proto::read_frame(&mut reader)
+    let (channel, payload) = proto::read_frame(reader)
         .await?
         .context("client closed before sending a request header")?;
     anyhow::ensure!(channel == proto::C_HEADER, "expected a header frame first");
     let header: Header = serde_json::from_slice(&payload).context("malformed request header")?;
-    let argv = header.argv;
+    Ok(header.argv)
+}
 
-    // Captured stdout/stderr → socket.
-    let (out_tx, mut out_rx) = mpsc::unbounded_channel::<OutChunk>();
-    let writer_out = writer.clone();
-    let writer_task = tokio::spawn(async move {
+/// Spawn the pump that forwards captured stdout/stderr chunks to the socket. Ends
+/// when `out_tx` (held by the running command's [`OutputCtx`]) is dropped.
+fn spawn_output_pump<W>(
+    writer: SharedWriter<W>,
+    mut out_rx: mpsc::UnboundedReceiver<OutChunk>,
+) -> tokio::task::JoinHandle<()>
+where
+    W: AsyncWrite + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
         while let Some(chunk) = out_rx.recv().await {
             let ch = match chunk.stream {
                 Stream::Stdout => proto::C_STDOUT,
                 Stream::Stderr => proto::C_STDERR,
             };
-            let mut w = writer_out.lock().await;
+            let mut w = writer.lock().await;
             if proto::write_frame(&mut *w, ch, &chunk.bytes).await.is_err() {
                 break;
             }
         }
-    });
+    })
+}
 
-    // Client stdin frames → the command's stdin.
-    let (in_tx, in_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-    let reader_task = tokio::spawn(async move {
+/// Spawn the pump that forwards client stdin frames to the command's stdin. Dropping
+/// `in_tx` (when this task ends) signals stdin EOF to the command.
+fn spawn_stdin_pump<R>(
+    mut reader: R,
+    in_tx: mpsc::UnboundedSender<Vec<u8>>,
+) -> tokio::task::JoinHandle<()>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
         loop {
             match proto::read_frame(&mut reader).await {
                 Ok(Some((proto::C_STDIN, data))) => {
@@ -162,8 +174,30 @@ where
                 Err(_) => break,
             }
         }
-        // Dropping `in_tx` here signals stdin EOF to the command.
-    });
+    })
+}
+
+/// Handle one forwarded command: read the header, run it with stdio routed over the
+/// socket, then send the exit code.
+async fn handle<S>(stream: S) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    // Count this request as in-flight so the upgrade watcher won't restart mid-run.
+    let _inflight = InflightGuard::new();
+
+    let (mut reader, writer) = tokio::io::split(stream);
+    let writer = Arc::new(Mutex::new(writer));
+
+    let argv = read_header(&mut reader).await?;
+
+    // Captured stdout/stderr → socket.
+    let (out_tx, out_rx) = mpsc::unbounded_channel::<OutChunk>();
+    let writer_task = spawn_output_pump(writer.clone(), out_rx);
+
+    // Client stdin frames → the command's stdin.
+    let (in_tx, in_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let reader_task = spawn_stdin_pump(reader, in_tx);
 
     // Run the command with IO routed to this connection. Dropping `ctx` when the
     // scope ends closes `out_tx`, which ends `writer_task`.

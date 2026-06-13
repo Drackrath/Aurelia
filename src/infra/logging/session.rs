@@ -198,21 +198,23 @@ impl LaunchSession {
         self.log_dir.join("stderr.log")
     }
 
-    pub fn write_summary(&self, summary: &LaunchSummary) -> anyhow::Result<()> {
+    /// Serialize `value` as pretty JSON and write it to `path`, ensuring the
+    /// session log directory exists first. Shared by all JSON artifact writers.
+    fn write_json_artifact<T: serde::Serialize + ?Sized>(&self, path: &Path, value: &T) -> anyhow::Result<()> {
         std::fs::create_dir_all(&self.log_dir)?;
-        let content = serde_json::to_string_pretty(summary)?;
-        std::fs::write(self.summary_path(), content)?;
+        let content = serde_json::to_string_pretty(value)?;
+        std::fs::write(path, content)?;
         Ok(())
     }
 
+    pub fn write_summary(&self, summary: &LaunchSummary) -> anyhow::Result<()> {
+        self.write_json_artifact(&self.summary_path(), summary)
+    }
+
     pub fn write_effective_env(&self, env: &EffectiveEnv) -> anyhow::Result<()> {
-        std::fs::create_dir_all(&self.log_dir)?;
         let mut redacted_env = env.clone();
         redacted_env.env_vars = redact_environment(redacted_env.env_vars);
-
-        let content = serde_json::to_string_pretty(&redacted_env)?;
-        std::fs::write(self.effective_env_path(), content)?;
-        Ok(())
+        self.write_json_artifact(&self.effective_env_path(), &redacted_env)
     }
 
     pub fn write_effective_env_txt(&self, env: &HashMap<String, String>) -> anyhow::Result<()> {
@@ -241,30 +243,34 @@ impl LaunchSession {
     }
 
     pub fn write_preflight_report<T: serde::Serialize>(&self, report: &T) -> anyhow::Result<()> {
-        std::fs::create_dir_all(&self.log_dir)?;
-        let content = serde_json::to_string_pretty(report)?;
-        std::fs::write(self.preflight_report_path(), content)?;
-        Ok(())
+        self.write_json_artifact(&self.preflight_report_path(), report)
     }
 
     pub fn write_dll_resolution_artifact(&self, resolutions: &[crate::launch::dll_provider_resolver::DllResolution]) -> anyhow::Result<()> {
-        std::fs::create_dir_all(&self.log_dir)?;
-        let content = serde_json::to_string_pretty(resolutions)?;
-        let path = self.log_dir.join("dll_resolution.json");
-        std::fs::write(path, content)?;
-        Ok(())
+        self.write_json_artifact(&self.log_dir.join("dll_resolution.json"), resolutions)
     }
 
     pub fn write_effective_launch_config(&self, config: &EffectiveLaunchConfig) -> anyhow::Result<()> {
-        std::fs::create_dir_all(&self.log_dir)?;
-        let content = serde_json::to_string_pretty(config)?;
-        std::fs::write(self.log_dir.join("effective_launch_config.json"), content)?;
-        Ok(())
+        self.write_json_artifact(&self.log_dir.join("effective_launch_config.json"), config)
     }
 }
 
 pub fn redact_environment(env: HashMap<String, String>) -> HashMap<String, String> {
     super::redact_sensitive(env)
+}
+
+/// Build a `CompatibilityWarning` with the given code, message and context
+/// entries. Centralizes the repeated struct construction in the sanity checks.
+fn sanity_warning(
+    code: &str,
+    message: String,
+    context: impl IntoIterator<Item = (String, String)>,
+) -> crate::launch::pipeline::CompatibilityWarning {
+    crate::launch::pipeline::CompatibilityWarning {
+        code: code.to_string(),
+        message,
+        context: context.into_iter().collect(),
+    }
 }
 
 pub fn check_environment_sanity(
@@ -290,17 +296,17 @@ pub fn check_environment_sanity(
         if is_baseline {
             for dll in d3d_dlls {
                 if overrides.contains(&format!("{}=n", dll)) {
-                    warnings.push(crate::launch::pipeline::CompatibilityWarning {
-                        code: "SANITY_UNEXPECTED_OVERRIDE".to_string(),
-                        message: format!(
+                    warnings.push(sanity_warning(
+                        "SANITY_UNEXPECTED_OVERRIDE",
+                        format!(
                             "WINEDLLOVERRIDES contains forced native override for '{}' in baseline mode. This may prevent the game from starting.",
                             dll
                         ),
-                        context: [
+                        [
                             ("dll".to_string(), dll.to_string()),
                             ("overrides".to_string(), overrides.clone()),
-                        ].into_iter().collect(),
-                    });
+                        ],
+                    ));
                 }
             }
         }
@@ -310,44 +316,44 @@ pub fn check_environment_sanity(
     if let Some(config) = user_config {
         if config.graphics_layers.dxvk_enabled {
             if !env_vars.contains_key("DXVK_LOG_LEVEL") && !env_vars.contains_key("DXVK_HUD") {
-                warnings.push(crate::launch::pipeline::CompatibilityWarning {
-                    code: "SANITY_DXVK_NO_DIAGNOSTICS".to_string(),
-                    message: "DXVK is enabled but no DXVK diagnostic variables (DXVK_LOG_LEVEL, DXVK_HUD) are set. Troubleshooting may be difficult if issues occur.".to_string(),
-                    context: HashMap::new(),
-                });
+                warnings.push(sanity_warning(
+                    "SANITY_DXVK_NO_DIAGNOSTICS",
+                    "DXVK is enabled but no DXVK diagnostic variables (DXVK_LOG_LEVEL, DXVK_HUD) are set. Troubleshooting may be difficult if issues occur.".to_string(),
+                    [],
+                ));
             }
             if let Some(overrides) = env_vars.get("WINEDLLOVERRIDES") {
                 if !overrides.contains("d3d11=n") && !overrides.contains("dxgi=n") && !overrides.contains("d3d9=n") && !overrides.contains("d3d8=n") && !overrides.contains("d3d10core=n") {
-                     warnings.push(crate::launch::pipeline::CompatibilityWarning {
-                        code: "SANITY_MISSING_DXVK_OVERRIDE".to_string(),
-                        message: "DXVK is enabled but WINEDLLOVERRIDES does not appear to contain native overrides for D3D11/DXGI/D3D9/D3D8/D3D10CORE.".to_string(),
-                        context: [("overrides".to_string(), overrides.clone())].into_iter().collect(),
-                    });
+                    warnings.push(sanity_warning(
+                        "SANITY_MISSING_DXVK_OVERRIDE",
+                        "DXVK is enabled but WINEDLLOVERRIDES does not appear to contain native overrides for D3D11/DXGI/D3D9/D3D8/D3D10CORE.".to_string(),
+                        [("overrides".to_string(), overrides.clone())],
+                    ));
                 }
             } else {
-                 warnings.push(crate::launch::pipeline::CompatibilityWarning {
-                    code: "SANITY_MISSING_OVERRIDES_ENV".to_string(),
-                    message: "DXVK is enabled but WINEDLLOVERRIDES environment variable is missing.".to_string(),
-                    context: HashMap::new(),
-                });
+                warnings.push(sanity_warning(
+                    "SANITY_MISSING_OVERRIDES_ENV",
+                    "DXVK is enabled but WINEDLLOVERRIDES environment variable is missing.".to_string(),
+                    [],
+                ));
             }
         }
 
         if config.graphics_layers.vkd3d_proton_enabled || config.graphics_layers.vkd3d_enabled {
             if !env_vars.contains_key("VKD3D_DEBUG") && !env_vars.contains_key("VKD3D_CONFIG") {
-                warnings.push(crate::launch::pipeline::CompatibilityWarning {
-                    code: "SANITY_VKD3D_NO_DIAGNOSTICS".to_string(),
-                    message: "VKD3D is enabled but no VKD3D diagnostic variables (VKD3D_DEBUG, VKD3D_CONFIG) are set.".to_string(),
-                    context: HashMap::new(),
-                });
+                warnings.push(sanity_warning(
+                    "SANITY_VKD3D_NO_DIAGNOSTICS",
+                    "VKD3D is enabled but no VKD3D diagnostic variables (VKD3D_DEBUG, VKD3D_CONFIG) are set.".to_string(),
+                    [],
+                ));
             }
             if let Some(overrides) = env_vars.get("WINEDLLOVERRIDES") {
                 if !overrides.contains("d3d12=n") {
-                     warnings.push(crate::launch::pipeline::CompatibilityWarning {
-                        code: "SANITY_MISSING_VKD3D_OVERRIDE".to_string(),
-                        message: "VKD3D is enabled but WINEDLLOVERRIDES does not appear to contain native overrides for D3D12.".to_string(),
-                        context: [("overrides".to_string(), overrides.clone())].into_iter().collect(),
-                    });
+                    warnings.push(sanity_warning(
+                        "SANITY_MISSING_VKD3D_OVERRIDE",
+                        "VKD3D is enabled but WINEDLLOVERRIDES does not appear to contain native overrides for D3D12.".to_string(),
+                        [("overrides".to_string(), overrides.clone())],
+                    ));
                 }
             }
         }
@@ -355,11 +361,11 @@ pub fn check_environment_sanity(
 
     // 3. Proton specific checks
     if runner_name.to_lowercase().contains("proton") && !env_vars.contains_key("STEAM_COMPAT_DATA_PATH") {
-        warnings.push(crate::launch::pipeline::CompatibilityWarning {
-            code: "SANITY_MISSING_PROTON_DATA_PATH".to_string(),
-            message: "Proton runner detected but STEAM_COMPAT_DATA_PATH is missing.".to_string(),
-            context: HashMap::new(),
-        });
+        warnings.push(sanity_warning(
+            "SANITY_MISSING_PROTON_DATA_PATH",
+            "Proton runner detected but STEAM_COMPAT_DATA_PATH is missing.".to_string(),
+            [],
+        ));
     }
 
     warnings

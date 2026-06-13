@@ -347,10 +347,7 @@ impl SteamClient {
                         .await
                     {
                         Ok(_) => {
-                            let aborted = shared_state_clone.read()
-                                .map(|s| s.abort_signal.load(std::sync::atomic::Ordering::Relaxed))
-                                .unwrap_or(false);
-                            if aborted {
+                            if download_aborted(&shared_state_clone) {
                                 break;
                             }
 
@@ -369,11 +366,7 @@ impl SteamClient {
                 }
 
                 if !depot_success {
-                    let aborted = shared_state_clone.read()
-                        .map(|s| s.abort_signal.load(std::sync::atomic::Ordering::Relaxed))
-                        .unwrap_or(false);
-
-                    if aborted {
+                    if download_aborted(&shared_state_clone) {
                         success = false;
                         break;
                     }
@@ -438,4 +431,14 @@ impl SteamClient {
         Ok(rx)
     }
 
+}
+
+/// Returns whether the user has signalled an abort for the in-progress
+/// download/verify. A poisoned lock is treated as "not aborted" so a transient
+/// lock failure can't spuriously cancel the operation.
+fn download_aborted(state: &Arc<std::sync::RwLock<crate::models::DownloadState>>) -> bool {
+    state
+        .read()
+        .map(|s| s.abort_signal.load(std::sync::atomic::Ordering::Relaxed))
+        .unwrap_or(false)
 }

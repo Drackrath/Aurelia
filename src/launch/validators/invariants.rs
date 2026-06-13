@@ -1,5 +1,33 @@
-use crate::launch::pipeline::PipelineContext;
+use crate::launch::pipeline::{EvidenceScanMetadata, PipelineContext};
 use crate::launch::validators::LaunchValidator;
+
+/// Parse a `WINEDLLOVERRIDES` value and return the DLL names (as written in the
+/// override string) that have a native (`n`) override and belong to `targets`.
+/// DLL matching is case-insensitive and trims surrounding whitespace.
+fn native_dll_overrides(overrides: &str, targets: &[&str]) -> Vec<String> {
+    let mut matched = Vec::new();
+    for part in overrides.split(';') {
+        if let Some((dll, mode)) = part.split_once('=')
+            && targets.contains(&dll.trim().to_lowercase().as_str())
+            && mode.contains('n')
+        {
+            matched.push(dll.to_string());
+        }
+    }
+    matched
+}
+
+/// Build the parenthetical suffix describing why no runtime evidence was found,
+/// based on the log scan metadata. Empty string when the log exists and is non-empty.
+fn evidence_missing_suffix(meta: &EvidenceScanMetadata) -> &'static str {
+    if !meta.file_exists {
+        " (Wine log missing)"
+    } else if meta.line_count == 0 {
+        " (Wine log empty)"
+    } else {
+        ""
+    }
+}
 
 pub struct LaunchInvariantValidator;
 
@@ -35,16 +63,11 @@ impl LaunchValidator for LaunchInvariantValidator {
         {
             if let Some(overrides) = spec.env.get("WINEDLLOVERRIDES") {
                 let dxvk_dlls = ["d3d8", "d3d9", "d3d10core", "d3d11", "dxgi"];
-                for part in overrides.split(';') {
-                    if let Some((dll, mode)) = part.split_once('=')
-                        && dxvk_dlls.contains(&dll.trim().to_lowercase().as_str())
-                        && mode.contains('n')
-                    {
-                        warnings.push((
-                            "INVARIANT_B_VIOLATION",
-                            format!("Effective backend is not DXVK but found native override for DXVK DLL: {}", dll),
-                        ));
-                    }
+                for dll in native_dll_overrides(overrides, &dxvk_dlls) {
+                    warnings.push((
+                        "INVARIANT_B_VIOLATION",
+                        format!("Effective backend is not DXVK but found native override for DXVK DLL: {}", dll),
+                    ));
                 }
             }
             if spec.env.get("WINEDLLPATH").is_some_and(|p| p.contains("dxvk")) {
@@ -61,16 +84,11 @@ impl LaunchValidator for LaunchInvariantValidator {
         {
             if let Some(overrides) = spec.env.get("WINEDLLOVERRIDES") {
                 let d3d12_dlls = ["d3d12", "d3d12core"];
-                for part in overrides.split(';') {
-                    if let Some((dll, mode)) = part.split_once('=')
-                        && d3d12_dlls.contains(&dll.trim().to_lowercase().as_str())
-                        && mode.contains('n')
-                    {
-                        warnings.push((
-                            "INVARIANT_C_VIOLATION",
-                            format!("Effective D3D12 provider is None but found native override for DLL: {}", dll),
-                        ));
-                    }
+                for dll in native_dll_overrides(overrides, &d3d12_dlls) {
+                    warnings.push((
+                        "INVARIANT_C_VIOLATION",
+                        format!("Effective D3D12 provider is None but found native override for DLL: {}", dll),
+                    ));
                 }
             }
             if spec.env.get("WINEDLLPATH").is_some_and(|p| p.contains("vkd3d")) {
@@ -161,8 +179,7 @@ impl LaunchValidator for LaunchInvariantValidator {
 
         // Post-launch validation: Check for missing evidence after launch
         if ctx.graphics_stack.effective_backend == "DXVK" && !ctx.graphics_stack.runtime_evidence.dxvk.evidence_found {
-             let meta = &ctx.graphics_stack.runtime_evidence.scan_metadata;
-             let suffix = if !meta.file_exists { " (Wine log missing)" } else if meta.line_count == 0 { " (Wine log empty)" } else { "" };
+             let suffix = evidence_missing_suffix(&ctx.graphics_stack.runtime_evidence.scan_metadata);
              let code = if ctx.graphics_stack.requested_backend == "DXVK" {
                  "STRICT_DXVK_EVIDENCE_MISSING"
              } else {
@@ -237,8 +254,7 @@ impl LaunchValidator for LaunchInvariantValidator {
         }
 
         if ctx.graphics_stack.effective_d3d12_provider == "vkd3d-proton" && !ctx.graphics_stack.runtime_evidence.vkd3d_proton.evidence_found {
-             let meta = &ctx.graphics_stack.runtime_evidence.scan_metadata;
-             let suffix = if !meta.file_exists { " (Wine log missing)" } else if meta.line_count == 0 { " (Wine log empty)" } else { "" };
+             let suffix = evidence_missing_suffix(&ctx.graphics_stack.runtime_evidence.scan_metadata);
              warnings.push((
                 "DIAGNOSTICS_MISSING_VKD3D_PROTON_EVIDENCE",
                 format!("VKD3D-Proton was requested/effective but no runtime evidence was found in logs{}.", suffix)

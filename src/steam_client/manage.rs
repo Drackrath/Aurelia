@@ -5,6 +5,36 @@
 use super::*;
 
 impl SteamClient {
+    /// Resolve an installed app's on-disk layout from its `appmanifest`:
+    /// `(manifest, steamapps_dir, library_root, installdir)`. Shared by the
+    /// move/relink flows, which differ only in the message reported when no
+    /// manifest exists (`missing_manifest_msg`, already formatted by the caller).
+    async fn resolve_source_layout(
+        &self,
+        appid: u32,
+        missing_manifest_msg: &str,
+    ) -> Result<(PathBuf, PathBuf, PathBuf, String)> {
+        let src_manifest = self.appmanifest_path(appid).await?;
+        if !src_manifest.exists() {
+            bail!("{missing_manifest_msg}");
+        }
+        let src_steamapps = src_manifest
+            .parent()
+            .ok_or_else(|| anyhow!("invalid manifest path for app {appid}"))?
+            .to_path_buf();
+        let src_lib_root = src_steamapps
+            .parent()
+            .ok_or_else(|| anyhow!("invalid library path for app {appid}"))?
+            .to_path_buf();
+
+        let raw = std::fs::read_to_string(&src_manifest)
+            .with_context(|| format!("failed reading {}", src_manifest.display()))?;
+        let installdir = parse_installdir_from_acf(&raw)
+            .ok_or_else(|| anyhow!("appmanifest for {appid} has no installdir"))?;
+
+        Ok((src_manifest, src_steamapps, src_lib_root, installdir))
+    }
+
     pub async fn update_app_branch(&self, appid: u32, branch: &str) -> Result<()> {
         let manifest_path = self.appmanifest_path(appid).await?;
         if !manifest_path.exists() {
@@ -83,23 +113,12 @@ impl SteamClient {
         use crate::relocate;
 
         // --- Resolve the source layout from the appmanifest ---
-        let src_manifest = self.appmanifest_path(appid).await?;
-        if !src_manifest.exists() {
-            bail!("app {appid} is not installed (no appmanifest found)");
-        }
-        let src_steamapps = src_manifest
-            .parent()
-            .ok_or_else(|| anyhow!("invalid manifest path for app {appid}"))?
-            .to_path_buf();
-        let src_lib_root = src_steamapps
-            .parent()
-            .ok_or_else(|| anyhow!("invalid library path for app {appid}"))?
-            .to_path_buf();
-
-        let raw = std::fs::read_to_string(&src_manifest)
-            .with_context(|| format!("failed reading {}", src_manifest.display()))?;
-        let installdir = parse_installdir_from_acf(&raw)
-            .ok_or_else(|| anyhow!("appmanifest for {appid} has no installdir"))?;
+        let (src_manifest, src_steamapps, src_lib_root, installdir) = self
+            .resolve_source_layout(
+                appid,
+                &format!("app {appid} is not installed (no appmanifest found)"),
+            )
+            .await?;
 
         let src_common = src_steamapps.join("common").join(&installdir);
         if !src_common.exists() {
@@ -158,28 +177,28 @@ impl SteamClient {
                 let compat_bytes = src_compat.as_ref().map(|p| relocate::dir_size(p)).unwrap_or(0);
                 let total = common_bytes + compat_bytes;
 
-                // Game files.
-                relocate::move_dir_with_progress(&src_common, &dest_common, common_bytes, |copied, file| {
+                // Both phases emit identical `Moving` events; the prefix phase just
+                // offsets its byte count past the already-copied game files.
+                let send_moving = |base: u64, copied: u64, file: &str| {
                     let _ = tx.blocking_send(DownloadProgress {
                         state: DownloadProgressState::Moving,
-                        bytes_downloaded: copied,
+                        bytes_downloaded: base + copied,
                         total_bytes: total,
                         current_file: file.to_string(),
                         ..Default::default()
                     });
+                };
+
+                // Game files.
+                relocate::move_dir_with_progress(&src_common, &dest_common, common_bytes, |copied, file| {
+                    send_moving(0, copied, file);
                 })
                 .with_context(|| format!("failed moving game files to {}", dest_common.display()))?;
 
                 // Proton prefix.
                 if let (Some(sc), Some(dc)) = (&src_compat, &dest_compat) {
                     relocate::move_dir_with_progress(sc, dc, compat_bytes, |copied, file| {
-                        let _ = tx.blocking_send(DownloadProgress {
-                            state: DownloadProgressState::Moving,
-                            bytes_downloaded: common_bytes + copied,
-                            total_bytes: total,
-                            current_file: file.to_string(),
-                            ..Default::default()
-                        });
+                        send_moving(common_bytes, copied, file);
                     })
                     .with_context(|| format!("failed moving Proton prefix to {}", dc.display()))?;
                 }
@@ -260,23 +279,12 @@ impl SteamClient {
     /// `libraryfolders.vdf`; the game files and Proton prefix are never touched.
     /// Steam should not be running. Returns the destination install directory.
     pub async fn relink_install(&self, appid: u32, dest_library: PathBuf) -> Result<PathBuf> {
-        let src_manifest = self.appmanifest_path(appid).await?;
-        if !src_manifest.exists() {
-            bail!("app {appid} is not registered (no appmanifest to relink)");
-        }
-        let src_steamapps = src_manifest
-            .parent()
-            .ok_or_else(|| anyhow!("invalid manifest path for app {appid}"))?
-            .to_path_buf();
-        let src_lib_root = src_steamapps
-            .parent()
-            .ok_or_else(|| anyhow!("invalid library path for app {appid}"))?
-            .to_path_buf();
-
-        let raw = std::fs::read_to_string(&src_manifest)
-            .with_context(|| format!("failed reading {}", src_manifest.display()))?;
-        let installdir = parse_installdir_from_acf(&raw)
-            .ok_or_else(|| anyhow!("appmanifest for {appid} has no installdir"))?;
+        let (src_manifest, src_steamapps, src_lib_root, installdir) = self
+            .resolve_source_layout(
+                appid,
+                &format!("app {appid} is not registered (no appmanifest to relink)"),
+            )
+            .await?;
 
         let dest_steamapps = dest_library.join("steamapps");
         if !dest_steamapps.exists() {

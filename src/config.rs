@@ -1,5 +1,6 @@
 use crate::models::{OwnedGame, SessionState, SteamPrefixMode, UserConfigStore};
 use anyhow::{Context, Result};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -19,6 +20,16 @@ async fn write_json_pretty<T: Serialize>(path: &Path, value: &T) -> Result<()> {
         .await
         .with_context(|| format!("failed writing {}", path.display()))?;
     Ok(())
+}
+
+/// Read `path` and parse it as JSON into `T`. Shared by the `load_*` helpers so the
+/// read / parse / error-context sequence lives in one place. Callers handle the
+/// missing-file fallback themselves, since each returns a different default.
+async fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T> {
+    let raw = fs::read_to_string(path)
+        .await
+        .with_context(|| format!("failed reading {}", path.display()))?;
+    serde_json::from_str(&raw).with_context(|| format!("failed parsing {}", path.display()))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
@@ -169,11 +180,7 @@ pub async fn load_session() -> Result<SessionState> {
     if !session_path.exists() {
         return Ok(SessionState::default());
     }
-
-    let raw = fs::read_to_string(&session_path)
-        .await
-        .with_context(|| format!("failed reading {}", session_path.display()))?;
-    serde_json::from_str(&raw).with_context(|| format!("failed parsing {}", session_path.display()))
+    read_json(&session_path).await
 }
 
 pub async fn save_session(session: &SessionState) -> Result<()> {
@@ -210,12 +217,7 @@ pub async fn load_launcher_config() -> Result<LauncherConfig> {
         }
         return Ok(config);
     }
-
-    let raw = fs::read_to_string(&path)
-        .await
-        .with_context(|| format!("failed reading {}", path.display()))?;
-    serde_json::from_str::<LauncherConfig>(&raw)
-        .with_context(|| format!("failed parsing {}", path.display()))
+    read_json(&path).await
 }
 
 pub async fn save_launcher_config(config: &LauncherConfig) -> Result<()> {
@@ -236,12 +238,7 @@ pub async fn load_library_cache() -> Result<Vec<OwnedGame>> {
     if !path.exists() {
         return Ok(Vec::new());
     }
-
-    let raw = fs::read_to_string(&path)
-        .await
-        .with_context(|| format!("failed reading {}", path.display()))?;
-    serde_json::from_str::<Vec<OwnedGame>>(&raw)
-        .with_context(|| format!("failed parsing {}", path.display()))
+    read_json(&path).await
 }
 
 /// Default lifetime of a cached `aurelia info` record before it is re-fetched
@@ -321,12 +318,7 @@ pub async fn load_user_configs() -> Result<UserConfigStore> {
     if !path.exists() {
         return Ok(UserConfigStore::new());
     }
-
-    let raw = fs::read_to_string(&path)
-        .await
-        .with_context(|| format!("failed reading {}", path.display()))?;
-    serde_json::from_str::<UserConfigStore>(&raw)
-        .with_context(|| format!("failed parsing {}", path.display()))
+    read_json(&path).await
 }
 
 pub async fn save_user_configs(configs: &UserConfigStore) -> Result<()> {

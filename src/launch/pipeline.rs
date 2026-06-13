@@ -284,6 +284,15 @@ pub fn map_io_error(err: &std::io::Error, dup_info: Option<&DuplicateInstanceInf
     launch_err
 }
 
+/// Mark an evidence item as found and record the supporting line, capping the
+/// stored evidence at 5 entries to bound memory/serialized size.
+fn record_evidence(item: &mut EvidenceItem, line: String) {
+    item.evidence_found = true;
+    if item.evidence.len() < 5 {
+        item.evidence.push(line);
+    }
+}
+
 pub fn detect_duplicate_instance(ctx: &PipelineContext) -> DuplicateInstanceInfo {
     if let Some(spec) = &ctx.command_spec {
         // 1. Check for explicit lockfile in the game directory or prefix
@@ -856,28 +865,16 @@ impl LaunchPipeline {
                         }
 
                         if evidence.contains("DXVK") {
-                            ctx.graphics_stack.runtime_evidence.dxvk.evidence_found = true;
-                            if ctx.graphics_stack.runtime_evidence.dxvk.evidence.len() < 5 {
-                                ctx.graphics_stack.runtime_evidence.dxvk.evidence.push(evidence.clone());
-                            }
+                            record_evidence(&mut ctx.graphics_stack.runtime_evidence.dxvk, evidence.clone());
                         }
                         if evidence.contains("VKD3D-Proton") {
-                            ctx.graphics_stack.runtime_evidence.vkd3d_proton.evidence_found = true;
-                            if ctx.graphics_stack.runtime_evidence.vkd3d_proton.evidence.len() < 5 {
-                                ctx.graphics_stack.runtime_evidence.vkd3d_proton.evidence.push(evidence.clone());
-                            }
+                            record_evidence(&mut ctx.graphics_stack.runtime_evidence.vkd3d_proton, evidence.clone());
                         }
                         if evidence.contains("VKD3D") && !evidence.contains("Proton") {
-                            ctx.graphics_stack.runtime_evidence.vkd3d.evidence_found = true;
-                            if ctx.graphics_stack.runtime_evidence.vkd3d.evidence.len() < 5 {
-                                ctx.graphics_stack.runtime_evidence.vkd3d.evidence.push(evidence.clone());
-                            }
+                            record_evidence(&mut ctx.graphics_stack.runtime_evidence.vkd3d, evidence.clone());
                         }
                         if evidence.contains("WineD3D") {
-                            ctx.graphics_stack.runtime_evidence.wined3d.evidence_found = true;
-                            if ctx.graphics_stack.runtime_evidence.wined3d.evidence.len() < 5 {
-                                ctx.graphics_stack.runtime_evidence.wined3d.evidence.push(evidence.clone());
-                            }
+                            record_evidence(&mut ctx.graphics_stack.runtime_evidence.wined3d, evidence.clone());
                         }
                         line_matched = true;
                     }
@@ -887,10 +884,7 @@ impl LaunchPipeline {
                     // DXVK Path Match
                     if let Some(path) = component_paths.get("dxvk") {
                         if line_lower.contains(&path.to_lowercase()) {
-                            ctx.graphics_stack.runtime_evidence.dxvk.evidence_found = true;
-                            if ctx.graphics_stack.runtime_evidence.dxvk.evidence.len() < 5 {
-                                ctx.graphics_stack.runtime_evidence.dxvk.evidence.push(format!("Path match: {}", line.trim()));
-                            }
+                            record_evidence(&mut ctx.graphics_stack.runtime_evidence.dxvk, format!("Path match: {}", line.trim()));
                             line_matched = true;
                         }
                     }
@@ -898,10 +892,7 @@ impl LaunchPipeline {
                     // VKD3D-Proton Path Match
                     if let Some(path) = component_paths.get("vkd3d_proton") {
                         if line_lower.contains(&path.to_lowercase()) {
-                            ctx.graphics_stack.runtime_evidence.vkd3d_proton.evidence_found = true;
-                            if ctx.graphics_stack.runtime_evidence.vkd3d_proton.evidence.len() < 5 {
-                                ctx.graphics_stack.runtime_evidence.vkd3d_proton.evidence.push(format!("Path match: {}", line.trim()));
-                            }
+                            record_evidence(&mut ctx.graphics_stack.runtime_evidence.vkd3d_proton, format!("Path match: {}", line.trim()));
                             line_matched = true;
                         }
                     }
@@ -927,10 +918,7 @@ impl LaunchPipeline {
                                     ctx.graphics_stack.graphics_stack_evidence.push(msg.clone());
 
                                     if is_builtin {
-                                        ctx.graphics_stack.runtime_evidence.wined3d.evidence_found = true;
-                                        if ctx.graphics_stack.runtime_evidence.wined3d.evidence.len() < 5 {
-                                            ctx.graphics_stack.runtime_evidence.wined3d.evidence.push(msg);
-                                        }
+                                        record_evidence(&mut ctx.graphics_stack.runtime_evidence.wined3d, msg);
                                     }
                                 }
                                 line_matched = true;

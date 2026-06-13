@@ -65,6 +65,12 @@ fn detail_to_workshop_item(detail: &PublishedFileDetails, fallback_app_id: u32) 
 }
 
 impl SteamClient {
+    /// Borrow the live Steam [`Connection`], or fail with the standard
+    /// "No connection" error every networked Workshop method here shares.
+    fn require_connection(&self) -> Result<&Connection> {
+        self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))
+    }
+
     /// Fetch metadata for a batch of Workshop published files in a single
     /// `PublishedFile.GetDetails` call. Ids that the service returns no data for
     /// (deleted/private/invalid) are skipped with a warning rather than failing
@@ -73,7 +79,7 @@ impl SteamClient {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        let connection = self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))?;
+        let connection = self.require_connection()?;
 
         let mut request = CPublishedFile_GetDetails_Request::new();
         // `publishedfileids` is a `repeated fixed64` → a plain `Vec<u64>`.
@@ -121,7 +127,7 @@ impl SteamClient {
         numperpage: u32,
         required_tags: &[String],
     ) -> Result<crate::models::WorkshopQueryPage> {
-        let connection = self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))?;
+        let connection = self.require_connection()?;
 
         let mut request = CPublishedFile_QueryFiles_Request::new();
         request.set_appid(app_id);
@@ -232,7 +238,7 @@ impl SteamClient {
     /// `app_id`, returning their publishedfileids. Sent as a UCM *client*
     /// message (a job), not a service method.
     pub async fn fetch_subscribed_items(&self, app_id: u32) -> Result<Vec<u64>> {
-        let connection = self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))?;
+        let connection = self.require_connection()?;
 
         let mut request = CMsgClientUCMEnumerateUserSubscribedFilesWithUpdates::new();
         request.set_app_id(app_id);
@@ -262,7 +268,7 @@ impl SteamClient {
 
     /// Subscribe the logged-in user to a Workshop item.
     pub async fn subscribe_published_file(&self, id: u64, app_id: u32) -> Result<()> {
-        let connection = self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))?;
+        let connection = self.require_connection()?;
 
         let mut request = CPublishedFile_Subscribe_Request::new();
         request.set_publishedfileid(id);
@@ -280,7 +286,7 @@ impl SteamClient {
 
     /// Unsubscribe the logged-in user from a Workshop item.
     pub async fn unsubscribe_published_file(&self, id: u64, app_id: u32) -> Result<()> {
-        let connection = self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))?;
+        let connection = self.require_connection()?;
 
         let mut request = CPublishedFile_Unsubscribe_Request::new();
         request.set_publishedfileid(id);
@@ -299,7 +305,7 @@ impl SteamClient {
     /// Rate a Workshop item — `up` for thumbs-up, `false` for thumbs-down
     /// (`PublishedFile.Vote`).
     pub async fn vote_workshop_item(&self, id: u64, up: bool) -> Result<()> {
-        let connection = self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))?;
+        let connection = self.require_connection()?;
 
         let mut request = CPublishedFile_Vote_Request::new();
         request.set_publishedfileid(id);
@@ -335,7 +341,7 @@ impl SteamClient {
         start: i32,
         count: i32,
     ) -> Result<Vec<WorkshopComment>> {
-        let connection = self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))?;
+        let connection = self.require_connection()?;
         let owner = self.workshop_item_creator(id).await?;
 
         let mut request = CCommunity_GetCommentThread_Request::new();
@@ -367,7 +373,7 @@ impl SteamClient {
     /// Post a comment to a Workshop item's public comment thread
     /// (`Community.PostCommentToThread`). Returns the new comment's `gidcomment`.
     pub async fn post_workshop_comment(&self, id: u64, text: &str) -> Result<u64> {
-        let connection = self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))?;
+        let connection = self.require_connection()?;
         let owner = self.workshop_item_creator(id).await?;
 
         let mut request = CCommunity_PostCommentToThread_Request::new();

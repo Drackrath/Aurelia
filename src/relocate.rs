@@ -61,6 +61,10 @@ fn copy_dir(src: &Path, dst: &Path, on_progress: &mut impl FnMut(u64, &str)) -> 
     let mut copied: u64 = 0;
     std::fs::create_dir_all(dst)?;
 
+    // Reuse one chunk buffer across every file in the tree; a game install can
+    // hold thousands of files, so per-file 4 MiB allocations would add up.
+    let mut buf = vec![0u8; 4 * 1024 * 1024];
+
     for entry in WalkDir::new(src).into_iter().filter_map(|e| e.ok()) {
         let rel = entry.path().strip_prefix(src).map_err(io::Error::other)?;
         let target = dst.join(rel);
@@ -68,7 +72,7 @@ fn copy_dir(src: &Path, dst: &Path, on_progress: &mut impl FnMut(u64, &str)) -> 
         if entry.file_type().is_dir() {
             std::fs::create_dir_all(&target)?;
         } else if entry.file_type().is_file() {
-            copy_file_chunked(entry.path(), &target, &mut copied, on_progress)?;
+            copy_file_chunked(entry.path(), &target, &mut copied, &mut buf, on_progress)?;
         }
         // Symlinks and other special files are rare in game installs; skip them
         // rather than risk copying them incorrectly.
@@ -80,6 +84,7 @@ fn copy_file_chunked(
     src: &Path,
     dst: &Path,
     copied: &mut u64,
+    buf: &mut [u8],
     on_progress: &mut impl FnMut(u64, &str),
 ) -> io::Result<()> {
     use io::{Read, Write};
@@ -88,9 +93,8 @@ fn copy_file_chunked(
     let mut writer = std::fs::File::create(dst)?;
     let name = src.file_name().unwrap_or_default().to_string_lossy().into_owned();
 
-    let mut buf = vec![0u8; 4 * 1024 * 1024];
     loop {
-        let n = reader.read(&mut buf)?;
+        let n = reader.read(buf)?;
         if n == 0 {
             break;
         }

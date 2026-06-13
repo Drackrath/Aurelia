@@ -19,6 +19,13 @@ pub struct PreflightReport {
 
 pub struct PreflightStage;
 
+/// Build a `LaunchError` whose message carries the standard `[Preflight]` prefix
+/// in front of a check's `details`. Keeps the (kind, prefixed-message) pairing
+/// consistent across every validation step below.
+fn preflight_error(kind: LaunchErrorKind, details: &str) -> LaunchError {
+    LaunchError::new(kind, format!("[Preflight] {}", details))
+}
+
 #[async_trait]
 impl PipelineStage for PreflightStage {
     fn name(&self) -> &str { "Preflight" }
@@ -38,12 +45,12 @@ impl PipelineStage for PreflightStage {
         if !runner_file.exists() {
             check.status = false;
             check.details = format!("Runner binary not found: {}", runner_file.display());
-            final_res = Err(LaunchError::new(LaunchErrorKind::Runner, format!("[Preflight] {}", check.details))
+            final_res = Err(preflight_error(LaunchErrorKind::Runner, &check.details)
                 .with_context("runner_path", runner_path.clone()));
         } else if !runner_file.is_file() {
             check.status = false;
             check.details = format!("Runner path is not a file: {}", runner_file.display());
-            final_res = Err(LaunchError::new(LaunchErrorKind::Runner, format!("[Preflight] {}", check.details))
+            final_res = Err(preflight_error(LaunchErrorKind::Runner, &check.details)
                 .with_context("runner_path", runner_path.clone()));
         }
         checks.push(check);
@@ -75,7 +82,7 @@ impl PipelineStage for PreflightStage {
                              check.status = false;
                              check.details = format!("Game executable not found: {}", game_exe);
 
-                             let mut err = LaunchError::new(LaunchErrorKind::GameData, format!("[Preflight] {}", check.details))
+                             let mut err = preflight_error(LaunchErrorKind::GameData, &check.details)
                                 .with_context("app_id", ctx.app_id.to_string())
                                 .with_context("app_name", ctx.app.as_ref().map(|a| a.name.clone()).unwrap_or_default())
                                 .with_context("game_exe", game_exe.to_string())
@@ -94,7 +101,7 @@ impl PipelineStage for PreflightStage {
                           check.status = false;
                           check.details = format!("Game executable is not a file: {}", game_exe);
                           ctx.executable_exists = false;
-                          final_res = Err(LaunchError::new(LaunchErrorKind::GameData, format!("[Preflight] {}", check.details))
+                          final_res = Err(preflight_error(LaunchErrorKind::GameData, &check.details)
                             .with_context("game_exe", game_exe.to_string()));
                      } else {
                          ctx.executable_exists = true;
@@ -111,12 +118,12 @@ impl PipelineStage for PreflightStage {
                 if !cwd.exists() {
                     check.status = false;
                     check.details = format!("Working directory does not exist: {}", cwd.display());
-                    final_res = Err(LaunchError::new(LaunchErrorKind::Environment, format!("[Preflight] {}", check.details))
+                    final_res = Err(preflight_error(LaunchErrorKind::Environment, &check.details)
                         .with_context("cwd", cwd.to_string_lossy()));
                 } else if !cwd.is_dir() {
                     check.status = false;
                     check.details = format!("Working directory is not a directory: {}", cwd.display());
-                    final_res = Err(LaunchError::new(LaunchErrorKind::Environment, format!("[Preflight] {}", check.details))
+                    final_res = Err(preflight_error(LaunchErrorKind::Environment, &check.details)
                         .with_context("cwd", cwd.to_string_lossy()));
                 }
                 checks.push(check);
@@ -131,12 +138,12 @@ impl PipelineStage for PreflightStage {
                 if !prefix_path.exists() {
                     check.status = false;
                     check.details = format!("WINEPREFIX does not exist: {}", prefix);
-                    final_res = Err(LaunchError::new(LaunchErrorKind::Environment, format!("[Preflight] {}", check.details))
+                    final_res = Err(preflight_error(LaunchErrorKind::Environment, &check.details)
                         .with_context("wineprefix", prefix));
                 } else if !prefix_path.is_dir() {
                     check.status = false;
                     check.details = format!("WINEPREFIX is not a directory: {}", prefix);
-                    final_res = Err(LaunchError::new(LaunchErrorKind::Environment, format!("[Preflight] {}", check.details))
+                    final_res = Err(preflight_error(LaunchErrorKind::Environment, &check.details)
                         .with_context("wineprefix", prefix));
                 }
                 checks.push(check);
@@ -152,7 +159,7 @@ impl PipelineStage for PreflightStage {
                 if metadata.is_file() && metadata.permissions().mode() & 0o111 == 0 {
                     check.status = false;
                     check.details = format!("Runner binary is not executable: {}", runner_file.display());
-                    final_res = Err(LaunchError::new(LaunchErrorKind::Permission, format!("[Preflight] {}", check.details))
+                    final_res = Err(preflight_error(LaunchErrorKind::Permission, &check.details)
                         .with_context("runner_path", runner_path.clone()));
                 }
             }

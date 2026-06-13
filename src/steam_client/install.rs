@@ -4,8 +4,38 @@
 //! and free helpers live in the parent module (in scope via `use super::*`).
 use super::*;
 
+/// Locate the `depots` object within a parsed appinfo VDF root object.
+///
+/// When the VDF root key is the well-known `appinfo`/`<appid>` wrapper, the
+/// `depots` node sits directly under the root; otherwise it may be nested one
+/// level down inside the first child object. Shared by `fetch_branches` and
+/// `get_available_platforms`, which locate depots identically.
+fn locate_depots<'a, 'text>(
+    root_obj: &'a steam_vdf_parser::Obj<'text>,
+    vdf_key: &str,
+    appid: u32,
+) -> Option<&'a steam_vdf_parser::Value<'text>> {
+    if vdf_key == "appinfo" || vdf_key == appid.to_string() {
+        root_obj.get("depots")
+    } else {
+        root_obj.get("depots").or_else(|| {
+            root_obj
+                .values()
+                .next()
+                .and_then(|v| v.as_obj())
+                .and_then(|o| o.get("depots"))
+        })
+    }
+}
+
 impl SteamClient {
-    pub async fn fetch_branches(&self, appid: u32) -> Result<Vec<String>> {
+    /// Issue a single PICS `ProductInfo` request for `appid` and return the raw
+    /// appinfo VDF buffer for that app. Shared by `fetch_branches` and
+    /// `get_available_platforms`, which both need exactly this round-trip.
+    ///
+    /// `ctx` is folded into the request-failure error message so callers keep
+    /// their original, distinct context strings.
+    async fn fetch_appinfo_buffer(&self, appid: u32, ctx: &'static str) -> Result<Vec<u8>> {
         let connection = self
             .connection
             .as_ref()
@@ -19,10 +49,8 @@ impl SteamClient {
                 ..Default::default()
             });
 
-        let response: CMsgClientPICSProductInfoResponse = connection
-            .job(request)
-            .await
-            .context("failed requesting appinfo product info for branches")?;
+        let response: CMsgClientPICSProductInfoResponse =
+            connection.job(request).await.context(ctx)?;
 
         let app = response
             .apps
@@ -30,28 +58,24 @@ impl SteamClient {
             .find(|entry| entry.appid() == appid)
             .ok_or_else(|| anyhow!("missing app info payload for app {appid}"))?;
 
+        Ok(app.buffer().to_vec())
+    }
+
+    pub async fn fetch_branches(&self, appid: u32) -> Result<Vec<String>> {
         // PICS returns the appinfo as *binary* VDF; parse that first and only fall
         // back to text (mirroring `get_available_platforms`). Parsing the binary
         // buffer as text — as this used to — fails with "Expected a valid token for
         // object start", which is why `branches` was broken.
-        let buffer = app.buffer().to_vec();
+        let buffer = self
+            .fetch_appinfo_buffer(appid, "failed requesting appinfo product info for branches")
+            .await?;
         let appinfo_vdf_text = String::from_utf8_lossy(&buffer);
         let vdf = steam_vdf_parser::parse_binary(&buffer)
             .or_else(|_| steam_vdf_parser::parse_text(&appinfo_vdf_text).map(|v| v.into_owned()))
             .context("failed parsing appinfo VDF")?;
 
         let root_obj = vdf.as_obj().context("appinfo VDF root is not an object")?;
-        let depots = if vdf.key() == "appinfo" || vdf.key() == appid.to_string() {
-            root_obj.get("depots")
-        } else {
-            root_obj.get("depots").or_else(|| {
-                root_obj
-                    .values()
-                    .next()
-                    .and_then(|v| v.as_obj())
-                    .and_then(|o| o.get("depots"))
-            })
-        };
+        let depots = locate_depots(root_obj, vdf.key(), appid);
 
         let mut names: Vec<String> = Vec::new();
         if let Some(branches) = depots
@@ -85,31 +109,9 @@ impl SteamClient {
         &mut self,
         appid: u32,
     ) -> Result<(Vec<DepotPlatform>, Vec<u8>)> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
-
-        let mut request = CMsgClientPICSProductInfoRequest::new();
-        request
-            .apps
-            .push(cmsg_client_picsproduct_info_request::AppInfo {
-                appid: Some(appid),
-                ..Default::default()
-            });
-
-        let response: CMsgClientPICSProductInfoResponse = connection
-            .job(request)
-            .await
-            .context("failed requesting appinfo product info")?;
-
-        let app = response
-            .apps
-            .iter()
-            .find(|entry| entry.appid() == appid)
-            .ok_or_else(|| anyhow!("missing app info payload for app {appid}"))?;
-
-        let buffer = app.buffer().to_vec();
+        let buffer = self
+            .fetch_appinfo_buffer(appid, "failed requesting appinfo product info")
+            .await?;
         let appinfo_vdf_text = String::from_utf8_lossy(&buffer);
 
         let mut has_linux = false;
@@ -120,17 +122,7 @@ impl SteamClient {
 
         if let Ok(vdf) = vdf_res {
             let root_obj = vdf.as_obj().unwrap();
-            let depots_val = if vdf.key() == "appinfo" || vdf.key() == appid.to_string() {
-                root_obj.get("depots")
-            } else {
-                root_obj.get("depots").or_else(|| {
-                    root_obj
-                        .values()
-                        .next()
-                        .and_then(|v| v.as_obj())
-                        .and_then(|o| o.get("depots"))
-                })
-            };
+            let depots_val = locate_depots(root_obj, vdf.key(), appid);
 
             if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
                 for value in depots.values() {
@@ -286,8 +278,6 @@ impl SteamClient {
                 &appinfo_vdf_bytes_owned
             };
 
-            let appinfo_vdf_text = String::from_utf8_lossy(appinfo_vdf_bytes).to_string();
-
             let mut selections = Vec::new();
             // Build id of the installed content (from PICS), recorded in the appmanifest
             // so the Steam launcher sees the install as current and doesn't re-download.
@@ -374,7 +364,13 @@ impl SteamClient {
                                                 app_id: appid,
                                                 depot_id: d_id,
                                                 manifest_id: *m_id,
-                                                appinfo_vdf: appinfo_vdf_text.clone(),
+                                                // The download loop below consumes only
+                                                // depot_id / manifest_id; the appinfo VDF is
+                                                // never read from these selections, so avoid
+                                                // cloning the (potentially multi-MB) VDF text
+                                                // once per depot. (Mirrors launch.rs, which
+                                                // also leaves this empty.)
+                                                appinfo_vdf: String::new(),
                                             });
                                         }
                                     }

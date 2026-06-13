@@ -132,18 +132,23 @@ pub fn list_installed(steam_library_path: &Path) -> Vec<InstalledProton> {
     out
 }
 
+/// Build the [`ProtonPackage`] for a curated Valve entry (name + Steam app id).
+fn valve_package(name: &str, app_id: u32) -> ProtonPackage {
+    ProtonPackage {
+        name: name.to_string(),
+        label: "Valve".to_string(),
+        size: 0,
+        source: ProtonSource::Valve { app_id },
+    }
+}
+
 /// List everything installable: the curated Valve Proton set plus recent GE
 /// releases fetched from GitHub. GitHub failures (offline, rate-limited) are logged
 /// and that source is skipped rather than failing the whole listing.
 pub async fn list_available() -> Result<Vec<ProtonPackage>> {
     let mut out: Vec<ProtonPackage> = VALVE_PROTONS
         .iter()
-        .map(|(name, app_id)| ProtonPackage {
-            name: name.to_string(),
-            label: "Valve".to_string(),
-            size: 0,
-            source: ProtonSource::Valve { app_id: *app_id },
-        })
+        .map(|(name, app_id)| valve_package(name, *app_id))
         .collect();
 
     for src in GE_SOURCES {
@@ -163,12 +168,7 @@ pub async fn resolve_package(name: &str) -> Result<ProtonPackage> {
         .iter()
         .find(|(n, _)| normalize_name(n) == needle)
     {
-        return Ok(ProtonPackage {
-            name: vname.to_string(),
-            label: "Valve".to_string(),
-            size: 0,
-            source: ProtonSource::Valve { app_id: *app_id },
-        });
+        return Ok(valve_package(vname, *app_id));
     }
 
     for src in GE_SOURCES {
@@ -392,12 +392,13 @@ fn unpack_guarded<R: std::io::Read>(reader: R, dest_parent: &Path) -> Result<()>
 /// Refuses to touch Steam-managed Proton under `steamapps/common` (uninstall those
 /// through Steam). Errors if the named runtime isn't an installed custom tool.
 pub fn remove(name: &str) -> Result<()> {
-    let dir = compat_tools_dir()?.join(name);
+    let base = compat_tools_dir()?;
+    let dir = base.join(name);
     if !dir.exists() {
         bail!(
             "'{name}' is not an installed custom runtime in {} \
              (official Valve Proton is removed via Steam)",
-            compat_tools_dir()?.display()
+            base.display()
         );
     }
     std::fs::remove_dir_all(&dir).with_context(|| format!("failed removing {}", dir.display()))?;

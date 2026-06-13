@@ -88,15 +88,7 @@ pub fn write(stream: Stream, s: &str) {
 /// Read one line — from the client's forwarded stdin when inside a daemon context,
 /// otherwise from the real process stdin. The trailing newline is stripped.
 pub async fn read_line() -> std::io::Result<String> {
-    if let Ok(stdin) = CTX.try_with(|ctx| ctx.stdin.clone()) {
-        let mut guard = stdin.lock().await;
-        return guard.read_line().await;
-    }
-    use tokio::io::AsyncBufReadExt;
-    let mut line = String::new();
-    let mut reader = tokio::io::BufReader::new(tokio::io::stdin());
-    reader.read_line(&mut line).await?;
-    Ok(line.trim_end_matches(['\n', '\r']).to_string())
+    Ok(read_line_opt().await?.unwrap_or_default())
 }
 
 /// Like [`read_line`] but distinguishes end-of-input (`Ok(None)`) from an empty
@@ -108,6 +100,12 @@ pub async fn read_line_opt() -> std::io::Result<Option<String>> {
         let mut guard = stdin.lock().await;
         return guard.read_line_opt().await;
     }
+    read_real_stdin_line().await
+}
+
+/// Read one line from the daemon's *own* process stdin, returning `Ok(None)` on EOF.
+/// Shared by [`read_line`]/[`read_line_opt`] for the non-daemon (standalone) path.
+async fn read_real_stdin_line() -> std::io::Result<Option<String>> {
     use tokio::io::AsyncBufReadExt;
     let mut line = String::new();
     let mut reader = tokio::io::BufReader::new(tokio::io::stdin());
@@ -126,12 +124,8 @@ struct DaemonStdin {
 }
 
 impl DaemonStdin {
-    async fn read_line(&mut self) -> std::io::Result<String> {
-        Ok(self.read_line_opt().await?.unwrap_or_default())
-    }
-
-    /// Like [`DaemonStdin::read_line`] but returns `Ok(None)` once the client's
-    /// stdin is closed and fully consumed, so callers can detect EOF.
+    /// Yields the next whole line, returning `Ok(None)` once the client's stdin is
+    /// closed and fully consumed so callers can detect EOF.
     async fn read_line_opt(&mut self) -> std::io::Result<Option<String>> {
         loop {
             if let Some(pos) = self.buf.iter().position(|&b| b == b'\n') {

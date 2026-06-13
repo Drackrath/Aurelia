@@ -93,11 +93,11 @@ impl SteamClient {
         None
     }
 
-    pub(crate) async fn remote_manifest_ids_static(
-        connection: &Connection,
-        appid: u32,
-        branch: &str,
-    ) -> Result<HashMap<u64, u64>> {
+    /// Request the PICS appinfo product-info for a single app and return its raw
+    /// appinfo buffer. The buffer is either text or binary VDF (see
+    /// [`find_vdf_in_pics`] / [`parse_appinfo`]). Shared by every PICS appinfo
+    /// lookup in this module so the request/job/find-app boilerplate lives once.
+    async fn pics_app_buffer(connection: &Connection, appid: u32) -> Result<Vec<u8>> {
         let mut request = CMsgClientPICSProductInfoRequest::new();
         request
             .apps
@@ -110,26 +110,44 @@ impl SteamClient {
             .job(request)
             .await
             .context("failed requesting appinfo product info for update metadata")?;
-
         let app = response
             .apps
             .iter()
             .find(|entry| entry.appid() == appid)
             .ok_or_else(|| anyhow!("missing appinfo payload for app {appid}"))?;
+        Ok(app.buffer().to_vec())
+    }
+
+    /// Locate the `depots` object inside a PICS appinfo VDF, accounting for both
+    /// the unwrapped layout (root holds the sections directly) and the wrapped
+    /// layout (sections nested under an `appinfo` key).
+    fn pics_depots_value<'a>(
+        vdf: &'a steam_vdf_parser::Vdf<'static>,
+        appid: u32,
+    ) -> Option<&'a steam_vdf_parser::Value<'static>> {
+        let root_obj = vdf.as_obj()?;
+        if vdf.key() == "appinfo" || vdf.key() == appid.to_string() {
+            root_obj.get("depots")
+        } else {
+            root_obj.get("depots").or_else(|| {
+                root_obj
+                    .get("appinfo")
+                    .and_then(|v| v.as_obj())
+                    .and_then(|o| o.get("depots"))
+            })
+        }
+    }
+
+    pub(crate) async fn remote_manifest_ids_static(
+        connection: &Connection,
+        appid: u32,
+        branch: &str,
+    ) -> Result<HashMap<u64, u64>> {
+        let buffer = Self::pics_app_buffer(connection, appid).await?;
 
         let mut manifests = HashMap::new();
-        if let Ok(vdf) = find_vdf_in_pics(app.buffer()) {
-            let root_obj = vdf.as_obj().unwrap();
-            let depots_val = if vdf.key() == "appinfo" || vdf.key() == appid.to_string() {
-                root_obj.get("depots")
-            } else {
-                root_obj.get("depots").or_else(|| {
-                    root_obj
-                        .get("appinfo")
-                        .and_then(|v| v.as_obj())
-                        .and_then(|o| o.get("depots"))
-                })
-            };
+        if let Ok(vdf) = find_vdf_in_pics(&buffer) {
+            let depots_val = Self::pics_depots_value(&vdf, appid);
 
             if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
                 for (key, value) in depots.iter() {
@@ -154,28 +172,9 @@ impl SteamClient {
         appid: u32,
         branch: &str,
     ) -> Option<String> {
-        let mut request = CMsgClientPICSProductInfoRequest::new();
-        request
-            .apps
-            .push(cmsg_client_picsproduct_info_request::AppInfo {
-                appid: Some(appid),
-                ..Default::default()
-            });
-
-        let response: CMsgClientPICSProductInfoResponse = connection.job(request).await.ok()?;
-        let app = response.apps.iter().find(|entry| entry.appid() == appid)?;
-        let vdf = find_vdf_in_pics(app.buffer()).ok()?;
-        let root_obj = vdf.as_obj()?;
-        let depots_val = if vdf.key() == "appinfo" || vdf.key() == appid.to_string() {
-            root_obj.get("depots")
-        } else {
-            root_obj.get("depots").or_else(|| {
-                root_obj
-                    .get("appinfo")
-                    .and_then(|v| v.as_obj())
-                    .and_then(|o| o.get("depots"))
-            })
-        };
+        let buffer = Self::pics_app_buffer(connection, appid).await.ok()?;
+        let vdf = find_vdf_in_pics(&buffer).ok()?;
+        let depots_val = Self::pics_depots_value(&vdf, appid);
 
         let buildid = |b: &str| {
             depots_val
@@ -239,24 +238,11 @@ impl SteamClient {
     pub(crate) async fn dlc_parent_from_pics(&self, appid: u32) -> Option<u32> {
         let connection = self.connection.as_ref()?;
 
-        let mut request = CMsgClientPICSProductInfoRequest::new();
-        request
-            .apps
-            .push(cmsg_client_picsproduct_info_request::AppInfo {
-                appid: Some(appid),
-                ..Default::default()
-            });
-
-        let response: CMsgClientPICSProductInfoResponse = connection.job(request).await.ok()?;
-        let app = response.apps.iter().find(|e| e.appid() == appid)?;
-        let raw_vdf = String::from_utf8(app.buffer().to_vec()).ok()?;
+        let buffer = Self::pics_app_buffer(connection, appid).await.ok()?;
+        let raw_vdf = String::from_utf8(buffer).ok()?;
         let parsed = parse_appinfo(&raw_vdf).ok()?;
 
-        let common = parsed
-            .appinfo
-            .as_ref()
-            .and_then(|a| a.common.as_ref())
-            .or(parsed.common.as_ref());
+        let common = appinfo_common(&parsed);
 
         let is_dlc = common
             .and_then(|c| c.app_type.as_deref())
@@ -288,27 +274,17 @@ impl SteamClient {
         let mut installdir = None;
 
         // Try to get info from PICS first as it's authoritative
-        let mut request = CMsgClientPICSProductInfoRequest::new();
-        request
-            .apps
-            .push(cmsg_client_picsproduct_info_request::AppInfo {
-                appid: Some(appid),
-                ..Default::default()
-            });
-
         if let Some(conn) = self.connection.as_ref() {
-            let res: Result<CMsgClientPICSProductInfoResponse, _> = conn.job(request).await;
-            let names = res.ok().and_then(|response| {
-                let app = response.apps.iter().find(|entry| entry.appid() == appid)?;
-                let raw_vdf = String::from_utf8(app.buffer().to_vec()).ok()?;
-                let parsed = parse_appinfo(&raw_vdf).ok()?;
-                let common = parsed
-                    .appinfo
-                    .as_ref()
-                    .and_then(|a| a.common.as_ref())
-                    .or(parsed.common.as_ref())?;
-                Some((common.name.clone(), common.installdir.clone()))
-            });
+            let names = match Self::pics_app_buffer(conn, appid).await {
+                Ok(buffer) => String::from_utf8(buffer)
+                    .ok()
+                    .and_then(|raw_vdf| parse_appinfo(&raw_vdf).ok())
+                    .and_then(|parsed| {
+                        let common = appinfo_common(&parsed)?;
+                        Some((common.name.clone(), common.installdir.clone()))
+                    }),
+                Err(_) => None,
+            };
             if let Some((name, dir)) = names {
                 if let Some(name) = name {
                     display_name = name;
@@ -544,4 +520,14 @@ impl SteamClient {
         Ok(out)
     }
 
+}
+
+/// Resolve an app's PICS `common` section, accounting for both appinfo layouts:
+/// either nested under an `appinfo` wrapper node or present at the root.
+fn appinfo_common(parsed: &crate::models::AppInfoRoot) -> Option<&crate::models::CommonNode> {
+    parsed
+        .appinfo
+        .as_ref()
+        .and_then(|a| a.common.as_ref())
+        .or(parsed.common.as_ref())
 }

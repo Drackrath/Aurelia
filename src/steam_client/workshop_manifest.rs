@@ -9,6 +9,7 @@
 //! build-order concerns.
 
 use anyhow::{Context, Result};
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
@@ -134,6 +135,9 @@ pub(crate) fn remove_installed_item(
 fn write_workshop_manifest(path: &Path, app_id: u32, items: &[InstalledWorkshopItem]) -> Result<()> {
     let size_on_disk: u64 = items.iter().map(|i| i.size).sum();
 
+    // Writing directly into the buffer with `write!` avoids allocating a fresh
+    // temporary `String` for every item in each block (which the previous
+    // `format!` + `push_str` pattern did). The emitted bytes are unchanged.
     let mut content = format!(
         "\"AppWorkshop\"\n{{\n\
          \t\"appid\"\t\t\"{app_id}\"\n\
@@ -142,42 +146,40 @@ fn write_workshop_manifest(path: &Path, app_id: u32, items: &[InstalledWorkshopI
          \t\"NeedsDownload\"\t\t\"0\"\n"
     );
 
-    // WorkshopItemsInstalled block
+    // WorkshopItemsInstalled block: size / timeupdated / manifest.
     content.push_str("\t\"WorkshopItemsInstalled\"\n\t{\n");
     for item in items {
-        content.push_str(&format!(
-            "\t\t\"{pfid}\"\n\t\t{{\n\
-             \t\t\t\"size\"\t\t\"{size}\"\n\
-             \t\t\t\"timeupdated\"\t\t\"{tu}\"\n\
-             \t\t\t\"manifest\"\t\t\"{manifest}\"\n\
-             \t\t}}\n",
-            pfid = item.published_file_id,
-            size = item.size,
-            tu = item.time_updated,
-            manifest = item.manifest_id,
-        ));
+        write_item_block(&mut content, item.published_file_id, |buf| {
+            let _ = write!(buf, "\t\t\t\"size\"\t\t\"{}\"\n", item.size);
+            let _ = write!(buf, "\t\t\t\"timeupdated\"\t\t\"{}\"\n", item.time_updated);
+            let _ = write!(buf, "\t\t\t\"manifest\"\t\t\"{}\"\n", item.manifest_id);
+        });
     }
     content.push_str("\t}\n");
 
-    // WorkshopItemDetails block
+    // WorkshopItemDetails block: manifest / timeupdated / timetouched.
     content.push_str("\t\"WorkshopItemDetails\"\n\t{\n");
     for item in items {
-        content.push_str(&format!(
-            "\t\t\"{pfid}\"\n\t\t{{\n\
-             \t\t\t\"manifest\"\t\t\"{manifest}\"\n\
-             \t\t\t\"timeupdated\"\t\t\"{tu}\"\n\
-             \t\t\t\"timetouched\"\t\t\"{tu}\"\n\
-             \t\t}}\n",
-            pfid = item.published_file_id,
-            manifest = item.manifest_id,
-            tu = item.time_updated,
-        ));
+        write_item_block(&mut content, item.published_file_id, |buf| {
+            let _ = write!(buf, "\t\t\t\"manifest\"\t\t\"{}\"\n", item.manifest_id);
+            let _ = write!(buf, "\t\t\t\"timeupdated\"\t\t\"{}\"\n", item.time_updated);
+            let _ = write!(buf, "\t\t\t\"timetouched\"\t\t\"{}\"\n", item.time_updated);
+        });
     }
     content.push_str("\t}\n}\n");
 
     std::fs::write(path, content)
         .with_context(|| format!("failed writing workshop manifest {}", path.display()))?;
     Ok(())
+}
+
+/// Write one `"<id>" { ... }` item sub-block, with the inner field lines
+/// supplied by `fields`. Factors out the brace envelope shared by the
+/// `WorkshopItemsInstalled` and `WorkshopItemDetails` blocks.
+fn write_item_block(buf: &mut String, published_file_id: u64, fields: impl FnOnce(&mut String)) {
+    let _ = write!(buf, "\t\t\"{published_file_id}\"\n\t\t{{\n");
+    fields(buf);
+    buf.push_str("\t\t}\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -274,41 +276,10 @@ fn parse_installed_items(raw: &str) -> Vec<InstalledWorkshopItem> {
                 let val = &quoted[1];
                 match section {
                     Section::ItemsInstalled => {
-                        let entry = items_installed.entry(id).or_default();
-                        match key {
-                            "size" => {
-                                if let Ok(v) = val.parse::<u64>() {
-                                    entry.size = v;
-                                }
-                            }
-                            "timeupdated" => {
-                                if let Ok(v) = val.parse::<i64>() {
-                                    entry.time_updated = v;
-                                }
-                            }
-                            "manifest" => {
-                                if let Ok(v) = val.parse::<u64>() {
-                                    entry.manifest_id = v;
-                                }
-                            }
-                            _ => {}
-                        }
+                        items_installed.entry(id).or_default().apply_field(key, val);
                     }
                     Section::ItemDetails => {
-                        let entry = items_details.entry(id).or_default();
-                        match key {
-                            "manifest" => {
-                                if let Ok(v) = val.parse::<u64>() {
-                                    entry.manifest_id = v;
-                                }
-                            }
-                            "timeupdated" => {
-                                if let Ok(v) = val.parse::<i64>() {
-                                    entry.time_updated = v;
-                                }
-                            }
-                            _ => {}
-                        }
+                        items_details.entry(id).or_default().apply_field(key, val);
                     }
                     Section::Other => {}
                 }
@@ -355,10 +326,35 @@ struct ItemInstalled {
     manifest_id: u64,
 }
 
+impl ItemInstalled {
+    /// Apply one `"key" "value"` pair from a `WorkshopItemsInstalled` sub-block.
+    /// Unrecognised keys and unparseable values are ignored.
+    fn apply_field(&mut self, key: &str, val: &str) {
+        match key {
+            "size" => self.size = val.parse().unwrap_or(self.size),
+            "timeupdated" => self.time_updated = val.parse().unwrap_or(self.time_updated),
+            "manifest" => self.manifest_id = val.parse().unwrap_or(self.manifest_id),
+            _ => {}
+        }
+    }
+}
+
 #[derive(Default)]
 struct ItemDetails {
     manifest_id: u64,
     time_updated: i64,
+}
+
+impl ItemDetails {
+    /// Apply one `"key" "value"` pair from a `WorkshopItemDetails` sub-block.
+    /// Unrecognised keys and unparseable values are ignored.
+    fn apply_field(&mut self, key: &str, val: &str) {
+        match key {
+            "manifest" => self.manifest_id = val.parse().unwrap_or(self.manifest_id),
+            "timeupdated" => self.time_updated = val.parse().unwrap_or(self.time_updated),
+            _ => {}
+        }
+    }
 }
 
 /// Extract all double-quoted substrings from `line` in order.

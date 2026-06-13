@@ -90,6 +90,14 @@ struct Slot {
 }
 
 impl Slot {
+    /// Record that the restore for the current `mtime` failed: drop any client and
+    /// arm the retry backoff. The matching `tracing::warn!` is emitted by the caller
+    /// (each failure path has its own message); this only mutates the slot.
+    fn record_failure(&mut self) {
+        self.client = None;
+        self.last_failure = Some(Instant::now());
+    }
+
     /// Whether the slot already reflects `mtime` and needs no restore attempt now:
     /// either a live client exists, or a recent failure is still within its backoff.
     fn is_current(&self, mtime: Option<SystemTime>) -> bool {
@@ -162,19 +170,16 @@ impl DaemonState {
                 }
                 Ok(_) => {
                     tracing::warn!("daemon: session restore did not authenticate");
-                    s.client = None;
-                    s.last_failure = Some(Instant::now());
+                    s.record_failure();
                 }
                 Err(e) => {
                     tracing::warn!("daemon: could not restore shared session: {e:#}");
-                    s.client = None;
-                    s.last_failure = Some(Instant::now());
+                    s.record_failure();
                 }
             },
             Err(e) => {
                 tracing::warn!("daemon: could not build Steam client: {e:#}");
-                s.client = None;
-                s.last_failure = Some(Instant::now());
+                s.record_failure();
             }
         }
         s.session_mtime = mtime;

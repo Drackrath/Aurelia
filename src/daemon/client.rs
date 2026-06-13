@@ -96,6 +96,14 @@ fn clear_std_handle_inheritance() {
     }
 }
 
+/// Write a relayed output chunk to a local stream and flush it immediately, so the
+/// daemon's stdout/stderr appears with the same interleaving the user would see when
+/// running locally.
+async fn write_and_flush<W: AsyncWrite + Unpin>(w: &mut W, data: &[u8]) -> std::io::Result<()> {
+    w.write_all(data).await?;
+    w.flush().await
+}
+
 /// Send the header + our stdin, relay the daemon's stdout/stderr, return its exit code.
 async fn forward<S>(stream: S, argv: Vec<String>) -> Result<i32>
 where
@@ -146,14 +154,8 @@ where
     let mut code = 0;
     loop {
         match proto::read_frame(&mut reader).await? {
-            Some((proto::C_STDOUT, data)) => {
-                stdout.write_all(&data).await?;
-                stdout.flush().await?;
-            }
-            Some((proto::C_STDERR, data)) => {
-                stderr.write_all(&data).await?;
-                stderr.flush().await?;
-            }
+            Some((proto::C_STDOUT, data)) => write_and_flush(&mut stdout, &data).await?,
+            Some((proto::C_STDERR, data)) => write_and_flush(&mut stderr, &data).await?,
             Some((proto::C_EXIT, data)) => {
                 code = i32::from_be_bytes(data.get(..4).and_then(|b| b.try_into().ok()).unwrap_or([0; 4]));
                 break;

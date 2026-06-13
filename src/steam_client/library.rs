@@ -258,38 +258,8 @@ impl SteamClient {
             // string of app ids.
             let dlcs = dlc_ids_from_section(section);
 
-            // `depots` holds numeric depot-id keys alongside non-numeric siblings
-            // (`branches`, `baselanguages`, …); keep only the numeric ones.
-            let mut depots = Vec::new();
-            if let Some(depots_obj) = section.get_obj(&["depots"]) {
-                for (id_str, node) in depots_obj.iter() {
-                    let Ok(id) = id_str.parse::<u32>() else { continue };
-                    let name = node
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("Unknown Depot")
-                        .to_string();
-                    depots.push((id, name));
-                }
-            }
-
-            let mut launch_options = Vec::new();
-            if let Some(launch_obj) = section.get_obj(&["config", "launch"]) {
-                for entry in launch_obj.values() {
-                    launch_options.push(RawLaunchOption {
-                        executable: entry
-                            .get("executable")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                        arguments: entry
-                            .get("arguments")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                    });
-                }
-            }
+            let depots = depots_from_section(section);
+            let launch_options = launch_options_from_section(section);
 
             (name, dlcs, depots, launch_options)
         };
@@ -335,28 +305,13 @@ impl SteamClient {
 
         // PICS product-info buffers are usually *binary* VDF (text only for some
         // apps), so go through `find_vdf_in_pics` rather than the text-only
-        // `parse_appinfo`. The category map lives at `<root>/common/category`,
-        // where the root key is either "appinfo" or the numeric appid.
+        // `parse_appinfo`. `pics_app_section` descends past the `appinfo`/numeric
+        // wrapper so the category map can be read directly at `common/category`.
         let vdf = find_vdf_in_pics(&buffer).context("failed to parse product info VDF")?;
-        let root_obj = vdf.as_obj().context("PICS root is not an object")?;
-        let common = if vdf.key() == "appinfo" || vdf.key() == appid.to_string() {
-            root_obj.get("common")
-        } else {
-            root_obj.get("common").or_else(|| {
-                root_obj
-                    .values()
-                    .next()
-                    .and_then(|v| v.as_obj())
-                    .and_then(|o| o.get("common"))
-            })
-        };
+        let section = pics_app_section(vdf.value());
 
         let mut categories = HashMap::new();
-        if let Some(cat_obj) = common
-            .and_then(|c| c.as_obj())
-            .and_then(|o| o.get("category"))
-            .and_then(|v| v.as_obj())
-        {
+        if let Some(cat_obj) = section.get_obj(&["common", "category"]) {
             for (key, value) in cat_obj.iter() {
                 if let Some(v) = value.as_str() {
                     categories.insert(key.to_string(), v.to_string());
@@ -429,4 +384,46 @@ impl SteamClient {
             .context("failed to parse launch metadata from PICS appinfo")
     }
 
+}
+
+/// Depot `(id, name)` pairs from an app's PICS section. The `depots` object holds
+/// numeric depot-id keys alongside non-numeric siblings (`branches`,
+/// `baselanguages`, …); only the numeric ones are kept.
+fn depots_from_section(section: &steam_vdf_parser::Value) -> Vec<(u32, String)> {
+    let mut depots = Vec::new();
+    if let Some(depots_obj) = section.get_obj(&["depots"]) {
+        for (id_str, node) in depots_obj.iter() {
+            let Ok(id) = id_str.parse::<u32>() else { continue };
+            let name = node
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown Depot")
+                .to_string();
+            depots.push((id, name));
+        }
+    }
+    depots
+}
+
+/// Raw launch options (`executable`, `arguments`) from an app's PICS
+/// `config/launch` section, in declaration order.
+fn launch_options_from_section(section: &steam_vdf_parser::Value) -> Vec<RawLaunchOption> {
+    let mut launch_options = Vec::new();
+    if let Some(launch_obj) = section.get_obj(&["config", "launch"]) {
+        for entry in launch_obj.values() {
+            launch_options.push(RawLaunchOption {
+                executable: entry
+                    .get("executable")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                arguments: entry
+                    .get("arguments")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+            });
+        }
+    }
+    launch_options
 }

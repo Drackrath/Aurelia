@@ -3753,34 +3753,53 @@ async fn cmd_workshop_status(app_id: u32, json: bool) -> Result<()> {
         .fetch_published_file_details(&all_ids)
         .await
         .unwrap_or_default();
-    let current_manifest = |id: u64| -> Option<u64> {
-        details.iter().find(|d| d.id == id).map(|d| d.hcontent_file)
-    };
-    let title_of = |id: u64| -> String {
-        details
-            .iter()
-            .find(|d| d.id == id)
-            .map(|d| d.title.clone())
-            .unwrap_or_default()
-    };
 
-    let is_installed = |id: u64| installed.iter().find(|i| i.id == id);
+    // Index details and the installed set once, so resolving each row is a hash
+    // lookup rather than a linear scan per id (the loops below run twice over the
+    // same data in the JSON and human paths).
+    let detail_by_id: std::collections::HashMap<u64, &aurelia::models::WorkshopItem> =
+        details.iter().map(|d| (d.id, d)).collect();
+    let installed_by_id: std::collections::HashMap<u64, &_> =
+        installed.iter().map(|i| (i.id, i)).collect();
+
+    // Precompute each row's status once (id, title, installed, subscribed, update),
+    // shared by both the JSON and human renderings below.
+    struct StatusRow {
+        id: u64,
+        title: String,
+        installed: bool,
+        subscribed: bool,
+        update: bool,
+    }
+    let rows: Vec<StatusRow> = all_ids
+        .iter()
+        .map(|&id| {
+            let inst = installed_by_id.get(&id).copied();
+            let current_manifest = detail_by_id.get(&id).map(|d| d.hcontent_file);
+            let update = match (inst, current_manifest) {
+                (Some(i), Some(cur)) => cur != 0 && cur != i.manifest_id,
+                _ => false,
+            };
+            StatusRow {
+                id,
+                title: detail_by_id.get(&id).map(|d| d.title.clone()).unwrap_or_default(),
+                installed: inst.is_some(),
+                subscribed: subscribed.contains(&id),
+                update,
+            }
+        })
+        .collect();
 
     if json {
-        let arr: Vec<_> = all_ids
+        let arr: Vec<_> = rows
             .iter()
-            .map(|&id| {
-                let inst = is_installed(id);
-                let update = match (inst, current_manifest(id)) {
-                    (Some(i), Some(cur)) => cur != 0 && cur != i.manifest_id,
-                    _ => false,
-                };
+            .map(|r| {
                 serde_json::json!({
-                    "id": id,
-                    "title": title_of(id),
-                    "installed": inst.is_some(),
-                    "subscribed": subscribed.contains(&id),
-                    "update_available": update,
+                    "id": r.id,
+                    "title": r.title,
+                    "installed": r.installed,
+                    "subscribed": r.subscribed,
+                    "update_available": r.update,
                 })
             })
             .collect();
@@ -3788,7 +3807,7 @@ async fn cmd_workshop_status(app_id: u32, json: bool) -> Result<()> {
         return Ok(());
     }
 
-    if all_ids.is_empty() {
+    if rows.is_empty() {
         cli_println!("No installed or subscribed Workshop items for app {app_id}.");
         return Ok(());
     }
@@ -3796,19 +3815,14 @@ async fn cmd_workshop_status(app_id: u32, json: bool) -> Result<()> {
         "{:>12}  {:<9}  {:<10}  {:<7}  TITLE",
         "ID", "INSTALLED", "SUBSCRIBED", "UPDATE"
     );
-    for &id in &all_ids {
-        let inst = is_installed(id);
-        let update = match (inst, current_manifest(id)) {
-            (Some(i), Some(cur)) => cur != 0 && cur != i.manifest_id,
-            _ => false,
-        };
+    for r in &rows {
         cli_println!(
             "{:>12}  {:<9}  {:<10}  {:<7}  {}",
-            id,
-            if inst.is_some() { "yes" } else { "no" },
-            if subscribed.contains(&id) { "yes" } else { "no" },
-            if update { "yes" } else { "-" },
-            title_of(id),
+            r.id,
+            if r.installed { "yes" } else { "no" },
+            if r.subscribed { "yes" } else { "no" },
+            if r.update { "yes" } else { "-" },
+            r.title,
         );
     }
     Ok(())

@@ -5,6 +5,58 @@
 use super::*;
 
 impl SteamClient {
+    /// Request PICS appinfo for a single app and return that app's raw VDF buffer.
+    /// `job_context` is attached to the network call so each caller's error message
+    /// is preserved. Shared by the depot/size/launch-option readers below.
+    async fn request_app_pics_buffer(
+        &self,
+        app_id: u32,
+        job_context: &'static str,
+    ) -> Result<Vec<u8>> {
+        let connection = self
+            .connection
+            .as_ref()
+            .context("steam connection not initialized")?;
+
+        let mut request = CMsgClientPICSProductInfoRequest::new();
+        request
+            .apps
+            .push(cmsg_client_picsproduct_info_request::AppInfo {
+                appid: Some(app_id),
+                ..Default::default()
+            });
+
+        let response: CMsgClientPICSProductInfoResponse =
+            connection.job(request).await.context(job_context)?;
+
+        let app = response
+            .apps
+            .iter()
+            .find(|entry| entry.appid() == app_id)
+            .ok_or_else(|| anyhow!("missing appinfo payload for app {app_id}"))?;
+
+        Ok(app.buffer().to_vec())
+    }
+
+    /// Resolve the `depots` object from a parsed PICS VDF, descending past the
+    /// numeric/`appinfo` wrapper when the depots aren't already at the root.
+    fn locate_depots_value<'a>(
+        vdf: &'a steam_vdf_parser::Vdf<'static>,
+        app_id: u32,
+    ) -> Option<&'a steam_vdf_parser::Value<'static>> {
+        let root_obj = vdf.as_obj()?;
+        if vdf.key() == "appinfo" || vdf.key() == app_id.to_string() {
+            root_obj.get("depots")
+        } else {
+            root_obj.get("depots").or_else(|| {
+                root_obj
+                    .get("appinfo")
+                    .and_then(|v| v.as_obj())
+                    .and_then(|o| o.get("depots"))
+            })
+        }
+    }
+
     pub async fn get_content_servers(&self, cell_id: u32) -> Result<Vec<String>> {
         let connection = self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))?;
         let mut request = CContentServerDirectory_GetServersForSteamPipe_Request::new();
@@ -98,43 +150,14 @@ impl SteamClient {
     }
 
     pub async fn get_depot_list(&self, app_id: u32) -> Result<Vec<DepotInfo>> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
-
-        let mut request = CMsgClientPICSProductInfoRequest::new();
-        request
-            .apps
-            .push(cmsg_client_picsproduct_info_request::AppInfo {
-                appid: Some(app_id),
-                ..Default::default()
-            });
-
-        let response: CMsgClientPICSProductInfoResponse = connection
-            .job(request)
-            .await
-            .context("failed requesting appinfo product info for depot list")?;
-
-        let app = response
-            .apps
-            .iter()
-            .find(|entry| entry.appid() == app_id)
-            .ok_or_else(|| anyhow!("missing appinfo payload for app {app_id}"))?;
+        let buffer = self
+            .request_app_pics_buffer(app_id, "failed requesting appinfo product info for depot list")
+            .await?;
 
         let mut out = Vec::new();
-        if let Ok(vdf) = find_vdf_in_pics(app.buffer()) {
-            let root_obj = vdf.as_obj().context("root is not an object")?;
-            let depots_val = if vdf.key() == "appinfo" || vdf.key() == app_id.to_string() {
-                root_obj.get("depots")
-            } else {
-                root_obj.get("depots").or_else(|| {
-                    root_obj
-                        .get("appinfo")
-                        .and_then(|v| v.as_obj())
-                        .and_then(|o| o.get("depots"))
-                })
-            };
+        if let Ok(vdf) = find_vdf_in_pics(&buffer) {
+            vdf.as_obj().context("root is not an object")?;
+            let depots_val = Self::locate_depots_value(&vdf, app_id);
 
             if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
                 for (key, value) in depots.iter() {
@@ -189,43 +212,17 @@ impl SteamClient {
         app_id: u32,
         platform: DepotPlatform,
     ) -> Result<InstallSizeEstimate> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
-
-        let mut request = CMsgClientPICSProductInfoRequest::new();
-        request
-            .apps
-            .push(cmsg_client_picsproduct_info_request::AppInfo {
-                appid: Some(app_id),
-                ..Default::default()
-            });
-
-        let response: CMsgClientPICSProductInfoResponse = connection
-            .job(request)
-            .await
-            .context("failed requesting appinfo product info for size estimate")?;
-
-        let app = response
-            .apps
-            .iter()
-            .find(|entry| entry.appid() == app_id)
-            .ok_or_else(|| anyhow!("missing appinfo payload for app {app_id}"))?;
+        let buffer = self
+            .request_app_pics_buffer(
+                app_id,
+                "failed requesting appinfo product info for size estimate",
+            )
+            .await?;
 
         let mut est = InstallSizeEstimate::default();
-        let vdf = find_vdf_in_pics(app.buffer()).context("failed to parse product info VDF")?;
-        let root_obj = vdf.as_obj().context("root is not an object")?;
-        let depots_val = if vdf.key() == "appinfo" || vdf.key() == app_id.to_string() {
-            root_obj.get("depots")
-        } else {
-            root_obj.get("depots").or_else(|| {
-                root_obj
-                    .get("appinfo")
-                    .and_then(|v| v.as_obj())
-                    .and_then(|o| o.get("depots"))
-            })
-        };
+        let vdf = find_vdf_in_pics(&buffer).context("failed to parse product info VDF")?;
+        vdf.as_obj().context("root is not an object")?;
+        let depots_val = Self::locate_depots_value(&vdf, app_id);
 
         if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
             for (key, value) in depots.iter() {
@@ -290,31 +287,14 @@ impl SteamClient {
     /// constraints. Read with the binary-safe VDF path (works for both binary and
     /// text PICS payloads). Entry `"0"` is sorted first (the default).
     pub async fn fetch_launch_options(&self, app_id: u32) -> Result<Vec<LaunchOptionInfo>> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let buffer = self
+            .request_app_pics_buffer(
+                app_id,
+                "failed requesting appinfo product info for launch options",
+            )
+            .await?;
 
-        let mut request = CMsgClientPICSProductInfoRequest::new();
-        request
-            .apps
-            .push(cmsg_client_picsproduct_info_request::AppInfo {
-                appid: Some(app_id),
-                ..Default::default()
-            });
-
-        let response: CMsgClientPICSProductInfoResponse = connection
-            .job(request)
-            .await
-            .context("failed requesting appinfo product info for launch options")?;
-
-        let app = response
-            .apps
-            .iter()
-            .find(|entry| entry.appid() == app_id)
-            .ok_or_else(|| anyhow!("missing appinfo payload for app {app_id}"))?;
-
-        let vdf = find_vdf_in_pics(app.buffer()).context("failed to parse product info VDF")?;
+        let vdf = find_vdf_in_pics(&buffer).context("failed to parse product info VDF")?;
         let root_obj = vdf.as_obj().context("root is not an object")?;
 
         // `config` sits at the root or under the numeric/"appinfo" wrapper.

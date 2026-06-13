@@ -1097,39 +1097,46 @@ pub fn parse_pics_product_info(buffer: &[u8]) -> Result<HashMap<u64, u64>> {
     }
 }
 
+/// Walk a parsed PICS appinfo VDF root and collect its `public`-branch depot →
+/// manifest-id map. Looks for `depots` at the root or one level under `appinfo`,
+/// skips non-English-tagged depots, and resolves each manifest id via
+/// [`extract_manifest_id_robust`]. Shared by the text and binary parse paths.
+fn depot_map_from_vdf_root(root: &steam_vdf_parser::Value) -> HashMap<u64, u64> {
+    let mut depot_map = HashMap::new();
+    let depots_val = root.get("depots").or_else(|| {
+        root.get("appinfo")
+            .and_then(|v| v.as_obj())
+            .and_then(|o| o.get("depots"))
+    });
+
+    if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
+        for (key, value) in depots.iter() {
+            if let Ok(depot_id) = key.parse::<u64>() {
+                let lang = value
+                    .get_obj(&["config"])
+                    .and_then(|c| c.get("language"))
+                    .and_then(|l| l.as_str());
+                if let Some(lang) = lang {
+                    if lang != "english" && !lang.is_empty() {
+                        continue;
+                    }
+                }
+
+                if let Some(m_id) = extract_manifest_id_robust(value, "public") {
+                    depot_map.insert(depot_id, m_id);
+                }
+            }
+        }
+    }
+    depot_map
+}
+
 fn parse_text_vdf(data: &[u8]) -> Result<HashMap<u64, u64>> {
     let text = String::from_utf8_lossy(data);
     let mut depot_map = HashMap::new();
 
     if let Ok(vdf) = steam_vdf_parser::parse_text(&text) {
-        let root_obj = vdf.as_obj().unwrap();
-        let depots_val = root_obj.get("depots").or_else(|| {
-            root_obj
-                .get("appinfo")
-                .and_then(|v| v.as_obj())
-                .and_then(|o| o.get("depots"))
-        });
-
-        if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
-            for (key, value) in depots.iter() {
-                if let Ok(depot_id) = key.parse::<u64>() {
-                    // Language check for library-parsed VDF
-                    let lang = value
-                        .get_obj(&["config"])
-                        .and_then(|c| c.get("language"))
-                        .and_then(|l| l.as_str());
-                    if let Some(lang) = lang {
-                        if lang != "english" && !lang.is_empty() {
-                            continue;
-                        }
-                    }
-
-                    if let Some(m_id) = extract_manifest_id_robust(value, "public") {
-                        depot_map.insert(depot_id, m_id);
-                    }
-                }
-            }
-        }
+        depot_map = depot_map_from_vdf_root(vdf.value());
     }
 
     if depot_map.is_empty() {
@@ -1215,36 +1222,10 @@ fn parse_text_vdf(data: &[u8]) -> Result<HashMap<u64, u64>> {
 
 fn parse_binary_vdf_with_offset(data: &[u8]) -> Result<HashMap<u64, u64>> {
     if let Ok(vdf) = find_vdf_in_pics(data) {
-        let mut depot_map = HashMap::new();
-        let root_obj = vdf.as_obj().context("root is not an object")?;
-        let depots_val = root_obj.get("depots").or_else(|| {
-            root_obj
-                .get("appinfo")
-                .and_then(|v| v.as_obj())
-                .and_then(|o| o.get("depots"))
-        });
-
-        if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
-            for (key, value) in depots.iter() {
-                if let Ok(depot_id) = key.parse::<u64>() {
-                    // Language check for binary-parsed VDF
-                    let lang = value
-                        .get_obj(&["config"])
-                        .and_then(|c| c.get("language"))
-                        .and_then(|l| l.as_str());
-                    if let Some(lang) = lang {
-                        if lang != "english" && !lang.is_empty() {
-                            continue;
-                        }
-                    }
-
-                    if let Some(m_id) = extract_manifest_id_robust(value, "public") {
-                        depot_map.insert(depot_id, m_id);
-                    }
-                }
-            }
-        }
-
+        // Ensure the located VDF is an object before walking it, preserving the
+        // original error when it is not.
+        vdf.as_obj().context("root is not an object")?;
+        let depot_map = depot_map_from_vdf_root(vdf.value());
         if !depot_map.is_empty() {
             return Ok(depot_map);
         }

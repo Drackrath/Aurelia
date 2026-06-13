@@ -381,14 +381,12 @@ impl CloudClient {
             .await
             .context("failed calling Cloud.ClientFileDownload")?;
 
-        let scheme = if response.use_https() { "https" } else { "http" };
-        let host = response.url_host();
-        let path = response.url_path();
-        if host.is_empty() || path.is_empty() {
-            return Err(anyhow!("ClientFileDownload returned empty URL host/path"));
-        }
-
-        let url = format!("{scheme}://{host}{path}");
+        let url = cloud_transfer_url(
+            response.use_https(),
+            response.url_host(),
+            response.url_path(),
+            "ClientFileDownload",
+        )?;
         let headers = build_header_map(response.request_headers.iter().map(|h| {
             (
                 h.name.as_deref().unwrap_or_default(),
@@ -442,14 +440,12 @@ impl CloudClient {
             .context("failed calling Cloud.ClientBeginFileUpload")?;
 
         for mut block in begin_response.block_requests {
-            let scheme = if block.use_https() { "https" } else { "http" };
-            let host = block.url_host().to_string();
-            let path = block.url_path().to_string();
-            if host.is_empty() || path.is_empty() {
-                return Err(anyhow!(
-                    "ClientBeginFileUpload returned empty URL host/path"
-                ));
-            }
+            let url = cloud_transfer_url(
+                block.use_https(),
+                block.url_host(),
+                block.url_path(),
+                "ClientBeginFileUpload",
+            )?;
 
             let block_offset = usize::try_from(block.block_offset()).unwrap_or(0);
             let block_length = usize::try_from(block.block_length()).unwrap_or(data.len());
@@ -474,7 +470,6 @@ impl CloudClient {
                 )
             }))?;
 
-            let url = format!("{scheme}://{host}{path}");
             self.http
                 .request(method, url)
                 .headers(headers)
@@ -508,6 +503,17 @@ impl CloudClient {
 
         Ok(())
     }
+}
+
+/// Build the request URL for a Steam Cloud HTTP transfer from the scheme flag and
+/// host/path the service returned, rejecting the empty host/path Steam sends when a
+/// transfer slot is unavailable. `what` names the originating RPC for the error.
+fn cloud_transfer_url(use_https: bool, host: &str, path: &str, what: &str) -> Result<String> {
+    if host.is_empty() || path.is_empty() {
+        return Err(anyhow!("{what} returned empty URL host/path"));
+    }
+    let scheme = if use_https { "https" } else { "http" };
+    Ok(format!("{scheme}://{host}{path}"))
 }
 
 fn build_header_map<'a>(headers: impl Iterator<Item = (&'a str, &'a str)>) -> Result<HeaderMap> {

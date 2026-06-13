@@ -353,6 +353,47 @@ impl SteamClient {
         Ok(())
     }
 
+    /// Request persona data for `ids` in [`PERSONA_REQUEST_CHUNK`]-sized chunks,
+    /// draining each chunk's `CMsgClientPersonaState` response burst (via
+    /// `apply`) before requesting the next, so a burst never overflows
+    /// steam-vent's 16-slot notification buffer.
+    ///
+    /// `deadline`, if set, stops before sending a chunk once reached. Request-send
+    /// failures are logged when `log_request_errors` is set, otherwise skipped
+    /// silently; either way the chunk is skipped. Shared by [`Self::run_friends_watcher`]
+    /// and [`Self::collect_friends`].
+    async fn drain_persona_data<S, E>(
+        &self,
+        persona_stream: &mut S,
+        ids: &[u64],
+        deadline: Option<tokio::time::Instant>,
+        log_request_errors: bool,
+        mut apply: impl FnMut(&CMsgClientPersonaState),
+    ) where
+        S: tokio_stream::Stream<Item = std::result::Result<CMsgClientPersonaState, E>> + Unpin,
+    {
+        for chunk in ids.chunks(PERSONA_REQUEST_CHUNK) {
+            if deadline.is_some_and(|d| tokio::time::Instant::now() >= d) {
+                break;
+            }
+            if let Err(e) = self.request_friend_data(chunk).await {
+                if log_request_errors {
+                    tracing::warn!("failed to request friend data: {e}");
+                }
+                continue;
+            }
+            while let Ok(item) =
+                tokio::time::timeout(PERSONA_DRAIN_IDLE, persona_stream.next()).await
+            {
+                match item {
+                    Some(Ok(state)) => apply(&state),
+                    Some(Err(_)) => continue, // lagged — keep draining
+                    None => break,            // stream closed
+                }
+            }
+        }
+    }
+
     /// Maintain `roster` for the lifetime of the connection by folding in every
     /// friends-list and persona-state update Steam pushes, requesting fresh
     /// persona data whenever the friends list changes.
@@ -386,27 +427,13 @@ impl SteamClient {
             friend_ids(&guard)
         };
 
-        // Pull persona data (names/status/games) for the initial friends in small
-        // chunks, draining each chunk's response burst before requesting the next so
-        // it never overflows steam-vent's 16-slot notification buffer.
-        for chunk in initial_ids.chunks(PERSONA_REQUEST_CHUNK) {
-            if let Err(e) = self.request_friend_data(chunk).await {
-                tracing::warn!("failed to request friend data: {e}");
-                continue;
-            }
-            while let Ok(item) =
-                tokio::time::timeout(PERSONA_DRAIN_IDLE, persona_stream.next()).await
-            {
-                match item {
-                    Some(Ok(state)) => {
-                        let mut guard = roster.write().expect("roster lock poisoned");
-                        apply_persona_state(&mut guard, &state);
-                    }
-                    Some(Err(_)) => continue, // lagged — keep draining
-                    None => break,            // stream closed
-                }
-            }
-        }
+        // Pull persona data (names/status/games) for the initial friends, folding
+        // each response into the shared roster as it arrives.
+        self.drain_persona_data(&mut persona_stream, &initial_ids, None, true, |state| {
+            let mut guard = roster.write().expect("roster lock poisoned");
+            apply_persona_state(&mut guard, state);
+        })
+        .await;
 
         tracing::info!("friends watcher started ({} friend(s) so far)", initial_ids.len());
         loop {
@@ -462,23 +489,10 @@ impl SteamClient {
         // never overflows steam-vent's 16-slot notification buffer.
         drain_unprocessed_into(&connection, &mut roster);
         let ids = friend_ids(&roster);
-        for chunk in ids.chunks(PERSONA_REQUEST_CHUNK) {
-            if tokio::time::Instant::now() >= deadline {
-                break;
-            }
-            if self.request_friend_data(chunk).await.is_err() {
-                continue;
-            }
-            while let Ok(item) =
-                tokio::time::timeout(PERSONA_DRAIN_IDLE, persona_stream.next()).await
-            {
-                match item {
-                    Some(Ok(state)) => apply_persona_state(&mut roster, &state),
-                    Some(Err(_)) => continue,
-                    None => break,
-                }
-            }
-        }
+        self.drain_persona_data(&mut persona_stream, &ids, Some(deadline), false, |state| {
+            apply_persona_state(&mut roster, state);
+        })
+        .await;
 
         let mut friends: Vec<Friend> = roster.into_values().collect();
         friends.sort_by(|a, b| match (&a.persona_name, &b.persona_name) {

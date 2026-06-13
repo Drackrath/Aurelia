@@ -99,17 +99,14 @@ impl SteamClient {
         Ok(record)
     }
 
-    /// Terminate every wine process running inside `wineprefix` (identified by the
-    /// prefix path appearing in the process environment). Used to stop a
-    /// Proton/Wine game whose processes outlive the runner we spawned. Only call
-    /// this for a per-game prefix — the shared master prefix also hosts Steam.
+    /// Invoke `f` once per numeric `/proc/<pid>` directory, passing its path and
+    /// the (still string) pid name. Returns early with `f`'s value the first time
+    /// it yields `Some`; returns `None` if `/proc` is unreadable or no entry
+    /// matched. Centralizes the directory scan + numeric-pid filter shared by the
+    /// prefix-scanning helpers so each caller only expresses its own match logic.
     #[cfg(unix)]
-    pub fn kill_wine_processes_in_prefix(wineprefix: &Path) {
-        let prefix_str = wineprefix.to_string_lossy().to_string();
-        let Ok(proc_dir) = std::fs::read_dir("/proc") else {
-            return;
-        };
-
+    fn scan_proc_pids<T>(mut f: impl FnMut(&Path, &str) -> Option<T>) -> Option<T> {
+        let proc_dir = std::fs::read_dir("/proc").ok()?;
         for entry in proc_dir.flatten() {
             let pid_path = entry.path();
             let Some(pid_str) = pid_path.file_name().and_then(|n| n.to_str()) else {
@@ -118,13 +115,28 @@ impl SteamClient {
             if !pid_str.chars().all(|c| c.is_ascii_digit()) {
                 continue;
             }
+            if let Some(out) = f(&pid_path, pid_str) {
+                return Some(out);
+            }
+        }
+        None
+    }
 
+    /// Terminate every wine process running inside `wineprefix` (identified by the
+    /// prefix path appearing in the process environment). Used to stop a
+    /// Proton/Wine game whose processes outlive the runner we spawned. Only call
+    /// this for a per-game prefix — the shared master prefix also hosts Steam.
+    #[cfg(unix)]
+    pub fn kill_wine_processes_in_prefix(wineprefix: &Path) {
+        let prefix_str = wineprefix.to_string_lossy().to_string();
+
+        Self::scan_proc_pids(|pid_path, pid_str| {
             let environ = match std::fs::read(pid_path.join("environ")) {
                 Ok(b) => String::from_utf8_lossy(&b).into_owned(),
-                Err(_) => continue,
+                Err(_) => return None,
             };
             if !environ.contains(&prefix_str) {
-                continue;
+                return None;
             }
 
             if let Ok(pid) = pid_str.parse::<i32>() {
@@ -132,43 +144,34 @@ impl SteamClient {
                     libc::kill(pid, libc::SIGTERM);
                 }
             }
-        }
+            // Never short-circuit: sweep every matching process.
+            None::<()>
+        });
     }
 
     pub fn kill_steam_in_prefix(wineprefix: &Path) {
         #[cfg(unix)]
         {
             let prefix_str = wineprefix.to_string_lossy().to_string();
-            let Ok(proc_dir) = std::fs::read_dir("/proc") else {
-                return;
-            };
 
-            for entry in proc_dir.flatten() {
-                let pid_path = entry.path();
-                let Some(pid_str) = pid_path.file_name().and_then(|n| n.to_str()) else {
-                    continue;
-                };
-                if !pid_str.chars().all(|c| c.is_ascii_digit()) {
-                    continue;
-                }
-
+            Self::scan_proc_pids(|pid_path, pid_str| {
                 let cmdline = match std::fs::read(pid_path.join("cmdline")) {
                     Ok(b) => String::from_utf8_lossy(&b).replace('\0', " "),
-                    Err(_) => continue,
+                    Err(_) => return None,
                 };
                 // Kill steam.exe and steamwebhelper.exe processes in this prefix
                 if !cmdline.to_lowercase().contains("steam.exe")
                     && !cmdline.to_lowercase().contains("steamwebhelper.exe")
                 {
-                    continue;
+                    return None;
                 }
 
                 let environ = match std::fs::read(pid_path.join("environ")) {
                     Ok(b) => String::from_utf8_lossy(&b).into_owned(),
-                    Err(_) => continue,
+                    Err(_) => return None,
                 };
                 if !environ.contains(&prefix_str) {
-                    continue;
+                    return None;
                 }
 
                 if let Ok(pid) = pid_str.parse::<i32>() {
@@ -176,7 +179,9 @@ impl SteamClient {
                         libc::kill(pid, libc::SIGTERM);
                     }
                 }
-            }
+                // Never short-circuit: sweep every matching process.
+                None::<()>
+            });
         }
         #[cfg(not(unix))]
         {
@@ -190,49 +195,32 @@ impl SteamClient {
         {
             let prefix_str = wineprefix.to_string_lossy().to_string();
 
-            let Ok(proc_dir) = std::fs::read_dir("/proc") else {
-                return false;
-            };
-
-            for entry in proc_dir.flatten() {
-                let pid_path = entry.path();
-
-                // Only look at numeric PID directories
-                if !pid_path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.chars().all(|c| c.is_ascii_digit()))
-                {
-                    continue;
-                }
-
+            Self::scan_proc_pids(|pid_path, _pid_str| {
                 // Must have steam.exe in cmdline
                 let cmdline = match std::fs::read(pid_path.join("cmdline")) {
                     Ok(b) => b,
-                    Err(_) => continue,
+                    Err(_) => return None,
                 };
                 let cmdline_str = String::from_utf8_lossy(&cmdline).replace('\0', " ");
                 if !cmdline_str.to_lowercase().contains("steam.exe") {
-                    continue;
+                    return None;
                 }
 
                 // Must have our WINEPREFIX in its environment
                 let environ = match std::fs::read(pid_path.join("environ")) {
                     Ok(b) => b,
-                    Err(_) => continue,
+                    Err(_) => return None,
                 };
                 let environ_str = String::from_utf8_lossy(&environ);
-                if environ_str.contains(&prefix_str) {
-                    return true;
-                }
-            }
+                environ_str.contains(&prefix_str).then_some(true)
+            })
+            .unwrap_or(false)
         }
         #[cfg(not(unix))]
         {
             let _ = wineprefix;
+            false
         }
-
-        false
     }
 
     /// Writes a steam.cfg into the Steam directory that minimises UI on startup.

@@ -389,7 +389,7 @@ impl DllProviderResolver {
         // Match DLL to component and look for it in runner root
         let is_dxvk = matches!(dll_name, "d3d8" | "d3d9" | "d3d10core" | "d3d11" | "dxgi");
         if is_dxvk && components.dxvk.is_some() {
-            let found = Self::find_in_runner_paths(&runner_root, &dll_filename, target_arch, vec![
+            if let Some(p) = Self::find_in_runner_paths(&runner_root, &dll_filename, target_arch, vec![
                 "lib/wine/dxvk/x86_64-windows",
                 "lib/wine/dxvk/i386-windows",
                 "files/lib/wine/dxvk/x86_64-windows",
@@ -402,15 +402,14 @@ impl DllProviderResolver {
                 "files/lib64/wine/dxvk",
                 "lib64/wine/dxvk",
                 "dist/lib64/wine/dxvk",
-            ]);
-            if found.is_some() {
-                return found;
+            ]) {
+                return Some(p);
             }
         }
 
         let is_nvapi = matches!(dll_name, "nvapi" | "nvapi64" | "nvofapi64");
         if is_nvapi && components.nvapi.is_some() {
-            let found = Self::find_in_runner_paths(&runner_root, &dll_filename, target_arch, vec![
+            if let Some(p) = Self::find_in_runner_paths(&runner_root, &dll_filename, target_arch, vec![
                 "lib/wine/nvapi/x86_64-windows",
                 "lib/wine/nvapi/i386-windows",
                 "files/lib/wine/nvapi/x86_64-windows",
@@ -420,9 +419,8 @@ impl DllProviderResolver {
                 "lib/wine/nvapi",
                 "files/lib/wine/nvapi",
                 "dist/lib/wine/nvapi",
-            ]);
-            if found.is_some() {
-                return found;
+            ]) {
+                return Some(p);
             }
         }
 
@@ -434,7 +432,7 @@ impl DllProviderResolver {
             );
 
             if use_proton && components.vkd3d_proton.is_some() {
-                let found = Self::find_in_runner_paths(&runner_root, &dll_filename, target_arch, vec![
+                if let Some(p) = Self::find_in_runner_paths(&runner_root, &dll_filename, target_arch, vec![
                     "lib/wine/vkd3d-proton/x86_64-windows",
                     "lib/wine/vkd3d-proton/i386-windows",
                     "files/lib/wine/vkd3d-proton/x86_64-windows",
@@ -447,14 +445,13 @@ impl DllProviderResolver {
                     "lib64/wine/vkd3d-proton",
                     "files/lib64/wine/vkd3d-proton",
                     "dist/lib64/wine/vkd3d-proton",
-                ]);
-                if found.is_some() {
-                    return found;
+                ]) {
+                    return Some(p);
                 }
             }
 
             if (!use_proton || d3d12_policy == &crate::models::D3D12ProviderPolicy::Auto) && components.vkd3d.is_some() {
-                let found = Self::find_in_runner_paths(&runner_root, &dll_filename, target_arch, vec![
+                if let Some(p) = Self::find_in_runner_paths(&runner_root, &dll_filename, target_arch, vec![
                     "lib/wine/vkd3d/x86_64-windows",
                     "lib/wine/vkd3d/i386-windows",
                     "files/lib/wine/vkd3d/x86_64-windows",
@@ -467,9 +464,8 @@ impl DllProviderResolver {
                     "lib64/wine/vkd3d",
                     "files/lib64/wine/vkd3d",
                     "dist/lib64/wine/vkd3d",
-                ]);
-                if found.is_some() {
-                    return found;
+                ]) {
+                    return Some(p);
                 }
             }
         }

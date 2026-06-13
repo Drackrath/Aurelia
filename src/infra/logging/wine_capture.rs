@@ -105,12 +105,9 @@ pub fn classify_graphics_evidence(log_line: &str) -> Option<String> {
     }
 
     // DLL Load Failures
+    // (winemac.drv failures are normal Wine bootstrap noise; already filtered out by the
+    // noise filter above, so they never reach this branch.)
     if line_lower.contains("failed to load module") && line_lower.contains("status=") {
-        // Filter out winemac.drv which is normal to fail on Linux (standard Wine bootstrap noise)
-        if line_lower.contains("winemac.drv") {
-            return None;
-        }
-
         // Specific middleware/dependency failure patterns
         if line_lower.contains("physx") {
              return Some(format!("PhysX/Middleware failure: {}", trimmed));
