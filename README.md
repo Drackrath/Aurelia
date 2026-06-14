@@ -231,7 +231,23 @@ aurelia proton list                  # installable runtimes (Valve + GE) and wha
 aurelia proton install GE-Proton9-20 # download a GE build (or "Proton 9.0" via Steam)
 aurelia proton default GE-Proton9-20 # set the global default (used when a game has none set)
 aurelia proton uninstall GE-Proton9-19  # delete an installed GE build
+
+# Luxtorpeda native-engine plugin (Linux only, optional)
+aurelia luxtorpeda enable             # turn the plugin on (off by default)
+aurelia luxtorpeda install            # download the client on demand (not bundled)
+aurelia luxtorpeda path ~/luxtorpeda  # use an existing install instead (skips the download)
+aurelia luxtorpeda status             # show enabled state + installed version
+aurelia config game 2270 --native-engine   # route one game through a native engine
+aurelia play 2270 --native-engine     # one-off launch via luxtorpeda
+aurelia luxtorpeda uninstall          # remove the downloaded payload
 ```
+
+> [!NOTE]
+> **Luxtorpeda** is an optional plugin that runs supported games on native Linux engines
+> (GZDoom, OpenMW, …) instead of Proton/Wine. It is **never bundled** — Aurelia downloads it
+> on the fly into `~/.config/Aurelia/plugins/luxtorpeda` only when you enable the feature and
+> opt a game in, so the binary stays lean. Linux only. Games run outside Steam's runtime
+> container; if an engine can't find system libraries, prefer Proton for that title.
 
 Add `--json` to any command for machine-readable output (errors included). It's a global
 flag, so `aurelia --json <command>` and `aurelia <command> --json` are equivalent.

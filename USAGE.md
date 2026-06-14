@@ -703,6 +703,7 @@ aurelia play <APP_ID> [-p <PROTON>] [-w]
 | --- | --- |
 | `-p, --proton <PROTON>` | Force a specific Proton/Wine runner (Linux only). Implies a Windows target. |
 | `-w, --windows` | Run the Windows executable directly with no Proton/Wine layer. |
+| `--native-engine` | Route this launch through the [luxtorpeda](#luxtorpeda-native-engine-plugin-linux-only) native-engine plugin (Linux only). Installs the plugin on first use. Conflicts with `--proton`/`--windows`. |
 
 Platform behavior:
 
@@ -1447,10 +1448,12 @@ aurelia config game <APP_ID> [--proton <VERSION>] [--clear-proton] [--platform <
 | `--proton <VERSION>` | Pin the Proton/Wine version for this game (a name from [`proton list`](#proton-list)). Overrides the global default at launch. |
 | `--clear-proton` | Remove the per-game version, so the game falls back to the [global default](#proton-default). |
 | `--platform <windows\|linux>` | Force the platform target. `windows` runs through Proton/Wine on Linux. |
+| `--native-engine` | Route this game through the [luxtorpeda](#luxtorpeda-native-engine-plugin-linux-only) native-engine plugin (Linux only; requires `aurelia luxtorpeda enable`). |
+| `--no-native-engine` | Clear luxtorpeda routing, back to normal native/Proton selection. |
 
 At launch, the Proton version is resolved in this order: an explicit `play --proton` flag →
 this per-game version → the global default (only when the game targets Windows). The
-`--json` output is `{ "app_id", "forced_proton_version", "platform_preference" }`.
+`--json` output is `{ "app_id", "forced_proton_version", "platform_preference", "runner" }`.
 
 ```bash
 aurelia config game 1245620                          # show current settings
@@ -1537,6 +1540,64 @@ aurelia proton default <VERSION>
 ```bash
 aurelia proton default GE-Proton9-20
 ```
+
+---
+
+## Luxtorpeda native-engine plugin (Linux only)
+
+[Luxtorpeda](https://codeberg.org/luxtorpeda/luxtorpeda) is an **optional plugin** that runs
+supported games on native Linux engines (GZDoom, OpenMW, devilutionX, …) instead of
+Proton/Wine. It is a separate GPL-2.0 program and is **never bundled or linked into Aurelia**:
+when you enable the feature and opt a game in, Aurelia downloads the client on the fly into
+`~/.config/Aurelia/plugins/luxtorpeda` and invokes it over a process boundary, the same way
+Steam invokes a compatibility tool. The binary therefore stays lean.
+
+Routing is **explicit opt-in per game** — enabling the plugin never changes how an
+un-pinned game launches.
+
+```text
+aurelia luxtorpeda enable | disable
+aurelia luxtorpeda install | update
+aurelia luxtorpeda path [<DIR>] [--clear]
+aurelia luxtorpeda status [--json]
+aurelia luxtorpeda uninstall [--json]
+```
+
+| Subcommand | Description |
+| --- | --- |
+| `enable` / `disable` | Master toggle (`luxtorpeda_enabled`). Off by default. |
+| `install` / `update` | Download (or re-download) the latest luxtorpeda client. Refused when a custom path is set. |
+| `path <DIR>` | Point Aurelia at an **existing** luxtorpeda install (a dir containing `toolmanifest.vdf`). This **disables the managed download** — that install is used as-is. Omit the dir to print the current value, or `--clear` to revert to the managed download. |
+| `status` | Show enabled state, source (managed vs custom path), and installed version. |
+| `uninstall` | Remove the **managed** payload from disk (never touches a custom-path install). |
+
+### Custom install (skip the download)
+
+If you already have luxtorpeda installed (e.g. in Steam's `compatibilitytools.d`), point
+Aurelia at it instead of downloading a second copy. When a custom path is set, enabling the
+plugin never prompts for or performs a download:
+
+```bash
+aurelia luxtorpeda path ~/.local/share/Steam/compatibilitytools.d/luxtorpeda
+aurelia luxtorpeda enable        # "Using your configured install ... (no download)"
+aurelia luxtorpeda path --clear  # revert to the on-the-fly managed download
+```
+
+The path is stored as `luxtorpeda_path` in the launcher config and validated on set (it
+must contain a `toolmanifest.vdf`, directly or in a subdirectory).
+
+Pin (or unpin) a game, or force a one-off launch:
+
+```bash
+aurelia luxtorpeda enable                      # off by default
+aurelia config game 2270 --native-engine       # route this game through luxtorpeda
+aurelia config game 2270 --no-native-engine    # back to normal native/Proton selection
+aurelia play 2270 --native-engine              # one-off, regardless of per-game config
+```
+
+> **Note:** engines run outside Steam's runtime (Sniper) container, so they rely on host
+> system libraries. If an engine fails to find a library for a given title, prefer Proton
+> for that game. `--native-engine` conflicts with `--proton`/`--windows`.
 
 ---
 

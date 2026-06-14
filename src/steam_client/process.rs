@@ -302,6 +302,7 @@ NoSavePersonalInfo=1
         proton_path: Option<&str>,
         launcher_config: &crate::config::LauncherConfig,
         user_config: Option<&crate::models::UserAppConfig>,
+        force_native_engine: bool,
     ) -> Result<std::process::Child> {
         use crate::launch::pipeline::{LaunchPipeline, PipelineContext};
         use crate::infra::logging::{LaunchSession, EventLogger};
@@ -312,6 +313,7 @@ NoSavePersonalInfo=1
         ctx.launcher_config = Some(launcher_config.clone());
         ctx.user_config = user_config.cloned();
         ctx.proton_path = proton_path.map(|s| s.to_string());
+        ctx.force_native_engine = force_native_engine;
 
         if let Ok(config_dir) = crate::config::config_dir() {
             let session = LaunchSession::new(&config_dir.join("logs"));

@@ -318,7 +318,7 @@ pub async fn install_github_package(
 }
 
 /// Stream `url` to `dest`, reporting progress as bytes arrive.
-async fn download_to(
+pub(crate) async fn download_to(
     url: &str,
     dest: &Path,
     on_progress: &mut (dyn FnMut(u64, u64) + Send),
@@ -354,7 +354,7 @@ async fn download_to(
 
 /// Extract a `.tar.gz` or `.tar.xz` tarball into `dest_parent` (the tarball's own
 /// top-level directory becomes the runtime folder).
-fn extract_tarball(archive: &Path, ext: &str, dest_parent: &Path) -> Result<()> {
+pub(crate) fn extract_tarball(archive: &Path, ext: &str, dest_parent: &Path) -> Result<()> {
     let file = std::fs::File::open(archive)
         .with_context(|| format!("failed opening {}", archive.display()))?;
     match ext {

@@ -42,14 +42,37 @@ impl Runner for NativeRunner {
     }
 }
 
+/// Whether this launch should be routed through the luxtorpeda plugin: either a one-off
+/// `--native-engine` override, or the game is pinned to it while the feature is enabled.
+fn wants_luxtorpeda(ctx: &PipelineContext) -> bool {
+    if ctx.force_native_engine {
+        return true;
+    }
+    let Some(config) = &ctx.launcher_config else { return false };
+    config.luxtorpeda_enabled
+        && config
+            .game_configs
+            .get(&ctx.app_id)
+            .map(|g| g.runner == crate::config::GameRunner::Luxtorpeda)
+            .unwrap_or(false)
+}
+
 #[async_trait]
 impl PipelineStage for ResolveComponentsStage {
     fn name(&self) -> &str { "ResolveComponents" }
     async fn execute(&self, ctx: &mut PipelineContext) -> std::result::Result<(), LaunchError> {
-        use crate::infra::runners::WineTkgRunner;
+        use crate::infra::runners::{LuxtorpedaRunner, WineTkgRunner};
         use crate::steam_client::LaunchTarget;
 
         if ctx.runner.is_none() {
+            // The luxtorpeda native-engine plugin is Linux-only. Route through it when the
+            // launch was explicitly forced (`--native-engine`) or the game is pinned to it
+            // and the feature is enabled.
+            if cfg!(target_os = "linux") && wants_luxtorpeda(ctx) {
+                ctx.runner = Some(Box::new(LuxtorpedaRunner) as Box<dyn Runner>);
+                return Ok(());
+            }
+
             let Some(info) = &ctx.launch_info else {
                 return Err(LaunchError::new(LaunchErrorKind::Validation, "LaunchInfo missing in ResolveComponentsStage"));
             };

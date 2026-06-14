@@ -36,6 +36,22 @@ async fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T> {
 pub struct GameConfig {
     pub forced_proton_version: Option<String>,
     pub platform_preference: Option<String>,
+    /// Which launch backend this game uses. `Auto` (default) keeps Aurelia's normal
+    /// native-vs-Proton selection; `Luxtorpeda` routes the game through the optional
+    /// luxtorpeda native-engine plugin (Linux only, requires `luxtorpeda_enabled`).
+    #[serde(default)]
+    pub runner: GameRunner,
+}
+
+/// Per-game launch backend selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum GameRunner {
+    /// Aurelia's normal selection (native Linux executable, or Proton/Wine for Windows).
+    #[default]
+    Auto,
+    /// Route through the luxtorpeda native-engine plugin.
+    Luxtorpeda,
 }
 
 /// Steam presence the session daemon
@@ -77,6 +93,15 @@ pub struct LauncherConfig {
     pub preferred_launch_options: HashMap<u32, String>,
     #[serde(default)]
     pub game_configs: HashMap<u32, GameConfig>,
+    /// Master toggle for the optional luxtorpeda native-engine plugin. When `false`
+    /// (default) nothing is ever downloaded and no game is routed through luxtorpeda.
+    #[serde(default)]
+    pub luxtorpeda_enabled: bool,
+    /// Path to an externally-managed luxtorpeda install (a directory containing, or holding
+    /// a subdirectory with, `toolmanifest.vdf`). When set, Aurelia uses this install and
+    /// never downloads its own managed copy. `None` (default) uses the on-the-fly download.
+    #[serde(default)]
+    pub luxtorpeda_path: Option<String>,
 }
 
 impl LauncherConfig {
@@ -112,6 +137,8 @@ impl Default for LauncherConfig {
             windows_steam_discovery_enabled: true,
             preferred_launch_options: HashMap::new(),
             game_configs: HashMap::new(),
+            luxtorpeda_enabled: false,
+            luxtorpeda_path: None,
         }
     }
 }
@@ -324,4 +351,36 @@ pub async fn load_user_configs() -> Result<UserConfigStore> {
 pub async fn save_user_configs(configs: &UserConfigStore) -> Result<()> {
     let path = config_dir()?.join("user_apps.json");
     write_json_pretty(&path, configs).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn game_config_without_runner_defaults_to_auto() {
+        // A config written before the `runner` field existed must still parse.
+        let legacy = r#"{ "forced_proton_version": "GE-Proton9-20", "platform_preference": null }"#;
+        let cfg: GameConfig = serde_json::from_str(legacy).unwrap();
+        assert_eq!(cfg.runner, GameRunner::Auto);
+        assert_eq!(cfg.forced_proton_version.as_deref(), Some("GE-Proton9-20"));
+    }
+
+    #[test]
+    fn game_runner_round_trips_as_lowercase() {
+        let cfg = GameConfig { runner: GameRunner::Luxtorpeda, ..Default::default() };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("\"luxtorpeda\""), "got: {json}");
+        let back: GameConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.runner, GameRunner::Luxtorpeda);
+    }
+
+    #[test]
+    fn launcher_config_without_luxtorpeda_flag_defaults_false() {
+        // Minimal legacy config.json (pre-luxtorpeda) must load.
+        let legacy = r#"{ "steam_library_path": "/x", "proton_version": "experimental",
+            "enable_cloud_sync": true }"#;
+        let cfg: LauncherConfig = serde_json::from_str(legacy).unwrap();
+        assert!(!cfg.luxtorpeda_enabled);
+    }
 }

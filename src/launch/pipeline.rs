@@ -79,6 +79,9 @@ pub struct PipelineContext {
     pub launcher_config: Option<LauncherConfig>,
     pub user_config: Option<UserAppConfig>,
     pub proton_path: Option<String>,
+    /// One-off request (e.g. `aurelia play --native-engine`) to force the luxtorpeda
+    /// runner for this launch regardless of the per-game config.
+    pub force_native_engine: bool,
 
     pub resolved_install_dir: Option<std::path::PathBuf>,
     pub resolved_executable_path: Option<std::path::PathBuf>,
@@ -106,6 +109,7 @@ impl PipelineContext {
             launcher_config: None,
             user_config: None,
             proton_path: None,
+            force_native_engine: false,
             resolved_install_dir: None,
             resolved_executable_path: None,
             executable_exists: false,

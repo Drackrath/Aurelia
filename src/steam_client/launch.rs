@@ -11,6 +11,7 @@ impl SteamClient {
         proton_path: Option<&str>,
         user_config: Option<&crate::models::UserAppConfig>,
         force_windows: bool,
+        force_native_engine: bool,
     ) -> Result<LaunchInfo> {
         let launch_options = self.get_product_info(app.app_id).await?;
         // When forcing a Windows launch, prefer a Windows executable entry.
@@ -72,7 +73,7 @@ impl SteamClient {
         let mut child = if native_windows {
             self.spawn_windows_native(app, &launch_info, user_config).await?
         } else {
-            self.spawn_game_process(app, &launch_info, chosen_proton_path, &launcher_config, user_config).await?
+            self.spawn_game_process(app, &launch_info, chosen_proton_path, &launcher_config, user_config, force_native_engine).await?
         };
 
         // Record the launch so a separate `aurelia stop <app_id>` invocation can
@@ -125,7 +126,7 @@ impl SteamClient {
         user_config: Option<&crate::models::UserAppConfig>,
     ) -> Result<()> {
         let launcher_config = load_launcher_config().await.unwrap_or_default();
-        self.spawn_game_process(app, launch_info, proton_path, &launcher_config, user_config).await?;
+        self.spawn_game_process(app, launch_info, proton_path, &launcher_config, user_config, false).await?;
         Ok(())
     }
 

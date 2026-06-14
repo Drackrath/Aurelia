@@ -181,6 +181,10 @@ enum Command {
         /// Always implied when running on Windows.
         #[arg(short, long)]
         windows: bool,
+        /// Route this launch through the luxtorpeda native-engine plugin (Linux only).
+        /// Installs the plugin on first use; see `aurelia luxtorpeda`.
+        #[arg(long, conflicts_with_all = ["proton", "windows"])]
+        native_engine: bool,
     },
     /// Stop a running game previously launched with `aurelia play`.
     Stop {
@@ -268,6 +272,12 @@ enum Command {
         #[command(subcommand)]
         command: ProtonCommand,
     },
+    /// Manage the optional luxtorpeda native-engine plugin (Linux only). The plugin is
+    /// never bundled — it is downloaded on demand into Aurelia's data dir.
+    Luxtorpeda {
+        #[command(subcommand)]
+        command: LuxtorpedaCommand,
+    },
     /// Kill all running aurelia processes, including the session daemon.
     Kill,
     /// Run the background session daemon: log in to Steam **once** and serve every
@@ -322,6 +332,13 @@ enum ConfigCommand {
         /// Force the game's platform target (`windows` runs through Proton on Linux).
         #[arg(long)]
         platform: Option<PlatformArg>,
+        /// Route this game through the luxtorpeda native-engine plugin (Linux only;
+        /// requires `aurelia luxtorpeda enable`).
+        #[arg(long)]
+        native_engine: bool,
+        /// Clear the luxtorpeda routing (back to Aurelia's normal native/Proton selection).
+        #[arg(long, conflicts_with = "native_engine")]
+        no_native_engine: bool,
     },
 }
 
@@ -342,6 +359,32 @@ enum ProtonCommand {
     Uninstall { version: String },
     /// Set the global default Proton/Wine version (used when a game has none set).
     Default { version: String },
+}
+
+#[derive(Subcommand)]
+enum LuxtorpedaCommand {
+    /// Enable the plugin (sets the master toggle; games still opt in per-game).
+    Enable,
+    /// Disable the plugin. Games pinned to it fall back to normal native/Proton launch.
+    Disable,
+    /// Download (or re-download) the latest luxtorpeda client into Aurelia's data dir.
+    Install,
+    /// Re-fetch the latest luxtorpeda client, replacing the installed payload.
+    Update,
+    /// Show whether the plugin is enabled and which version (if any) is installed.
+    Status,
+    /// Use an externally-managed luxtorpeda install instead of the managed download.
+    /// Pass a directory to set it (disables downloading), omit args to show the current
+    /// value, or `--clear` to revert to the managed download.
+    Path {
+        /// Directory of an existing luxtorpeda install (contains `toolmanifest.vdf`).
+        path: Option<String>,
+        /// Clear the custom path and use Aurelia's managed download instead.
+        #[arg(long, conflicts_with = "path")]
+        clear: bool,
+    },
+    /// Remove the downloaded luxtorpeda payload from disk.
+    Uninstall,
 }
 
 #[derive(Subcommand)]
@@ -804,7 +847,8 @@ async fn run(cli: Cli) -> Result<()> {
             app_id,
             proton,
             windows,
-        } => cmd_play(app_id, proton, windows, json).await,
+            native_engine,
+        } => cmd_play(app_id, proton, windows, native_engine, json).await,
         Command::Stop { app_id } => cmd_stop(app_id, json).await,
         Command::Enable {
             app_id,
@@ -839,7 +883,9 @@ async fn run(cli: Cli) -> Result<()> {
                 proton,
                 clear_proton,
                 platform,
-            } => cmd_config_game(app_id, proton, clear_proton, platform, json).await,
+                native_engine,
+                no_native_engine,
+            } => cmd_config_game(app_id, proton, clear_proton, platform, native_engine, no_native_engine, json).await,
         },
         Command::Cloud { command } => match command {
             CloudCommand::Sync {
@@ -889,6 +935,16 @@ async fn run(cli: Cli) -> Result<()> {
             ProtonCommand::Install { version } => cmd_proton_install(version, json).await,
             ProtonCommand::Uninstall { version } => cmd_proton_uninstall(version, json).await,
             ProtonCommand::Default { version } => cmd_proton_default(version, json).await,
+        },
+        Command::Luxtorpeda { command } => match command {
+            LuxtorpedaCommand::Enable => cmd_luxtorpeda_toggle(true, json).await,
+            LuxtorpedaCommand::Disable => cmd_luxtorpeda_toggle(false, json).await,
+            LuxtorpedaCommand::Install | LuxtorpedaCommand::Update => {
+                cmd_luxtorpeda_install(json).await
+            }
+            LuxtorpedaCommand::Status => cmd_luxtorpeda_status(json).await,
+            LuxtorpedaCommand::Path { path, clear } => cmd_luxtorpeda_path(path, clear, json).await,
+            LuxtorpedaCommand::Uninstall => cmd_luxtorpeda_uninstall(json).await,
         },
         Command::Kill => cmd_kill(json),
         Command::Daemon {
@@ -2253,7 +2309,16 @@ fn report_operation(app_id: u32, status: &str, json: bool) {
     }
 }
 
-async fn cmd_play(app_id: u32, proton: Option<String>, windows: bool, json: bool) -> Result<()> {
+async fn cmd_play(
+    app_id: u32,
+    proton: Option<String>,
+    windows: bool,
+    native_engine: bool,
+    json: bool,
+) -> Result<()> {
+    if native_engine && !cfg!(target_os = "linux") {
+        anyhow::bail!("--native-engine (luxtorpeda) is only available on Linux");
+    }
     let mut client = authed_client().await?;
     let game = find_game(&mut client, app_id).await?;
 
@@ -2279,7 +2344,7 @@ async fn cmd_play(app_id: u32, proton: Option<String>, windows: bool, json: bool
         cli_println!("Launching {} ...", game.name);
     }
     client
-        .play_game(&game, proton_path.as_deref(), user_config, force_windows)
+        .play_game(&game, proton_path.as_deref(), user_config, force_windows, native_engine)
         .await
         .with_context(|| format!("failed to launch {}", game.name))?;
     if json {
@@ -3162,8 +3227,12 @@ async fn cmd_config_game(
     proton: Option<String>,
     clear_proton: bool,
     platform: Option<PlatformArg>,
+    native_engine: bool,
+    no_native_engine: bool,
     json: bool,
 ) -> Result<()> {
+    use aurelia::config::GameRunner;
+
     let mut cfg = load_launcher_config().await.unwrap_or_default();
     let mut changed = false;
     {
@@ -3185,17 +3254,29 @@ async fn cmd_config_game(
             );
             changed = true;
         }
+        if native_engine {
+            entry.runner = GameRunner::Luxtorpeda;
+            changed = true;
+        } else if no_native_engine {
+            entry.runner = GameRunner::Auto;
+            changed = true;
+        }
     }
     if changed {
         cfg.save().await.context("failed saving game config")?;
     }
 
     let entry = cfg.game_configs.get(&app_id).cloned().unwrap_or_default();
+    let runner_label = match entry.runner {
+        GameRunner::Auto => "auto",
+        GameRunner::Luxtorpeda => "luxtorpeda (native engine)",
+    };
     if json {
         print_json(&serde_json::json!({
             "app_id": app_id,
             "forced_proton_version": entry.forced_proton_version,
             "platform_preference": entry.platform_preference,
+            "runner": entry.runner,
         }));
     } else {
         cli_println!("App {app_id}:");
@@ -3207,6 +3288,159 @@ async fn cmd_config_game(
             "  Platform: {}",
             entry.platform_preference.as_deref().unwrap_or("(auto)")
         );
+        cli_println!("  Runner  : {runner_label}");
+    }
+    Ok(())
+}
+
+/// `luxtorpeda enable|disable`: flip the master toggle for the native-engine plugin.
+async fn cmd_luxtorpeda_toggle(enable: bool, json: bool) -> Result<()> {
+    let mut cfg = load_launcher_config().await.unwrap_or_default();
+    cfg.luxtorpeda_enabled = enable;
+    cfg.save().await.context("failed saving launcher config")?;
+
+    if json {
+        print_json(&serde_json::json!({ "luxtorpeda_enabled": enable }));
+    } else if enable {
+        cli_println!("Luxtorpeda enabled. Pin a game with `aurelia config game <id> --native-engine`.");
+        match &cfg.luxtorpeda_path {
+            Some(p) => cli_println!("Using your configured install at {p} (no download)."),
+            None => cli_println!("The client downloads automatically on first use (or run `aurelia luxtorpeda install`)."),
+        }
+        if !cfg!(target_os = "linux") {
+            cli_println!("Note: luxtorpeda only runs on Linux.");
+        }
+    } else {
+        cli_println!("Luxtorpeda disabled. Pinned games fall back to native/Proton launch.");
+    }
+    Ok(())
+}
+
+/// `luxtorpeda install|update`: download the latest client into Aurelia's data dir.
+async fn cmd_luxtorpeda_install(json: bool) -> Result<()> {
+    let cfg = load_launcher_config().await.unwrap_or_default();
+    if let Some(p) = &cfg.luxtorpeda_path {
+        anyhow::bail!(
+            "a custom luxtorpeda path is configured ({p}); Aurelia uses that install and \
+             does not download a managed copy. Run `aurelia luxtorpeda path --clear` first \
+             to switch to the managed download."
+        );
+    }
+    if !json {
+        cli_println!("Downloading luxtorpeda ...");
+    }
+    let mut last_pct: i64 = -1;
+    let mut on_progress = |done: u64, total: u64| {
+        if json || total == 0 {
+            return;
+        }
+        let pct = (done.saturating_mul(100) / total) as i64;
+        if pct != last_pct {
+            last_pct = pct;
+            cli_print!("\r  {pct:>3}%  ({} / {})        ", human_bytes(done), human_bytes(total));
+        }
+    };
+    let entry = aurelia::luxtorpeda::install(&mut on_progress)
+        .await
+        .context("failed installing luxtorpeda")?;
+    let installed = aurelia::luxtorpeda::installed(None);
+    let version = installed.as_ref().map(|i| i.version.clone()).unwrap_or_default();
+
+    if json {
+        print_json(&serde_json::json!({
+            "status": "installed",
+            "version": version,
+            "entry": entry,
+        }));
+    } else {
+        cli_println!("\n  Installed luxtorpeda {version}");
+        cli_println!("  Entry: {}", entry.display());
+    }
+    Ok(())
+}
+
+/// `luxtorpeda status`: report enabled state and installed version.
+async fn cmd_luxtorpeda_status(json: bool) -> Result<()> {
+    let cfg = load_launcher_config().await.unwrap_or_default();
+    let custom = cfg.luxtorpeda_path.as_deref().map(std::path::Path::new);
+    let installed = aurelia::luxtorpeda::installed(custom);
+
+    if json {
+        print_json(&serde_json::json!({
+            "enabled": cfg.luxtorpeda_enabled,
+            "custom_path": cfg.luxtorpeda_path,
+            "installed": installed,
+            "linux": cfg!(target_os = "linux"),
+        }));
+        return Ok(());
+    }
+
+    cli_println!("Luxtorpeda native-engine plugin:");
+    cli_println!("  Enabled  : {}", cfg.luxtorpeda_enabled);
+    match &cfg.luxtorpeda_path {
+        Some(p) => cli_println!("  Source   : custom path ({p})"),
+        None => cli_println!("  Source   : managed download"),
+    }
+    match &installed {
+        Some(i) => {
+            cli_println!("  Installed: {} ({})", i.version, i.entry.display());
+        }
+        None if cfg.luxtorpeda_path.is_some() => {
+            cli_println!("  Installed: NOT FOUND at the configured custom path");
+        }
+        None => cli_println!("  Installed: no (run `aurelia luxtorpeda install`)"),
+    }
+    if !cfg!(target_os = "linux") {
+        cli_println!("  Note     : luxtorpeda only runs on Linux.");
+    } else {
+        cli_println!(
+            "  Note     : engines run outside the Steam Runtime container; if one fails to \
+             find system libraries, prefer Proton for that title."
+        );
+    }
+    Ok(())
+}
+
+/// `luxtorpeda path`: set, show, or clear the external luxtorpeda install path.
+async fn cmd_luxtorpeda_path(path: Option<String>, clear: bool, json: bool) -> Result<()> {
+    let mut cfg = load_launcher_config().await.unwrap_or_default();
+
+    if clear {
+        cfg.luxtorpeda_path = None;
+        cfg.save().await.context("failed saving launcher config")?;
+    } else if let Some(p) = path {
+        // Reject anything that isn't actually a luxtorpeda install, so a typo can't
+        // silently disable the managed download and then fail only at launch time.
+        if aurelia::luxtorpeda::installed(Some(std::path::Path::new(&p))).is_none() {
+            anyhow::bail!(
+                "'{p}' is not a luxtorpeda install (no toolmanifest.vdf found there or in a subdirectory)"
+            );
+        }
+        cfg.luxtorpeda_path = Some(p);
+        cfg.save().await.context("failed saving launcher config")?;
+    }
+    // No args (and no --clear): fall through to just report the current value.
+
+    if json {
+        print_json(&serde_json::json!({ "custom_path": cfg.luxtorpeda_path }));
+    } else {
+        match &cfg.luxtorpeda_path {
+            Some(p) => cli_println!("Custom luxtorpeda path: {p} (managed download disabled)"),
+            None => cli_println!("Custom luxtorpeda path: (none — using the managed download)"),
+        }
+    }
+    Ok(())
+}
+
+/// `luxtorpeda uninstall`: delete the downloaded payload.
+async fn cmd_luxtorpeda_uninstall(json: bool) -> Result<()> {
+    let removed = aurelia::luxtorpeda::uninstall().context("failed removing luxtorpeda")?;
+    if json {
+        print_json(&serde_json::json!({ "status": if removed { "removed" } else { "not_installed" } }));
+    } else if removed {
+        cli_println!("Removed the luxtorpeda payload.");
+    } else {
+        cli_println!("Luxtorpeda was not installed.");
     }
     Ok(())
 }

@@ -6,6 +6,7 @@ pub mod library;
 pub mod local_library;
 pub mod models;
 pub mod launch;
+pub mod luxtorpeda;
 pub mod proton;
 pub mod relocate;
 pub mod running;
