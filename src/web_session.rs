@@ -133,7 +133,7 @@ async fn read_checked(resp: reqwest::Response) -> Result<String> {
 
 /// A random 24-hex-character `sessionid` token.
 fn random_sessionid() -> String {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    (0..24).map(|_| char::from_digit(rng.gen_range(0..16), 16).unwrap()).collect()
+    use rand::RngExt;
+    let mut rng = rand::rng();
+    (0..24).map(|_| char::from_digit(rng.random_range(0..16), 16).unwrap()).collect()
 }
