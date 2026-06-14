@@ -258,8 +258,7 @@ impl SteamClient {
         Ok(rx)
     }
 
-    /// Whether a game is installed *and* its files are present on disk. Returns
-    /// `(available, install_path)` — mirrors Heroic's `isGameAvailable`.
+    /// Whether a game is installed and its files are present on disk
     pub async fn is_game_available(&self, appid: u32) -> (bool, Option<String>) {
         let Ok(manifest) = self.appmanifest_path(appid).await else {
             return (false, None);
@@ -267,17 +266,19 @@ impl SteamClient {
         if !manifest.exists() {
             return (false, None);
         }
+        // A manifest written at install start
+        match std::fs::read_to_string(&manifest) {
+            Ok(raw) if !manifest_is_fully_installed(&raw) => return (false, None),
+            Ok(_) => {}
+            Err(_) => return (false, None),
+        }
         match self.install_root_for_app(appid).await {
             Ok(path) => (path.exists(), Some(path.to_string_lossy().into_owned())),
             Err(_) => (false, None),
         }
     }
 
-    /// Relink an install to a different Steam library **without copying files** —
-    /// the game's files must already be present at the destination (e.g. the user
-    /// moved them by hand). Relocates the `appmanifest` and updates
-    /// `libraryfolders.vdf`; the game files and Proton prefix are never touched.
-    /// Steam should not be running. Returns the destination install directory.
+    /// Relink 
     pub async fn relink_install(&self, appid: u32, dest_library: PathBuf) -> Result<PathBuf> {
         let (src_manifest, src_steamapps, src_lib_root, installdir) = self
             .resolve_source_layout(

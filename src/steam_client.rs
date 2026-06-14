@@ -1325,6 +1325,22 @@ fn parse_installdir_from_acf(raw: &str) -> Option<String> {
     }
     None
 }
+
+/// Read the `StateFlags` value from an appmanifest, if present.
+fn parse_state_flags_from_acf(raw: &str) -> Option<u32> {
+    for line in raw.lines() {
+        let quoted = extract_quoted_values(line.trim());
+        if quoted.len() >= 2 && quoted[0].eq_ignore_ascii_case("stateflags") {
+            return quoted[1].parse::<u32>().ok();
+        }
+    }
+    None
+}
+
+/// Download StateFlags
+pub(crate) fn manifest_is_fully_installed(raw: &str) -> bool {
+    parse_state_flags_from_acf(raw).is_some_and(|flags| flags & 4 != 0)
+}
 fn parse_installed_depots_from_acf(raw: &str) -> HashMap<u64, u64> {
     let mut manifests = HashMap::new();
     let mut in_installed_depots = false;
@@ -1465,6 +1481,25 @@ fn extract_quoted_values(line: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fully_installed_only_when_state_flag_set() {
+        // StateFlags 4 = StateFullyInstalled.
+        assert!(manifest_is_fully_installed(
+            "\"AppState\"\n{\n\t\"StateFlags\"\t\t\"4\"\n}"
+        ));
+        // 6 = StateFullyInstalled | StateUpdateRequired (installed, update pending).
+        assert!(manifest_is_fully_installed(
+            "\"AppState\"\n{\n\t\"StateFlags\"\t\t\"6\"\n}"
+        ));
+        // 2 = StateUpdateRequired only: an install that started but never finished
+        // (e.g. cancelled). Must NOT count as installed.
+        assert!(!manifest_is_fully_installed(
+            "\"AppState\"\n{\n\t\"StateFlags\"\t\t\"2\"\n}"
+        ));
+        // Missing StateFlags is treated as not installed.
+        assert!(!manifest_is_fully_installed("\"AppState\"\n{\n}"));
+    }
 
     fn cats(pairs: &[(u32, &str)]) -> HashMap<String, String> {
         pairs

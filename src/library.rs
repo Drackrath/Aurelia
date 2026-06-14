@@ -331,6 +331,7 @@ async fn parse_app_manifest_info(path: &Path) -> Result<Option<(u32, InstalledAp
     let mut name = None;
     let mut last_owner = None;
     let mut active_branch = "public".to_string();
+    let mut state_flags: Option<u32> = None;
 
     let mut in_user_config = false;
 
@@ -361,6 +362,7 @@ async fn parse_app_manifest_info(path: &Path) -> Result<Option<(u32, InstalledAp
                     "name" => name = Some(value.to_string()),
                     // "0" means no owner recorded; treat as unknown.
                     "lastowner" => last_owner = value.parse::<u64>().ok().filter(|&id| id != 0),
+                    "stateflags" => state_flags = value.parse::<u32>().ok(),
                     _ => {}
                 }
             } else if key == "betakey" && !value.trim().is_empty() {
@@ -372,6 +374,15 @@ async fn parse_app_manifest_info(path: &Path) -> Result<Option<(u32, InstalledAp
     let (Some(id), Some(dir)) = (app_id, install_dir_name) else {
         return Ok(None);
     };
+
+    // Only count an app as installed once its manifest is marked fully installed
+    // (StateFlags & StateFullyInstalled). A manifest written at install start
+    // carries only StateUpdateRequired (2); if the install is cancelled that
+    // partial manifest remains, and without this check the game would wrongly be
+    // reported as installed by `list`.
+    if !state_flags.is_some_and(|flags| flags & 4 != 0) {
+        return Ok(None);
+    }
     let install_path = path
         .parent()
         .map(|p| p.join("common").join(dir))
