@@ -19,6 +19,7 @@ use aurelia::steam_client::{SharedApp, SteamClient, StoreAppInfo};
 mod output;
 mod daemon;
 mod proc_admin;
+mod steam_urls;
 
 /// Aurelia — a command-line Steam launcher (auth, library, install, launch).
 #[derive(Parser)]
@@ -976,6 +977,17 @@ fn print_json_line(value: &serde_json::Value) {
     }
 }
 
+/// Emit an intermediate NDJSON *event* (progress ticks, login challenges) to
+/// **stderr**, keeping stdout reserved for the single terminal result object so
+/// a driver like Heroic can `JSON.parse` stdout without scanning for the last
+/// value.
+fn eprint_json_line(value: &serde_json::Value) {
+    match serde_json::to_string(value) {
+        Ok(s) => cli_eprintln!("{s}"),
+        Err(_) => cli_eprintln!("{{}}"),
+    }
+}
+
 /// Build a client and restore a persisted session if one exists.
 ///
 /// Inside the daemon this returns a cheap client backed by the **single shared
@@ -1232,7 +1244,7 @@ async fn cmd_login_json(
     // code / mobile confirmation. Emit this first so the driver can immediately
     // tell the user to approve the login (otherwise it sees no output until the
     // attempt completes or times out).
-    print_json_line(&serde_json::json!({
+    eprint_json_line(&serde_json::json!({
         "event": "awaiting_confirmation",
         "message": "Signing in — if prompted, approve this login in your Steam Mobile app."
     }));
@@ -1255,7 +1267,7 @@ async fn cmd_login_json(
             }).flatten();
 
             if let Some(kind) = code_kind {
-                print_json_line(&serde_json::json!({ "event": "guard_required", "type": kind }));
+                eprint_json_line(&serde_json::json!({ "event": "guard_required", "type": kind }));
                 let code = read_stdin_line()
                     .await
                     .context("failed reading Steam Guard code from stdin")?;
@@ -1269,7 +1281,7 @@ async fn cmd_login_json(
                 .iter()
                 .any(|p| matches!(p.requirement, DeviceConfirmation))
             {
-                print_json_line(
+                eprint_json_line(
                     &serde_json::json!({ "event": "guard_required", "type": "device_confirmation" }),
                 );
                 bail!("approve this login in the Steam Mobile app, then run login again")
@@ -1280,9 +1292,9 @@ async fn cmd_login_json(
     }
 }
 
-/// Emit a QR login challenge URL as one NDJSON line for a `--json` driver.
+/// Emit a QR login challenge URL as one NDJSON line
 fn emit_qr_challenge_json(url: &str) {
-    print_json_line(&serde_json::json!({ "event": "qr_challenge", "url": url }));
+    eprint_json_line(&serde_json::json!({ "event": "qr_challenge", "url": url }));
 }
 
 /// Read a single line from stdin (used to receive a Guard code from a `--json`
@@ -1441,7 +1453,27 @@ async fn cmd_list(
     }
 
     if json {
-        cli_println!("{}", serde_json::to_string_pretty(&games)?);
+        // Bake the conventional artwork/store URLs
+        let enriched: Vec<serde_json::Value> = games
+            .iter()
+            .map(|g| {
+                let mut v = serde_json::to_value(g).unwrap_or_default();
+                if let Some(obj) = v.as_object_mut() {
+                    obj.insert(
+                        "assets".into(),
+                        serde_json::json!({
+                            "header": steam_urls::header_url(g.app_id),
+                            "capsule": steam_urls::capsule_url(g.app_id),
+                            "hero": steam_urls::hero_url(g.app_id),
+                            "logo": steam_urls::logo_url(g.app_id),
+                        }),
+                    );
+                    obj.insert("store_url".into(), serde_json::json!(steam_urls::store_url(g.app_id)));
+                }
+                v
+            })
+            .collect();
+        cli_println!("{}", serde_json::to_string_pretty(&enriched)?);
         return Ok(());
     }
 
@@ -2714,6 +2746,7 @@ fn info_json_value(
         "discount_pct": details.discount_pct,
         "platforms": details.platforms,
         "reviews": details.review_summary,
+        "store_url": steam_urls::store_url(details.app_id),
         "assets": {
             "header": details.assets.header,
             "capsule": details.assets.capsule,
@@ -2911,6 +2944,9 @@ async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
                     "owned": s.map(|s| s.owned),
                     "installed": s.map(|s| s.installed),
                     "disabled": s.map(|s| s.disabled),
+                    "image_url": steam_urls::header_url(*id),
+                    "image_fallback_url": steam_urls::small_capsule_url(*id),
+                    "store_url": steam_urls::store_url(*id),
                 })
             }).collect::<Vec<_>>(),
         });
@@ -4241,9 +4277,10 @@ fn emit_progress_json(
         "eta_seconds": eta_seconds,
         "file": p.current_file,
     });
-    // Compact single line so the whole --json stream is valid NDJSON.
+    // Compact single line of NDJSON on stderr, so stdout keeps only the
+    // terminal result object.
     if let Ok(s) = serde_json::to_string(&value) {
-        cli_println!("{s}");
+        cli_eprintln!("{s}");
     }
 }
 
