@@ -123,9 +123,13 @@ struct Metacritic {
 
 /// Fetch storefront details for a single app. Returns `Ok(None)` if the store has
 /// no public entry for the app id (e.g. it was delisted).
-pub async fn fetch_app_details(client: &reqwest::Client, app_id: u32) -> Result<Option<AppDetails>> {
+pub async fn fetch_app_details(
+    client: &reqwest::Client,
+    app_id: u32,
+    language: &str,
+) -> Result<Option<AppDetails>> {
     let url = format!(
-        "https://store.steampowered.com/api/appdetails?appids={app_id}&l=english&cc=us"
+        "https://store.steampowered.com/api/appdetails?appids={app_id}&l={language}&cc=us"
     );
     let resp = client
         .get(&url)

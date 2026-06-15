@@ -71,6 +71,7 @@ of a specific command. `--version` prints the build version.
   - [`config show`](#config-show)
   - [`config protons`](#config-protons)
   - [`config presence`](#config-presence)
+  - [`config language`](#config-language)
   - [`config game`](#config-game)
 - [Proton & Wine runtimes](#proton--wine-runtimes)
   - [`proton list`](#proton-list)
@@ -317,7 +318,7 @@ CM connection (the `StoreBrowse` service), not the HTTPS storefront. A session i
 **only on a cache miss** — see [Caching](#caching) below; a cached lookup works offline.
 
 ```text
-aurelia info <APP_ID>... [--extended] [--no-cache] [--json]
+aurelia info <APP_ID>... [--extended] [--no-cache] [--lang <LANGUAGE>] [--json]
 ```
 
 | Option | Description |
@@ -325,6 +326,7 @@ aurelia info <APP_ID>... [--extended] [--no-cache] [--json]
 | `<APP_ID>...` | One or more app ids. Multiple ids are fetched together (see below). |
 | `--extended` | Also show storefront-only fields (see below). Makes additional HTTPS storefront requests. |
 | `--no-cache` | Bypass the local metadata cache and fetch fresh data from Steam. |
+| `-l`, `--lang <LANGUAGE>` | Steam API language name for store text (descriptions, requirements, etc.), e.g. `german`, `french`, `schinese`. Defaults to the `aurelia config language` setting, then English. |
 | `--json` | Emit JSON instead of formatted text. |
 
 By default `info` shows what the `StoreBrowse` protocol provides directly: type,
@@ -359,8 +361,8 @@ command; a single unknown id still errors.
 
 To avoid a Steam logon on every call — Steam throttles repeated logons, and front-ends
 like Heroic poll `info` often — the CM-sourced metadata (the `StoreBrowse` fields plus the
-DLC list) is cached to disk per app under `info_cache/<APP_ID>.json` in the config
-directory. A cache **hit** serves the result with **no network access at all** (no logon,
+DLC list) is cached to disk per app and language under `info_cache/<APP_ID>.<LANGUAGE>.json`
+in the config directory, so requests in different languages never clobber each other. A cache **hit** serves the result with **no network access at all** (no logon,
 no `StoreBrowse`/PICS round-trip), so it also works offline.
 
 - The cache **time-to-live defaults to 6 hours**. Override it (in seconds) with the
@@ -382,6 +384,7 @@ aurelia info 690830 --extended           # + requirements, Metacritic, tags, gen
 aurelia info 690830 --json               # single object
 aurelia info 690830 570 730 --json       # array of three objects, one logon
 aurelia info 690830 --no-cache           # force a fresh fetch
+aurelia info 690830 --lang german        # store text in German (falls back to config/English)
 AURELIA_INFO_CACHE_TTL=0 aurelia info 690830   # bypass the cache for this run
 ```
 
@@ -429,7 +432,7 @@ aurelia achievements <APP_ID> [-l <LANG>] [--json]
 
 | Option | Description |
 | --- | --- |
-| `-l, --lang <LANG>` | Language for names/descriptions (Steam API language name, e.g. `english`, `german`). Default `english`. |
+| `-l, --lang <LANG>` | Language for names/descriptions (Steam API language name, e.g. `english`, `german`). When omitted, falls back to the [`config language`](#config-language) setting, or `english`. |
 | `--json` | Emit JSON instead of a table. |
 
 Combines the game's achievement **definitions** and **global rarity** (`Player.GetGameAchievements`)
@@ -1434,6 +1437,25 @@ aurelia config presence online          # appear online to friends
 aurelia config presence offline --json  # back to invisible; {"chat_presence":"offline"}
 ```
 
+### `config language`
+
+View or set the default **Steam API language name** used by
+[`achievements`](#achievements) when its `--lang` flag is not given. Run with no
+argument to print the current value (unset means `english`); pass an empty string
+to clear it.
+
+```text
+aurelia config language [<NAME>] [--json]
+```
+
+```bash
+aurelia config language            # print the current default (or "english")
+aurelia config language german     # set German as the default
+aurelia config language ""         # clear it (back to english)
+```
+
+The `--json` output is `{ "language": "german"|null }`.
+
 ### `config game`
 
 View or set a game's **per-game launch settings** — the Proton/Wine version it runs with
@@ -1691,7 +1713,7 @@ Aurelia stores its data under the user config directory:
 | --- | --- |
 | `session.json` | Persisted login session (refresh token). |
 | `images/` | Cached cover/header artwork (`<APP_ID>_library.jpg`). |
-| `info_cache/` | Cached `info` metadata (`<APP_ID>.json`); TTL via `AURELIA_INFO_CACHE_TTL` (default 6h). |
+| `info_cache/` | Cached `info` metadata (`<APP_ID>.<LANGUAGE>.json`); TTL via `AURELIA_INFO_CACHE_TTL` (default 6h). |
 | `logs/` | Per-launch event logs. |
 
 Game installs live in your Steam libraries (`steamapps/common/...`), which Aurelia

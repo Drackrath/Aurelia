@@ -1,6 +1,8 @@
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -109,21 +111,8 @@ enum Command {
         #[command(subcommand)]
         command: MarketCommand,
     },
-    /// Download and install a game.
-    Install {
-        app_id: u32,
-        /// Depot platform to install. Auto-detected if omitted.
-        #[arg(short, long)]
-        platform: Option<PlatformArg>,
-        /// When installing a DLC, restart the Steam client afterward so the running
-        /// client picks up the change (Windows). Without this it only warns.
-        #[arg(long)]
-        restart_steam: bool,
-        /// Don't install — just report the estimated download and on-disk size
-        /// (from PICS, no files fetched). Pair with `--json` for tooling.
-        #[arg(long)]
-        dry_run: bool,
-    },
+    /// Download and install a game (or manage in-flight installs).
+    Install(InstallArgs),
     /// Uninstall a game.
     Uninstall {
         app_id: u32,
@@ -229,15 +218,20 @@ enum Command {
         /// `AURELIA_INFO_CACHE_TTL`, default 6h) to avoid a Steam logon per call.
         #[arg(long)]
         no_cache: bool,
+        /// Steam API language name for store text (descriptions, requirements).
+        /// Defaults to the `aurelia config language` setting, or English.
+        #[arg(short = 'l', long = "lang")]
+        lang: Option<String>,
     },
     /// List a game's DLC (app id and name only).
     Dlc { app_id: u32 },
     /// Show the logged-in user's achievements for a game (with unlock state).
     Achievements {
         app_id: u32,
-        /// Language for achievement names/descriptions (Steam API language name).
-        #[arg(short, long, default_value = "english")]
-        lang: String,
+        /// Steam API language name. Defaults to the `aurelia config language`
+        /// setting, or English.
+        #[arg(short, long)]
+        lang: Option<String>,
     },
     /// List depots for a game.
     Depots { app_id: u32 },
@@ -319,6 +313,13 @@ enum ConfigCommand {
         /// `online`, or `offline` (invisible: you appear offline but still sync
         /// friends and receive chat). Omit to print the current setting.
         mode: Option<ChatPresenceArg>,
+    },
+    /// View or set the default Steam API language.
+    Language {
+        /// The default Steam API language name (e.g. `german`, `french`,
+        /// `schinese`) used by `aurelia achievements` when `--lang` is not
+        /// given. Omit the value to print the current setting.
+        lang: Option<String>,
     },
     /// View or set per-game launch settings (Proton version, platform).
     Game {
@@ -560,6 +561,37 @@ enum WorkshopCommand {
         /// The comment text.
         text: String,
     },
+}
+
+/// `aurelia install`: either install an app (positional `app_id`) or manage
+/// in-flight installs (`list` / `stop`). The positional and the subcommands
+/// coexist via clap's args-conflict-with-subcommands pattern.
+#[derive(clap::Args)]
+#[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
+struct InstallArgs {
+    #[command(subcommand)]
+    action: Option<InstallAction>,
+    /// App id to install. Auto-detected platform unless --platform given.
+    app_id: Option<u32>,
+    /// Depot platform to install. Auto-detected if omitted.
+    #[arg(short, long)]
+    platform: Option<PlatformArg>,
+    /// When installing a DLC, restart the Steam client afterward so the running
+    /// client picks up the change (Windows). Without this it only warns.
+    #[arg(long)]
+    restart_steam: bool,
+    /// Don't install — just report the estimated download and on-disk size
+    /// (from PICS, no files fetched). Pair with `--json` for tooling.
+    #[arg(long)]
+    dry_run: bool,
+}
+
+#[derive(clap::Subcommand)]
+enum InstallAction {
+    /// List in-flight installs (use --json for tooling).
+    List,
+    /// Stop a running install by app id.
+    Stop { app_id: u32 },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -815,12 +847,16 @@ async fn run(cli: Cli) -> Result<()> {
             } => cmd_market_search(query, app_id, count, json).await,
             MarketCommand::Listings => cmd_market_listings(json).await,
         },
-        Command::Install {
-            app_id,
-            platform,
-            restart_steam,
-            dry_run,
-        } => cmd_install(app_id, platform, restart_steam, dry_run, json).await,
+        Command::Install(args) => match args.action {
+            Some(InstallAction::List) => cmd_install_list(json).await,
+            Some(InstallAction::Stop { app_id }) => cmd_install_stop(app_id, json).await,
+            None => {
+                let Some(app_id) = args.app_id else {
+                    bail!("an app id is required, e.g. `aurelia install 945360`");
+                };
+                cmd_install(app_id, args.platform, args.restart_steam, args.dry_run, json).await
+            }
+        },
         Command::Uninstall {
             app_id,
             delete_prefix,
@@ -865,7 +901,8 @@ async fn run(cli: Cli) -> Result<()> {
             app_ids,
             extended,
             no_cache,
-        } => cmd_info(app_ids, extended, no_cache, json).await,
+            lang,
+        } => cmd_info(app_ids, extended, no_cache, lang, json).await,
         Command::Dlc { app_id } => cmd_dlc(app_id, json).await,
         Command::Achievements { app_id, lang } => cmd_achievements(app_id, lang, json).await,
         Command::Depots { app_id } => cmd_depots(app_id, json).await,
@@ -879,6 +916,7 @@ async fn run(cli: Cli) -> Result<()> {
             ConfigCommand::Show => cmd_config_show(json).await,
             ConfigCommand::Protons => cmd_config_protons(json).await,
             ConfigCommand::Presence { mode } => cmd_config_presence(mode, json).await,
+            ConfigCommand::Language { lang } => cmd_config_language(lang, json).await,
             ConfigCommand::Game {
                 app_id,
                 proton,
@@ -1995,6 +2033,38 @@ async fn cmd_market_listings(json: bool) -> Result<()> {
     Ok(())
 }
 
+/// Tracks in-flight installs in this process (the daemon) so `install stop` /
+/// `install list` can reach a running download's shared state across the
+/// separate forwarded connections that the daemon serves.
+static ACTIVE_INSTALLS: OnceLock<Mutex<HashMap<u32, Arc<RwLock<DownloadState>>>>> = OnceLock::new();
+
+fn active_installs() -> &'static Mutex<HashMap<u32, Arc<RwLock<DownloadState>>>> {
+    ACTIVE_INSTALLS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// RAII handle: registers an install's shared state on construction and removes
+/// it on drop, so the registry entry is cleared on success, error, or `?`/abort.
+struct InstallGuard {
+    app_id: u32,
+}
+
+impl InstallGuard {
+    fn register(app_id: u32, state: Arc<RwLock<DownloadState>>) -> Self {
+        if let Ok(mut map) = active_installs().lock() {
+            map.insert(app_id, state);
+        }
+        Self { app_id }
+    }
+}
+
+impl Drop for InstallGuard {
+    fn drop(&mut self) {
+        if let Ok(mut map) = active_installs().lock() {
+            map.remove(&self.app_id);
+        }
+    }
+}
+
 async fn cmd_install(
     app_id: u32,
     platform: Option<PlatformArg>,
@@ -2041,7 +2111,11 @@ async fn cmd_install(
         }
     };
 
+    // Share this install's state via a process-global registry so `install stop`
+    // / `install list` (served on other daemon connections) can reach it. The
+    // guard removes the entry when this function returns (success, error, abort).
     let state = Arc::new(RwLock::new(DownloadState::default()));
+    let _install_guard = InstallGuard::register(app_id, Arc::clone(&state));
     let rx = client
         .install_game(app_id, platform, cached_vdf, None, state)
         .await
@@ -2118,6 +2192,103 @@ async fn cmd_install_dry_run(
         cli_println!("  Download size: {}", human_bytes(est.download_size));
         cli_println!("  Disk size    : {}", human_bytes(est.disk_size));
         cli_println!("  Depots       : {}", est.depot_count);
+    }
+    Ok(())
+}
+
+/// `aurelia install stop <app_id>`: signal a running install (tracked in this
+/// process's registry) to abort. The download loops poll `abort_signal`.
+async fn cmd_install_stop(app_id: u32, json: bool) -> Result<()> {
+    let state = active_installs()
+        .lock()
+        .ok()
+        .and_then(|map| map.get(&app_id).cloned());
+
+    let Some(state) = state else {
+        if json {
+            print_json(&serde_json::json!({
+                "event": "not_found",
+                "app_id": app_id,
+            }));
+        } else {
+            cli_eprintln!(
+                "no active install for app {app_id} (is the daemon running, and is an install in progress?)"
+            );
+        }
+        return Ok(());
+    };
+
+    // The abort flag is an `Arc<AtomicBool>` inside the struct; we only need to
+    // read the struct to flip it (no write lock required).
+    if let Ok(guard) = state.read() {
+        guard.abort_signal.store(true, Ordering::SeqCst);
+    }
+
+    if json {
+        print_json(&serde_json::json!({
+            "event": "stopping",
+            "app_id": app_id,
+        }));
+    } else {
+        cli_println!("Stopping install of app {app_id} ...");
+    }
+    Ok(())
+}
+
+/// `aurelia install list`: report the installs in flight in this process.
+async fn cmd_install_list(json: bool) -> Result<()> {
+    // Snapshot under the lock, then release it before printing.
+    let mut rows: Vec<(u32, String, u64, u64, String, bool)> = Vec::new();
+    if let Ok(map) = active_installs().lock() {
+        for state in map.values() {
+            if let Ok(s) = state.read() {
+                rows.push((
+                    s.app_id,
+                    s.app_name.clone(),
+                    s.total_bytes,
+                    s.downloaded_bytes,
+                    s.status_text.clone(),
+                    s.is_downloading,
+                ));
+            }
+        }
+    }
+    rows.sort_by_key(|r| r.0);
+
+    if json {
+        let arr: Vec<_> = rows
+            .iter()
+            .map(|(app_id, name, total, done, status, downloading)| {
+                serde_json::json!({
+                    "app_id": app_id,
+                    "name": name,
+                    "downloaded_bytes": done,
+                    "total_bytes": total,
+                    "percent": percent_of(*done, *total),
+                    "status": status,
+                    "is_downloading": downloading,
+                })
+            })
+            .collect();
+        print_json(&serde_json::Value::Array(arr));
+        return Ok(());
+    }
+
+    if rows.is_empty() {
+        cli_println!("No installs in progress.");
+        return Ok(());
+    }
+
+    cli_println!("{:>9}  {:>20}  {:>9}  NAME / STATUS", "APPID", "PROGRESS", "");
+    for (app_id, name, total, done, status, _) in &rows {
+        let progress = format!("{} / {}", human_bytes(*done), human_bytes(*total));
+        cli_println!(
+            "{:>9}  {:>20}  {:>5.1}%  {}",
+            app_id,
+            progress,
+            percent_of(*done, *total),
+            if name.is_empty() { status } else { name }
+        );
     }
     Ok(())
 }
@@ -2596,7 +2767,17 @@ async fn cmd_set_branch(app_id: u32, branch: String, json: bool) -> Result<()> {
 /// SteamSpy user tags.
 type ExtendedInfo = (aurelia::store::AppDetails, Vec<String>);
 
-async fn cmd_info(app_ids: Vec<u32>, extended: bool, no_cache: bool, json: bool) -> Result<()> {
+async fn cmd_info(
+    app_ids: Vec<u32>,
+    extended: bool,
+    no_cache: bool,
+    lang: Option<String>,
+    json: bool,
+) -> Result<()> {
+    // Resolve the store-text language once: explicit --lang > `config language` >
+    // English. Threaded into the StoreBrowse fetch, the `--extended` storefront
+    // fetch, and the per-language cache key.
+    let lang = resolve_steam_language(lang).await;
     // The CM-sourced metadata (StoreBrowse + the DLC list) is effectively static
     // for hours, and drivers like Heroic call `info` repeatedly. Serve it from a
     // short-TTL disk cache so a repeat call avoids the Steam CM logon and the
@@ -2616,7 +2797,7 @@ async fn cmd_info(app_ids: Vec<u32>, extended: bool, no_cache: bool, json: bool)
         std::collections::HashMap::new();
     let mut misses: Vec<u32> = Vec::new();
     for &id in &app_ids {
-        match load_info_cache(id, ttl).await {
+        match load_info_cache(id, &lang, ttl).await {
             Some(cached) => {
                 base.insert(id, (cached.details, cached.dlc));
             }
@@ -2629,7 +2810,7 @@ async fn cmd_info(app_ids: Vec<u32>, extended: bool, no_cache: bool, json: bool)
         // (no HTTPS storefront API), so a session is needed here.
         let client = authed_client().await?;
         let store = client
-            .fetch_store_apps(&misses)
+            .fetch_store_apps(&misses, &lang)
             .await
             .context("failed to fetch store information")?;
         for &id in &misses {
@@ -2652,10 +2833,10 @@ async fn cmd_info(app_ids: Vec<u32>, extended: bool, no_cache: bool, json: bool)
                 .await
                 .map(|e| e.dlcs)
                 .unwrap_or_default();
-            let dlc = resolve_dlc_names_via_store(&client, &dlc_ids).await;
+            let dlc = resolve_dlc_names_via_store(&client, &dlc_ids, &lang).await;
 
             // Best-effort cache write — a failure here must not fail the command.
-            if let Err(e) = save_info_cache(id, &details, &dlc).await {
+            if let Err(e) = save_info_cache(id, &lang, &details, &dlc).await {
                 tracing::warn!("could not cache info for app {id}: {e:#}");
             }
             base.insert(id, (details, dlc));
@@ -2675,7 +2856,7 @@ async fn cmd_info(app_ids: Vec<u32>, extended: bool, no_cache: bool, json: bool)
                     if !base.contains_key(&id) {
                         continue;
                     }
-                    let web = aurelia::store::fetch_app_details(&http, id).await.ok().flatten();
+                    let web = aurelia::store::fetch_app_details(&http, id, &lang).await.ok().flatten();
                     let tags = aurelia::store::fetch_tags(&http, id).await;
                     if let Some(d) = web {
                         extended_by_id.insert(id, (d, tags));
@@ -2893,12 +3074,13 @@ fn print_info_human(
 async fn resolve_dlc_names_via_store(
     client: &SteamClient,
     dlc_ids: &[u32],
+    language: &str,
 ) -> Vec<(u32, Option<String>)> {
     if dlc_ids.is_empty() {
         return Vec::new();
     }
     let name_by_id: std::collections::HashMap<u32, String> = client
-        .fetch_store_apps(dlc_ids)
+        .fetch_store_apps(dlc_ids, language)
         .await
         .unwrap_or_default()
         .into_iter()
@@ -2925,7 +3107,7 @@ async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
         .await
         .map(|e| e.dlcs)
         .unwrap_or_default();
-    let dlc = resolve_dlc_names_via_store(&steam, &dlc_ids).await;
+    let dlc = resolve_dlc_names_via_store(&steam, &dlc_ids, "english").await;
     let states = steam
         .dlc_states(app_id, &dlc_ids)
         .await
@@ -2979,8 +3161,23 @@ async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_achievements(app_id: u32, lang: String, json: bool) -> Result<()> {
+/// Resolve the Steam API language name (e.g. "german", "schinese") to use for
+/// user-facing store text: an explicit `--lang` flag wins, else the
+/// `aurelia config language` setting, else "english".
+async fn resolve_steam_language(flag: Option<String>) -> String {
+    match flag {
+        Some(l) => l,
+        None => load_launcher_config()
+            .await
+            .ok()
+            .and_then(|c| c.language)
+            .unwrap_or_else(|| "english".to_string()),
+    }
+}
+
+async fn cmd_achievements(app_id: u32, lang: Option<String>, json: bool) -> Result<()> {
     let client = authed_client().await?;
+    let lang = resolve_steam_language(lang).await;
     let achievements = client
         .fetch_achievements(app_id, &lang)
         .await
@@ -3207,6 +3404,32 @@ async fn cmd_config_presence(mode: Option<ChatPresenceArg>, json: bool) -> Resul
             cli_println!(
                 "Restart the session daemon for this to take effect (`aurelia daemon stop` or `aurelia kill`)."
             );
+        }
+    }
+    Ok(())
+}
+
+/// `config language [<name>]`: view or set the default Steam API language name
+/// used by `aurelia achievements` when `--lang` is not given. Pass an empty
+/// value to clear it (falling back to English).
+async fn cmd_config_language(lang: Option<String>, json: bool) -> Result<()> {
+    let mut config = load_launcher_config().await.unwrap_or_default();
+    let changed = lang.is_some();
+    if let Some(lang) = lang {
+        let value = lang.trim().to_ascii_lowercase();
+        config.language = if value.is_empty() { None } else { Some(value) };
+        save_launcher_config(&config).await?;
+    }
+    let current = config.language.as_deref();
+    if json {
+        print_json(&serde_json::json!({ "language": current }));
+    } else {
+        match current {
+            Some(lang) => cli_println!("Language: {lang}"),
+            None => cli_println!("Language: english (default)"),
+        }
+        if changed {
+            cli_println!("Saved.");
         }
     }
     Ok(())
@@ -4450,6 +4673,29 @@ mod tests {
     /// Parse an argv into a `Cli` the way the binary does.
     fn parse(args: &[&str]) -> Cli {
         Cli::try_parse_from(args).expect("args should parse")
+    }
+
+    #[test]
+    fn install_positional_and_subcommands_coexist() {
+        // Positional install (Heroic depends on this form).
+        match parse(&["aurelia", "install", "945360"]).command {
+            Command::Install(args) => {
+                assert!(args.action.is_none());
+                assert_eq!(args.app_id, Some(945360));
+            }
+            _ => panic!("expected Install"),
+        }
+        // Management verbs.
+        match parse(&["aurelia", "install", "list"]).command {
+            Command::Install(args) => assert!(matches!(args.action, Some(InstallAction::List))),
+            _ => panic!("expected Install list"),
+        }
+        match parse(&["aurelia", "install", "stop", "945360"]).command {
+            Command::Install(args) => {
+                assert!(matches!(args.action, Some(InstallAction::Stop { app_id: 945360 })))
+            }
+            _ => panic!("expected Install stop"),
+        }
     }
 
     #[test]

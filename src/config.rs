@@ -102,6 +102,10 @@ pub struct LauncherConfig {
     /// never downloads its own managed copy. `None` (default) uses the on-the-fly download.
     #[serde(default)]
     pub luxtorpeda_path: Option<String>,
+    /// Persistent default Steam API language *name* (e.g. "german") used by
+    /// `aurelia achievements` when `--lang` is not given. `None` = use "english".
+    #[serde(default)]
+    pub language: Option<String>,
 }
 
 impl LauncherConfig {
@@ -139,6 +143,7 @@ impl Default for LauncherConfig {
             game_configs: HashMap::new(),
             luxtorpeda_enabled: false,
             luxtorpeda_path: None,
+            language: None,
         }
     }
 }
@@ -299,10 +304,16 @@ fn info_cache_dir() -> Result<PathBuf> {
     Ok(data_dir()?.join("info_cache"))
 }
 
-/// Per-app cache file. One file per app id (rather than a shared map) so
-/// concurrent Aurelia invocations for different apps never clobber each other.
-fn info_cache_path(app_id: u32) -> Result<PathBuf> {
-    Ok(info_cache_dir()?.join(format!("{app_id}.json")))
+/// Per-app, per-language cache file. One file per `(app id, language)` (rather
+/// than a shared map) so concurrent Aurelia invocations for different apps — or
+/// the same app in different languages — never clobber each other. The language
+/// is sanitized to keep it safe as a filename component.
+fn info_cache_path(app_id: u32, language: &str) -> Result<PathBuf> {
+    let lang: String = language
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+        .collect();
+    Ok(info_cache_dir()?.join(format!("{app_id}.{lang}.json")))
 }
 
 fn now_unix() -> u64 {
@@ -315,11 +326,15 @@ fn now_unix() -> u64 {
 /// Load a cached `info` record for `app_id` if one exists and is still within
 /// `ttl`. Returns `None` on a miss, a stale entry, or any read/parse error, so the
 /// caller falls through to a fresh fetch. A zero `ttl` always misses.
-pub async fn load_info_cache(app_id: u32, ttl: std::time::Duration) -> Option<CachedAppInfo> {
+pub async fn load_info_cache(
+    app_id: u32,
+    language: &str,
+    ttl: std::time::Duration,
+) -> Option<CachedAppInfo> {
     if ttl.is_zero() {
         return None;
     }
-    let path = info_cache_path(app_id).ok()?;
+    let path = info_cache_path(app_id, language).ok()?;
     let raw = fs::read_to_string(&path).await.ok()?;
     let cached: CachedAppInfo = serde_json::from_str(&raw).ok()?;
     let age = now_unix().saturating_sub(cached.fetched_at);
@@ -329,6 +344,7 @@ pub async fn load_info_cache(app_id: u32, ttl: std::time::Duration) -> Option<Ca
 /// Persist an `info` record for `app_id`, stamped with the current time.
 pub async fn save_info_cache(
     app_id: u32,
+    language: &str,
     details: &crate::steam_client::StoreAppInfo,
     dlc: &[(u32, Option<String>)],
 ) -> Result<()> {
@@ -337,7 +353,7 @@ pub async fn save_info_cache(
         details: details.clone(),
         dlc: dlc.to_vec(),
     };
-    write_json_pretty(&info_cache_path(app_id)?, &record).await
+    write_json_pretty(&info_cache_path(app_id, language)?, &record).await
 }
 
 pub async fn load_user_configs() -> Result<UserConfigStore> {
