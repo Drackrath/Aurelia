@@ -25,6 +25,7 @@ of a specific command. `--version` prints the build version.
   - [`image`](#image)
 - [Installation & maintenance](#installation--maintenance)
   - [`install`](#install)
+  - [`install list` / `install stop`](#install-list--install-stop)
   - [`update`](#update)
   - [`verify`](#verify)
   - [`uninstall`](#uninstall)
@@ -515,6 +516,39 @@ recognises it as installed and **enabled**. The base game must already be instal
 aurelia install 1245620
 aurelia install 1245620 --platform windows
 ```
+
+Installs run inside the [session daemon](#session-daemon), so they continue in the
+background even if the foreground command is interrupted (Ctrl+C detaches the client; it
+does **not** cancel the download). Use [`install stop`](#install-list--install-stop) to
+cancel, or [`install list`](#install-list--install-stop) to see what's running.
+
+### `install list` / `install stop`
+
+Manage in-flight installs running in the daemon.
+
+```text
+aurelia install list [--json]
+aurelia install stop <APP_ID> [--json]
+```
+
+`install list` shows each install in progress with its app id, byte progress, percentage
+and status (`No installs in progress.` when idle). With `--json` it emits an array of
+`{ "app_id", "name", "downloaded_bytes", "total_bytes", "percent", "status", "is_downloading" }`.
+
+`install stop <APP_ID>` signals the running install for that app to abort. With `--json` it
+emits `{ "event": "stopping", "app_id" }`, or `{ "event": "not_found", "app_id" }` if no
+matching install is active (e.g. the daemon isn't running or the download already finished).
+
+```bash
+aurelia install list
+aurelia install list --json
+aurelia install stop 1245620
+```
+
+> Stopping reaches a running install only when it shares the daemon with the `stop`
+> command — the normal path, since commands auto-forward to the daemon. A foreground
+> install started in a separate process (e.g. with the daemon disabled) can't be stopped
+> from another process.
 
 ### `update`
 

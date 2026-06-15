@@ -93,7 +93,10 @@ sync, and Proton/Wine launching all work today.
 - [x] **Library** — fetch owned games, scan local installs, search & filter, Family Sharing
 - [x] **Install & updates** — 4-phase download pipeline (manifest → security → chunks),
       updates, uninstall, integrity verification, and moving installs between library
-      folders (with Steam's `appmanifest`/`libraryfolders.vdf` kept in sync)
+      folders (with Steam's `appmanifest`/`libraryfolders.vdf` kept in sync); installs run
+      in the background daemon and can be listed and cancelled (`install list` / `install stop`)
+- [x] **Localized metadata** — store text (`info`) and achievement names/descriptions follow
+      a `--lang` flag or the `config language` default (used by the Heroic Steam integration)
 - [x] **DLC** — install, enable/disable, and per-DLC ownership/install status
 - [x] **Steam Cloud** — enumerate, download, upload save data
 - [x] **Proton/Wine** — runtime discovery, a download manager (official Valve Proton + GE
@@ -160,13 +163,17 @@ aurelia list --search elden          # filter by name
 aurelia list --online                # add an ONLINE column (needs-connection heuristic)
 aurelia info 690830                  # game details (description, release, reviews, DLC)
 aurelia info 690830 --extended       # + requirements, Metacritic, tags, genres, categories
+aurelia info 690830 --lang german    # localize store text (falls back to config/English)
 aurelia dlc 690830                   # list a game's DLC with ownership/install status
 aurelia achievements 620             # your achievements for a game (unlock state + rarity)
+aurelia achievements 620 --lang german  # localize achievement names/descriptions
 aurelia image 1245620                # fetch cover art to the cache (prints the path)
 aurelia image 1245620 -o cover.jpg   # save artwork to a specific file
 
 # Install & maintain
 aurelia install 1245620              # download & install a game by app id
+aurelia install list                 # show installs running in the daemon (with progress)
+aurelia install stop 1245620         # cancel a running install
 aurelia update 1245620               # download the latest manifest
 aurelia verify 1245620               # verify installed files
 aurelia uninstall 1245620            # remove a game (--delete-prefix wipes its prefix)
@@ -224,6 +231,7 @@ aurelia wallet                               # Steam Wallet balance
 aurelia config show                  # print launcher configuration
 aurelia config protons               # list detected Proton/Wine runtimes
 aurelia config presence online       # appear online for chat (default: offline/invisible)
+aurelia config language german       # default language for info/achievements text
 aurelia config game 1245620 --proton GE-Proton9-20  # pin a Proton version for one game
 
 # Proton / Wine runtimes (download manager)
