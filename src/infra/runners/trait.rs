@@ -11,6 +11,8 @@ pub struct LaunchContext {
     pub launcher_config: LauncherConfig,
     pub user_config: Option<UserAppConfig>,
     pub proton_path: Option<String>,
+    /// Run with real Steam integration
+    pub steam_enabled: bool,
     pub target_architecture: crate::models::ExecutableArchitecture,
     pub dll_resolutions: Vec<crate::launch::dll_provider_resolver::DllResolution>,
     pub verification_ptr: *mut crate::infra::logging::LaunchVerification, // HACK: for Runner to write diagnostics

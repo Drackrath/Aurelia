@@ -17,6 +17,7 @@ impl PipelineStage for BuildCommandStage {
                 launcher_config: ctx.launcher_config.as_ref().ok_or_else(|| missing("launcher_config"))?.clone(),
                 user_config: ctx.user_config.clone(),
                 proton_path: ctx.proton_path.clone(),
+                steam_enabled: ctx.steam_enabled,
                 target_architecture: ctx.target_architecture,
                 dll_resolutions: ctx.dll_resolutions.clone(),
                 verification_ptr: &mut ctx.verification as *mut _,

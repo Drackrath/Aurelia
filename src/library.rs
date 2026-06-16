@@ -453,6 +453,7 @@ pub fn build_game_library(
             is_owned: true,
             is_family_shared: false,
             online_required: None,
+            platform: None,
         });
     }
 
@@ -486,6 +487,7 @@ pub fn build_game_library(
             is_owned: false,
             is_family_shared: family_shared,
             online_required: None,
+            platform: None,
         });
     }
 

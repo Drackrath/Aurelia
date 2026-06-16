@@ -12,17 +12,66 @@ impl SteamClient {
         user_config: Option<&crate::models::UserAppConfig>,
         force_windows: bool,
         force_native_engine: bool,
+        steam_enabled: bool,
     ) -> Result<LaunchInfo> {
+        // A Family-Shared game (licensed to another account) can only be authorised
+        // by a running Steam client, so it always needs Steam integration regardless
+        // of the user's preference.
+        let steam_enabled = steam_enabled || !app.is_owned;
+
+        // With Steam integration the game talks to the host Steam client; make sure
+        // one is running (start it silently if not) so Steamworks/Family-Sharing can
+        // initialise. Best-effort and Linux-only.
+        #[cfg(target_os = "linux")]
+        if steam_enabled {
+            crate::utils::ensure_steam_running();
+        }
+
         let launch_options = self.get_product_info(app.app_id).await?;
-        // When forcing a Windows launch, prefer a Windows executable entry.
-        let launch_info = if force_windows {
+
+        // Only one platform's depot is installed, so a launch entry is only usable
+        // if its executable is actually on disk. A game commonly advertises Windows,
+        // macOS and Linux entries; picking one by order alone can select a build that
+        // was never installed (e.g. choosing the Windows `.exe` for a game where only
+        // the native Linux depot is present), which then fails with
+        // "game_executable_not_found". Prefer entries whose executable exists.
+        let exe_exists = |o: &LaunchInfo| -> bool {
+            match app.install_path.as_deref() {
+                Some(dir) if !o.executable.is_empty() => {
+                    std::path::Path::new(dir)
+                        .join(o.executable.replace('\\', "/"))
+                        .exists()
+                }
+                _ => false,
+            }
+        };
+
+        // Prefer the Windows executable entry whenever we intend to run through a
+        // Proton/Wine layer — either a native Windows launch (`force_windows`) or
+        // an explicit/configured Proton runner (`proton_path`). `--proton` would
+        // otherwise be ignored when a game's first entry is a macOS/Linux build.
+        // Within each preference, an entry whose executable is installed wins over
+        // one that isn't. With no runner and no force, pick the installed entry
+        // (the platform whose depot is present), falling back to the first.
+        let prefer_windows_target = force_windows || proton_path.is_some();
+        let launch_info = if prefer_windows_target {
             launch_options
                 .iter()
-                .find(|o| o.target == LaunchTarget::WindowsProton)
+                .find(|o| o.target == LaunchTarget::WindowsProton && exe_exists(o))
+                // No installed Windows build: a Proton request can't override which
+                // depot is actually on disk. A native-Linux-only game (e.g. one a
+                // driver like Heroic launches with a default `--proton`) must still
+                // run its installed native build rather than a non-existent `.exe`.
+                .or_else(|| launch_options.iter().find(|o| exe_exists(o)))
+                .or_else(|| launch_options.iter().find(|o| o.target == LaunchTarget::WindowsProton))
                 .or_else(|| launch_options.first())
                 .cloned()
         } else {
-            launch_options.first().cloned()
+            launch_options
+                .iter()
+                .find(|o| exe_exists(o))
+                .or_else(|| launch_options.first())
+                .cloned()
         }
         .ok_or_else(|| anyhow!("no launch options"))?;
 
@@ -73,7 +122,7 @@ impl SteamClient {
         let mut child = if native_windows {
             self.spawn_windows_native(app, &launch_info, user_config).await?
         } else {
-            self.spawn_game_process(app, &launch_info, chosen_proton_path, &launcher_config, user_config, force_native_engine).await?
+            self.spawn_game_process(app, &launch_info, chosen_proton_path, &launcher_config, user_config, force_native_engine, steam_enabled).await?
         };
 
         // Record the launch so a separate `aurelia stop <app_id>` invocation can
@@ -126,7 +175,7 @@ impl SteamClient {
         user_config: Option<&crate::models::UserAppConfig>,
     ) -> Result<()> {
         let launcher_config = load_launcher_config().await.unwrap_or_default();
-        self.spawn_game_process(app, launch_info, proton_path, &launcher_config, user_config, false).await?;
+        self.spawn_game_process(app, launch_info, proton_path, &launcher_config, user_config, false, false).await?;
         Ok(())
     }
 

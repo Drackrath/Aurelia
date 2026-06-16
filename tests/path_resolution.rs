@@ -45,6 +45,7 @@ async fn test_batman_path_resolution() {
         is_owned: true,
         is_family_shared: false,
         online_required: None,
+        platform: None,
     };
 
     let launch_info = LaunchInfo {

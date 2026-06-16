@@ -82,6 +82,8 @@ pub struct PipelineContext {
     /// One-off request (e.g. `aurelia play --native-engine`) to force the luxtorpeda
     /// runner for this launch regardless of the per-game config.
     pub force_native_engine: bool,
+    /// Run the game with real Steam integration
+    pub steam_enabled: bool,
 
     pub resolved_install_dir: Option<std::path::PathBuf>,
     pub resolved_executable_path: Option<std::path::PathBuf>,
@@ -110,6 +112,7 @@ impl PipelineContext {
             user_config: None,
             proton_path: None,
             force_native_engine: false,
+            steam_enabled: false,
             resolved_install_dir: None,
             resolved_executable_path: None,
             executable_exists: false,

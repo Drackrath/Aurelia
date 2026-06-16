@@ -81,7 +81,10 @@ impl SteamClient {
     /// Returns the resolved record on success. Fails if Aurelia has no record of
     /// the game running — e.g. it was started directly through Steam rather than
     /// `aurelia play`.
-    pub fn stop_game(app_id: u32) -> Result<crate::running::RunningGame> {
+    /// Stop a game previously launched by `aurelia play`. With `force`, processes
+    /// are killed immediately (SIGKILL / `taskkill /F`); otherwise they are first
+    /// asked to exit (SIGTERM) so the game can shut down and save cleanly.
+    pub fn stop_game(app_id: u32, force: bool) -> Result<crate::running::RunningGame> {
         let record = crate::running::load(app_id).ok_or_else(|| {
             anyhow!("app {app_id} is not running (no launch was recorded by Aurelia)")
         })?;
@@ -91,12 +94,55 @@ impl SteamClient {
         // prefix too when we recorded one (never the shared master prefix).
         #[cfg(unix)]
         if let Some(prefix) = record.wineprefix.as_deref() {
-            Self::kill_wine_processes_in_prefix(prefix);
+            Self::kill_wine_processes_in_prefix(prefix, force);
         }
 
-        kill_process_tree(record.pid);
+        // Proton re-parents the game's processes (steam.exe shim, the game exe,
+        // wineserver) away from the runner we spawned, so killing the recorded PID
+        // tree alone leaves them running — and in the default shared-prefix mode no
+        // wineprefix is recorded to sweep. Every one of those processes carries
+        // STEAM_COMPAT_APP_ID=<app_id> in its environment, so use that as the
+        // authoritative way to find and stop the whole game.
+        #[cfg(unix)]
+        Self::kill_processes_for_app(app_id, force);
+
+        kill_process_tree(record.pid, force);
         crate::running::clear(app_id);
         Ok(record)
+    }
+
+    /// Terminate every process belonging to `app_id`, identified by
+    /// `STEAM_COMPAT_APP_ID=<app_id>` in its environment. This catches Proton's
+    /// re-parented game/steam.exe/wineserver processes that aren't in the spawned
+    /// runner's tree. The master Steam client never carries a game's app id, so it
+    /// is not affected.
+    #[cfg(unix)]
+    pub fn kill_processes_for_app(app_id: u32, force: bool) {
+        let needle = format!("STEAM_COMPAT_APP_ID={app_id}");
+        let signal = if force { libc::SIGKILL } else { libc::SIGTERM };
+
+        Self::scan_proc_pids(|pid_path, pid_str| {
+            let environ = match std::fs::read(pid_path.join("environ")) {
+                Ok(b) => b,
+                Err(_) => return None,
+            };
+            // environ is NUL-separated `KEY=VALUE` entries; match one exactly so
+            // app id 945360 never matches 9453600.
+            let matches = environ
+                .split(|&b| b == 0)
+                .any(|entry| entry == needle.as_bytes());
+            if !matches {
+                return None;
+            }
+
+            if let Ok(pid) = pid_str.parse::<i32>() {
+                unsafe {
+                    libc::kill(pid, signal);
+                }
+            }
+            // Never short-circuit: sweep every matching process.
+            None::<()>
+        });
     }
 
     /// Invoke `f` once per numeric `/proc/<pid>` directory, passing its path and
@@ -127,8 +173,9 @@ impl SteamClient {
     /// Proton/Wine game whose processes outlive the runner we spawned. Only call
     /// this for a per-game prefix — the shared master prefix also hosts Steam.
     #[cfg(unix)]
-    pub fn kill_wine_processes_in_prefix(wineprefix: &Path) {
+    pub fn kill_wine_processes_in_prefix(wineprefix: &Path, force: bool) {
         let prefix_str = wineprefix.to_string_lossy().to_string();
+        let signal = if force { libc::SIGKILL } else { libc::SIGTERM };
 
         Self::scan_proc_pids(|pid_path, pid_str| {
             let environ = match std::fs::read(pid_path.join("environ")) {
@@ -141,7 +188,7 @@ impl SteamClient {
 
             if let Ok(pid) = pid_str.parse::<i32>() {
                 unsafe {
-                    libc::kill(pid, libc::SIGTERM);
+                    libc::kill(pid, signal);
                 }
             }
             // Never short-circuit: sweep every matching process.
@@ -303,6 +350,7 @@ NoSavePersonalInfo=1
         launcher_config: &crate::config::LauncherConfig,
         user_config: Option<&crate::models::UserAppConfig>,
         force_native_engine: bool,
+        steam_enabled: bool,
     ) -> Result<std::process::Child> {
         use crate::launch::pipeline::{LaunchPipeline, PipelineContext};
         use crate::infra::logging::{LaunchSession, EventLogger};
@@ -314,6 +362,7 @@ NoSavePersonalInfo=1
         ctx.user_config = user_config.cloned();
         ctx.proton_path = proton_path.map(|s| s.to_string());
         ctx.force_native_engine = force_native_engine;
+        ctx.steam_enabled = steam_enabled;
 
         if let Ok(config_dir) = crate::config::config_dir() {
             let session = LaunchSession::new(&config_dir.join("logs"));

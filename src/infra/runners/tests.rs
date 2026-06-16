@@ -22,6 +22,7 @@ mod tests {
                 is_owned: true,
                 is_family_shared: false,
                 online_required: None,
+                platform: None,
             },
             launch_info: LaunchInfo {
                 app_id: 123,
@@ -35,6 +36,7 @@ mod tests {
             launcher_config: LauncherConfig::default(),
             user_config: None,
             proton_path: Some("/tmp/proton".to_string()),
+            steam_enabled: false,
             target_architecture: crate::models::ExecutableArchitecture::X86_64,
             dll_resolutions: Vec::new(),
             verification_ptr: std::ptr::null_mut(),
@@ -92,6 +94,7 @@ mod tests {
             is_owned: true,
             is_family_shared: false,
             online_required: None,
+            platform: None,
         };
 
         let mut config = LauncherConfig::default();
@@ -114,6 +117,7 @@ mod tests {
             launcher_config: config,
             user_config: Some(user_config.clone()),
             proton_path: Some(runner_path.to_string_lossy().to_string()),
+            steam_enabled: false,
             target_architecture: crate::models::ExecutableArchitecture::X86_64,
             dll_resolutions: Vec::new(),
             verification_ptr: std::ptr::null_mut(),

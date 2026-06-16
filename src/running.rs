@@ -79,3 +79,36 @@ pub fn list() -> Vec<RunningGame> {
     games.sort_by(|a, b| a.name.cmp(&b.name));
     games
 }
+
+/// Whether the process behind a recorded launch is still alive. A launch that was
+/// interrupted (e.g. `aurelia play` killed with Ctrl-C) can leave its record
+/// behind after the process is gone, so liveness is checked against the OS.
+pub fn is_alive(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        // `/proc/<pid>` exists for every live process and is cheaper (and needs no
+        // libc/unsafe) than a signal-0 probe.
+        std::path::Path::new(&format!("/proc/{pid}")).exists()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        // No cheap cross-process liveness check here; treat the record as live.
+        true
+    }
+}
+
+/// The games Aurelia is running whose process is still alive. Records whose
+/// process has already exited are pruned as a side effect, so stale launches
+/// (e.g. an interrupted `aurelia play`) don't linger in the listing.
+pub fn list_active() -> Vec<RunningGame> {
+    let mut alive = Vec::new();
+    for game in list() {
+        if is_alive(game.pid) {
+            alive.push(game);
+        } else {
+            clear(game.app_id);
+        }
+    }
+    alive
+}

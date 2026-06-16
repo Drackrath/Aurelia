@@ -23,6 +23,19 @@ impl Runner for WineTkgRunner {
         std::fs::create_dir_all(&effective_game_prefix)
             .map_err(|e| LaunchError::new(LaunchErrorKind::Permission, format!("failed creating {}", effective_game_prefix.display())).with_source(anyhow!(e)))?;
 
+        // Proton's `setup_prefix` opens its lock at `$STEAM_COMPAT_DATA_PATH/pfx.lock`
+        // with O_CREAT, which fails with ENOENT unless the compatdata directory
+        // already exists (Steam itself pre-creates it). In the default shared-prefix
+        // mode the WINEPREFIX above lives elsewhere, so compatdata is never created
+        // and Proton aborts immediately. Create it here so the path build_env hands
+        // Proton as STEAM_COMPAT_DATA_PATH is guaranteed to exist.
+        let compat_data_path = library_root
+            .join("steamapps")
+            .join("compatdata")
+            .join(ctx.app.app_id.to_string());
+        std::fs::create_dir_all(&compat_data_path)
+            .map_err(|e| LaunchError::new(LaunchErrorKind::Permission, format!("failed creating {}", compat_data_path.display())).with_source(anyhow!(e)))?;
+
         tracing::info!("Effective game prefix: {}", effective_game_prefix.display());
         tracing::info!("Shared steam compatibility data enabled: {}", ctx.launcher_config.use_shared_compat_data);
         tracing::info!("Steam Runtime Prefix Mode: {:?}", steam_prefix_mode);
@@ -405,6 +418,7 @@ impl Runner for WineTkgRunner {
             force_builtin_d3d,
             Some(&game_working_dir),
             strict_dxvk,
+            ctx.steam_enabled,
         );
 
         // Enhance overrides with resolved DLL providers
@@ -543,7 +557,31 @@ impl Runner for WineTkgRunner {
 
         let (use_steam_runtime, _runtime_source) = resolve_steam_runtime(ctx);
 
-        if use_steam_runtime {
+        if ctx.steam_enabled {
+            // Steam-enabled launch: expose the host's real Steam client so Proton's
+            // lsteamclient bridges to the running client (Steamworks online features,
+            // Family-Shared licences). Falls back to the standalone trap if no host
+            // Steam install is found.
+            let config_dir = crate::config::config_dir()
+                .map_err(|e| LaunchError::new(LaunchErrorKind::Environment, "failed to get config dir").with_source(e))?;
+            let (path, source) = match crate::utils::host_steam_client_path() {
+                Some(p) => (p, "real_host"),
+                None => {
+                    tracing::warn!("steam-enabled launch requested but no host Steam install found; using standalone trap");
+                    let fake = crate::utils::setup_fake_steam_trap(&config_dir)
+                        .map_err(|e| LaunchError::new(LaunchErrorKind::Permission, "failed to setup fake steam trap").with_source(e))?;
+                    (fake, "fake_trap")
+                }
+            };
+            env.insert("STEAM_COMPAT_CLIENT_INSTALL_PATH".to_string(), path.to_string_lossy().to_string());
+            unsafe {
+                if !ctx.verification_ptr.is_null() {
+                    let v = &mut *ctx.verification_ptr;
+                    v.steam_client_install_path_exposed_to_game = Some(path.to_string_lossy().to_string());
+                    v.steam_client_install_path_source = Some(source.to_string());
+                }
+            }
+        } else if use_steam_runtime {
             let steam_cfg = crate::utils::get_master_steam_config();
             let steam_prefix_mode = ctx.user_config.as_ref()
                 .map(|c| c.steam_prefix_mode.clone())
@@ -602,6 +640,15 @@ impl Runner for WineTkgRunner {
         }
         if let Ok(xdg_runtime) = std::env::var("XDG_RUNTIME_DIR") {
             env.insert("XDG_RUNTIME_DIR".to_string(), xdg_runtime);
+        }
+        // X11 servers that use cookie authentication reject Wine's winex11 driver
+        // unless XAUTHORITY is forwarded. Modern desktops (GDM/systemd/Xwayland)
+        // place the cookie under $XDG_RUNTIME_DIR rather than ~/.Xauthority, so
+        // Wine can't find it implicitly — without this the game fails to create a
+        // window ("nodrv_CreateWindow: no driver could be loaded") and runs
+        // invisibly even though DISPLAY is set.
+        if let Ok(xauthority) = std::env::var("XAUTHORITY") {
+            env.insert("XAUTHORITY".to_string(), xauthority);
         }
 
         // Apply GPU preference if specified. CONSERVATIVE: No forced offload if unset.

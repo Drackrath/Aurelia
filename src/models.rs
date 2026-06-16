@@ -218,6 +218,13 @@ pub struct LibraryGame {
     /// per-app PICS fetch. See [`crate::steam_client::category_online_required`].
     #[serde(default)]
     pub online_required: Option<bool>,
+    /// Platform whose depot is installed locally (`"windows"`, `"linux"` or
+    /// `"macos"`), determined from the files on disk. `None` when the game isn't
+    /// installed or the platform couldn't be determined. Lets a driver (e.g.
+    /// Heroic) tell a native-Linux game (run directly) from a Windows game (run
+    /// through Proton) without re-deriving it.
+    #[serde(default)]
+    pub platform: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

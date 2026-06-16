@@ -355,22 +355,34 @@ pub use market::{
 /// On Windows the launched process is often a thin launcher that re-spawns the
 /// real game, so we kill the whole tree with `taskkill /T`. On Unix we send
 /// `SIGTERM` then `SIGKILL` to give the game a chance to exit cleanly first.
-fn kill_process_tree(pid: u32) {
+/// Terminate the process tree rooted at `pid`. With `force`, kill immediately;
+/// otherwise ask it to exit first (SIGTERM) and only SIGKILL the stragglers after
+/// a short grace period so the game can shut down cleanly.
+fn kill_process_tree(pid: u32, force: bool) {
     #[cfg(target_os = "windows")]
     {
-        let _ = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .output();
+        let mut args = vec!["/PID".to_string(), pid.to_string(), "/T".to_string()];
+        if force {
+            args.push("/F".to_string());
+        }
+        let _ = Command::new("taskkill").args(&args).output();
     }
 
     #[cfg(unix)]
     {
-        unsafe {
-            libc::kill(pid as i32, libc::SIGTERM);
-        }
-        std::thread::sleep(Duration::from_millis(500));
-        unsafe {
-            libc::kill(pid as i32, libc::SIGKILL);
+        let pid = pid as i32;
+        if force {
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+            }
+        } else {
+            unsafe {
+                libc::kill(pid, libc::SIGTERM);
+            }
+            std::thread::sleep(Duration::from_millis(500));
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+            }
         }
     }
 }
@@ -1584,6 +1596,7 @@ mod tests {
             is_owned: true,
             is_family_shared: false,
             online_required: None,
+            platform: None,
         };
         let launch_info = LaunchInfo {
             app_id: 123,

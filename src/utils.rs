@@ -159,6 +159,85 @@ pub fn setup_fake_steam_trap(config_dir: &Path) -> Result<PathBuf> {
     Ok(trap_dir)
 }
 
+/// The host's real Steam client install directory, suitable as
+/// `STEAM_COMPAT_CLIENT_INSTALL_PATH` so Proton's `lsteamclient` bridge can reach
+/// the running Steam client (Steamworks online features, Family-Sharing licences).
+/// Returns the first existing standard location, or `None` if Steam isn't found.
+#[cfg(not(target_os = "windows"))]
+pub fn host_steam_client_path() -> Option<PathBuf> {
+    crate::config::detect_steam_path()
+}
+
+/// Whether the host's Steam client is currently running. Checks `~/.steam/steam.pid`
+/// first (the client writes its PID there), then falls back to scanning `/proc` for
+/// the `steam` or `steamwebhelper` processes. Detection must be reliable: a
+/// false negative would make [`ensure_steam_running`] run `steam` again, which only
+/// brings the already-open client to the foreground (the opposite of `-silent`).
+#[cfg(target_os = "linux")]
+pub fn is_steam_running() -> bool {
+    // ~/.steam/steam.pid holds the running client's PID.
+    if let Ok(home) = std::env::var("HOME") {
+        if let Ok(pid) = std::fs::read_to_string(format!("{home}/.steam/steam.pid")) {
+            if let Ok(pid) = pid.trim().parse::<u32>() {
+                if std::path::Path::new(&format!("/proc/{pid}")).exists() {
+                    return true;
+                }
+            }
+        }
+    }
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(pid) = name.to_str() else { continue };
+        if !pid.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        if let Ok(comm) = std::fs::read_to_string(entry.path().join("comm")) {
+            let comm = comm.trim();
+            if comm == "steam" || comm == "steamwebhelper" {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Start the host's Steam client minimised to the tray (`steam -silent`) if it
+/// isn't already running, so Steamworks/Family-Sharing has a client to talk to.
+/// Fully detached (its own session, no stdio) so it outlives this launch and never
+/// blocks it. Best-effort: a failure to start is logged, not fatal.
+#[cfg(target_os = "linux")]
+pub fn ensure_steam_running() {
+    if is_steam_running() {
+        tracing::info!("Steam client already running; not starting it");
+        return;
+    }
+    tracing::info!("Steam client not running; starting `steam -silent` (tray)");
+    let mut cmd = std::process::Command::new("steam");
+    cmd.arg("-silent")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    // Detach into its own session/process group so Steam keeps running independently
+    // of this launch (and isn't torn down with the game's process tree on stop).
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+    }
+    match cmd.spawn() {
+        Ok(_) => tracing::info!("Launched Steam client (-silent)"),
+        Err(e) => tracing::warn!("could not start Steam client: {e:#}"),
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RunnerComponents {
     pub dxvk: Option<ComponentInfo>,
@@ -698,16 +777,26 @@ pub fn build_dll_overrides(
     force_builtin_d3d: bool,
     game_dir: Option<&std::path::Path>,
     strict_dxvk: bool,
+    steam_enabled: bool,
 ) -> String {
-    let mut overrides: Vec<String> = vec![
-        "vstdlib_s=n".into(),
-        "tier0_s=n".into(),
-        "steamclient=n".into(),
-        "steamclient64=n".into(),
-        "steam_api=n".into(),
-        "steam_api64=n".into(),
-        "lsteamclient=".into(),
-    ];
+    // In standalone mode Aurelia neutralises Steam's client DLLs and disables
+    // `lsteamclient` so a game runs without a Steam client. When Steam is enabled
+    // those must be left to Proton's defaults (`lsteamclient` loads builtin and
+    // bridges to the running client), otherwise Steamworks init fails and
+    // Family-Shared / online games can't start.
+    let mut overrides: Vec<String> = if steam_enabled {
+        Vec::new()
+    } else {
+        vec![
+            "vstdlib_s=n".into(),
+            "tier0_s=n".into(),
+            "steamclient=n".into(),
+            "steamclient64=n".into(),
+            "steam_api=n".into(),
+            "steam_api64=n".into(),
+            "lsteamclient=".into(),
+        ]
+    };
 
     if no_overlay {
         overrides.push("GameOverlayRenderer=n".into());

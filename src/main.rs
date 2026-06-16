@@ -175,11 +175,22 @@ enum Command {
         /// Installs the plugin on first use; see `aurelia luxtorpeda`.
         #[arg(long, conflicts_with_all = ["proton", "windows"])]
         native_engine: bool,
+        /// Run with real Steam integration instead of standalone mode: bridge to the
+        /// host Steam client (started silently if not running) so Steamworks online
+        /// features work. Implied for Family-Shared games, which require it.
+        #[arg(long)]
+        steam: bool,
     },
+    /// List the games Aurelia is currently running.
+    Running,
     /// Stop a running game previously launched with `aurelia play`.
     Stop {
         /// App id to stop. Omit to list the games Aurelia is tracking as running.
         app_id: Option<u32>,
+        /// Force-kill the game immediately (SIGKILL) instead of asking it to exit
+        /// gracefully first. Use when a game is hung and ignores a normal stop.
+        #[arg(long)]
+        force: bool,
     },
     /// Enable an installed DLC for its base game.
     Enable {
@@ -885,8 +896,10 @@ async fn run(cli: Cli) -> Result<()> {
             proton,
             windows,
             native_engine,
-        } => cmd_play(app_id, proton, windows, native_engine, json).await,
-        Command::Stop { app_id } => cmd_stop(app_id, json).await,
+            steam,
+        } => cmd_play(app_id, proton, windows, native_engine, steam, json).await,
+        Command::Running => cmd_running(json),
+        Command::Stop { app_id, force } => cmd_stop(app_id, force, json).await,
         Command::Enable {
             app_id,
             restart_steam,
@@ -1110,6 +1123,7 @@ fn merge_family_shared(games: &mut Vec<LibraryGame>, shared: Vec<SharedApp>) {
             is_owned: false,
             is_family_shared: true,
             online_required: None,
+            platform: None,
         });
     }
 }
@@ -1440,6 +1454,44 @@ fn report_session_status(status: &daemon::SessionStatus, via_daemon: bool, json:
     }
 }
 
+/// Best-effort detection of the platform whose depot is installed for a game, by
+/// looking for a Windows executable in its install directory: a Windows depot
+/// always ships a `.exe`, a native Linux/macOS build never does. Breadth-first so
+/// a Windows game's top-level `.exe` is found immediately; the walk is bounded so
+/// a large native install can't stall `list`. Returns `None` when the directory
+/// can't be read or the budget is exhausted before a verdict (the caller then
+/// leaves the platform unknown rather than guessing).
+fn detect_installed_platform(install_path: &str) -> Option<String> {
+    let root = std::path::Path::new(install_path);
+    if !root.is_dir() {
+        return None;
+    }
+    let mut queue = std::collections::VecDeque::from([root.to_path_buf()]);
+    let mut budget = 100_000usize;
+    while let Some(dir) = queue.pop_front() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if budget == 0 {
+                return None;
+            }
+            budget -= 1;
+            let path = entry.path();
+            if path.is_dir() {
+                queue.push_back(path);
+            } else if path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
+            {
+                return Some("windows".to_string());
+            }
+        }
+    }
+    Some("linux".to_string())
+}
+
 async fn cmd_list(
     installed: bool,
     search: Option<String>,
@@ -1487,6 +1539,17 @@ async fn cmd_list(
             tracing::warn!(
                 "--online needs an authenticated, online session; ONLINE column will be unknown"
             );
+        }
+    }
+
+    // Record each installed game's depot platform so a driver (e.g. Heroic) can
+    // tell native-Linux games from Windows-via-Proton ones. Only installed games
+    // have files to inspect; the scan early-exits on the first `.exe`.
+    for g in &mut games {
+        if g.is_installed {
+            if let Some(path) = g.install_path.as_deref() {
+                g.platform = detect_installed_platform(path);
+            }
         }
     }
 
@@ -2517,10 +2580,21 @@ async fn cmd_play(
     proton: Option<String>,
     windows: bool,
     native_engine: bool,
+    steam: bool,
     json: bool,
 ) -> Result<()> {
     if native_engine && !cfg!(target_os = "linux") {
         anyhow::bail!("--native-engine (luxtorpeda) is only available on Linux");
+    }
+    // `--windows` runs the executable directly with no Proton/Wine layer, which
+    // can only work on a Windows host. On Linux a Windows PE can't be exec'd
+    // natively (it fails with "Permission denied"), so reject it up front and
+    // point the user at the default Proton path.
+    if windows && !cfg!(target_os = "windows") {
+        anyhow::bail!(
+            "--windows runs the game with no Proton/Wine layer and only works on a Windows host; \
+             on Linux omit it (optionally pass --proton <runner>) to run the game through Proton"
+        );
     }
     let mut client = authed_client().await?;
     let game = find_game(&mut client, app_id).await?;
@@ -2547,7 +2621,7 @@ async fn cmd_play(
         cli_println!("Launching {} ...", game.name);
     }
     client
-        .play_game(&game, proton_path.as_deref(), user_config, force_windows, native_engine)
+        .play_game(&game, proton_path.as_deref(), user_config, force_windows, native_engine, steam)
         .await
         .with_context(|| format!("failed to launch {}", game.name))?;
     if json {
@@ -2562,39 +2636,47 @@ async fn cmd_play(
     Ok(())
 }
 
-async fn cmd_stop(app_id: Option<u32>, json: bool) -> Result<()> {
+/// `aurelia running`: list the games Aurelia currently has running (stale records
+/// whose process has exited are pruned).
+fn cmd_running(json: bool) -> Result<()> {
+    let running = aurelia::running::list_active();
+    if json {
+        let arr: Vec<_> = running
+            .iter()
+            .map(|g| serde_json::json!({ "app_id": g.app_id, "name": g.name, "pid": g.pid }))
+            .collect();
+        print_json(&serde_json::json!({ "running": arr }));
+        return Ok(());
+    }
+    if running.is_empty() {
+        cli_println!("No games are running (none launched via `aurelia play`).");
+    } else {
+        cli_println!("{:>9}  {:>8}  NAME", "APPID", "PID");
+        for g in &running {
+            cli_println!("{:>9}  {:>8}  {}", g.app_id, g.pid, g.name);
+        }
+    }
+    Ok(())
+}
+
+async fn cmd_stop(app_id: Option<u32>, force: bool, json: bool) -> Result<()> {
     // No app id: report what Aurelia currently tracks as running.
     let Some(app_id) = app_id else {
-        let running = aurelia::running::list();
-        if json {
-            let arr: Vec<_> = running
-                .iter()
-                .map(|g| serde_json::json!({ "app_id": g.app_id, "name": g.name, "pid": g.pid }))
-                .collect();
-            print_json(&serde_json::json!({ "running": arr }));
-            return Ok(());
-        }
-        if running.is_empty() {
-            cli_println!("No games are running (none launched via `aurelia play`).");
-        } else {
-            cli_println!("{:>9}  {:>8}  NAME", "APPID", "PID");
-            for g in &running {
-                cli_println!("{:>9}  {:>8}  {}", g.app_id, g.pid, g.name);
-            }
-        }
-        return Ok(());
+        return cmd_running(json);
     };
 
-    let stopped = SteamClient::stop_game(app_id)
+    let stopped = SteamClient::stop_game(app_id, force)
         .with_context(|| format!("failed to stop app {app_id}"))?;
     if json {
         print_json(&serde_json::json!({
             "app_id": stopped.app_id,
             "name": stopped.name,
             "status": "stopped",
+            "forced": force,
         }));
     } else {
-        cli_println!("Stopped {} (app {}).", stopped.name, stopped.app_id);
+        let how = if force { " (forced)" } else { "" };
+        cli_println!("Stopped {} (app {}){}.", stopped.name, stopped.app_id, how);
     }
     Ok(())
 }
