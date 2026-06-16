@@ -188,6 +188,10 @@ pub fn home_dir() -> Result<PathBuf> {
 }
 
 pub fn config_dir() -> Result<PathBuf> {
+    // embedding driver
+    if let Some(dir) = std::env::var_os("AURELIA_CONFIG_DIR").filter(|v| !v.is_empty()) {
+        return Ok(PathBuf::from(dir));
+    }
     Ok(home_dir()?.join(".config/Aurelia"))
 }
 
