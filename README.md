@@ -100,7 +100,12 @@ sync, and Proton/Wine launching all work today.
 - [x] **DLC** — install, enable/disable, and per-DLC ownership/install status
 - [x] **Steam Cloud** — enumerate, download, upload save data
 - [x] **Proton/Wine** — runtime discovery, a download manager (official Valve Proton + GE
-      builds), per-game version pinning, and launch integration
+      builds), per-game version pinning, and launch integration; depot-aware executable
+      selection (native vs Proton), running-game tracking, and graceful/forced stop
+      (`running` / `stop --force`)
+- [x] **Steam integration (opt-in)** — launch with the host Steam client bridged in
+      (`play --steam`, Steam started silently if needed) for Steamworks online features;
+      required for and auto-enabled on Family-Shared games
 - [x] **Depot browser** — list depots, inspect manifest trees, download single files
 - [x] **Workshop** — browse/search, install/uninstall, subscribe, collections, rate, and
       read/post comments
@@ -194,8 +199,10 @@ aurelia launch-options 1245620       # list Steam launch configs (exe/args/platf
 
 # Launch
 aurelia play 1245620                 # launch a game and wait for it to exit
-aurelia play 1245620 --windows       # run the Windows .exe directly (default on Windows)
-aurelia play 1245620 --proton experimental   # force a specific Proton/Wine runner
+aurelia play 1245620 --proton experimental   # Linux: force a specific Proton/Wine runner
+aurelia play 1245620 --steam         # run with Steam online features (Family Sharing / DRM)
+aurelia running                      # list games Aurelia is currently running
+aurelia stop 1245620                 # stop a running game (--force to kill a hung one)
 
 # Steam Cloud
 aurelia cloud sync 1245620           # sync saves (down then up)
@@ -267,7 +274,9 @@ flag, so `aurelia --json <command>` and `aurelia <command> --json` are equivalen
 ## Configuration
 
 Aurelia stores its configuration and local data under `~/.config/Aurelia`
-(`%USERPROFILE%\.config\Aurelia` on Windows).
+(`%USERPROFILE%\.config\Aurelia` on Windows). Set **`AURELIA_CONFIG_DIR`** to relocate it —
+useful for an embedding driver (e.g. Heroic) that needs Aurelia's state isolated from a
+standalone install.
 
 - **Library path** — Aurelia auto-detects your existing Steam installation. Inspect the
   resolved configuration with `aurelia config show`.

@@ -36,6 +36,8 @@ of a specific command. `--version` prints the build version.
   - [`enable` / `disable`](#enable--disable)
 - [Launching](#launching)
   - [`play`](#play)
+  - [`running`](#running)
+  - [`stop`](#stop)
 - [Depots & branches](#depots--branches)
   - [`branches`](#branches)
   - [`set-branch`](#set-branch)
@@ -111,6 +113,10 @@ of a specific command. `--version` prints the build version.
   not listed in `libraryfolders.vdf`.
 - **Logging:** Set `RUST_LOG` to control tracing verbosity, e.g. `RUST_LOG=debug` (to
   stderr).
+- **Config location:** Aurelia stores its session, config, caches and launch logs under
+  `~/.config/Aurelia` by default. Set **`AURELIA_CONFIG_DIR`** to relocate them — useful for
+  an embedding driver (e.g. Heroic) that needs Aurelia's state isolated from a user's
+  standalone install.
 
 `<APP_ID>` is the numeric Steam application id (visible via `aurelia list`).
 
@@ -280,6 +286,11 @@ shared library offered by your Steam Family is queried and merged in (these show
 the Steam Families shared-library list, and, for installed games, comparing the
 `LastOwner` in the `appmanifest` against your SteamID. The `--json` output includes
 `is_owned` and `is_family_shared` booleans per game.
+
+For **installed** games the `--json` output also carries a `platform` field
+(`"windows"`, `"linux"` or `"macos"`) — the platform of the depot actually on disk,
+detected from the installed files. It tells a driver whether the game runs natively or
+through Proton without re-deriving it (`null` when not installed or undetermined).
 
 ```bash
 aurelia list
@@ -733,13 +744,14 @@ Launch a game and wait for it to exit. Requires an active session. If Steam Clou
 enabled, saves are synced down before launch and up afterward.
 
 ```text
-aurelia play <APP_ID> [-p <PROTON>] [-w]
+aurelia play <APP_ID> [-p <PROTON>] [-w] [--steam]
 ```
 
 | Option | Description |
 | --- | --- |
 | `-p, --proton <PROTON>` | Force a specific Proton/Wine runner (Linux only). Implies a Windows target. |
-| `-w, --windows` | Run the Windows executable directly with no Proton/Wine layer. |
+| `-w, --windows` | Run the Windows executable directly with no Proton/Wine layer. **Windows hosts only** — rejected on Linux, where a Windows `.exe` can't be run natively. |
+| `--steam` | Launch with real Steam integration (Proton's `lsteamclient` bridge + the host Steam client, started silently if not running) so Steamworks online features work. Without it, the game runs standalone. Implied for Family-Shared games, which require Steam to authorise the borrowed licence. |
 | `--native-engine` | Route this launch through the [luxtorpeda](#luxtorpeda-native-engine-plugin-linux-only) native-engine plugin (Linux only). Installs the plugin on first use. Conflicts with `--proton`/`--windows`. |
 
 Platform behavior:
@@ -747,13 +759,64 @@ Platform behavior:
 - **On Windows**, games always run natively — there is no Proton/Wine layer — so plain
   `aurelia play <APP_ID>` works and `--windows` is implied.
 - **On Linux**, native Linux builds run directly; Windows builds run through Proton/Wine.
-  Use `--proton <ver>` to pin a specific runner (see `config protons` for available names),
-  or `--windows` to run the `.exe` directly with no compatibility layer.
+  Use `--proton <ver>` to pin a specific runner (see `config protons` for available names).
+  The launch entry is chosen by the **installed depot**: Aurelia picks the executable that
+  actually exists on disk, so a game installed as a native Linux build runs natively even if
+  `--proton` is passed.
+
+Steam integration (`--steam`):
+
+- **Standalone (default):** the game runs without a Steam client. Works for owned games with
+  lenient DRM; Steamworks online features may be unavailable.
+- **With `--steam`:** Aurelia exposes the host Steam client and enables Proton's Steam bridge,
+  starting Steam silently (`steam -silent`) if it isn't already running. Required for
+  Steamworks online features and for **Family-Shared** games (where it's forced on).
 
 ```bash
-aurelia play 1245620                 # native on Windows / auto on Linux
-aurelia play 1245620 --windows       # force native Windows execution
+aurelia play 1245620                 # native on Windows / auto on Linux, standalone
+aurelia play 1245620 --windows       # Windows host: force native execution
 aurelia play 1245620 --proton experimental   # Linux: pin a Proton version
+aurelia play 1245620 --steam         # run with Steam online features enabled
+```
+
+---
+
+### `running`
+
+List the games Aurelia is currently running (launched via `aurelia play`). Records whose
+process has already exited are pruned, so the list reflects what's actually live.
+
+```text
+aurelia running [--json]
+```
+
+```bash
+aurelia running
+aurelia running --json
+```
+
+### `stop`
+
+Stop a running game previously launched with `aurelia play`. Omitting the app id lists the
+running games (same as [`running`](#running)).
+
+```text
+aurelia stop [<APP_ID>] [--force]
+```
+
+| Option | Description |
+| --- | --- |
+| `--force` | Kill the game immediately (SIGKILL) instead of asking it to exit gracefully first. Use when a game is hung and ignores a normal stop. |
+
+A normal stop asks the game to exit cleanly (so it can save); `--force` terminates it at once.
+Either way Aurelia sweeps the game's whole process tree — including Proton's re-parented
+`steam.exe`/`wineserver`/game processes (matched by `STEAM_COMPAT_APP_ID`) — so nothing is
+left behind.
+
+```bash
+aurelia stop                # list running games
+aurelia stop 1245620        # graceful stop
+aurelia stop 1245620 --force   # force-kill a hung game
 ```
 
 ---
