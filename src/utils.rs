@@ -163,7 +163,6 @@ pub fn setup_fake_steam_trap(config_dir: &Path) -> Result<PathBuf> {
 /// `STEAM_COMPAT_CLIENT_INSTALL_PATH` so Proton's `lsteamclient` bridge can reach
 /// the running Steam client (Steamworks online features, Family-Sharing licences).
 /// Returns the first existing standard location, or `None` if Steam isn't found.
-#[cfg(not(target_os = "windows"))]
 pub fn host_steam_client_path() -> Option<PathBuf> {
     crate::config::detect_steam_path()
 }
