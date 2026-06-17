@@ -69,8 +69,6 @@ enum Command {
         #[arg(long, conflicts_with_all = ["username", "password", "guard", "qr", "code", "health"])]
         reconnect: bool,
     },
-    /// Clear the stored session.
-    Logout,
     /// List games in your library.
     List {
         /// Only show installed games.
@@ -85,133 +83,7 @@ enum Command {
         #[arg(long)]
         online: bool,
     },
-    /// Show account details for the logged-in user.
-    Account,
-    /// List friends, search for a SteamID, or add/remove friends.
-    Friends {
-        #[command(subcommand)]
-        command: Option<FriendsCommand>,
-    },
-    /// Send and read direct (friend) chat messages.
-    Chat {
-        #[command(subcommand)]
-        command: ChatCommand,
-    },
-    /// View your Steam inventory for a game.
-    Inventory {
-        app_id: u32,
-        /// Inventory context id (default 2; Steam community items use 6).
-        #[arg(long, default_value_t = 2)]
-        context: u32,
-    },
-    /// Show your Steam Wallet balance.
-    Wallet,
-    /// Steam Community Market: prices, search, and your listings.
-    Market {
-        #[command(subcommand)]
-        command: MarketCommand,
-    },
-    /// Download and install a game (or manage in-flight installs).
-    Install(InstallArgs),
-    /// Uninstall a game.
-    Uninstall {
-        app_id: u32,
-        /// Also delete the game's Wine prefix / compat data.
-        #[arg(long)]
-        delete_prefix: bool,
-    },
-    /// Move an installed game to a different Steam library folder, updating
-    /// Steam's data so the client recognises the new install path.
-    Move {
-        app_id: u32,
-        /// Destination Steam library folder (its root, containing `steamapps/`),
-        /// e.g. `D:\SteamLibrary`. Must already be a Steam library.
-        library: PathBuf,
-        /// Stop Steam for the duration of the move and restart it afterward.
-        /// Steam overwrites its data files on exit, so moving while it runs is
-        /// unsafe; without this, the move refuses to run while Steam is open.
-        #[arg(long)]
-        restart_steam: bool,
-    },
-    /// Relink an install to a different Steam library **without copying** — the
-    /// files must already be at the destination (e.g. you moved them by hand).
-    Relink {
-        app_id: u32,
-        /// Destination Steam library root (containing `steamapps/`).
-        library: PathBuf,
-        /// Stop Steam for the duration and restart it afterward.
-        #[arg(long)]
-        restart_steam: bool,
-    },
-    /// Register an existing on-disk install with Steam (writes its appmanifest).
-    Import {
-        app_id: u32,
-        /// Steam library root whose `steamapps/common/<installdir>` holds the files.
-        library: PathBuf,
-        /// Depot platform whose files are present. Defaults to the current OS.
-        #[arg(short, long)]
-        platform: Option<PlatformArg>,
-        /// Stop Steam for the duration and restart it afterward.
-        #[arg(long)]
-        restart_steam: bool,
-    },
-    /// Report whether a game is installed and its files are present on disk.
-    Available { app_id: u32 },
-    /// Verify the integrity of an installed game.
-    Verify { app_id: u32 },
-    /// Download the latest manifest for an installed game.
-    Update { app_id: u32 },
-    /// Launch a game and wait for it to exit.
-    Play {
-        app_id: u32,
-        /// Force a specific Proton/Wine runner (Linux only; implies Windows target).
-        #[arg(short, long)]
-        proton: Option<String>,
-        /// Run the Windows executable directly with no Proton/Wine layer.
-        /// Always implied when running on Windows.
-        #[arg(short, long)]
-        windows: bool,
-        /// Route this launch through the luxtorpeda native-engine plugin (Linux only).
-        /// Installs the plugin on first use; see `aurelia luxtorpeda`.
-        #[arg(long, conflicts_with_all = ["proton", "windows"])]
-        native_engine: bool,
-        /// Run with real Steam integration instead of standalone mode: bridge to the
-        /// host Steam client (started silently if not running) so Steamworks online
-        /// features work. Implied for Family-Shared games, which require it.
-        #[arg(long)]
-        steam: bool,
-    },
-    /// List the games Aurelia is currently running.
-    Running,
-    /// Stop a running game previously launched with `aurelia play`.
-    Stop {
-        /// App id to stop. Omit to list the games Aurelia is tracking as running.
-        app_id: Option<u32>,
-        /// Force-kill the game immediately (SIGKILL) instead of asking it to exit
-        /// gracefully first. Use when a game is hung and ignores a normal stop.
-        #[arg(long)]
-        force: bool,
-    },
-    /// Enable an installed DLC for its base game.
-    Enable {
-        app_id: u32,
-        /// Stop Steam while applying the change, then restart it, so the running
-        /// client picks it up (Windows). Steam reads DLC state only at startup.
-        #[arg(long)]
-        restart_steam: bool,
-    },
-    /// Disable a DLC for its base game.
-    Disable {
-        app_id: u32,
-        /// Stop Steam while applying the change, then restart it (Windows).
-        #[arg(long)]
-        restart_steam: bool,
-    },
-    /// List available beta branches for a game.
-    Branches { app_id: u32 },
-    /// Switch a game to a different branch.
-    SetBranch { app_id: u32, branch: String },
-    /// Show detailed information about a game (description, release, reviews, DLC).
+    /// Show detailed information about a game.
     Info {
         /// One or more app ids. Multiple ids are fetched over a *single* Steam
         /// logon (one batched StoreBrowse call) — far cheaper than running `info`
@@ -234,9 +106,72 @@ enum Command {
         #[arg(short = 'l', long = "lang")]
         lang: Option<String>,
     },
-    /// List a game's DLC (app id and name only).
+    /// Download and install a game.
+    Install(InstallArgs),
+    /// Download the latest manifest for an installed game.
+    Update { app_id: u32 },
+    /// Launch a game and wait for it to exit.
+    Play {
+        app_id: u32,
+        /// Force a specific Proton/Wine runner (Linux only; implies Windows target).
+        #[arg(short, long)]
+        proton: Option<String>,
+        /// Run the Windows executable directly with no Proton/Wine layer.
+        /// Always implied when running on Windows.
+        #[arg(short, long)]
+        windows: bool,
+        /// Route this launch through the luxtorpeda native-engine plugin (Linux only).
+        /// Installs the plugin on first use; see `aurelia luxtorpeda`.
+        #[arg(long, conflicts_with_all = ["proton", "windows"])]
+        native_engine: bool,
+        /// Run with real Steam integration instead of standalone mode: bridge to the
+        /// host Steam client (started silently if not running) so Steamworks online
+        /// features work. Implied for Family-Shared games, which require it.
+        #[arg(long)]
+        steam: bool,
+    },
+    /// Stop a running game previously launched with `aurelia play`.
+    Stop {
+        /// App id to stop. Omit to list the games Aurelia is tracking as running.
+        app_id: Option<u32>,
+        /// Force-kill the game immediately (SIGKILL) instead of asking it to exit
+        /// gracefully first. Use when a game is hung and ignores a normal stop.
+        #[arg(long)]
+        force: bool,
+    },
+    /// List the games Aurelia is currently running.
+    Running,
+    /// Uninstall a game.
+    Uninstall {
+        app_id: u32,
+        /// Also delete the game's Wine prefix / compat data.
+        #[arg(long)]
+        delete_prefix: bool,
+    },
+    /// Verify the integrity of an installed game.
+    Verify { app_id: u32 },
+    /// Report whether a game is installed and its files are present on disk.
+    Available { app_id: u32 },
+    /// Show account details for the logged-in user.
+    Account,
+    /// List a game's DLC.
     Dlc { app_id: u32 },
-    /// Show the logged-in user's achievements for a game (with unlock state).
+    /// Enable an installed DLC for its base game.
+    Enable {
+        app_id: u32,
+        /// Stop Steam while applying the change, then restart it, so the running
+        /// client picks it up (Windows). Steam reads DLC state only at startup.
+        #[arg(long)]
+        restart_steam: bool,
+    },
+    /// Disable a DLC for its base game.
+    Disable {
+        app_id: u32,
+        /// Stop Steam while applying the change, then restart it (Windows).
+        #[arg(long)]
+        restart_steam: bool,
+    },
+    /// Show the logged-in user's achievements for a game.
     Achievements {
         app_id: u32,
         /// Steam API language name. Defaults to the `aurelia config language`
@@ -244,10 +179,6 @@ enum Command {
         #[arg(short, long)]
         lang: Option<String>,
     },
-    /// List depots for a game.
-    Depots { app_id: u32 },
-    /// List a game's launch options (executables/arguments Steam can start it with).
-    LaunchOptions { app_id: u32 },
     /// Download a game's cover/header artwork to the local image cache.
     Image {
         app_id: u32,
@@ -258,41 +189,99 @@ enum Command {
         #[arg(short, long)]
         force: bool,
     },
-    /// Inspect launcher configuration.
-    Config {
-        #[command(subcommand)]
-        command: ConfigCommand,
+    /// Move an installed game to a different Steam library folder
+    Move {
+        app_id: u32,
+        /// Destination Steam library folder (its root, containing `steamapps/`),
+        /// e.g. `D:\SteamLibrary`. Must already be a Steam library.
+        library: PathBuf,
+        /// Stop Steam for the duration of the move and restart it afterward.
+        /// Steam overwrites its data files on exit, so moving while it runs is
+        /// unsafe; without this, the move refuses to run while Steam is open.
+        #[arg(long)]
+        restart_steam: bool,
     },
+    /// Relink an install to a different Steam library.
+    Relink {
+        app_id: u32,
+        /// Destination Steam library root (containing `steamapps/`).
+        library: PathBuf,
+        /// Stop Steam for the duration and restart it afterward.
+        #[arg(long)]
+        restart_steam: bool,
+    },
+    /// Register an existing on-disk install with Steam.
+    Import {
+        app_id: u32,
+        /// Steam library root whose `steamapps/common/<installdir>` holds the files.
+        library: PathBuf,
+        /// Depot platform whose files are present. Defaults to the current OS.
+        #[arg(short, long)]
+        platform: Option<PlatformArg>,
+        /// Stop Steam for the duration and restart it afterward.
+        #[arg(long)]
+        restart_steam: bool,
+    },
+    /// List available beta branches for a game.
+    Branches { app_id: u32 },
+    /// Switch a game to a different branch.
+    SetBranch { app_id: u32, branch: String },
+    /// List depots for a game.
+    Depots { app_id: u32 },
+    /// List a game's launch options.
+    LaunchOptions { app_id: u32 },
     /// Manage Steam Cloud saves for a game.
     Cloud {
         #[command(subcommand)]
         command: CloudCommand,
     },
-    /// Manage Steam Workshop items (published files) for a game.
+    /// Manage Steam Workshop items for a game.
     Workshop {
         #[command(subcommand)]
         command: WorkshopCommand,
     },
-    /// Download and manage Proton/Wine runtimes (official Valve Proton + GE builds).
+    /// Download and manage Proton/Wine runtimes.
     Proton {
         #[command(subcommand)]
         command: ProtonCommand,
     },
-    /// Manage the optional luxtorpeda native-engine plugin (Linux only). The plugin is
-    /// never bundled — it is downloaded on demand into Aurelia's data dir.
+    /// Manage the optional luxtorpeda native-engine plugin.
     Luxtorpeda {
         #[command(subcommand)]
         command: LuxtorpedaCommand,
     },
-    /// Kill all running aurelia processes, including the session daemon.
-    Kill,
-    /// Run the background session daemon: log in to Steam **once** and serve every
-    /// other `aurelia` command over a local socket, so repeated commands never
-    /// re-authenticate (avoiding Steam's logon rate limits). Start one per session
-    /// (e.g. at Heroic startup); other invocations auto-connect to it.
-    ///
-    /// With a subcommand (`stop`/`list`) it manages running daemons instead of
-    /// starting one.
+    /// List friends, search for a SteamID, or add/remove friends.
+    Friends {
+        #[command(subcommand)]
+        command: Option<FriendsCommand>,
+    },
+    /// Send and read direct chat messages.
+    Chat {
+        #[command(subcommand)]
+        command: ChatCommand,
+    },
+    /// View your Steam inventory for a game.
+    Inventory {
+        app_id: u32,
+        /// Inventory context id (default 2; Steam community items use 6).
+        #[arg(long, default_value_t = 2)]
+        context: u32,
+    },
+    /// Show your Steam Wallet balance.
+    Wallet,
+    /// Steam Community Market: prices, search, and your listings.
+    Market {
+        #[command(subcommand)]
+        command: MarketCommand,
+    },
+    /// Inspect launcher configuration.
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommand,
+    },
+    /// Clear the stored session.
+    Logout,
+    /// Run the background session daemon serving other commands over a local socket.
     Daemon {
         /// Override the socket/pipe path (also settable via `AURELIA_DAEMON_SOCKET`).
         #[arg(long)]
@@ -300,6 +289,8 @@ enum Command {
         #[command(subcommand)]
         command: Option<DaemonCommand>,
     },
+    /// Kill all running aurelia processes, including the session daemon.
+    Kill,
 }
 
 #[derive(Subcommand)]
