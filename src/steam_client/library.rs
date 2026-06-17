@@ -114,6 +114,8 @@ impl SteamClient {
         load_library_cache().await
     }
 
+    // (see `installed_depots_need_update` below for the update-detection logic)
+
     pub async fn check_for_updates(&self, games: &mut [LibraryGame]) -> Result<()> {
         for game in games.iter_mut() {
             game.update_available = false;
@@ -139,9 +141,7 @@ impl SteamClient {
                 continue;
             }
 
-            game.update_available = remote.iter().any(|(depot, remote_manifest)| {
-                local.get(depot).copied().unwrap_or_default() != *remote_manifest
-            });
+            game.update_available = installed_depots_need_update(&local, &remote);
         }
 
         Ok(())
@@ -431,4 +431,56 @@ fn launch_options_from_section(section: &steam_vdf_parser::Value) -> Vec<RawLaun
         }
     }
     launch_options
+}
+
+/// Decide whether an installed game has a pending update, given its installed
+/// (`local`) depot→manifest map (from the appmanifest) and the full remote
+/// (`remote`) depot→manifest map from PICS.
+fn installed_depots_need_update(local: &HashMap<u64, u64>, remote: &HashMap<u64, u64>) -> bool {
+    local.iter().any(|(depot, local_manifest)| {
+        remote
+            .get(depot)
+            .is_some_and(|remote_manifest| remote_manifest != local_manifest)
+    })
+}
+
+#[cfg(test)]
+mod update_detection_tests {
+    use super::installed_depots_need_update;
+    use std::collections::HashMap;
+
+    fn map(pairs: &[(u64, u64)]) -> HashMap<u64, u64> {
+        pairs.iter().copied().collect()
+    }
+
+    #[test]
+    fn up_to_date_install_is_not_flagged() {
+        // Installed Windows depot matches remote; remote also lists the Linux and
+        // macOS builds (not installed). These must NOT trigger a false update.
+        let local = map(&[(101, 1111)]);
+        let remote = map(&[(101, 1111), (102, 2222), (103, 3333)]);
+        assert!(!installed_depots_need_update(&local, &remote));
+    }
+
+    #[test]
+    fn changed_installed_depot_is_flagged() {
+        let local = map(&[(101, 1111)]);
+        let remote = map(&[(101, 9999), (102, 2222)]);
+        assert!(installed_depots_need_update(&local, &remote));
+    }
+
+    #[test]
+    fn unknown_remote_depot_for_installed_one_is_ignored() {
+        // Remote dropped/renamed the installed depot — nothing to compare, so we
+        // don't fabricate an update (and never panic).
+        let local = map(&[(101, 1111)]);
+        let remote = map(&[(102, 2222)]);
+        assert!(!installed_depots_need_update(&local, &remote));
+    }
+
+    #[test]
+    fn nothing_installed_means_no_update() {
+        let remote = map(&[(101, 1111)]);
+        assert!(!installed_depots_need_update(&HashMap::new(), &remote));
+    }
 }
