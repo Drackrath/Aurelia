@@ -885,7 +885,7 @@ These commands require an active session.
 Synchronise a game's Steam Cloud saves with their real on-disk locations.
 
 ```text
-aurelia cloud sync <APP_ID> [--up | --down] [--path <DIR>] [--json]
+aurelia cloud sync <APP_ID> [--up | --down] [--path <DIR>] [--resolve <cloud|local>] [--json]
 ```
 
 | Option | Description |
@@ -893,11 +893,37 @@ aurelia cloud sync <APP_ID> [--up | --down] [--path <DIR>] [--json]
 | `--up` | Only upload local saves to Steam. Conflicts with `--down`. |
 | `--down` | Only download saves from Steam. Conflicts with `--up`. |
 | `--path <DIR>` | Override the base directory for **classic** (token-less) remote-storage files. Defaults to `<userdata>/<account>/<appid>/remote`. Does **not** affect Auto-Cloud files (see below). |
+| `--resolve <cloud\|local>` | How to resolve a **diverged** save (see [Conflicts](#conflicts) below). `cloud` overwrites local with the Steam copy; `local` overwrites the Steam copy with the on-disk one. Omit to only **detect** conflicts and leave both copies untouched. |
 | `--json` | Emit a JSON result instead of text. |
 
 With **neither** flag it performs a full sync — **down then up** — matching what `play` does
 around a launch. `--down` or `--up` restrict it to one direction. The `--json` result is
-`{ "app_id", "direction": "both"|"down"|"up", "remote_root", "downloaded", "uploaded" }`.
+`{ "app_id", "direction": "both"|"down"|"up", "remote_root", "status": "ok"|"conflicts",
+"downloaded": [..], "uploaded": [..], "conflicts": [..] }` (`downloaded`/`uploaded` are the
+filenames moved; `conflicts` is described below).
+
+#### Conflicts
+
+Aurelia never decides a save by timestamp alone — a clock skew or a restored file can make
+the wrong copy "newer" and silently destroy progress. Instead it compares the **content
+hash** of each save against a small per-app baseline (the last state at which cloud and local
+agreed, stored under `cloud_sync/<APP_ID>.json` in the config dir):
+
+- identical content → nothing is moved;
+- only one side changed since the baseline → it's moved the obvious way (a newer local save
+  uploads; a newer cloud save downloads);
+- **both** sides changed independently (or there's no baseline yet and the two copies differ)
+  → a **conflict**: the copies have diverged and neither is touched. Each conflicting file is
+  reported in the `conflicts` array as `{ filename, local_path, local_hash, local_size,
+  local_timestamp, cloud_hash, cloud_size, cloud_timestamp }`, and `status` is `"conflicts"`.
+
+Re-run with `--resolve cloud` (keep Steam's copy) or `--resolve local` (keep the on-disk copy)
+to apply a choice; resolving records a fresh baseline so later syncs are clean. This is the
+contract a front-end (e.g. Heroic) drives to show a **Take Cloud / Take Local** prompt — it
+runs a plain sync, and if `status` is `conflicts` it asks the user, then re-runs with
+`--resolve`. The same conflict-safe logic guards the automatic sync around
+[`play`](#play): a diverged save is left untouched (logged as a warning) rather than
+overwritten.
 
 **Path mapping (important).** Steam Auto-Cloud filenames embed the real save location as a
 leading root token, e.g. `%WinAppDataLocalLow%SadSocket/9Kings/save.json`. Aurelia resolves
@@ -914,20 +940,23 @@ Token-less filenames are classic `ISteamRemoteStorage` files and live under the 
 directory (default `<appid>/remote`). `%GameInstall%` resolves against the game's install
 directory when it is installed.
 
-**Direction logic.**
+**Direction logic.** Direction filters only the *automatic* (non-conflicting) transfers;
+conflicts are detected in every direction.
 
-- **down** — a cloud file is written to its mapped local path when it is newer than (or
-  missing) the local copy; the file is then stamped with the cloud's modification time so a
-  later sync doesn't see it as locally changed.
-- **up** — a save is uploaded when it is newer than, or differs in size from, its cloud copy.
-  The candidate set is the union of (a) files already in the cloud and (b) local files matched
-  by the app's UFS `savefiles` rules (read from appinfo), so a **brand-new** save that has
-  never been in the cloud still gets its first upload.
+- **down** — applies cloud-side changes: a cloud file is written to its mapped local path
+  (then stamped with the cloud's modification time so a later sync doesn't see it as locally
+  changed). A save that also changed locally is reported as a conflict, not overwritten.
+- **up** — applies local-side changes: a changed local save is uploaded. The candidate set is
+  the union of (a) files already in the cloud and (b) local files matched by the app's UFS
+  `savefiles` rules (read from appinfo), so a **brand-new** save that has never been in the
+  cloud still gets its first upload.
 
 ```bash
-aurelia cloud sync 1245620                 # download then upload
-aurelia cloud sync 1245620 --down          # pull saves from Steam only
-aurelia cloud sync 1245620 --up            # push local saves to Steam
+aurelia cloud sync 1245620                 # down then up; report any conflicts
+aurelia cloud sync 1245620 --down          # pull cloud changes only
+aurelia cloud sync 1245620 --up            # push local changes only
+aurelia cloud sync 1245620 --resolve cloud # on conflict, keep Steam's copy
+aurelia cloud sync 1245620 --resolve local # on conflict, keep the on-disk copy
 aurelia cloud sync 1245620 --json
 ```
 

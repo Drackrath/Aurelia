@@ -111,7 +111,18 @@ impl SteamClient {
                 app.install_path.as_ref().map(PathBuf::from),
             );
             tracing::info!(appid = app.app_id, "Syncing Cloud...");
-            let _ = client.sync_down(app.app_id, &resolver).await;
+            // Conflict-safe: a divergent save is left untouched (never clobbered),
+            // so the user can resolve it via `cloud sync` / the Heroic chooser. The
+            // game launches with whatever is currently on disk.
+            match client.sync_down(app.app_id, &resolver).await {
+                Ok(outcome) if outcome.has_conflicts() => tracing::warn!(
+                    appid = app.app_id,
+                    "{} Cloud save(s) diverged from local — left untouched; resolve with `aurelia cloud sync`",
+                    outcome.conflicts.len()
+                ),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(appid = app.app_id, "Cloud sync-down failed (continuing): {e:#}"),
+            }
             // UFS rules let sync_up discover brand-new local saves; best-effort.
             let specs = self.fetch_ufs_save_specs(app.app_id).await.unwrap_or_default();
             cloud_client = Some(client);
@@ -156,7 +167,12 @@ impl SteamClient {
                 // be surfaced as a launch failure. Log it and continue (this mirrors the
                 // best-effort sync_down before launch).
                 match client.sync_up(app.app_id, resolver, &cloud_specs).await {
-                    Ok(()) => tracing::info!(appid = app.app_id, "Upload Complete"),
+                    Ok(outcome) if outcome.has_conflicts() => tracing::warn!(
+                        appid = app.app_id,
+                        "{} Cloud save(s) diverged on upload — left untouched; resolve with `aurelia cloud sync`",
+                        outcome.conflicts.len()
+                    ),
+                    Ok(_) => tracing::info!(appid = app.app_id, "Upload Complete"),
                     Err(e) => {
                         tracing::warn!(appid = app.app_id, "Cloud upload failed (continuing): {e:#}")
                     }

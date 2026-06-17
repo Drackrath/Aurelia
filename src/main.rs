@@ -486,6 +486,10 @@ enum CloudCommand {
         /// Local save directory. Defaults to Aurelia's managed cloud root.
         #[arg(long)]
         path: Option<PathBuf>,
+        /// Resolve diverged saves by taking this side (`cloud` or `local`) instead
+        /// of reporting them. Omit to only detect conflicts and leave both copies.
+        #[arg(long, value_enum)]
+        resolve: Option<CloudResolve>,
     },
     /// List a game's Steam Cloud files (name, size, modified time).
     List { app_id: u32 },
@@ -632,6 +636,24 @@ impl From<ChatPresenceArg> for aurelia::config::ChatPresence {
         match value {
             ChatPresenceArg::Online => aurelia::config::ChatPresence::Online,
             ChatPresenceArg::Offline => aurelia::config::ChatPresence::Offline,
+        }
+    }
+}
+
+/// Which side wins when `cloud sync` finds a diverged save.
+#[derive(Clone, Copy, ValueEnum)]
+enum CloudResolve {
+    /// Overwrite the local copy with the cloud copy.
+    Cloud,
+    /// Overwrite the cloud copy with the local copy.
+    Local,
+}
+
+impl From<CloudResolve> for aurelia::cloud_sync::ConflictPolicy {
+    fn from(value: CloudResolve) -> Self {
+        match value {
+            CloudResolve::Cloud => aurelia::cloud_sync::ConflictPolicy::TakeCloud,
+            CloudResolve::Local => aurelia::cloud_sync::ConflictPolicy::TakeLocal,
         }
     }
 }
@@ -989,7 +1011,8 @@ async fn run(cli: Cli) -> Result<()> {
                 up,
                 down,
                 path,
-            } => cmd_cloud_sync(app_id, up, down, path, json).await,
+                resolve,
+            } => cmd_cloud_sync(app_id, up, down, path, resolve, json).await,
             CloudCommand::List { app_id } => cmd_cloud_list(app_id, json).await,
         },
         Command::Workshop { command } => match command {
@@ -4132,8 +4155,11 @@ async fn cmd_cloud_sync(
     up: bool,
     down: bool,
     path: Option<PathBuf>,
+    resolve: Option<CloudResolve>,
     json: bool,
 ) -> Result<()> {
+    use aurelia::cloud_sync::{ConflictPolicy, SyncDirection};
+
     let client = authed_client().await?;
     let cloud = client.cloud_client()?;
 
@@ -4151,42 +4177,85 @@ async fn cmd_cloud_sync(
         aurelia::cloud_sync::CloudPathResolver::new(remote_root.clone(), install_path.map(PathBuf::from));
 
     // No flag = full sync (down then up); `--down`/`--up` restrict the direction.
-    let mut downloaded = false;
-    let mut uploaded = false;
-    if !up {
-        cloud
-            .sync_down(app_id, &resolver)
-            .await
-            .with_context(|| format!("cloud sync-down failed for app {app_id}"))?;
-        downloaded = true;
-    }
-    if !down {
-        // UFS save rules let sync_up discover brand-new local saves; best-effort.
-        let specs = client.fetch_ufs_save_specs(app_id).await.unwrap_or_default();
-        cloud
-            .sync_up(app_id, &resolver, &specs)
-            .await
-            .with_context(|| format!("cloud sync-up failed for app {app_id}"))?;
-        uploaded = true;
-    }
-
     let direction = if up {
-        "up"
+        SyncDirection::Up
     } else if down {
-        "down"
+        SyncDirection::Down
     } else {
-        "both"
+        SyncDirection::Both
     };
+    let direction_str = match direction {
+        SyncDirection::Up => "up",
+        SyncDirection::Down => "down",
+        SyncDirection::Both => "both",
+    };
+
+    // Without `--resolve` we only *detect* divergent saves (and leave both copies
+    // intact); with it, every conflict is resolved by taking the chosen side.
+    let policy = resolve.map_or(ConflictPolicy::Detect, ConflictPolicy::from);
+
+    // UFS save rules let the upload pass discover brand-new local saves.
+    let specs = client.fetch_ufs_save_specs(app_id).await.unwrap_or_default();
+    let outcome = cloud
+        .sync(app_id, &resolver, &specs, direction, policy)
+        .await
+        .with_context(|| format!("cloud sync failed for app {app_id}"))?;
+
+    let status = if outcome.has_conflicts() {
+        "conflicts"
+    } else {
+        "ok"
+    };
+
     if json {
+        let conflicts: Vec<_> = outcome
+            .conflicts
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "filename": c.filename,
+                    "local_path": c.local_path,
+                    "local_hash": c.local_hash,
+                    "local_size": c.local_size,
+                    "local_timestamp": c.local_timestamp,
+                    "cloud_hash": c.cloud_hash,
+                    "cloud_size": c.cloud_size,
+                    "cloud_timestamp": c.cloud_timestamp,
+                })
+            })
+            .collect();
         print_json(&serde_json::json!({
             "app_id": app_id,
-            "direction": direction,
+            "direction": direction_str,
             "remote_root": remote_root.to_string_lossy(),
-            "downloaded": downloaded,
-            "uploaded": uploaded,
+            "status": status,
+            "downloaded": outcome.downloaded,
+            "uploaded": outcome.uploaded,
+            "conflicts": conflicts,
         }));
+        return Ok(());
+    }
+
+    if outcome.has_conflicts() {
+        cli_println!(
+            "{} Cloud save(s) diverged from local — neither copy was changed:",
+            outcome.conflicts.len()
+        );
+        for c in &outcome.conflicts {
+            cli_println!(
+                "  {}  (cloud {} bytes @ {}, local {} bytes @ {})",
+                c.filename, c.cloud_size, c.cloud_timestamp, c.local_size, c.local_timestamp
+            );
+        }
+        cli_println!(
+            "\nResolve with: `aurelia cloud sync {app_id} --resolve cloud`  (use the Steam copy)\n            or `aurelia cloud sync {app_id} --resolve local`  (use the on-disk copy)"
+        );
     } else {
-        cli_println!("Synced Cloud saves for app {app_id} ({direction}).");
+        cli_println!(
+            "Synced Cloud saves for app {app_id} ({direction_str}): {} down, {} up.",
+            outcome.downloaded.len(),
+            outcome.uploaded.len()
+        );
     }
     Ok(())
 }
