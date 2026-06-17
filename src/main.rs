@@ -672,6 +672,17 @@ impl From<PlatformArg> for DepotPlatform {
     }
 }
 
+/// ASCII-art banner shown when `aurelia` is run with no subcommand.
+const BANNER: &str = include_str!("../assets/asciiart_banner.txt");
+
+/// Print the banner followed by the top-level long help. Used for a bare
+/// `aurelia` invocation so the user sees the logo and then every command.
+fn print_banner_and_help() {
+    use clap::CommandFactory;
+    cli_println!("{BANNER}\n");
+    cli_print!("{}", Cli::command().render_long_help());
+}
+
 fn main() {
     // The CLI's top-level async future is large (every command arm) and the Steam
     // connect/auth path is deeply nested; in debug builds this can overflow the OS
@@ -725,7 +736,25 @@ fn must_run_locally(cli: &Cli) -> bool {
 }
 
 async fn async_main() {
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) => {
+            use clap::error::ErrorKind;
+            // Bare `aurelia` (no subcommand): greet with the banner, then the full
+            // help — instead of clap's terse "requires a subcommand" error.
+            if matches!(
+                e.kind(),
+                ErrorKind::MissingSubcommand
+                    | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+            ) {
+                print_banner_and_help();
+                std::process::exit(0);
+            }
+            // Everything else (genuine parse errors, --help, --version) keeps clap's
+            // default rendering and exit codes.
+            e.exit();
+        }
+    };
 
     // Send tracing/diagnostics to stderr so stdout stays clean for --json output.
     aurelia::infra::logging::init_cli_logging(cli.verbose);

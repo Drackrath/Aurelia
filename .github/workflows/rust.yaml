@@ -3,14 +3,12 @@ name: Aurelia Rust Build
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+# Build the aurelia-deb and aurelia-windows packages only on a new release &
+# tag (a pushed v* tag), not on every code push.
 on:
   push:
-    paths:
-      - "src/**"
-      - "assets/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - ".github/workflows/rust.yaml"
+    tags:
+      - "v*"
 
 jobs:
   aurelia-deb:
