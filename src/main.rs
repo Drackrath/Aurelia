@@ -89,6 +89,12 @@ enum Command {
         /// fetches PICS appinfo per game, so it is slower than a plain listing.
         #[arg(long)]
         online: bool,
+        /// Compute `update_available` for installed games by comparing local and
+        /// remote depot manifests (applies to owned *and* Family-Shared games).
+        /// Requires a connection and a manifest fetch per game, so it is slower
+        /// than a plain listing; off by default.
+        #[arg(long)]
+        check_updates: bool,
     },
     /// Show detailed information about a game.
     Info {
@@ -115,8 +121,11 @@ enum Command {
     },
     /// Download and install a game.
     Install(InstallArgs),
-    /// Download the latest manifest for an installed game.
-    Update { app_id: u32 },
+    /// List installed games with an update available, or update one by app id.
+    Update {
+        /// Game to update. Omit to list every installed game that needs an update.
+        app_id: Option<u32>,
+    },
     /// Launch a game and wait for it to exit.
     Play {
         app_id: u32,
@@ -136,6 +145,9 @@ enum Command {
         /// features work. Implied for Family-Shared games, which require it.
         #[arg(long)]
         steam: bool,
+        /// Skip the automatic update check and install before launching.
+        #[arg(long)]
+        noupdate: bool,
     },
     /// Stop a running game previously launched with `aurelia play`.
     Stop {
@@ -853,7 +865,8 @@ async fn run(cli: Cli) -> Result<()> {
             installed,
             search,
             online,
-        } => cmd_list(installed, search, online, json).await,
+            check_updates,
+        } => cmd_list(installed, search, online, check_updates, json).await,
         Command::Account => cmd_account(json).await,
         Command::Friends { command } => match command {
             None | Some(FriendsCommand::List) => cmd_friends(json).await,
@@ -917,14 +930,18 @@ async fn run(cli: Cli) -> Result<()> {
         } => cmd_import(app_id, library, platform, restart_steam, json).await,
         Command::Available { app_id } => cmd_available(app_id, json).await,
         Command::Verify { app_id } => cmd_verify(app_id, json).await,
-        Command::Update { app_id } => cmd_update(app_id, json).await,
+        Command::Update { app_id } => match app_id {
+            Some(id) => cmd_update(id, json).await,
+            None => cmd_check_updates(json).await,
+        },
         Command::Play {
             app_id,
             proton,
             windows,
             native_engine,
             steam,
-        } => cmd_play(app_id, proton, windows, native_engine, steam, json).await,
+            noupdate,
+        } => cmd_play(app_id, proton, windows, native_engine, steam, noupdate, json).await,
         Command::Running => cmd_running(json),
         Command::Stop { app_id, force } => cmd_stop(app_id, force, json).await,
         Command::Enable {
@@ -1523,6 +1540,7 @@ async fn cmd_list(
     installed: bool,
     search: Option<String>,
     online: bool,
+    check_updates: bool,
     json: bool,
 ) -> Result<()> {
     let mut client = restored_client().await?;
@@ -1565,6 +1583,24 @@ async fn cmd_list(
         } else {
             tracing::warn!(
                 "--online needs an authenticated, online session; ONLINE column will be unknown"
+            );
+        }
+    }
+
+    // Resolve `update_available` only when requested: it reads each installed
+    // game's appmanifest and fetches its remote depot manifests, too costly for a
+    // plain `list`. `check_for_updates` compares local vs remote manifests and is
+    // ownership-agnostic, so Family-Shared games (which won't launch when stale)
+    // are flagged just like owned ones.
+    if check_updates {
+        if client.is_authenticated() && !client.is_offline() {
+            tracing::info!("Checking {} game(s) for updates ...", games.len());
+            if let Err(e) = client.check_for_updates(&mut games).await {
+                tracing::warn!("could not check for updates: {e:#}");
+            }
+        } else {
+            tracing::warn!(
+                "--check-updates needs an authenticated, online session; update status will be unknown"
             );
         }
     }
@@ -2595,6 +2631,67 @@ async fn cmd_update(app_id: u32, json: bool) -> Result<()> {
     Ok(())
 }
 
+/// `aurelia update` with no app id: list every installed game whose active branch
+/// has a newer build available than what's on disk.
+async fn cmd_check_updates(json: bool) -> Result<()> {
+    let mut client = authed_client().await?;
+    if client.is_offline() {
+        bail!("offline — connect to Steam to check for updates");
+    }
+
+    let mut games = load_library(&mut client).await;
+    games.retain(|g| g.is_installed);
+    if games.is_empty() {
+        if json {
+            print_json(&serde_json::json!({ "updates": [] }));
+        } else {
+            cli_println!("No installed games found.");
+        }
+        return Ok(());
+    }
+
+    tracing::info!("Checking {} installed game(s) for updates ...", games.len());
+    client.check_for_updates(&mut games).await?;
+
+    let mut updates: Vec<&LibraryGame> = games.iter().filter(|g| g.update_available).collect();
+    updates.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+
+    if json {
+        let arr: Vec<_> = updates
+            .iter()
+            .map(|g| {
+                serde_json::json!({
+                    "app_id": g.app_id,
+                    "name": g.name,
+                    "active_branch": g.active_branch,
+                })
+            })
+            .collect();
+        print_json(&serde_json::json!({ "updates": arr }));
+        return Ok(());
+    }
+
+    if updates.is_empty() {
+        cli_println!("All installed games are up to date.");
+        return Ok(());
+    }
+
+    cli_println!("{:>9}  NAME", "APPID");
+    for g in &updates {
+        let branch = if g.active_branch != "public" {
+            format!(" [{}]", g.active_branch)
+        } else {
+            String::new()
+        };
+        cli_println!("{:>9}  {}{}", g.app_id, g.name, branch);
+    }
+    cli_println!(
+        "\n{} game(s) need an update. Run `aurelia update <app_id>` to install one.",
+        updates.len()
+    );
+    Ok(())
+}
+
 /// Print the final result of a streaming operation (install/verify/update).
 fn report_operation(app_id: u32, status: &str, json: bool) {
     if json {
@@ -2608,6 +2705,7 @@ async fn cmd_play(
     windows: bool,
     native_engine: bool,
     steam: bool,
+    noupdate: bool,
     json: bool,
 ) -> Result<()> {
     if native_engine && !cfg!(target_os = "linux") {
@@ -2624,7 +2722,50 @@ async fn cmd_play(
         );
     }
     let mut client = authed_client().await?;
-    let game = find_game(&mut client, app_id).await?;
+    let mut game = find_game(&mut client, app_id).await?;
+
+    // Family-Shared games are pinned to the owner's current build — a stale
+    // install simply won't launch — so for them the pre-launch update is
+    // *required*, not best-effort: any failure aborts the launch (running the old
+    // build would just fail cryptically) and `--noupdate` is ignored.
+    let update_required = game.is_installed && game.is_family_shared;
+
+    // Pull the latest build before launching. For owned games this is best-effort
+    // (a failed check/download must not stop the user playing what's installed);
+    // for Family-Shared games it is mandatory (see above).
+    if game.is_installed && (!noupdate || update_required) {
+        if let Err(e) = client.check_for_updates(std::slice::from_mut(&mut game)).await {
+            if update_required {
+                bail!(
+                    "could not verify the latest build for Family-Shared game {} ({e:#}); \
+                     it must be up to date to launch",
+                    game.name
+                );
+            }
+            tracing::warn!("pre-launch update check failed ({e:#}); launching current version");
+        }
+        if game.update_available {
+            if !json {
+                let kind = if update_required { "Required update" } else { "Update available" };
+                cli_println!("{kind} for {} — installing ...", game.name);
+            }
+            let state = Arc::new(RwLock::new(DownloadState::default()));
+            let update_result = match client.update_game(app_id, state).await {
+                Ok(rx) => drive_progress(rx, json).await,
+                Err(e) => Err(e),
+            };
+            if let Err(e) = update_result {
+                if update_required {
+                    bail!(
+                        "required update for Family-Shared game {} failed ({e:#}); \
+                         it can't launch until updated",
+                        game.name
+                    );
+                }
+                tracing::warn!("pre-launch update failed ({e:#}); launching current version");
+            }
+        }
+    }
 
     // Proton/Wine is Linux-only; on Windows we always run the game natively.
     let force_windows = windows || cfg!(target_os = "windows");
