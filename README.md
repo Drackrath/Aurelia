@@ -26,10 +26,6 @@
 > [!NOTE]
 > Manual review checklist for the latest code-review changes: [FILES_REVIEWED.md](FILES_REVIEWED.md).
 
-<!-- -->
-
-> [!NOTE]
-> The [AUR package](https://aur.archlinux.org/packages/aurelia) currently lists an **incorrect license**. Aurelia is released under **GPL-3.0** (see [LICENSE](LICENSE))
 
 Aurelia is a pure command-line Steam launcher and library manager — no CEF, no WebViews,
 no GUI. It talks to Steam's real network protocols through
