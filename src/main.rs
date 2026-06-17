@@ -25,7 +25,14 @@ mod steam_urls;
 
 /// Aurelia — a command-line Steam launcher (auth, library, install, launch).
 #[derive(Parser)]
-#[command(name = "aurelia", version, about, long_about = None)]
+#[command(
+    name = "aurelia",
+    version,
+    about,
+    long_about = None,
+    // Default template, with a "Version: x.y.z" line inserted under the about text.
+    help_template = "{before-help}{about-with-newline}Version: {version}\n\n{usage-heading} {usage}\n\n{all-args}{after-help}"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
