@@ -57,7 +57,7 @@ steam-vent = { git = "https://codeberg.org/steam-vent/steam-vent.git", tag = "v0
 
 [profile.release]
 opt-level = "z"      # optimize for size
-lto = "fat"          # whole-program inlining + cross-crate dead-code elimination
+lto = "thin"          # whole-program inlining + cross-crate dead-code elimination
 codegen-units = 1    # better cross-module optimization (slower compile)
 panic = "abort"      # drop unwinding tables & landing pads
 strip = "symbols"    # strip symbol/debug info from the binary
