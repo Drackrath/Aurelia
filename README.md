@@ -7,6 +7,7 @@
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL%203.0-blue.svg)](LICENSE)
 [![Built with Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
 [![Status: Alpha](https://img.shields.io/badge/status-active%20alpha-yellow.svg)](#project-status)
+[![AUR](https://img.shields.io/badge/AUR-aurelia-1793d1.svg)](https://aur.archlinux.org/packages/aurelia)
 
 <br clear="left" />
 
@@ -24,6 +25,11 @@
 
 > [!NOTE]
 > Manual review checklist for the latest code-review changes: [FILES_REVIEWED.md](FILES_REVIEWED.md).
+
+<!-- -->
+
+> [!NOTE]
+> The [AUR package](https://aur.archlinux.org/packages/aurelia) currently lists an **incorrect license**. Aurelia is released under **GPL-3.0** (see [LICENSE](LICENSE))
 
 Aurelia is a pure command-line Steam launcher and library manager — no CEF, no WebViews,
 no GUI. It talks to Steam's real network protocols through
