@@ -133,8 +133,10 @@ Or upload the files manually under **Releases → Draft a new release** on GitHu
 
 ## 5. (Optional) Other artifacts
 
-- **Debian package** — `cargo deb` uses the `[package.metadata.deb]` block already in
-  `Cargo.toml` and emits a `.deb` under `target/debian/`.
+- **Debian package** — the release workflow already builds a `.deb` on each Linux runner
+  (x86_64 and arm64) and attaches it to the release, using the `[package.metadata.deb]`
+  block in `Cargo.toml`. To build one locally, `cargo deb` emits a `.deb` under
+  `target/debian/`.
 - **Direct source install** — users with a Rust toolchain can skip releases entirely:
   `cargo install --git https://github.com/Drackrath/Aurelia.git --tag v0.1.1 --locked`.
 
