@@ -125,9 +125,18 @@ impl SteamClient {
                 continue;
             }
 
-            let (local, branch) = self.local_manifest_info(game)?;
+            let (local, branch, update_pending) = self.local_manifest_info(game)?;
             game.local_manifest_ids = local.clone();
             game.active_branch = branch;
+
+            // A partially-started update leaves Steam's `StateUpdateRequired` flag
+            // set, with the new content staged (not in `InstalledDepots`), so the
+            // per-depot comparison below can't see it. The flag is authoritative —
+            // and works offline — so trust it and skip the remote round-trip.
+            if update_pending {
+                game.update_available = true;
+                continue;
+            }
 
             if self.is_offline() || self.connection.is_none() {
                 continue;
@@ -147,27 +156,33 @@ impl SteamClient {
         Ok(())
     }
 
-    pub(crate) fn local_manifest_info(&self, game: &LibraryGame) -> Result<(HashMap<u64, u64>, String)> {
+    /// Returns the installed depot manifest ids, the active branch, and whether the
+    /// appmanifest marks an update as pending (Steam's `StateUpdateRequired` flag).
+    pub(crate) fn local_manifest_info(
+        &self,
+        game: &LibraryGame,
+    ) -> Result<(HashMap<u64, u64>, String, bool)> {
         let install_path = match &game.install_path {
             Some(path) => PathBuf::from(path),
-            None => return Ok((HashMap::new(), "public".to_string())),
+            None => return Ok((HashMap::new(), "public".to_string(), false)),
         };
 
         let steamapps = match install_path.parent().and_then(|p| p.parent()) {
             Some(path) => path.to_path_buf(),
-            None => return Ok((HashMap::new(), "public".to_string())),
+            None => return Ok((HashMap::new(), "public".to_string(), false)),
         };
 
         let manifest_path = steamapps.join(format!("appmanifest_{}.acf", game.app_id));
         if !manifest_path.exists() {
-            return Ok((HashMap::new(), "public".to_string()));
+            return Ok((HashMap::new(), "public".to_string(), false));
         }
 
         let raw = std::fs::read_to_string(&manifest_path)
             .with_context(|| format!("failed reading {}", manifest_path.display()))?;
         let manifests = parse_installed_depots_from_acf(&raw);
         let branch = parse_active_branch_from_acf(&raw);
-        Ok((manifests, branch))
+        let update_pending = manifest_update_pending(&raw);
+        Ok((manifests, branch, update_pending))
     }
 
     pub(crate) async fn remote_manifest_ids(&self, appid: u32, branch: &str) -> Result<HashMap<u64, u64>> {
