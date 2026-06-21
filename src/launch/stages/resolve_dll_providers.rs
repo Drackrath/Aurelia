@@ -27,6 +27,13 @@ impl PipelineStage for ResolveDllProvidersStage {
     fn name(&self) -> &str { "ResolveDllProviders" }
 
     async fn execute(&self, ctx: &mut PipelineContext) -> std::result::Result<(), LaunchError> {
+        // Under umu, Proton/protonfixes own DLL deployment + WINEDLLOVERRIDES. Aurelia
+        // deploys nothing, so skip DLL resolution entirely (see ResolveComponents).
+        if ctx.skip_dll_management {
+            tracing::info!("skip_dll_management set (umu runner): bypassing DLL provider resolution");
+            return Ok(());
+        }
+
         let app = ctx.app.as_ref().ok_or_else(|| LaunchError::new(LaunchErrorKind::Validation, "App context missing"))?;
         let install_path = app.install_path.as_ref().ok_or_else(|| LaunchError::new(LaunchErrorKind::GameData, "Install path missing"))?;
 

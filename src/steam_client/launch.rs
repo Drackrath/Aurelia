@@ -12,6 +12,7 @@ impl SteamClient {
         user_config: Option<&crate::models::UserAppConfig>,
         force_windows: bool,
         force_native_engine: bool,
+        force_umu: bool,
         steam_enabled: bool,
     ) -> Result<LaunchInfo> {
         // A Family-Shared game (licensed to another account) can only be authorised
@@ -133,13 +134,35 @@ impl SteamClient {
         let mut child = if native_windows {
             self.spawn_windows_native(app, &launch_info, user_config).await?
         } else {
-            self.spawn_game_process(app, &launch_info, chosen_proton_path, &launcher_config, user_config, force_native_engine, steam_enabled).await?
+            self.spawn_game_process(app, &launch_info, chosen_proton_path, &launcher_config, user_config, force_native_engine, force_umu, steam_enabled).await?
         };
 
         // Record the launch so a separate `aurelia stop <app_id>` invocation can
         // find and terminate the process while we block on `wait()` below.
+        // The umu runner always uses the per-game compatdata prefix regardless of
+        // `steam_prefix_mode` / `use_shared_compat_data`, so record that exact path rather
+        // than the config-derived one (which could be the shared master prefix and get
+        // filtered out below). Mirrors `resolve_components::wants_umu`.
+        let umu_active = !native_windows
+            && cfg!(target_os = "linux")
+            && launch_info.target == LaunchTarget::WindowsProton
+            && (force_umu
+                || (launcher_config.umu_enabled
+                    && launcher_config
+                        .game_configs
+                        .get(&app.app_id)
+                        .map(|g| g.runner == crate::config::GameRunner::Umu)
+                        .unwrap_or(false)));
         let wineprefix = if native_windows {
             None
+        } else if umu_active {
+            Some(
+                crate::infra::runners::umu::umu_compat_data_path(
+                    &launcher_config.steam_library_path,
+                    app.app_id,
+                )
+                .join("pfx"),
+            )
         } else {
             let user_configs = crate::config::load_user_configs().await.unwrap_or_default();
             let pfx = crate::utils::steam_wineprefix_for_game(&launcher_config, app.app_id, &user_configs);
@@ -191,7 +214,7 @@ impl SteamClient {
         user_config: Option<&crate::models::UserAppConfig>,
     ) -> Result<()> {
         let launcher_config = load_launcher_config().await.unwrap_or_default();
-        self.spawn_game_process(app, launch_info, proton_path, &launcher_config, user_config, false, false).await?;
+        self.spawn_game_process(app, launch_info, proton_path, &launcher_config, user_config, false, false, false).await?;
         Ok(())
     }
 

@@ -257,6 +257,13 @@ aurelia luxtorpeda status             # show enabled state + installed version
 aurelia config game 2270 --native-engine   # route one game through a native engine
 aurelia play 2270 --native-engine     # one-off launch via luxtorpeda
 aurelia luxtorpeda uninstall          # remove the downloaded payload
+
+# umu-launcher Proton backend (Linux only, optional)
+aurelia umu enable                    # turn the backend on (off by default)
+aurelia umu path ~/.local/bin/umu-run # use a specific umu-run (else looked up on $PATH)
+aurelia umu status                    # show enabled state + whether umu-run is found
+aurelia config game 480 --umu         # route one game through umu-run
+aurelia play 480 --umu                # one-off launch via umu (Steam Linux Runtime + protonfixes)
 ```
 
 > [!NOTE]
@@ -265,6 +272,15 @@ aurelia luxtorpeda uninstall          # remove the downloaded payload
 > on the fly into `~/.config/Aurelia/plugins/luxtorpeda` only when you enable the feature and
 > opt a game in, so the binary stays lean. Linux only. Games run outside Steam's runtime
 > container; if an engine can't find system libraries, prefer Proton for that title.
+
+> [!NOTE]
+> **umu-launcher** is an optional, additive Proton backend that runs a Windows game inside the
+> **Steam Linux Runtime container** (pressure-vessel) with **protonfixes** — the tooling Lutris,
+> Heroic and Bottles use to run Proton games outside Steam. It is **never bundled**; install
+> `umu-launcher` via your package manager (or `aurelia umu path <bin>`) and Aurelia invokes
+> `umu-run` as a wrapper. Under umu, Proton/protonfixes own DXVK/VKD3D, so Aurelia skips its own
+> DLL deployment. Opt-in per game; the default direct-Proton path is unchanged. Linux only,
+> Windows/Proton games only.
 
 Add `--json` to any command for machine-readable output (errors included). It's a global
 flag, so `aurelia --json <command>` and `aurelia <command> --json` are equivalent.

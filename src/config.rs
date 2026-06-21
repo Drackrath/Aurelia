@@ -52,6 +52,9 @@ pub enum GameRunner {
     Auto,
     /// Route through the luxtorpeda native-engine plugin.
     Luxtorpeda,
+    /// Route Windows/Proton launches through umu-launcher (`umu-run`), gaining the Steam
+    /// Linux Runtime container and protonfixes (Linux only, requires `umu_enabled`).
+    Umu,
 }
 
 /// Steam presence the session daemon
@@ -102,6 +105,14 @@ pub struct LauncherConfig {
     /// never downloads its own managed copy. `None` (default) uses the on-the-fly download.
     #[serde(default)]
     pub luxtorpeda_path: Option<String>,
+    /// Master toggle for the optional umu-launcher backend. When `false` (default) no game
+    /// is ever routed through `umu-run` and nothing umu-related is invoked.
+    #[serde(default)]
+    pub umu_enabled: bool,
+    /// Path to an externally-managed `umu-run` binary. When set, Aurelia uses this binary
+    /// instead of looking up `umu-run` on `$PATH`. `None` (default) uses `$PATH`.
+    #[serde(default)]
+    pub umu_path: Option<String>,
     /// Persistent default Steam API language *name* (e.g. "german") used by
     /// `aurelia achievements` when `--lang` is not given. `None` = use "english".
     #[serde(default)]
@@ -143,6 +154,8 @@ impl Default for LauncherConfig {
             game_configs: HashMap::new(),
             luxtorpeda_enabled: false,
             luxtorpeda_path: None,
+            umu_enabled: false,
+            umu_path: None,
             language: None,
         }
     }

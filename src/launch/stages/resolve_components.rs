@@ -57,11 +57,31 @@ fn wants_luxtorpeda(ctx: &PipelineContext) -> bool {
             .unwrap_or(false)
 }
 
+/// Whether this launch should be routed through umu-launcher (`umu-run`): either a one-off
+/// `--umu` override, or the game is pinned to it while the feature is enabled. Only applies
+/// to Windows/Proton targets — native Linux games never need umu.
+fn wants_umu(ctx: &PipelineContext) -> bool {
+    use crate::steam_client::LaunchTarget;
+    if !matches!(ctx.launch_info.as_ref().map(|i| i.target), Some(LaunchTarget::WindowsProton)) {
+        return false;
+    }
+    if ctx.force_umu {
+        return true;
+    }
+    let Some(config) = &ctx.launcher_config else { return false };
+    config.umu_enabled
+        && config
+            .game_configs
+            .get(&ctx.app_id)
+            .map(|g| g.runner == crate::config::GameRunner::Umu)
+            .unwrap_or(false)
+}
+
 #[async_trait]
 impl PipelineStage for ResolveComponentsStage {
     fn name(&self) -> &str { "ResolveComponents" }
     async fn execute(&self, ctx: &mut PipelineContext) -> std::result::Result<(), LaunchError> {
-        use crate::infra::runners::{LuxtorpedaRunner, WineTkgRunner};
+        use crate::infra::runners::{LuxtorpedaRunner, UmuRunner, WineTkgRunner};
         use crate::steam_client::LaunchTarget;
 
         if ctx.runner.is_none() {
@@ -70,6 +90,15 @@ impl PipelineStage for ResolveComponentsStage {
             // and the feature is enabled.
             if cfg!(target_os = "linux") && wants_luxtorpeda(ctx) {
                 ctx.runner = Some(Box::new(LuxtorpedaRunner) as Box<dyn Runner>);
+                return Ok(());
+            }
+
+            // umu-launcher is Linux-only and only handles Windows/Proton targets. When
+            // selected, umu/Proton own DLL + runtime management, so skip Aurelia's own DLL
+            // resolution/deployment for the rest of the pipeline.
+            if cfg!(target_os = "linux") && wants_umu(ctx) {
+                ctx.runner = Some(Box::new(UmuRunner) as Box<dyn Runner>);
+                ctx.skip_dll_management = true;
                 return Ok(());
             }
 

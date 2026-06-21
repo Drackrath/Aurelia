@@ -806,7 +806,7 @@ impl Runner for WineTkgRunner {
 ///
 /// Wraps this game's per-app config (if any) in a single-entry `UserConfigStore`
 /// and resolves the prefix the same way the launcher does globally.
-fn effective_game_prefix(ctx: &LaunchContext) -> PathBuf {
+pub(crate) fn effective_game_prefix(ctx: &LaunchContext) -> PathBuf {
     let user_config_store: crate::models::UserConfigStore = ctx.user_config.as_ref().map(|c| {
         let mut store = HashMap::new();
         store.insert(ctx.app.app_id, c.clone());
@@ -853,7 +853,7 @@ fn forced_proton(ctx: &LaunchContext) -> Option<&str> {
 /// Resolve the Proton/runner identifier, erroring if none is available.
 ///
 /// Prefers a per-game forced version, then the context's `proton_path`.
-fn resolve_proton_required(ctx: &LaunchContext) -> std::result::Result<&str, LaunchError> {
+pub(crate) fn resolve_proton_required(ctx: &LaunchContext) -> std::result::Result<&str, LaunchError> {
     if let Some(forced) = forced_proton(ctx) {
         Ok(forced)
     } else {
@@ -868,7 +868,7 @@ fn resolve_proton_required(ctx: &LaunchContext) -> std::result::Result<&str, Lau
 /// Errors if the game is not installed. The executable is resolved relative to
 /// the install dir unless it is absolute; the working dir honours an explicit
 /// `workingdir`, then the executable's parent, then the install dir.
-fn resolve_game_paths(ctx: &LaunchContext) -> std::result::Result<(PathBuf, PathBuf, PathBuf), LaunchError> {
+pub(crate) fn resolve_game_paths(ctx: &LaunchContext) -> std::result::Result<(PathBuf, PathBuf, PathBuf), LaunchError> {
     let install_dir = PathBuf::from(
         ctx.app.install_path
             .clone()

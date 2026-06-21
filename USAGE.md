@@ -753,6 +753,7 @@ aurelia play <APP_ID> [-p <PROTON>] [-w] [--steam]
 | `-w, --windows` | Run the Windows executable directly with no Proton/Wine layer. **Windows hosts only** — rejected on Linux, where a Windows `.exe` can't be run natively. |
 | `--steam` | Launch with real Steam integration (Proton's `lsteamclient` bridge + the host Steam client, started silently if not running) so Steamworks online features work. Without it, the game runs standalone. Implied for Family-Shared games, which require Steam to authorise the borrowed licence. |
 | `--native-engine` | Route this launch through the [luxtorpeda](#luxtorpeda-native-engine-plugin-linux-only) native-engine plugin (Linux only). Installs the plugin on first use. Conflicts with `--proton`/`--windows`. |
+| `--umu` | Route this launch through [umu-launcher](#umu-launcher-proton-backend-linux-only) (`umu-run`) for the Steam Linux Runtime container + protonfixes (Linux only, Windows/Proton games). One-off override regardless of per-game config. |
 
 Platform behavior:
 
@@ -1598,6 +1599,8 @@ aurelia config game <APP_ID> [--proton <VERSION>] [--clear-proton] [--platform <
 | `--platform <windows\|linux>` | Force the platform target. `windows` runs through Proton/Wine on Linux. |
 | `--native-engine` | Route this game through the [luxtorpeda](#luxtorpeda-native-engine-plugin-linux-only) native-engine plugin (Linux only; requires `aurelia luxtorpeda enable`). |
 | `--no-native-engine` | Clear luxtorpeda routing, back to normal native/Proton selection. |
+| `--umu` | Route this game through [umu-launcher](#umu-launcher-proton-backend-linux-only) (`umu-run`) (Linux only; requires `aurelia umu enable`). |
+| `--no-umu` | Clear umu routing, back to normal native/Proton selection. |
 
 At launch, the Proton version is resolved in this order: an explicit `play --proton` flag →
 this per-game version → the global default (only when the game targets Windows). The
@@ -1746,6 +1749,57 @@ aurelia play 2270 --native-engine              # one-off, regardless of per-game
 > **Note:** engines run outside Steam's runtime (Sniper) container, so they rely on host
 > system libraries. If an engine fails to find a library for a given title, prefer Proton
 > for that game. `--native-engine` conflicts with `--proton`/`--windows`.
+
+---
+
+## umu-launcher Proton backend (Linux only)
+
+[umu-launcher](https://github.com/Open-Wine-Components/umu-launcher) (`umu-run`) is an
+**optional, additive** Proton backend that runs a Windows game inside the **Steam Linux
+Runtime container** (pressure-vessel / `SteamLinuxRuntime_sniper`) and applies **protonfixes**
+— the same tooling Lutris, Heroic and Bottles use to run Proton games outside Steam.
+Aurelia's normal launch drives Proton/Wine *directly*, outside that container; umu adds it.
+
+umu is the same external-program model as luxtorpeda — it is **never bundled or linked into
+Aurelia**. Aurelia discovers `umu-run` (a configured path, else `$PATH`) and invokes it as a
+wrapper around the game executable; **Proton and protonfixes own DXVK/VKD3D and the runtime
+container**, so Aurelia skips its own DLL deployment for umu launches. `WineTkgRunner` (direct
+Proton) remains the default and fallback.
+
+Routing is **explicit opt-in per game** — enabling the backend never changes how an un-pinned
+game launches. umu only handles Windows/Proton targets; native-Linux games never use it.
+
+```text
+aurelia umu enable | disable
+aurelia umu status [--json]
+aurelia umu path [<PATH>] [--clear]
+```
+
+| Subcommand | Description |
+| --- | --- |
+| `enable` / `disable` | Master toggle (`umu_enabled`). Off by default. Disabling makes pinned games fall back to native/Proton launch. |
+| `status` | Show enabled state, the resolved `umu-run` source (configured path vs `$PATH`), whether it is found, and its version. |
+| `path <PATH>` | Use a specific `umu-run` binary instead of looking it up on `$PATH` (stored as `umu_path`). Omit the path to print the current value, or `--clear` to revert to `$PATH` lookup. |
+
+umu is not downloaded by Aurelia — install `umu-launcher` via your package manager (AUR,
+Fedora, Nix, `pip`), or point Aurelia at an existing binary with `aurelia umu path <path>`.
+
+Pin (or unpin) a game, or force a one-off launch:
+
+```bash
+aurelia umu enable                  # off by default
+aurelia config game 480 --umu       # route this game through umu-run
+aurelia config game 480 --no-umu    # back to normal native/Proton selection
+aurelia play 480 --umu              # one-off, regardless of per-game config
+```
+
+> **Note:** umu is Linux-only and only applies to Windows/Proton games. `PROTONPATH` is
+> pointed at Aurelia's resolved Proton so umu does not download its own. Because Proton/
+> protonfixes own DLL management under umu, Aurelia's DXVK/VKD3D deployment and
+> `WINEDLLOVERRIDES` synthesis are bypassed (user-supplied env is still passed through).
+> Real-Steam bridged mode (`--steam`) for Family-Shared/DRM titles is not supported under
+> umu in this version. See the [umu runner wiki page](.docs/wiki/17-umu-runner.md) for the
+> full env contract and limitations.
 
 ---
 

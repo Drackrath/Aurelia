@@ -82,6 +82,13 @@ pub struct PipelineContext {
     /// One-off request (e.g. `aurelia play --native-engine`) to force the luxtorpeda
     /// runner for this launch regardless of the per-game config.
     pub force_native_engine: bool,
+    /// One-off request (e.g. `aurelia play --umu`) to force the umu-launcher runner for
+    /// this launch regardless of the per-game config.
+    pub force_umu: bool,
+    /// When set (by `ResolveComponents` after selecting `UmuRunner`), Aurelia defers all
+    /// DLL deployment/override management to umu/Proton: `ResolveDllProviders` and the
+    /// prefix DLL-symlink step in `PreparePrefix` become no-ops.
+    pub skip_dll_management: bool,
     /// Run the game with real Steam integration
     pub steam_enabled: bool,
 
@@ -112,6 +119,8 @@ impl PipelineContext {
             user_config: None,
             proton_path: None,
             force_native_engine: false,
+            force_umu: false,
+            skip_dll_management: false,
             steam_enabled: false,
             resolved_install_dir: None,
             resolved_executable_path: None,

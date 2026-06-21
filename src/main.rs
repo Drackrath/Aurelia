@@ -140,6 +140,10 @@ enum Command {
         /// Installs the plugin on first use; see `aurelia luxtorpeda`.
         #[arg(long, conflicts_with_all = ["proton", "windows"])]
         native_engine: bool,
+        /// Route this launch through umu-launcher (`umu-run`) for the Steam Linux Runtime
+        /// container + protonfixes (Linux only, Windows/Proton games; see `aurelia umu`).
+        #[arg(long, conflicts_with_all = ["windows", "native_engine"])]
+        umu: bool,
         /// Run with real Steam integration instead of standalone mode: bridge to the
         /// host Steam client (started silently if not running) so Steamworks online
         /// features work. Implied for Family-Shared games, which require it.
@@ -269,6 +273,11 @@ enum Command {
         #[command(subcommand)]
         command: LuxtorpedaCommand,
     },
+    /// Manage the optional umu-launcher (`umu-run`) Proton backend.
+    Umu {
+        #[command(subcommand)]
+        command: UmuCommand,
+    },
     /// List friends, search for a SteamID, or add/remove friends.
     Friends {
         #[command(subcommand)]
@@ -362,6 +371,13 @@ enum ConfigCommand {
         /// Clear the luxtorpeda routing (back to Aurelia's normal native/Proton selection).
         #[arg(long, conflicts_with = "native_engine")]
         no_native_engine: bool,
+        /// Route this game through umu-launcher (`umu-run`) (Linux only; requires
+        /// `aurelia umu enable`).
+        #[arg(long, conflicts_with_all = ["native_engine", "no_native_engine"])]
+        umu: bool,
+        /// Clear the umu routing (back to Aurelia's normal native/Proton selection).
+        #[arg(long, conflicts_with_all = ["umu", "native_engine"])]
+        no_umu: bool,
     },
 }
 
@@ -408,6 +424,25 @@ enum LuxtorpedaCommand {
     },
     /// Remove the downloaded luxtorpeda payload from disk.
     Uninstall,
+}
+
+#[derive(Subcommand)]
+enum UmuCommand {
+    /// Enable the umu backend (sets the master toggle; games still opt in per-game).
+    Enable,
+    /// Disable the umu backend. Games pinned to it fall back to normal native/Proton launch.
+    Disable,
+    /// Show whether umu is enabled and whether `umu-run` is found (and its version).
+    Status,
+    /// Use a specific `umu-run` binary instead of looking it up on `$PATH`.
+    /// Pass a path to set it, omit args to show the current value, or `--clear` to revert.
+    Path {
+        /// Path to a `umu-run` binary.
+        path: Option<String>,
+        /// Clear the custom path and use `$PATH` lookup instead.
+        #[arg(long, conflicts_with = "path")]
+        clear: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -961,9 +996,10 @@ async fn run(cli: Cli) -> Result<()> {
             proton,
             windows,
             native_engine,
+            umu,
             steam,
             noupdate,
-        } => cmd_play(app_id, proton, windows, native_engine, steam, noupdate, json).await,
+        } => cmd_play(app_id, proton, windows, native_engine, umu, steam, noupdate, json).await,
         Command::Running => cmd_running(json),
         Command::Stop { app_id, force } => cmd_stop(app_id, force, json).await,
         Command::Enable {
@@ -1003,7 +1039,9 @@ async fn run(cli: Cli) -> Result<()> {
                 platform,
                 native_engine,
                 no_native_engine,
-            } => cmd_config_game(app_id, proton, clear_proton, platform, native_engine, no_native_engine, json).await,
+                umu,
+                no_umu,
+            } => cmd_config_game(app_id, proton, clear_proton, platform, native_engine, no_native_engine, umu, no_umu, json).await,
         },
         Command::Cloud { command } => match command {
             CloudCommand::Sync {
@@ -1064,6 +1102,12 @@ async fn run(cli: Cli) -> Result<()> {
             LuxtorpedaCommand::Status => cmd_luxtorpeda_status(json).await,
             LuxtorpedaCommand::Path { path, clear } => cmd_luxtorpeda_path(path, clear, json).await,
             LuxtorpedaCommand::Uninstall => cmd_luxtorpeda_uninstall(json).await,
+        },
+        Command::Umu { command } => match command {
+            UmuCommand::Enable => cmd_umu_toggle(true, json).await,
+            UmuCommand::Disable => cmd_umu_toggle(false, json).await,
+            UmuCommand::Status => cmd_umu_status(json).await,
+            UmuCommand::Path { path, clear } => cmd_umu_path(path, clear, json).await,
         },
         Command::Kill => cmd_kill(json),
         Command::Daemon {
@@ -2727,12 +2771,16 @@ async fn cmd_play(
     proton: Option<String>,
     windows: bool,
     native_engine: bool,
+    umu: bool,
     steam: bool,
     noupdate: bool,
     json: bool,
 ) -> Result<()> {
     if native_engine && !cfg!(target_os = "linux") {
         anyhow::bail!("--native-engine (luxtorpeda) is only available on Linux");
+    }
+    if umu && !cfg!(target_os = "linux") {
+        anyhow::bail!("--umu (umu-launcher) is only available on Linux");
     }
     // `--windows` runs the executable directly with no Proton/Wine layer, which
     // can only work on a Windows host. On Linux a Windows PE can't be exec'd
@@ -2812,7 +2860,7 @@ async fn cmd_play(
         cli_println!("Launching {} ...", game.name);
     }
     client
-        .play_game(&game, proton_path.as_deref(), user_config, force_windows, native_engine, steam)
+        .play_game(&game, proton_path.as_deref(), user_config, force_windows, native_engine, umu, steam)
         .await
         .with_context(|| format!("failed to launch {}", game.name))?;
     if json {
@@ -3761,6 +3809,8 @@ async fn cmd_config_game(
     platform: Option<PlatformArg>,
     native_engine: bool,
     no_native_engine: bool,
+    umu: bool,
+    no_umu: bool,
     json: bool,
 ) -> Result<()> {
     use aurelia::config::GameRunner;
@@ -3792,6 +3842,12 @@ async fn cmd_config_game(
         } else if no_native_engine {
             entry.runner = GameRunner::Auto;
             changed = true;
+        } else if umu {
+            entry.runner = GameRunner::Umu;
+            changed = true;
+        } else if no_umu {
+            entry.runner = GameRunner::Auto;
+            changed = true;
         }
     }
     if changed {
@@ -3802,6 +3858,7 @@ async fn cmd_config_game(
     let runner_label = match entry.runner {
         GameRunner::Auto => "auto",
         GameRunner::Luxtorpeda => "luxtorpeda (native engine)",
+        GameRunner::Umu => "umu (umu-launcher)",
     };
     if json {
         print_json(&serde_json::json!({
@@ -3973,6 +4030,108 @@ async fn cmd_luxtorpeda_uninstall(json: bool) -> Result<()> {
         cli_println!("Removed the luxtorpeda payload.");
     } else {
         cli_println!("Luxtorpeda was not installed.");
+    }
+    Ok(())
+}
+
+/// `umu enable|disable`: flip the master toggle for the umu-launcher backend.
+async fn cmd_umu_toggle(enable: bool, json: bool) -> Result<()> {
+    let mut cfg = load_launcher_config().await.unwrap_or_default();
+    cfg.umu_enabled = enable;
+    cfg.save().await.context("failed saving launcher config")?;
+
+    if json {
+        print_json(&serde_json::json!({ "umu_enabled": enable }));
+    } else if enable {
+        cli_println!("umu enabled. Pin a game with `aurelia config game <id> --umu`.");
+        match &cfg.umu_path {
+            Some(p) => cli_println!("Using your configured umu-run at {p}."),
+            None => cli_println!("Aurelia looks up `umu-run` on $PATH. Install `umu-launcher` via your package manager, or set `aurelia umu path <path>`."),
+        }
+        if !cfg!(target_os = "linux") {
+            cli_println!("Note: umu only runs on Linux.");
+        }
+    } else {
+        cli_println!("umu disabled. Pinned games fall back to native/Proton launch.");
+    }
+    Ok(())
+}
+
+/// Resolve the configured/`$PATH` `umu-run` binary and, if runnable, its version
+/// (via `umu-run --version`). Returns `(resolved_path, found, version)`.
+fn umu_probe(configured: Option<&str>) -> (std::path::PathBuf, bool, Option<String>) {
+    let bin = aurelia::infra::runners::umu::umu_binary(configured);
+    let output = std::process::Command::new(&bin).arg("--version").output();
+    match output {
+        Ok(out) => {
+            let mut text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if text.is_empty() {
+                text = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            }
+            let version = (!text.is_empty()).then_some(text);
+            (bin, true, version)
+        }
+        Err(_) => (bin, false, None),
+    }
+}
+
+/// `umu status`: report enabled state and whether `umu-run` is found (+ version).
+async fn cmd_umu_status(json: bool) -> Result<()> {
+    let cfg = load_launcher_config().await.unwrap_or_default();
+    let (bin, found, version) = umu_probe(cfg.umu_path.as_deref());
+
+    if json {
+        print_json(&serde_json::json!({
+            "enabled": cfg.umu_enabled,
+            "umu_path": cfg.umu_path,
+            "resolved_binary": bin.to_string_lossy(),
+            "found": found,
+            "version": version,
+            "linux": cfg!(target_os = "linux"),
+        }));
+        return Ok(());
+    }
+
+    cli_println!("umu-launcher backend:");
+    cli_println!("  Enabled  : {}", cfg.umu_enabled);
+    match &cfg.umu_path {
+        Some(p) => cli_println!("  Source   : custom path ({p})"),
+        None => cli_println!("  Source   : $PATH lookup (umu-run)"),
+    }
+    if found {
+        match &version {
+            Some(v) => cli_println!("  Found    : yes ({} — {v})", bin.display()),
+            None => cli_println!("  Found    : yes ({})", bin.display()),
+        }
+    } else {
+        cli_println!("  Found    : NO — install `umu-launcher` via your package manager, or set `aurelia umu path <path>`");
+    }
+    if !cfg!(target_os = "linux") {
+        cli_println!("  Note     : umu only runs on Linux.");
+    }
+    Ok(())
+}
+
+/// `umu path`: set, show, or clear the configured `umu-run` binary path.
+async fn cmd_umu_path(path: Option<String>, clear: bool, json: bool) -> Result<()> {
+    let mut cfg = load_launcher_config().await.unwrap_or_default();
+
+    if clear {
+        cfg.umu_path = None;
+        cfg.save().await.context("failed saving launcher config")?;
+    } else if let Some(p) = path {
+        cfg.umu_path = Some(p);
+        cfg.save().await.context("failed saving launcher config")?;
+    }
+    // No args (and no --clear): fall through to just report the current value.
+
+    if json {
+        print_json(&serde_json::json!({ "umu_path": cfg.umu_path }));
+    } else {
+        match &cfg.umu_path {
+            Some(p) => cli_println!("Custom umu-run path: {p}"),
+            None => cli_println!("Custom umu-run path: (none — using $PATH lookup)"),
+        }
     }
     Ok(())
 }

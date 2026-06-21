@@ -28,6 +28,12 @@ impl PipelineStage for PreparePrefixStage {
         };
         runner.prepare_prefix(&runner_ctx).await?;
 
+        // Under umu, Proton/protonfixes own DLL deployment; skip the in-prefix DLL-symlink
+        // step (Aurelia deployed/resolved nothing — see ResolveComponents).
+        if ctx.skip_dll_management {
+            return Ok(());
+        }
+
         // Post-runner prefix preparation: handle symlinks
         let app_id = runner_ctx.app.app_id;
         let user_configs = ctx.user_config.iter()

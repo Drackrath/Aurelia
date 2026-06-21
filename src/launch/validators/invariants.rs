@@ -37,6 +37,17 @@ impl LaunchValidator for LaunchInvariantValidator {
     fn validate(&self, ctx: &mut PipelineContext) {
         let mut warnings = Vec::new();
 
+        // Under umu, Proton/protonfixes own DXVK/VKD3D deployment and WINEDLLOVERRIDES —
+        // Aurelia deploys nothing and does not author the DLL stack. The DXVK/VKD3D
+        // "Aurelia deployed X" invariants (B, C, C-mismatch, and the post-launch
+        // DXVK/VKD3D-Proton evidence checks) therefore do not apply; running them would
+        // emit false positives. We skip them and downgrade to an informational note. GPU,
+        // backend-request (D), and process-lifecycle checks remain runner-agnostic.
+        let umu_runner = ctx.skip_dll_management;
+        if umu_runner {
+            tracing::info!("LaunchInvariant: umu runner active — DXVK/VKD3D DLL-deployment invariants skipped (Proton/protonfixes own DLLs)");
+        }
+
         // Invariant A: If effective GPU is unset/default, there must be no forced GPU-selection env vars.
         if ctx.graphics_stack.effective_gpu.is_none()
             && let Some(spec) = &ctx.command_spec
@@ -58,7 +69,8 @@ impl LaunchValidator for LaunchInvariantValidator {
         }
 
         // Invariant B: If effective backend is not DXVK, there must be no DXVK-forcing overrides or DXVK-only DLL path injection.
-        if ctx.graphics_stack.effective_backend != "DXVK"
+        if !umu_runner
+            && ctx.graphics_stack.effective_backend != "DXVK"
             && let Some(spec) = &ctx.command_spec
         {
             if let Some(overrides) = spec.env.get("WINEDLLOVERRIDES") {
@@ -79,7 +91,8 @@ impl LaunchValidator for LaunchInvariantValidator {
         }
 
         // Invariant C: If effective D3D12 provider is unset/default/not-selected, there must be no forced D3D12 provider injection.
-        if ctx.graphics_stack.effective_d3d12_provider == "None"
+        if !umu_runner
+            && ctx.graphics_stack.effective_d3d12_provider == "None"
             && let Some(spec) = &ctx.command_spec
         {
             if let Some(overrides) = spec.env.get("WINEDLLOVERRIDES") {
@@ -102,7 +115,7 @@ impl LaunchValidator for LaunchInvariantValidator {
         // Detailed Invariant C: Effective D3D12 provider must match resolved provider paths if one is active.
         // If effective is "vkd3d-proton", we expect to see it in the path.
         // If effective is "vkd3d", we expect to see vkd3d but NOT vkd3d-proton in the path.
-        if ctx.graphics_stack.effective_d3d12_provider != "None" {
+        if !umu_runner && ctx.graphics_stack.effective_d3d12_provider != "None" {
             let provider = &ctx.graphics_stack.effective_d3d12_provider;
             for res in &ctx.dll_resolutions {
                 if (res.name == "d3d12" || res.name == "d3d12core")
@@ -177,8 +190,10 @@ impl LaunchValidator for LaunchInvariantValidator {
             }
         }
 
-        // Post-launch validation: Check for missing evidence after launch
-        if ctx.graphics_stack.effective_backend == "DXVK" && !ctx.graphics_stack.runtime_evidence.dxvk.evidence_found {
+        // Post-launch validation: Check for missing evidence after launch.
+        // Skipped under umu — Aurelia does not author the DXVK stack there, so a missing
+        // DXVK-evidence warning would be a false positive about Aurelia's own deployment.
+        if !umu_runner && ctx.graphics_stack.effective_backend == "DXVK" && !ctx.graphics_stack.runtime_evidence.dxvk.evidence_found {
              let suffix = evidence_missing_suffix(&ctx.graphics_stack.runtime_evidence.scan_metadata);
              let code = if ctx.graphics_stack.requested_backend == "DXVK" {
                  "STRICT_DXVK_EVIDENCE_MISSING"
@@ -253,7 +268,7 @@ impl LaunchValidator for LaunchInvariantValidator {
             }
         }
 
-        if ctx.graphics_stack.effective_d3d12_provider == "vkd3d-proton" && !ctx.graphics_stack.runtime_evidence.vkd3d_proton.evidence_found {
+        if !umu_runner && ctx.graphics_stack.effective_d3d12_provider == "vkd3d-proton" && !ctx.graphics_stack.runtime_evidence.vkd3d_proton.evidence_found {
              let suffix = evidence_missing_suffix(&ctx.graphics_stack.runtime_evidence.scan_metadata);
              warnings.push((
                 "DIAGNOSTICS_MISSING_VKD3D_PROTON_EVIDENCE",

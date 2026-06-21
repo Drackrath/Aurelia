@@ -49,3 +49,38 @@ fn test_path_discovery_roots() {
     assert_eq!(vkd3d.version, "1.10");
     assert_eq!(vkd3d.source, ComponentSource::BundledWithRunner);
 }
+
+/// The umu runner sets `PROTONPATH` to a Proton directory (via `derive_runner_root`) and
+/// hands DLL ownership to Proton — but Aurelia's component *discovery* still runs against
+/// that root. This asserts `detect_runner_components` works on a Proton dir shaped the way
+/// umu's `PROTONPATH` points (the standard `files/lib/wine/{dxvk,vkd3d}` layout), reached via
+/// the script-derived root that umu would compute.
+#[test]
+fn test_path_discovery_umu_protonpath_layout() {
+    use std::fs;
+    use tempfile::tempdir;
+    use aurelia::utils::{derive_runner_root, detect_runner_components, ComponentSource};
+
+    let tmp = tempdir().unwrap();
+    let proton_dir = tmp.path().join("GE-Proton9-20");
+    // A `proton` script at the dir root — derive_runner_root resolves this to `proton_dir`,
+    // which is exactly the value umu's PROTONPATH receives.
+    fs::create_dir_all(&proton_dir).unwrap();
+    fs::write(proton_dir.join("proton"), "dummy").unwrap();
+
+    let dxvk_dir = proton_dir.join("files/lib/wine/dxvk");
+    fs::create_dir_all(&dxvk_dir).unwrap();
+    fs::write(dxvk_dir.join("d3d11.dll"), "fake dll").unwrap();
+    let share_dxvk = proton_dir.join("files/share/dxvk");
+    fs::create_dir_all(&share_dxvk).unwrap();
+    fs::write(share_dxvk.join("version"), "dxvk (v2.3-g1234567)").unwrap();
+
+    let protonpath = derive_runner_root(&proton_dir.join("proton"));
+    assert_eq!(protonpath, proton_dir);
+
+    let components = detect_runner_components(&protonpath, None);
+    assert!(components.dxvk.is_some());
+    let dxvk = components.dxvk.unwrap();
+    assert_eq!(dxvk.version, "2.3");
+    assert_eq!(dxvk.source, ComponentSource::BundledWithRunner);
+}
