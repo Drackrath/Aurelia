@@ -52,9 +52,16 @@ impl SteamClient {
     }
 
     pub async fn uninstall_game(&self, appid: u32, delete_prefix: bool) -> Result<()> {
-        let cfg = load_launcher_config().await?;
-        let steamapps = PathBuf::from(cfg.steam_library_path).join("steamapps");
-        let appmanifest = steamapps.join(format!("appmanifest_{appid}.acf"));
+        // Resolve the appmanifest across *every* Steam library (including other
+        // drives), not just the configured main library. Otherwise uninstalling
+        // a game installed on a secondary-drive library fails with "no
+        // appmanifest or install directory found", since its manifest lives in
+        // that library's steamapps — mirrors how move/relink locate the source.
+        let appmanifest = self.appmanifest_path(appid).await?;
+        let steamapps = appmanifest
+            .parent()
+            .ok_or_else(|| anyhow!("invalid steamapps path for app {appid}"))?
+            .to_path_buf();
 
         let installdir = if appmanifest.exists() {
             let raw = std::fs::read_to_string(&appmanifest)

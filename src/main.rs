@@ -121,6 +121,9 @@ enum Command {
     },
     /// Download and install a game.
     Install(InstallArgs),
+    /// List the Steam library folders games can be installed into (one per
+    /// drive/location). Use `--json` for tooling.
+    Libraries,
     /// List installed games with an update available, or update one by app id.
     Update {
         /// Game to update. Omit to list every installed game that needs an update.
@@ -609,6 +612,11 @@ struct InstallArgs {
     /// (from PICS, no files fetched). Pair with `--json` for tooling.
     #[arg(long)]
     dry_run: bool,
+    /// Steam library folder (drive/location) to install into. A library root
+    /// containing a `steamapps` directory, as listed by `aurelia libraries`.
+    /// Defaults to the configured `steam_library_path`.
+    #[arg(long)]
+    library: Option<String>,
 }
 
 #[derive(clap::Subcommand)]
@@ -927,9 +935,18 @@ async fn run(cli: Cli) -> Result<()> {
                 let Some(app_id) = args.app_id else {
                     bail!("an app id is required, e.g. `aurelia install 945360`");
                 };
-                cmd_install(app_id, args.platform, args.restart_steam, args.dry_run, json).await
+                cmd_install(
+                    app_id,
+                    args.platform,
+                    args.restart_steam,
+                    args.dry_run,
+                    args.library,
+                    json,
+                )
+                .await
             }
         },
+        Command::Libraries => cmd_libraries(json).await,
         Command::Uninstall {
             app_id,
             delete_prefix,
@@ -2214,11 +2231,35 @@ impl Drop for InstallGuard {
     }
 }
 
+/// List the Steam library folders available to install into, one per line (or a
+/// JSON `{ "libraries": [...] }` object with `--json`). Only roots that actually
+/// contain a `steamapps` directory are reported.
+async fn cmd_libraries(json: bool) -> Result<()> {
+    let libraries: Vec<String> = aurelia::library::all_library_roots()
+        .await
+        .into_iter()
+        .filter(|root| root.join("steamapps").is_dir())
+        .map(|root| root.to_string_lossy().to_string())
+        .collect();
+
+    if json {
+        print_json(&serde_json::json!({ "libraries": libraries }));
+    } else if libraries.is_empty() {
+        cli_println!("No Steam library folders found.");
+    } else {
+        for path in &libraries {
+            cli_println!("{path}");
+        }
+    }
+    Ok(())
+}
+
 async fn cmd_install(
     app_id: u32,
     platform: Option<PlatformArg>,
     restart_steam: bool,
     dry_run: bool,
+    library: Option<String>,
     json: bool,
 ) -> Result<()> {
     let mut client = authed_client().await?;
@@ -2266,7 +2307,7 @@ async fn cmd_install(
     let state = Arc::new(RwLock::new(DownloadState::default()));
     let _install_guard = InstallGuard::register(app_id, Arc::clone(&state));
     let rx = client
-        .install_game(app_id, platform, cached_vdf, None, state)
+        .install_game(app_id, platform, cached_vdf, None, library, state)
         .await
         .with_context(|| format!("failed to start install for app {app_id}"))?;
     drive_progress(rx, json).await?;
@@ -4049,7 +4090,7 @@ async fn cmd_proton_install(version: String, json: bool) -> Result<()> {
             let client = authed_client().await?;
             let state = Arc::new(RwLock::new(DownloadState::default()));
             let rx = client
-                .install_game(app_id, DepotPlatform::Linux, None, None, state)
+                .install_game(app_id, DepotPlatform::Linux, None, None, None, state)
                 .await
                 .with_context(|| format!("failed to start installing {}", pkg.name))?;
             drive_progress(rx, json).await?;

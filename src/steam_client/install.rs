@@ -168,6 +168,7 @@ impl SteamClient {
         platform: DepotPlatform,
         cached_vdf: Option<Vec<u8>>,
         filter_depots: Option<Vec<u64>>,
+        library_override: Option<String>,
         shared_state: Arc<std::sync::RwLock<crate::models::DownloadState>>,
     ) -> Result<Receiver<DownloadProgress>> {
         let connection = self
@@ -177,7 +178,10 @@ impl SteamClient {
             .context("steam connection not initialized")?;
 
         let cfg = load_launcher_config().await?;
-        let library_root = cfg.steam_library_path.clone();
+        // Install into the caller-chosen library (a drive/location picked in the
+        // UI) when given, else the configured default. DLCs ignore this and
+        // follow their base game's library (handled below).
+        let library_root = library_override.unwrap_or_else(|| cfg.steam_library_path.clone());
         let (game_name, pics_installdir) = self.resolve_install_game_info(appid).await;
         let installdir = pics_installdir.unwrap_or_else(|| sanitize_install_dir(&game_name));
 
