@@ -1353,6 +1353,12 @@ fn parse_state_flags_from_acf(raw: &str) -> Option<u32> {
 pub(crate) fn manifest_is_fully_installed(raw: &str) -> bool {
     parse_state_flags_from_acf(raw).is_some_and(|flags| flags & 4 != 0)
 }
+
+/// Fetch `StateUpdateRequired` flag
+pub(crate) fn manifest_update_pending(raw: &str) -> bool {
+    parse_state_flags_from_acf(raw).is_some_and(|flags| flags & 2 != 0)
+}
+
 fn parse_installed_depots_from_acf(raw: &str) -> HashMap<u64, u64> {
     let mut manifests = HashMap::new();
     let mut in_installed_depots = false;
@@ -1511,6 +1517,24 @@ mod tests {
         ));
         // Missing StateFlags is treated as not installed.
         assert!(!manifest_is_fully_installed("\"AppState\"\n{\n}"));
+    }
+
+    #[test]
+    fn update_pending_when_update_required_flag_set() {
+        // 4 = StateFullyInstalled only: up to date, no update pending.
+        assert!(!manifest_update_pending(
+            "\"AppState\"\n{\n\t\"StateFlags\"\t\t\"4\"\n}"
+        ));
+        // 6 = StateFullyInstalled | StateUpdateRequired: installed, update pending.
+        assert!(manifest_update_pending(
+            "\"AppState\"\n{\n\t\"StateFlags\"\t\t\"6\"\n}"
+        ));
+        // 1046 = a partially-started update
+        assert!(manifest_update_pending(
+            "\"AppState\"\n{\n\t\"StateFlags\"\t\t\"1046\"\n}"
+        ));
+        // Missing StateFlags
+        assert!(!manifest_update_pending("\"AppState\"\n{\n}"));
     }
 
     fn cats(pairs: &[(u32, &str)]) -> HashMap<String, String> {

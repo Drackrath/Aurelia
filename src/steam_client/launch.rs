@@ -244,6 +244,13 @@ impl SteamClient {
                 state.app_id = appid;
                 state.app_name = game_name.clone();
                 state.downloaded_bytes = 0;
+                // Reset the byte counters the progress reporter reads so a previous
+                // operation's totals don't leak in. The whole-app total has no PICS
+                // pre-sum here; `on_manifest` fills it in as each depot is fetched.
+                state.total_bytes = 0;
+                state.depot_id = 0;
+                state.depot_downloaded_bytes = 0;
+                state.depot_total_bytes = 0;
                 state.status_text = format!("Preparing operation for {}...", game_name);
             }
 
@@ -322,7 +329,78 @@ impl SteamClient {
             let mut success = true;
             let mut successful_depots = Vec::new();
 
+            // Periodically forward the live byte counters over the channel.
+            let progress_tx = tx.clone();
+            let progress_state = shared_state_clone.clone();
+            let report_verify_mode = verify_mode;
+            tokio::spawn(async move {
+                let mut ticker =
+                    tokio::time::interval(std::time::Duration::from_millis(250));
+                loop {
+                    ticker.tick().await;
+                    let snapshot = match progress_state.read() {
+                        Ok(s) => Some((
+                            s.is_downloading,
+                            s.downloaded_bytes,
+                            s.total_bytes,
+                            s.status_text.clone(),
+                            s.depot_id,
+                            s.depot_downloaded_bytes,
+                            s.depot_total_bytes,
+                        )),
+                        Err(_) => None,
+                    };
+                    let Some((
+                        downloading,
+                        downloaded,
+                        total,
+                        status,
+                        depot_id,
+                        depot_downloaded,
+                        depot_total,
+                    )) = snapshot
+                    else {
+                        break;
+                    };
+                    if !downloading {
+                        break;
+                    }
+                    if progress_tx
+                        .send(DownloadProgress {
+                            state: if report_verify_mode {
+                                DownloadProgressState::Verifying
+                            } else {
+                                DownloadProgressState::Downloading
+                            },
+                            bytes_downloaded: downloaded,
+                            total_bytes: total,
+                            current_file: status,
+                            depot_id,
+                            depot_bytes_downloaded: depot_downloaded,
+                            depot_total_bytes: depot_total,
+                        })
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            });
+
             for selection in selections {
+                // Restart the per-depot counters so the current depot's progress is
+                // reported from zero (the whole-app counters keep accumulating).
+                if let Ok(mut state) = shared_state_clone.write() {
+                    state.depot_id = selection.depot_id;
+                    state.depot_downloaded_bytes = 0;
+                    state.depot_total_bytes = 0;
+                    state.status_text = if verify_mode {
+                        format!("Verifying depot {}", selection.depot_id)
+                    } else {
+                        format!("Downloading depot {}", selection.depot_id)
+                    };
+                }
+
                 let key: Vec<u8> = match client_clone.get_depot_key(appid, selection.depot_id).await {
                     Ok(k) => k,
                     Err(e) => {
@@ -369,27 +447,25 @@ impl SteamClient {
                         cdn_server,
                     );
 
-                    let tx_clone = tx.clone();
-                    let selection_depot_id = selection.depot_id;
+                    // Advance the cumulative byte counters 
+                    let state_for_progress = shared_state_clone.clone();
                     let on_progress = Arc::new(move |bytes: u64| {
-                        let _ = tx_clone.try_send(DownloadProgress {
-                            state: if verify_mode {
-                                DownloadProgressState::Verifying
-                            } else {
-                                DownloadProgressState::Downloading
-                            },
-                            bytes_downloaded: bytes,
-                            depot_id: selection_depot_id,
-                            depot_bytes_downloaded: bytes,
-                            current_file: format!("Depot {}", selection_depot_id),
-                            ..Default::default()
-                        });
+                        if let Ok(mut state) = state_for_progress.write() {
+                            state.downloaded_bytes += bytes;
+                            state.depot_downloaded_bytes += bytes;
+                        }
                     });
 
                     let depot_size = Arc::new(std::sync::atomic::AtomicU64::new(0));
                     let size_clone = depot_size.clone();
+                    let state_for_manifest = shared_state_clone.clone();
                     let on_manifest = Arc::new(move |total_bytes: u64| {
                         size_clone.store(total_bytes, std::sync::atomic::Ordering::SeqCst);
+                        if let Ok(mut state) = state_for_manifest.write() {
+                            // Accumulate per-depot totals
+                            state.depot_total_bytes = total_bytes;
+                            state.total_bytes += total_bytes;
+                        }
                     });
 
                     let abort_signal = shared_state_clone

@@ -2,7 +2,8 @@ name: Aurelia Release
 
 # Build release binaries for every target on a native runner (no cross-compiling)
 # and attach them to a GitHub Release. Asset names follow RELEASE.md (the names
-# Heroic's downloader expects): aurelia_<os>_<arch>[.exe].
+# Heroic's downloader expects): aurelia_<os>_<arch>[.exe]. The Linux jobs also
+# build and attach a Debian package (.deb) for standalone `apt`/`dpkg` installs.
 #
 # Triggers on a pushed v* tag (creates the release); workflow_dispatch just
 # builds the artifacts so you can test the matrix without tagging.
@@ -91,6 +92,16 @@ jobs:
             chmod +x "dist/${{ matrix.asset }}"
           fi
 
+      # Build a Debian package for standalone `apt`/`dpkg` installs (independent of
+      # Heroic, which fetches the raw binary above). cargo-deb auto-detects the
+      # runner's architecture, so the x86_64 and arm64 Linux jobs each emit their
+      # own .deb. `--no-build` reuses the binary built in the previous step.
+      - name: Build .deb package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cargo install cargo-deb --locked
+          cargo deb --no-build
+
       # Upload this target's binary straight to the GitHub Release with `gh`
       # (no upload/download-artifact round-trip — that proved unreliable in this
       # runner setup). The first job to finish creates the release; the rest
@@ -108,3 +119,15 @@ jobs:
             --title "Aurelia $GITHUB_REF_NAME" \
             --generate-notes 2>/dev/null \
           || gh release upload "$GITHUB_REF_NAME" "$asset" --repo "$GITHUB_REPOSITORY" --clobber
+
+      # Attach the .deb (built above) to the same release. Runs after the step
+      # above, so the release is guaranteed to exist by now. cargo-deb names it
+      # aurelia_<version>_<arch>.deb under target/debian/.
+      - name: Publish .deb to release (Linux)
+        if: runner.os == 'Linux' && startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          deb=$(ls target/debian/*.deb | head -n1)
+          gh release upload "$GITHUB_REF_NAME" "$deb" --repo "$GITHUB_REPOSITORY" --clobber
