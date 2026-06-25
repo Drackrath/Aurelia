@@ -2231,24 +2231,47 @@ impl Drop for InstallGuard {
     }
 }
 
-/// List the Steam library folders available to install into, one per line (or a
-/// JSON `{ "libraries": [...] }` object with `--json`). Only roots that actually
-/// contain a `steamapps` directory are reported.
+/// Free bytes on the filesystem/drive that `path` lives on, or `None` if it
+/// can't be determined (no mounted disk contains the path).
+fn available_space_for(path: &std::path::Path) -> Option<u64> {
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    disks
+        .iter()
+        .filter(|disk| path.starts_with(disk.mount_point()))
+        // Longest matching mount point wins (a nested mount over its parent).
+        .max_by_key(|disk| disk.mount_point().as_os_str().len())
+        .map(|disk| disk.available_space())
+}
+
+/// List the Steam library folders available to install into, with the free
+/// space on each, one per line (or a JSON `{ "libraries": [{path, free_bytes}] }`
+/// object with `--json`). Only roots that actually contain a `steamapps`
+/// directory are reported.
 async fn cmd_libraries(json: bool) -> Result<()> {
-    let libraries: Vec<String> = aurelia::library::all_library_roots()
+    let libraries: Vec<(String, Option<u64>)> = aurelia::library::all_library_roots()
         .await
         .into_iter()
         .filter(|root| root.join("steamapps").is_dir())
-        .map(|root| root.to_string_lossy().to_string())
+        .map(|root| {
+            let free = available_space_for(&root);
+            (root.to_string_lossy().to_string(), free)
+        })
         .collect();
 
     if json {
-        print_json(&serde_json::json!({ "libraries": libraries }));
+        let entries: Vec<serde_json::Value> = libraries
+            .iter()
+            .map(|(path, free)| serde_json::json!({ "path": path, "free_bytes": free }))
+            .collect();
+        print_json(&serde_json::json!({ "libraries": entries }));
     } else if libraries.is_empty() {
         cli_println!("No Steam library folders found.");
     } else {
-        for path in &libraries {
-            cli_println!("{path}");
+        for (path, free) in &libraries {
+            match free {
+                Some(bytes) => cli_println!("{path}  ({} free)", human_bytes(*bytes)),
+                None => cli_println!("{path}"),
+            }
         }
     }
     Ok(())
@@ -2300,6 +2323,29 @@ async fn cmd_install(
             (chosen, Some(buffer))
         }
     };
+
+    // Refuse to start if the target drive can't hold the game. (DLC installs go
+    // into the base game's library and aren't covered by the base-game estimate,
+    // so they're skipped here.)
+    if !is_dlc {
+        let est = client
+            .estimate_install_size(app_id, platform)
+            .await
+            .with_context(|| format!("failed to estimate install size for app {app_id}"))?;
+        let library_root = match &library {
+            Some(lib) => lib.clone(),
+            None => load_launcher_config().await?.steam_library_path,
+        };
+        if let Some(free) = available_space_for(std::path::Path::new(&library_root)) {
+            if est.disk_size > free {
+                bail!(
+                    "not enough space on {library_root}: needs {} but only {} free",
+                    human_bytes(est.disk_size),
+                    human_bytes(free)
+                );
+            }
+        }
+    }
 
     // Share this install's state via a process-global registry so `install stop`
     // / `install list` (served on other daemon connections) can reach it. The
