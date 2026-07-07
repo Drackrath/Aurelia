@@ -1,5 +1,6 @@
 use crate::library::cloud_sync::{default_cloud_root, CloudClient, CloudPathResolver, UfsSaveSpec};
 use crate::web::cm_list::get_cm_endpoints;
+use crate::core::utils::extract_quoted_values;
 use crate::core::config::{
     delete_session, library_cache_path, load_launcher_config, load_library_cache, load_session,
     save_library_cache, save_session,
@@ -1474,26 +1475,6 @@ fn rewrite_app_branch(raw: &str, branch: &str) -> String {
     // we assume it exists in a valid Steam manifest.
 
     out.join("\n")
-}
-
-fn extract_quoted_values(line: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut in_quote = false;
-    let mut current = String::new();
-    for ch in line.chars() {
-        if ch == '"' {
-            if in_quote {
-                out.push(current.clone());
-                current.clear();
-            }
-            in_quote = !in_quote;
-            continue;
-        }
-        if in_quote {
-            current.push(ch);
-        }
-    }
-    out
 }
 
 #[cfg(test)]
