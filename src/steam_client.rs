@@ -344,7 +344,10 @@ mod manifests;
 mod process;
 mod workshop;
 mod workshop_manifest;
+mod cloudconfig;
+mod collections;
 
+pub use collections::RemoteNamespace;
 pub use friends::{resolve_steam_id, AddedFriend, Friend, ResolvedUser, Roster};
 pub use market::{
     market_price, market_search, InventoryItem, MarketPrice, MarketSearchResult, MyMarketState,

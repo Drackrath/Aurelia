@@ -11,6 +11,7 @@ use aurelia::core::config::{
     info_cache_ttl, load_info_cache, load_launcher_config, load_library_cache, load_session,
     load_user_configs, save_info_cache, save_launcher_config,
 };
+use aurelia::library::collections::{self, CollectionsStore};
 use aurelia::library::{build_game_library, scan_installed_app_info};
 use aurelia::core::models::{
     DepotPlatform, DownloadProgress, DownloadProgressState, DownloadState, LibraryGame,
@@ -87,6 +88,10 @@ enum Command {
         /// Filter by case-insensitive substring of the game name.
         #[arg(short, long)]
         search: Option<String>,
+        /// Only show games in the named collection (by name or id). Static
+        /// collections only — dynamic (filter-based) ones can't be resolved offline.
+        #[arg(long)]
+        collection: Option<String>,
         /// Show an ONLINE column indicating whether each game appears to require
         /// an online connection (inferred from Steam store categories). This
         /// fetches PICS appinfo per game, so it is slower than a plain listing.
@@ -290,6 +295,11 @@ enum Command {
         #[command(subcommand)]
         command: UmuCommand,
     },
+    /// Manage Steam library collections (categories/groups).
+    Collections {
+        #[command(subcommand)]
+        command: CollectionsCommand,
+    },
     /// List friends, search for a SteamID, or add/remove friends.
     Friends {
         #[command(subcommand)]
@@ -475,6 +485,48 @@ enum UmuCommand {
     },
     /// Remove the downloaded umu-launcher payload from disk.
     Uninstall,
+}
+
+#[derive(Subcommand)]
+enum CollectionsCommand {
+    /// List all collections and their game counts (offline).
+    List,
+    /// Show a collection's games (offline). Accepts a name or id.
+    Show { name: String },
+    /// Create a new (static) collection (offline).
+    Create { name: String },
+    /// Delete a collection (offline). Built-in favorite/hidden can't be deleted.
+    Delete { name: String },
+    /// Rename a collection (offline).
+    Rename { name: String, new_name: String },
+    /// Add one or more app ids to a collection (offline).
+    Add {
+        name: String,
+        #[arg(required = true)]
+        app_ids: Vec<u32>,
+    },
+    /// Remove one or more app ids from a collection (offline).
+    Remove {
+        name: String,
+        #[arg(required = true)]
+        app_ids: Vec<u32>,
+    },
+    /// Download collections from your Steam account and merge them in (needs login).
+    Pull,
+    /// Upload your local collections to your Steam account (needs login).
+    /// This changes your real Steam library — confirm or pass `--yes`.
+    Push {
+        /// Skip the confirmation prompt. Required in `--json` mode.
+        #[arg(short, long)]
+        yes: bool,
+    },
+    /// Pull then push — reconcile local and Steam collections (needs login).
+    /// This changes your real Steam library — confirm or pass `--yes`.
+    Sync {
+        /// Skip the confirmation prompt. Required in `--json` mode.
+        #[arg(short, long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -958,10 +1010,29 @@ async fn run(cli: Cli) -> Result<()> {
         Command::List {
             installed,
             search,
+            collection,
             online,
             check_updates,
-        } => cmd_list(installed, search, online, check_updates, json).await,
+        } => cmd_list(installed, search, collection, online, check_updates, json).await,
         Command::Account => cmd_account(json).await,
+        Command::Collections { command } => match command {
+            CollectionsCommand::List => cmd_collections_list(json).await,
+            CollectionsCommand::Show { name } => cmd_collections_show(name, json).await,
+            CollectionsCommand::Create { name } => cmd_collections_create(name, json).await,
+            CollectionsCommand::Delete { name } => cmd_collections_delete(name, json).await,
+            CollectionsCommand::Rename { name, new_name } => {
+                cmd_collections_rename(name, new_name, json).await
+            }
+            CollectionsCommand::Add { name, app_ids } => {
+                cmd_collections_add(name, app_ids, json).await
+            }
+            CollectionsCommand::Remove { name, app_ids } => {
+                cmd_collections_remove(name, app_ids, json).await
+            }
+            CollectionsCommand::Pull => cmd_collections_pull(json).await,
+            CollectionsCommand::Push { yes } => cmd_collections_push(yes, json).await,
+            CollectionsCommand::Sync { yes } => cmd_collections_sync(yes, json).await,
+        },
         Command::Friends { command } => match command {
             None | Some(FriendsCommand::List) => cmd_friends(json).await,
             Some(FriendsCommand::Search { query }) => cmd_friends_search(query, json).await,
@@ -1659,12 +1730,18 @@ fn detect_installed_platform(install_path: &str) -> Option<String> {
 async fn cmd_list(
     installed: bool,
     search: Option<String>,
+    collection: Option<String>,
     online: bool,
     check_updates: bool,
     json: bool,
 ) -> Result<()> {
     let mut client = restored_client().await?;
     let mut games = load_library(&mut client).await;
+
+    // Load the local collections store (best-effort; ignore if none). Only static
+    // collections contribute here — dynamic (filter-based) collections have no
+    // explicit membership list, so their members can't be resolved offline.
+    let collections_store = aurelia::library::collections::CollectionsStore::load().ok();
 
     // Include Family-Shared games that aren't installed (and which we don't own),
     // such as titles only available through a family member's library.
@@ -1685,7 +1762,39 @@ async fn cmd_list(
     if let Some(needle) = search.as_deref().map(str::to_ascii_lowercase) {
         games.retain(|g| g.name.to_ascii_lowercase().contains(&needle));
     }
+    // Filter to a single collection's members when requested. Resolved against
+    // the local store (static collections only); an unknown name/id is an error.
+    if let Some(name) = collection.as_deref() {
+        let store = collections_store
+            .as_ref()
+            .context("no collections found — run `aurelia collections pull` first")?;
+        let col = store.resolve(name)?;
+        if col.is_dynamic() {
+            bail!(
+                "'{}' is a dynamic (filter-based) collection; its membership is computed by \
+                 Steam and can't be resolved offline",
+                col.name
+            );
+        }
+        let members: std::collections::HashSet<u32> = col.added.iter().copied().collect();
+        let removed: std::collections::HashSet<u32> = col.removed.iter().copied().collect();
+        games.retain(|g| members.contains(&g.app_id) && !removed.contains(&g.app_id));
+    }
     games.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
+
+    // Precompute each game's static-collection membership names for display.
+    let game_collections = |app_id: u32| -> Vec<String> {
+        collections_store
+            .as_ref()
+            .map(|s| {
+                s.collections
+                    .iter()
+                    .filter(|c| !c.deleted && !c.is_dynamic() && c.contains(app_id))
+                    .map(|c| c.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
 
     // Resolve the "online required" status only when requested: it needs a PICS
     // appinfo fetch per game, which is too costly to do on every `list`.
@@ -1753,6 +1862,7 @@ async fn cmd_list(
                         }),
                     );
                     obj.insert("store_url".into(), serde_json::json!(steam_urls::store_url(g.app_id)));
+                    obj.insert("collections".into(), serde_json::json!(game_collections(g.app_id)));
                 }
                 v
             })
@@ -1768,11 +1878,14 @@ async fn cmd_list(
 
     if online {
         cli_println!(
-            "{:>9}  {:<10}  {:<13}  {:<7}  NAME",
-            "APPID", "STATUS", "LICENSE", "ONLINE"
+            "{:>9}  {:<10}  {:<13}  {:<7}  {:<20}  NAME",
+            "APPID", "STATUS", "LICENSE", "ONLINE", "COLLECTIONS"
         );
     } else {
-        cli_println!("{:>9}  {:<10}  {:<13}  NAME", "APPID", "STATUS", "LICENSE");
+        cli_println!(
+            "{:>9}  {:<10}  {:<13}  {:<20}  NAME",
+            "APPID", "STATUS", "LICENSE", "COLLECTIONS"
+        );
     }
     for g in &games {
         let status = if g.is_installed {
@@ -1796,6 +1909,12 @@ async fn cmd_list(
         } else {
             String::new()
         };
+        let cols = game_collections(g.app_id);
+        let cols = if cols.is_empty() {
+            "-".to_string()
+        } else {
+            cols.join(", ")
+        };
         if online {
             let online_col = match g.online_required {
                 Some(true) => "yes",
@@ -1803,13 +1922,13 @@ async fn cmd_list(
                 None => "?",
             };
             cli_println!(
-                "{:>9}  {:<10}  {:<13}  {:<7}  {}{}",
-                g.app_id, status, license, online_col, g.name, branch
+                "{:>9}  {:<10}  {:<13}  {:<7}  {:<20}  {}{}",
+                g.app_id, status, license, online_col, cols, g.name, branch
             );
         } else {
             cli_println!(
-                "{:>9}  {:<10}  {:<13}  {}{}",
-                g.app_id, status, license, g.name, branch
+                "{:>9}  {:<10}  {:<13}  {:<20}  {}{}",
+                g.app_id, status, license, cols, g.name, branch
             );
         }
     }
@@ -1823,6 +1942,259 @@ async fn cmd_list(
         );
     } else {
         cli_println!("\n{} game(s).", games.len());
+    }
+    Ok(())
+}
+
+/// Human-readable kind label for a collection.
+fn collection_kind(c: &collections::Collection) -> &'static str {
+    if c.is_builtin() {
+        "built-in"
+    } else if c.is_dynamic() {
+        "dynamic"
+    } else {
+        "static"
+    }
+}
+
+/// `collections list`: show every collection (offline).
+async fn cmd_collections_list(json: bool) -> Result<()> {
+    let store = CollectionsStore::load()?;
+    let visible: Vec<&collections::Collection> =
+        store.collections.iter().filter(|c| !c.deleted).collect();
+
+    if json {
+        let items: Vec<serde_json::Value> = visible
+            .iter()
+            .map(|c| {
+                let members = c.added.iter().filter(|a| !c.removed.contains(a)).count();
+                serde_json::json!({
+                    "id": c.id,
+                    "name": c.name,
+                    "kind": collection_kind(c),
+                    "dynamic": c.is_dynamic(),
+                    "count": members,
+                })
+            })
+            .collect();
+        print_json(&serde_json::json!({
+            "namespace_version": store.namespace_version,
+            "collections": items,
+        }));
+        return Ok(());
+    }
+
+    if visible.is_empty() {
+        cli_println!("No collections. Create one with `aurelia collections create <name>`,");
+        cli_println!("or fetch your Steam collections with `aurelia collections pull`.");
+        return Ok(());
+    }
+
+    cli_println!("{:<14}  {:<9}  {:>7}  NAME", "ID", "KIND", "GAMES");
+    for c in &visible {
+        let members = c.added.iter().filter(|a| !c.removed.contains(a)).count();
+        let count = if c.is_dynamic() {
+            "-".to_string()
+        } else {
+            members.to_string()
+        };
+        cli_println!(
+            "{:<14}  {:<9}  {:>7}  {}",
+            c.id,
+            collection_kind(c),
+            count,
+            c.name
+        );
+    }
+    cli_println!("\n{} collection(s).", visible.len());
+    Ok(())
+}
+
+/// `collections show <name>`: list a collection's member app ids (offline).
+async fn cmd_collections_show(name: String, json: bool) -> Result<()> {
+    let store = CollectionsStore::load()?;
+    let c = store.resolve(&name)?;
+    let members: Vec<u32> = if c.is_dynamic() {
+        Vec::new()
+    } else {
+        c.added.iter().copied().filter(|a| !c.removed.contains(a)).collect()
+    };
+
+    if json {
+        print_json(&serde_json::json!({
+            "id": c.id,
+            "name": c.name,
+            "kind": collection_kind(c),
+            "dynamic": c.is_dynamic(),
+            "app_ids": members,
+        }));
+        return Ok(());
+    }
+
+    cli_println!("Collection : {}", c.name);
+    cli_println!("Id         : {}", c.id);
+    cli_println!("Kind       : {}", collection_kind(c));
+    if c.is_dynamic() {
+        cli_println!(
+            "\nThis is a dynamic (filter-based) collection; Steam computes its members, \
+             so they can't be listed offline."
+        );
+        return Ok(());
+    }
+    if members.is_empty() {
+        cli_println!("\n(no games)");
+    } else {
+        cli_println!("\nGames ({}):", members.len());
+        for app_id in members {
+            cli_println!("  {app_id}");
+        }
+    }
+    Ok(())
+}
+
+/// `collections create <name>`: make a new static collection (offline).
+async fn cmd_collections_create(name: String, json: bool) -> Result<()> {
+    let mut store = CollectionsStore::load()?;
+    let id = store.create(&name)?;
+    if json {
+        print_json(&serde_json::json!({ "status": "created", "id": id, "name": name }));
+    } else {
+        cli_println!("Created collection '{name}' ({id}).");
+        cli_println!("Add games with `aurelia collections add \"{name}\" <appid> ...`, then");
+        cli_println!("`aurelia collections push` to upload it to your Steam account.");
+    }
+    Ok(())
+}
+
+/// `collections delete <name>`: mark a collection for deletion (offline).
+async fn cmd_collections_delete(name: String, json: bool) -> Result<()> {
+    let mut store = CollectionsStore::load()?;
+    store.delete(&name)?;
+    if json {
+        print_json(&serde_json::json!({ "status": "deleted", "name": name }));
+    } else {
+        cli_println!("Marked collection '{name}' for deletion.");
+        cli_println!("Run `aurelia collections push` to apply it to your Steam account.");
+    }
+    Ok(())
+}
+
+/// `collections rename <name> <new_name>` (offline).
+async fn cmd_collections_rename(name: String, new_name: String, json: bool) -> Result<()> {
+    let mut store = CollectionsStore::load()?;
+    store.rename(&name, &new_name)?;
+    if json {
+        print_json(&serde_json::json!({ "status": "renamed", "from": name, "to": new_name }));
+    } else {
+        cli_println!("Renamed '{name}' to '{new_name}'.");
+    }
+    Ok(())
+}
+
+/// `collections add <name> <appid>...` (offline).
+async fn cmd_collections_add(name: String, app_ids: Vec<u32>, json: bool) -> Result<()> {
+    let mut store = CollectionsStore::load()?;
+    store.add(&name, &app_ids)?;
+    if json {
+        print_json(&serde_json::json!({ "status": "added", "name": name, "app_ids": app_ids }));
+    } else {
+        cli_println!("Added {} game(s) to '{name}'.", app_ids.len());
+    }
+    Ok(())
+}
+
+/// `collections remove <name> <appid>...` (offline).
+async fn cmd_collections_remove(name: String, app_ids: Vec<u32>, json: bool) -> Result<()> {
+    let mut store = CollectionsStore::load()?;
+    store.remove(&name, &app_ids)?;
+    if json {
+        print_json(&serde_json::json!({ "status": "removed", "name": name, "app_ids": app_ids }));
+    } else {
+        cli_println!("Removed {} game(s) from '{name}'.", app_ids.len());
+    }
+    Ok(())
+}
+
+/// `collections pull`: download and merge Steam's collections into the local store.
+async fn cmd_collections_pull(json: bool) -> Result<()> {
+    let client = authed_client().await?;
+    let mut store = CollectionsStore::load()?;
+    collections::pull(&mut store, &client).await?;
+    let count = store.collections.iter().filter(|c| !c.deleted).count();
+    if json {
+        print_json(&serde_json::json!({
+            "status": "pulled",
+            "namespace_version": store.namespace_version,
+            "count": count,
+        }));
+    } else {
+        cli_println!(
+            "Pulled collections from Steam. {count} collection(s) locally (version {}).",
+            store.namespace_version
+        );
+    }
+    Ok(())
+}
+
+/// Confirm a mutating cloud write, honoring `--yes` and `--json`. Returns `Ok(())`
+/// to proceed, or an error to abort. In `--json` mode `--yes` is mandatory.
+fn confirm_cloud_write(action: &str, count: usize, yes: bool, json: bool) -> Result<()> {
+    if yes {
+        return Ok(());
+    }
+    if json {
+        bail!("refusing to {action} without confirmation — pass `--yes` in --json mode");
+    }
+    let answer = prompt_line(&format!(
+        "About to {action} {count} collection(s) to your Steam account. Continue? [y/N] "
+    ))?;
+    if matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+        Ok(())
+    } else {
+        bail!("aborted");
+    }
+}
+
+/// `collections push`: upload local collections to Steam (mutates the account).
+async fn cmd_collections_push(yes: bool, json: bool) -> Result<()> {
+    let mut store = CollectionsStore::load()?;
+    confirm_cloud_write("upload", store.collections.len(), yes, json)?;
+    let client = authed_client().await?;
+    collections::push(&mut store, &client).await?;
+    let count = store.collections.len();
+    if json {
+        print_json(&serde_json::json!({
+            "status": "pushed",
+            "namespace_version": store.namespace_version,
+            "count": count,
+        }));
+    } else {
+        cli_println!(
+            "Pushed collections to Steam. Now at version {} ({count} collection(s)).",
+            store.namespace_version
+        );
+    }
+    Ok(())
+}
+
+/// `collections sync`: pull then push (mutates the account).
+async fn cmd_collections_sync(yes: bool, json: bool) -> Result<()> {
+    let mut store = CollectionsStore::load()?;
+    confirm_cloud_write("sync", store.collections.len(), yes, json)?;
+    let client = authed_client().await?;
+    collections::sync(&mut store, &client).await?;
+    let count = store.collections.len();
+    if json {
+        print_json(&serde_json::json!({
+            "status": "synced",
+            "namespace_version": store.namespace_version,
+            "count": count,
+        }));
+    } else {
+        cli_println!(
+            "Synced collections with Steam. Now at version {} ({count} collection(s)).",
+            store.namespace_version
+        );
     }
     Ok(())
 }
