@@ -289,6 +289,16 @@ aurelia luxtorpeda uninstall          # remove the downloaded payload
 > opt a game in, so the binary stays lean. Linux only. Games run outside Steam's runtime
 > container; if an engine can't find system libraries, prefer Proton for that title.
 
+<!-- -->
+
+> [!NOTE]
+> **umu-launcher** is an optional plugin that runs Windows games through Proton **outside**
+> Steam (applying the Steam Linux Runtime and per-game protonfixes), wrapping the launch with
+> `umu-run` instead of replacing the runtime. Like luxtorpeda it is **never bundled** —
+> Aurelia downloads it on the fly into `~/.config/Aurelia/plugins/umu` only when you enable the
+> feature and opt a game in, so the binary stays lean. Linux only. It **wraps Proton** rather
+> than replacing it, so `--umu` combines with `--proton` to pick the Proton build it runs.
+
 Add `--json` to any command for machine-readable output (errors included). It's a global
 flag, so `aurelia --json <command>` and `aurelia <command> --json` are equivalent.
 
