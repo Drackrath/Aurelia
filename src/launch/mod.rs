@@ -3,6 +3,7 @@ pub mod stages;
 pub mod validators;
 pub mod dll_provider_resolver;
 pub mod fixups;
+pub mod launch_script;
 
 #[cfg(test)]
 mod verification_tests;

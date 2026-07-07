@@ -92,6 +92,7 @@ of a specific command. `--version` prints the build version.
   - [`steam-runtime install` / `repair` / `status`](#windows-steam-runtime)
 - [Luxtorpeda native-engine plugin](#luxtorpeda-native-engine-plugin-linux-only)
 - [umu-launcher plugin](#umu-launcher-plugin-linux-only)
+- [Launch scripts](#launch-scripts)
 - [Session daemon](#session-daemon)
   - [`daemon`](#daemon)
   - [`daemon list` / `daemon stop`](#daemon)
@@ -1964,6 +1965,73 @@ aurelia play 1245620 --umu --proton GE-Proton9-20   # choose which Proton umu ru
 The path is stored as `umu_path` in the launcher config. `--umu` is Linux-only and conflicts
 with `--windows`/`--native-engine`; it **combines** with `--proton`, which selects the Proton
 build umu runs the game through.
+
+---
+
+## Launch scripts
+
+A **launch script** wraps the fully-resolved launch command with your own shell script. When a
+script is active for a game, Aurelia runs the script as the program and passes the
+previously-resolved program and its arguments to it as `"$@"`, so a script that is just
+`exec "$@"` is a transparent passthrough, while a custom one can prepend `gamemoderun` /
+`mangohud` / `gamescope` or launch its own way. This works uniformly for native, Proton
+(WineTkg), luxtorpeda and umu launches, because it rewrites the final launch command just
+before spawning.
+
+**Script directory.** Scripts live in `AURELIA_SCRIPT_DIR` if that env var is set, otherwise
+`~/.config/Aurelia/scripts`. A game's auto-detected script is `<script_dir>/<appid>.sh` on
+unix (`<appid>.bat` on Windows). `aurelia scripts new` sets the unix executable bit (`0o755`).
+
+**Exported environment.** Alongside the entire resolved launch environment (`WINEPREFIX`,
+`WINEDLLOVERRIDES`, `STEAM_COMPAT_*`, …), Aurelia exports:
+
+| Variable | Meaning |
+| --- | --- |
+| `AURELIA_APP_ID` | the Steam app id |
+| `AURELIA_APP_NAME` | the game's display name |
+| `AURELIA_GAME_DIR` | the game's install directory (when known) |
+| `AURELIA_LAUNCH_PROGRAM` | the resolved program that would have run |
+| `AURELIA_LAUNCH_ARGS` | its arguments, space-joined |
+
+**Resolution precedence** (first match wins; `play --no-script` bypasses all):
+
+1. `aurelia play <id> --script <PATH>` — one-off override for a single launch.
+2. `aurelia config game <id> --launch-script <PATH>` — the per-game pinned script
+   (stored as `launch_script` in the launcher config; clear with `--no-launch-script`).
+3. the auto-detected `<script_dir>/<appid>.sh` (or `.bat`), when it exists on disk.
+
+An explicit `--script` / `--launch-script` path that does not exist fails the launch with a
+validation error rather than silently falling back.
+
+```text
+aurelia scripts dir                     # print the resolved script directory
+aurelia scripts list [--json]           # app ids with a script + their resolved paths
+aurelia scripts new <app_id> [--force]  # scaffold <script_dir>/<app_id>.sh (or .bat)
+aurelia scripts show <app_id>           # print the resolved script path + contents
+aurelia scripts remove <app_id>         # delete the dir-based script
+```
+
+| Subcommand | Description |
+| --- | --- |
+| `dir` | Print the resolved launch-script directory. |
+| `list` | List app ids that have a script (dir-based **and** config-pinned) with resolved paths and, when known, the game name. |
+| `new <app_id>` | Create the script directory if needed and write a documented template to the platform path. Errors if the file exists unless `--force`; on unix the file is made executable. |
+| `show <app_id>` | Print the resolved script path and its contents. |
+| `remove <app_id>` | Delete the dir-based script (reports when none exists). |
+
+Typical use:
+
+```bash
+aurelia scripts new 2270                 # scaffold ~/.config/Aurelia/scripts/2270.sh
+# edit it, e.g.:  exec gamemoderun mangohud "$@"
+aurelia play 2270                        # launches through the script
+
+aurelia config game 2270 --launch-script ~/wrappers/mygame.sh   # pin a specific script
+aurelia play 2270 --script ~/other.sh    # one-off override
+aurelia play 2270 --no-script            # bypass all scripts for this launch
+```
+
+Every `scripts` subcommand honors the global `--json` flag.
 
 ---
 

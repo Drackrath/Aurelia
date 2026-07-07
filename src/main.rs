@@ -156,6 +156,15 @@ enum Command {
         /// Combine with `--proton` to pick the Proton build umu runs.
         #[arg(long, conflicts_with_all = ["windows", "native_engine"])]
         umu: bool,
+        /// Wrap this launch with a specific launch script, overriding the per-game
+        /// config and the auto-detected `<script_dir>/<app_id>.sh`. The script runs
+        /// with the resolved launch command as its arguments. See `aurelia scripts`.
+        #[arg(long, value_name = "PATH")]
+        script: Option<PathBuf>,
+        /// Bypass all launch scripts for this launch (ignore the per-game config and
+        /// any auto-detected script).
+        #[arg(long, conflicts_with = "script")]
+        no_script: bool,
         /// Run with real Steam integration instead of standalone mode: bridge to the
         /// host Steam client (started silently if not running) so Steamworks online
         /// features work. Implied for Family-Shared games, which require it.
@@ -295,6 +304,11 @@ enum Command {
         #[command(subcommand)]
         command: UmuCommand,
     },
+    /// Manage per-game launch scripts.
+    Scripts {
+        #[command(subcommand)]
+        command: ScriptsCommand,
+    },
     /// Manage Steam library collections (categories/groups).
     Collections {
         #[command(subcommand)]
@@ -400,6 +414,13 @@ enum ConfigCommand {
         /// Clear the umu routing (back to Aurelia's normal native/Proton selection).
         #[arg(long, conflicts_with = "umu")]
         no_umu: bool,
+        /// Set a per-game launch script that wraps the resolved launch command. See
+        /// `aurelia scripts`. Overrides the auto-detected `<script_dir>/<app_id>.sh`.
+        #[arg(long, value_name = "PATH")]
+        launch_script: Option<PathBuf>,
+        /// Clear the per-game launch script (falls back to the auto-detected script).
+        #[arg(long, conflicts_with = "launch_script")]
+        no_launch_script: bool,
     },
 }
 
@@ -485,6 +506,28 @@ enum UmuCommand {
     },
     /// Remove the downloaded umu-launcher payload from disk.
     Uninstall,
+}
+
+#[derive(Subcommand)]
+enum ScriptsCommand {
+    /// Print the resolved launch-script directory (`AURELIA_SCRIPT_DIR` or
+    /// `<config_dir>/scripts`).
+    Dir,
+    /// List app ids that have a launch script (dir-based and config-pinned) and
+    /// their resolved paths.
+    List,
+    /// Scaffold a launch script for a game at `<script_dir>/<app_id>.sh` (or `.bat`
+    /// on Windows). Errors if one already exists unless `--force`.
+    New {
+        app_id: u32,
+        /// Overwrite an existing script.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Print the resolved launch-script path for a game and its contents.
+    Show { app_id: u32 },
+    /// Delete the dir-based launch script for a game.
+    Remove { app_id: u32 },
 }
 
 #[derive(Subcommand)]
@@ -1114,9 +1157,11 @@ async fn run(cli: Cli) -> Result<()> {
             windows,
             native_engine,
             umu,
+            script,
+            no_script,
             steam,
             noupdate,
-        } => cmd_play(app_id, proton, windows, native_engine, umu, steam, noupdate, json).await,
+        } => cmd_play(app_id, proton, windows, native_engine, umu, script, no_script, steam, noupdate, json).await,
         Command::Running => cmd_running(json),
         Command::Stop { app_id, force } => cmd_stop(app_id, force, json).await,
         Command::Enable {
@@ -1158,7 +1203,9 @@ async fn run(cli: Cli) -> Result<()> {
                 no_native_engine,
                 umu,
                 no_umu,
-            } => cmd_config_game(app_id, proton, clear_proton, platform, native_engine, no_native_engine, umu, no_umu, json).await,
+                launch_script,
+                no_launch_script,
+            } => cmd_config_game(app_id, proton, clear_proton, platform, native_engine, no_native_engine, umu, no_umu, launch_script, no_launch_script, json).await,
         },
         Command::Cloud { command } => match command {
             CloudCommand::Sync {
@@ -1232,6 +1279,13 @@ async fn run(cli: Cli) -> Result<()> {
             UmuCommand::Status => cmd_umu_status(json).await,
             UmuCommand::Path { path, clear } => cmd_umu_path(path, clear, json).await,
             UmuCommand::Uninstall => cmd_umu_uninstall(json).await,
+        },
+        Command::Scripts { command } => match command {
+            ScriptsCommand::Dir => cmd_scripts_dir(json).await,
+            ScriptsCommand::List => cmd_scripts_list(json).await,
+            ScriptsCommand::New { app_id, force } => cmd_scripts_new(app_id, force, json).await,
+            ScriptsCommand::Show { app_id } => cmd_scripts_show(app_id, json).await,
+            ScriptsCommand::Remove { app_id } => cmd_scripts_remove(app_id, json).await,
         },
         Command::Kill => cmd_kill(json),
         Command::Daemon {
@@ -3267,6 +3321,8 @@ async fn cmd_play(
     windows: bool,
     native_engine: bool,
     umu: bool,
+    script: Option<PathBuf>,
+    no_script: bool,
     steam: bool,
     noupdate: bool,
     json: bool,
@@ -3355,7 +3411,7 @@ async fn cmd_play(
         cli_println!("Launching {} ...", game.name);
     }
     client
-        .play_game(&game, proton_path.as_deref(), user_config, force_windows, native_engine, umu, steam)
+        .play_game(&game, proton_path.as_deref(), user_config, force_windows, native_engine, umu, script, no_script, steam)
         .await
         .with_context(|| format!("failed to launch {}", game.name))?;
     if json {
@@ -4306,6 +4362,8 @@ async fn cmd_config_game(
     no_native_engine: bool,
     umu: bool,
     no_umu: bool,
+    launch_script: Option<PathBuf>,
+    no_launch_script: bool,
     json: bool,
 ) -> Result<()> {
     use aurelia::core::config::GameRunner;
@@ -4344,6 +4402,13 @@ async fn cmd_config_game(
             entry.runner = GameRunner::Auto;
             changed = true;
         }
+        if no_launch_script {
+            entry.launch_script = None;
+            changed = true;
+        } else if let Some(s) = launch_script {
+            entry.launch_script = Some(s.to_string_lossy().to_string());
+            changed = true;
+        }
     }
     if changed {
         cfg.save().await.context("failed saving game config")?;
@@ -4361,6 +4426,7 @@ async fn cmd_config_game(
             "forced_proton_version": entry.forced_proton_version,
             "platform_preference": entry.platform_preference,
             "runner": entry.runner,
+            "launch_script": entry.launch_script,
         }));
     } else {
         cli_println!("App {app_id}:");
@@ -4373,6 +4439,10 @@ async fn cmd_config_game(
             entry.platform_preference.as_deref().unwrap_or("(auto)")
         );
         cli_println!("  Runner  : {runner_label}");
+        cli_println!(
+            "  Script  : {}",
+            entry.launch_script.as_deref().unwrap_or("(auto-detected / none)")
+        );
     }
     Ok(())
 }
@@ -4672,6 +4742,156 @@ async fn cmd_umu_uninstall(json: bool) -> Result<()> {
         cli_println!("Removed the umu-launcher payload.");
     } else {
         cli_println!("umu-launcher was not installed.");
+    }
+    Ok(())
+}
+
+/// Best-effort game-name lookup from the offline library cache, for pretty-printing
+/// in the `scripts` commands. Returns `None` when the id isn't in the cache.
+async fn resolve_game_name(app_id: u32) -> Option<String> {
+    load_library_cache()
+        .await
+        .ok()
+        .and_then(|games| games.into_iter().find(|g| g.app_id == app_id).map(|g| g.name))
+}
+
+/// `scripts dir`: print the resolved launch-script directory.
+async fn cmd_scripts_dir(json: bool) -> Result<()> {
+    let dir = aurelia::launch::launch_script::script_dir();
+    if json {
+        print_json(&serde_json::json!({ "script_dir": dir }));
+    } else {
+        cli_println!("{}", dir.display());
+    }
+    Ok(())
+}
+
+/// `scripts list`: app ids with a launch script (dir-based + config-pinned) and
+/// their resolved paths.
+async fn cmd_scripts_list(json: bool) -> Result<()> {
+    use aurelia::launch::launch_script;
+    let cfg = load_launcher_config().await.unwrap_or_default();
+    let ids = launch_script::list_script_app_ids(Some(&cfg));
+
+    // Best-effort name resolution from the offline library cache.
+    let library = load_library_cache().await.unwrap_or_default();
+    let name_of = |id: u32| library.iter().find(|g| g.app_id == id).map(|g| g.name.clone());
+
+    if json {
+        let entries: Vec<_> = ids
+            .iter()
+            .map(|id| {
+                serde_json::json!({
+                    "app_id": id,
+                    "name": name_of(*id),
+                    "path": launch_script::resolve(*id, Some(&cfg), None, false),
+                })
+            })
+            .collect();
+        print_json(&serde_json::json!({ "scripts": entries }));
+        return Ok(());
+    }
+
+    if ids.is_empty() {
+        cli_println!("No launch scripts. Create one with `aurelia scripts new <app_id>`.");
+        return Ok(());
+    }
+    cli_println!("Launch scripts (dir: {}):", launch_script::script_dir().display());
+    for id in ids {
+        let name = name_of(id).unwrap_or_else(|| "(unknown)".to_string());
+        match launch_script::resolve(id, Some(&cfg), None, false) {
+            Some(p) => cli_println!("  {id:<10} {name}\n             {}", p.display()),
+            None => cli_println!("  {id:<10} {name}  (unresolved)"),
+        }
+    }
+    Ok(())
+}
+
+/// `scripts new`: scaffold a launch script at `<script_dir>/<app_id>.sh|bat`.
+async fn cmd_scripts_new(app_id: u32, force: bool, json: bool) -> Result<()> {
+    use aurelia::launch::launch_script;
+    let dir = launch_script::script_dir();
+    std::fs::create_dir_all(&dir)
+        .with_context(|| format!("failed creating script dir {}", dir.display()))?;
+    let path = launch_script::dir_script_path(app_id);
+    if path.exists() && !force {
+        anyhow::bail!(
+            "a launch script already exists at {} (use --force to overwrite)",
+            path.display()
+        );
+    }
+    let name = resolve_game_name(app_id).await.unwrap_or_default();
+    let body = launch_script::template(app_id, &name);
+    std::fs::write(&path, body).with_context(|| format!("failed writing {}", path.display()))?;
+
+    // Make it directly executable on unix so `exec "$@"`-style wrappers can be run.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&path)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms)
+            .with_context(|| format!("failed setting executable bit on {}", path.display()))?;
+    }
+
+    if json {
+        print_json(&serde_json::json!({ "app_id": app_id, "path": path, "status": "created" }));
+    } else {
+        cli_println!("Created launch script: {}", path.display());
+        cli_println!("Edit it, then `aurelia play {app_id}` runs through it.");
+    }
+    Ok(())
+}
+
+/// `scripts show`: print the resolved launch-script path for a game and its contents.
+async fn cmd_scripts_show(app_id: u32, json: bool) -> Result<()> {
+    use aurelia::launch::launch_script;
+    let cfg = load_launcher_config().await.unwrap_or_default();
+    let Some(path) = launch_script::resolve(app_id, Some(&cfg), None, false) else {
+        if json {
+            print_json(&serde_json::json!({ "app_id": app_id, "path": null, "exists": false }));
+        } else {
+            cli_println!("No launch script for app {app_id}.");
+        }
+        return Ok(());
+    };
+    let contents = std::fs::read_to_string(&path).ok();
+    if json {
+        print_json(&serde_json::json!({
+            "app_id": app_id,
+            "path": path,
+            "exists": contents.is_some(),
+            "contents": contents,
+        }));
+    } else {
+        cli_println!("Launch script for app {app_id}: {}", path.display());
+        match contents {
+            Some(c) => {
+                cli_println!("");
+                cli_print!("{c}");
+            }
+            None => cli_println!("(file does not exist on disk)"),
+        }
+    }
+    Ok(())
+}
+
+/// `scripts remove`: delete the dir-based launch script for a game.
+async fn cmd_scripts_remove(app_id: u32, json: bool) -> Result<()> {
+    use aurelia::launch::launch_script;
+    let removed = launch_script::remove_dir_script(app_id)
+        .with_context(|| format!("failed removing launch script for app {app_id}"))?;
+    let path = launch_script::dir_script_path(app_id);
+    if json {
+        print_json(&serde_json::json!({
+            "app_id": app_id,
+            "path": path,
+            "status": if removed { "removed" } else { "not_found" },
+        }));
+    } else if removed {
+        cli_println!("Removed launch script: {}", path.display());
+    } else {
+        cli_println!("No dir-based launch script for app {app_id} at {}.", path.display());
     }
     Ok(())
 }

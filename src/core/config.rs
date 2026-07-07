@@ -41,6 +41,11 @@ pub struct GameConfig {
     /// luxtorpeda native-engine plugin (Linux only, requires `luxtorpeda_enabled`).
     #[serde(default)]
     pub runner: GameRunner,
+    /// Per-game launch script path. When set (and not overridden/bypassed at launch),
+    /// Aurelia wraps the resolved launch command with this script. Takes precedence
+    /// over the auto-detected `<script_dir>/<app_id>.sh|bat`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_script: Option<String>,
 }
 
 /// Per-game launch backend selection.

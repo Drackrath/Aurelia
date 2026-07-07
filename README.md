@@ -293,6 +293,16 @@ aurelia luxtorpeda status             # show enabled state + installed version
 aurelia config game 2270 --native-engine   # route one game through a native engine
 aurelia play 2270 --native-engine     # one-off launch via luxtorpeda
 aurelia luxtorpeda uninstall          # remove the downloaded payload
+
+# Per-game launch scripts (wrap the resolved launch command with your own script)
+aurelia scripts new 2270              # scaffold <script_dir>/2270.sh (2270.bat on Windows)
+aurelia scripts list                  # app ids with a script + resolved paths
+aurelia scripts show 2270             # print the resolved script + its contents
+aurelia play 2270                     # runs through the script (e.g. gamemoderun/mangohud/gamescope)
+aurelia config game 2270 --launch-script ~/my/wrap.sh   # pin a specific script per game
+aurelia play 2270 --script ~/other.sh # one-off override for a single launch
+aurelia play 2270 --no-script         # bypass all scripts for this launch
+aurelia scripts remove 2270           # delete the dir-based script
 ```
 
 > [!NOTE]
@@ -311,6 +321,17 @@ aurelia luxtorpeda uninstall          # remove the downloaded payload
 > Aurelia downloads it on the fly into `~/.config/Aurelia/plugins/umu` only when you enable the
 > feature and opt a game in, so the binary stays lean. Linux only. It **wraps Proton** rather
 > than replacing it, so `--umu` combines with `--proton` to pick the Proton build it runs.
+
+<!-- -->
+
+> [!NOTE]
+> **Per-game launch scripts** let you wrap the fully-resolved launch command with your own
+> shell script (`<script_dir>/<appid>.sh`, or `.bat` on Windows). Aurelia runs the script with
+> the resolved command as its arguments (`"$@"`) and exports `AURELIA_*` env vars, so a script
+> that is just `exec "$@"` is a passthrough while a custom one can prepend `gamemoderun` /
+> `mangohud` / `gamescope`. It works uniformly for native, Proton, luxtorpeda and umu launches.
+> Resolution precedence: `play --script <path>` > `config game --launch-script <path>` >
+> the auto-detected `<script_dir>/<appid>.sh`. `play --no-script` bypasses all of them.
 
 Add `--json` to any command for machine-readable output (errors included). It's a global
 flag, so `aurelia --json <command>` and `aurelia <command> --json` are equivalent.

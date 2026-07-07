@@ -85,6 +85,12 @@ pub struct PipelineContext {
     /// One-off request (e.g. `aurelia play --umu`) to wrap this launch through the
     /// umu-launcher plugin regardless of the per-game config.
     pub force_umu: bool,
+    /// One-off launch-script override (e.g. `aurelia play --script <PATH>`) that
+    /// takes precedence over the per-game config and the auto-detected dir script.
+    pub launch_script_override: Option<std::path::PathBuf>,
+    /// One-off request (e.g. `aurelia play --no-script`) to bypass all launch
+    /// scripts for this launch.
+    pub disable_launch_script: bool,
     /// Whether umu wrapping is active for this launch, resolved in
     /// `ResolveComponentsStage` and threaded into `LaunchContext`.
     pub use_umu: bool,
@@ -124,6 +130,8 @@ impl PipelineContext {
             proton_path: None,
             force_native_engine: false,
             force_umu: false,
+            launch_script_override: None,
+            disable_launch_script: false,
             use_umu: false,
             umu_run: None,
             steam_enabled: false,
@@ -505,6 +513,7 @@ impl LaunchPipeline {
         pipeline.add_stage(Box::new(crate::launch::stages::build_environment::BuildEnvironmentStage));
         pipeline.add_stage(Box::new(crate::launch::stages::build_command::BuildCommandStage));
         pipeline.add_stage(Box::new(crate::launch::stages::preflight::PreflightStage));
+        pipeline.add_stage(Box::new(crate::launch::stages::apply_launch_script::ApplyLaunchScriptStage));
         pipeline.add_stage(Box::new(crate::launch::stages::spawn_process::SpawnProcessStage));
         pipeline.add_stage(Box::new(crate::launch::stages::finalize::FinalizeStage));
 
