@@ -106,6 +106,11 @@ pub struct LauncherConfig {
     /// `aurelia achievements` when `--lang` is not given. `None` = use "english".
     #[serde(default)]
     pub language: Option<String>,
+    /// Global default for wrapping game launches through umu-launcher (`umu-run`,
+    /// the unified Proton launcher). When `true`, games run via `umu-run` unless a
+    /// per-game override says otherwise. `#[serde(default)]` keeps old configs valid.
+    #[serde(default)]
+    pub use_umu: bool,
 }
 
 impl LauncherConfig {
@@ -144,6 +149,7 @@ impl Default for LauncherConfig {
             luxtorpeda_enabled: false,
             luxtorpeda_path: None,
             language: None,
+            use_umu: false,
         }
     }
 }
