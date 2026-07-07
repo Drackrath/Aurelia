@@ -336,7 +336,7 @@ fn detect_dxvk(root: &Path, prefix: Option<&Path>) -> Option<ComponentInfo> {
     // 1. Bundled inside runner (Modern Wine-TKG layout)
     if let Some(info) = detect_bundled_modern(
         root,
-        &["lib/wine/dxvk", "files/lib/wine/dxvk", "dist/lib/wine/dxvk"],
+        &crate::proton::wine_component_dirs("dxvk"),
         |_| &["d3d11.dll", "dxgi.dll", "d3d9.dll", "d3d8.dll", "d3d10core.dll"],
     ) {
         return Some(info);
@@ -390,7 +390,7 @@ fn detect_vkd3d_proton(root: &Path, prefix: Option<&Path>) -> Option<ComponentIn
     // 1. Modern Wine-TKG layout
     if let Some(info) = detect_bundled_modern(
         root,
-        &["lib/wine/vkd3d-proton", "files/lib/wine/vkd3d-proton", "dist/lib/wine/vkd3d-proton"],
+        &crate::proton::wine_component_dirs("vkd3d-proton"),
         |_| &["d3d12.dll", "d3d12core.dll"],
     ) {
         return Some(info);
@@ -450,7 +450,7 @@ fn detect_nvapi(root: &Path, prefix: Option<&Path>) -> Option<ComponentInfo> {
     // 1. Bundled inside runner (Modern Wine-TKG layout)
     if let Some(info) = detect_bundled_modern(
         root,
-        &["lib/wine/nvapi", "files/lib/wine/nvapi", "dist/lib/wine/nvapi"],
+        &crate::proton::wine_component_dirs("nvapi"),
         |arch| {
             if arch == "x86_64-windows" {
                 &["nvapi64.dll"]
@@ -480,7 +480,7 @@ fn detect_vkd3d(root: &Path, prefix: Option<&Path>) -> Option<ComponentInfo> {
     // 1. Modern Wine-TKG layout
     if let Some(info) = detect_bundled_modern(
         root,
-        &["lib/wine/vkd3d", "files/lib/wine/vkd3d", "dist/lib/wine/vkd3d"],
+        &crate::proton::wine_component_dirs("vkd3d"),
         |_| &["libvkd3d-1.dll", "libvkd3d-shader-1.dll"],
     ) {
         return Some(info);
@@ -540,17 +540,20 @@ fn detect_vkd3d(root: &Path, prefix: Option<&Path>) -> Option<ComponentInfo> {
 /// `<root>/<subdir>/<arch>/<dlls>` with a `version` file in the arch or component
 /// folder. `required_for_arch` yields the DLLs that must all be present for a given
 /// arch (NVAPI ships arch-specific names, the rest share one list).
-fn detect_bundled_modern(
+fn detect_bundled_modern<S: AsRef<str>>(
     root: &Path,
-    subdirs: &[&str],
+    subdirs: &[S],
     required_for_arch: impl Fn(&str) -> &'static [&'static str],
 ) -> Option<ComponentInfo> {
     for subdir in subdirs {
-        let comp_path = root.join(subdir);
+        let comp_path = root.join(subdir.as_ref());
         if !comp_path.is_dir() {
             continue;
         }
-        for arch in ["x86_64-windows", "i386-windows"] {
+        // Only the Windows PE arch dirs hold the DLLs we match here; the `-unix`
+        // WOW64 bridge dirs from ARCH_SUBDIRS are irrelevant to this check.
+        for arch in crate::proton::ARCH_SUBDIRS.iter().filter(|a| a.ends_with("-windows")) {
+            let arch = *arch;
             let arch_path = comp_path.join(arch);
             let required = required_for_arch(arch);
             if required.iter().all(|dll| arch_path.join(dll).exists()) {
