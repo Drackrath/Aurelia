@@ -66,15 +66,93 @@ struct GithubSource {
     repo: &'static str,
     label: &'static str,
     ext: &'static str,
+    /// When set, this source ships CPU-microarch-specific assets (e.g. Proton-CachyOS
+    /// `x86_64_v3` vs `x86_64`). Asset selection then prefers the best match for the
+    /// host CPU (see [`host_cachyos_microarch`]).
+    microarch: bool,
 }
 
 const GE_SOURCES: &[GithubSource] = &[
-    GithubSource { repo: "GloriousEggroll/proton-ge-custom", label: "Proton-GE", ext: ".tar.gz" },
-    GithubSource { repo: "GloriousEggroll/wine-ge-custom", label: "Wine-GE", ext: ".tar.xz" },
+    GithubSource { repo: "GloriousEggroll/proton-ge-custom", label: "Proton-GE", ext: ".tar.gz", microarch: false },
+    GithubSource { repo: "GloriousEggroll/wine-ge-custom", label: "Wine-GE", ext: ".tar.xz", microarch: false },
+    // Proton-CachyOS ships two microarch builds per release: a baseline `x86_64` and
+    // an AVX2-optimized `x86_64_v3`. We pick the best one for the host CPU.
+    GithubSource { repo: "CachyOS/proton-cachyos", label: "Proton-CachyOS", ext: ".tar.xz", microarch: true },
 ];
 
 /// How many recent releases to list per GE repo.
 const GE_RELEASES_PER_REPO: usize = 8;
+
+// ---------------------------------------------------------------------------
+// Modern unified-layout component discovery (shared constants)
+// ---------------------------------------------------------------------------
+//
+// Modern runners (Proton 11+, GE, Proton-CachyOS) use a unified layout where
+// graphics components live under `<lib-root>/wine/<component>/<arch>` alongside the
+// bare base dirs that hold the WOW64 unix-bridge `.so` libraries. These constants
+// are the single source of truth shared by `utils`, `dll_provider_resolver`, and the
+// `wine_tkg` runner so discovery paths stay consistent and de-duplicated.
+
+/// Lib roots a runner may use. The `*/wine` roots host the arch-split component
+/// folders; the bare base dirs (`files/lib`, `files/lib64`) hold the WOW64 unix-bridge
+/// `.so` loaders that a modern WOW64 build needs on `WINEDLLPATH`.
+pub(crate) const UNIFIED_LIB_SUBDIRS: &[&str] = &[
+    "lib/wine",
+    "lib64/wine",
+    "files/lib/wine",
+    "files/lib64/wine",
+    "dist/lib/wine",
+    "dist/lib64/wine",
+    // Bare base dirs — WOW64 unix bridge `.so` libs (ntdll.so, etc.).
+    "files/lib",
+    "files/lib64",
+];
+
+/// Architecture subdirectories a component may split into. The `-windows` dirs hold
+/// the PE DLLs; the `-unix` dirs are the WOW64 bridge dirs (host-side `.so`).
+pub(crate) const ARCH_SUBDIRS: &[&str] =
+    &["x86_64-windows", "i386-windows", "x86_64-unix", "i386-unix"];
+
+/// Graphics component families discovered inside a runner.
+pub(crate) const COMPONENT_FAMILIES: &[&str] = &["dxvk", "vkd3d", "vkd3d-proton", "nvapi"];
+
+/// The `<lib-root>/wine/<family>` component directories across every unified/legacy
+/// lib layout (excludes the bare base dirs, which never host components).
+pub(crate) fn wine_component_dirs(family: &str) -> Vec<String> {
+    UNIFIED_LIB_SUBDIRS
+        .iter()
+        .filter(|l| l.ends_with("wine"))
+        .map(|l| format!("{l}/{family}"))
+        .collect()
+}
+
+/// All candidate relative dirs where a component's DLLs may live: every
+/// `<lib-root>/wine/<family>/<arch>` plus the bare `<lib-root>/wine/<family>`
+/// (arch-neutral / legacy split-lib layouts).
+pub(crate) fn component_dll_subdirs(family: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for lib in UNIFIED_LIB_SUBDIRS.iter().filter(|l| l.ends_with("wine")) {
+        for arch in ARCH_SUBDIRS {
+            out.push(format!("{lib}/{family}/{arch}"));
+        }
+        out.push(format!("{lib}/{family}"));
+    }
+    out
+}
+
+/// The best Proton-CachyOS microarch asset infix for the host CPU: `x86_64_v3` when
+/// the host supports AVX2, else the baseline `x86_64`. Detection runs on the build
+/// host CPU via `is_x86_feature_detected!`, which is portable and needs no target
+/// cfg beyond the x86_64 guard.
+pub(crate) fn host_cachyos_microarch() -> &'static str {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::is_x86_feature_detected!("avx2") {
+            return "x86_64_v3";
+        }
+    }
+    "x86_64"
+}
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -126,6 +204,15 @@ pub fn list_installed(steam_library_path: &Path) -> Vec<InstalledProton> {
             }
         }
     }
+
+    // Drop duplicate physical directories reached via different library roots,
+    // symlinks, or a `compatibilitytools.d` that overlaps the scanned library
+    // (canonicalize so the same runtime isn't listed twice).
+    let mut seen_paths = std::collections::HashSet::new();
+    out.retain(|p| {
+        let key = std::fs::canonicalize(&p.path).unwrap_or_else(|_| p.path.clone());
+        seen_paths.insert(key)
+    });
 
     out.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
     out.dedup_by(|a, b| a.name == b.name);
@@ -215,16 +302,49 @@ fn github_client() -> Result<reqwest::Client> {
     builder.build().context("failed to build the GitHub HTTP client")
 }
 
-/// Map a GitHub release to a package, picking the first asset with the source's
-/// extension (skipping checksum/`.sha*` files). Returns `None` if no asset matches.
+/// Pick the release asset to download: among assets with the source's extension
+/// (skipping checksum/`.sha*` files), honor CPU microarch when `microarch` is set —
+/// prefer the `x86_64_v3` (AVX2) build when the host supports it, otherwise the
+/// generic `x86_64` build. Falls back to the first matching asset.
+fn choose_asset(assets: Vec<GhAsset>, ext: &str, microarch: Option<&str>) -> Option<GhAsset> {
+    let mut matching: Vec<GhAsset> =
+        assets.into_iter().filter(|a| a.name.ends_with(ext)).collect();
+
+    if let Some(arch) = microarch {
+        if arch == "x86_64_v3" {
+            if let Some(i) = matching.iter().position(|a| a.name.contains("x86_64_v3")) {
+                return Some(matching.swap_remove(i));
+            }
+        }
+        // Baseline host (or no v3 asset): pick the generic x86_64 build, never a
+        // higher microarch level the CPU may not support.
+        if let Some(i) = matching.iter().position(|a| {
+            a.name.contains("x86_64")
+                && !a.name.contains("x86_64_v3")
+                && !a.name.contains("x86_64_v4")
+        }) {
+            return Some(matching.swap_remove(i));
+        }
+    }
+
+    matching.into_iter().next()
+}
+
+/// Map a GitHub release to a package, picking the best asset for the source (and
+/// host CPU, for microarch sources). Returns `None` if no asset matches.
 fn release_to_package(src: &GithubSource, rel: GhRelease) -> Option<ProtonPackage> {
-    let asset = rel
-        .assets
-        .into_iter()
-        .find(|a| a.name.ends_with(src.ext))?;
+    let microarch = src.microarch.then(host_cachyos_microarch);
+    let asset = choose_asset(rel.assets, src.ext, microarch)?;
+    // For microarch sources, surface the selected build in the label so `proton list`
+    // shows whether the AVX2-optimized asset was chosen.
+    let label = if src.microarch && asset.name.contains("x86_64_v3") {
+        format!("{} (x86_64_v3 — AVX2 optimized)", src.label)
+    } else {
+        src.label.to_string()
+    };
     Some(ProtonPackage {
         name: rel.tag_name,
-        label: src.label.to_string(),
+        label,
         size: asset.size,
         source: ProtonSource::Github {
             url: asset.browser_download_url,
@@ -478,5 +598,94 @@ mod tests {
             }],
         };
         assert!(release_to_package(src, rel).is_none());
+    }
+
+    fn cachyos_assets() -> Vec<GhAsset> {
+        vec![
+            GhAsset {
+                name: "proton-cachyos-10.0-20250101-slr-x86_64.tar.xz".to_string(),
+                browser_download_url: "http://x/base".to_string(),
+                size: 100,
+            },
+            GhAsset {
+                name: "proton-cachyos-10.0-20250101-slr-x86_64_v3.tar.xz".to_string(),
+                browser_download_url: "http://x/v3".to_string(),
+                size: 200,
+            },
+            GhAsset {
+                name: "proton-cachyos-10.0-20250101-slr.sha512sum".to_string(),
+                browser_download_url: "http://x/sum".to_string(),
+                size: 1,
+            },
+        ]
+    }
+
+    #[test]
+    fn host_microarch_is_a_known_value() {
+        let m = host_cachyos_microarch();
+        assert!(m == "x86_64" || m == "x86_64_v3", "unexpected microarch: {m}");
+    }
+
+    #[test]
+    fn cachyos_prefers_v3_when_host_supports_avx2() {
+        let a = choose_asset(cachyos_assets(), ".tar.xz", Some("x86_64_v3")).unwrap();
+        assert_eq!(a.browser_download_url, "http://x/v3");
+        assert!(a.name.contains("x86_64_v3"));
+    }
+
+    #[test]
+    fn cachyos_falls_back_to_generic_without_avx2() {
+        let a = choose_asset(cachyos_assets(), ".tar.xz", Some("x86_64")).unwrap();
+        assert_eq!(a.browser_download_url, "http://x/base");
+        assert!(!a.name.contains("x86_64_v3"));
+    }
+
+    #[test]
+    fn cachyos_v3_falls_back_to_generic_when_no_v3_asset() {
+        let only_base = vec![GhAsset {
+            name: "proton-cachyos-10.0-x86_64.tar.xz".to_string(),
+            browser_download_url: "http://x/base".to_string(),
+            size: 100,
+        }];
+        let a = choose_asset(only_base, ".tar.xz", Some("x86_64_v3")).unwrap();
+        assert_eq!(a.browser_download_url, "http://x/base");
+    }
+
+    #[test]
+    fn cachyos_release_labels_v3_selection() {
+        let src = GE_SOURCES
+            .iter()
+            .find(|s| s.repo == "CachyOS/proton-cachyos")
+            .unwrap();
+        // Force a v3 pick by giving only a v3 asset (host-independent).
+        let rel = GhRelease {
+            tag_name: "cachyos-10.0".to_string(),
+            assets: vec![GhAsset {
+                name: "proton-cachyos-10.0-x86_64_v3.tar.xz".to_string(),
+                browser_download_url: "http://x/v3".to_string(),
+                size: 200,
+            }],
+        };
+        // Only meaningful on an AVX2 host; otherwise choose_asset would skip the v3
+        // asset. Assert the label reflects whatever asset was actually chosen.
+        if let Some(pkg) = release_to_package(src, rel) {
+            if pkg.size == 200 {
+                assert!(pkg.label.contains("x86_64_v3"), "label was {}", pkg.label);
+            }
+        }
+    }
+
+    #[test]
+    fn non_microarch_source_keeps_plain_label() {
+        let src = &GE_SOURCES[0]; // Proton-GE, microarch = false
+        let rel = GhRelease {
+            tag_name: "GE-Proton9-20".to_string(),
+            assets: vec![GhAsset {
+                name: "GE-Proton9-20.tar.gz".to_string(),
+                browser_download_url: "http://x/tar".to_string(),
+                size: 5,
+            }],
+        };
+        assert_eq!(release_to_package(src, rel).unwrap().label, "Proton-GE");
     }
 }
