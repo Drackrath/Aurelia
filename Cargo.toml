@@ -21,6 +21,7 @@ serde_json = "1"
 steam-vdf-parser = "0.1.1" # Needed for raw binary PICS VDF parsing (not supported by keyvalues-serde or steam-vent yet)
 steam-vent = "0.5"
 steam-vent-proto = "=0.5.2" # proto is no longer re-exported as steam_vent::proto since 0.5; depend on it directly
+steam-vent-proto-common = "0.5.1" # RpcMethod/RpcMessage traits, to hand-wire the CloudConfigStore RPC (library collections) not shipped in steam-vent-proto
 steam-vent-chat = { path = "vendor/steam-vent-chat" } # Vendored fork (ported to steam-vent 0.5) for friend chat; see vendor/steam-vent-chat/Cargo.toml
 steamid-ng = "3" # Construct SteamIDs (from u64 / string) to pass to steam-vent-chat; matches steam-vent's steamid-ng
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "time", "net", "io-util", "sync", "io-std", "process"] }
@@ -42,6 +43,11 @@ libc = "0.2"
 regex = "1"
 sysinfo = { version = "0.33", default-features = false, features = ["system", "disk"] } # Enumerate/kill aurelia processes for `kill`/`daemon`; `disk` for library free-space checks
 qrcode = { version = "0.14", default-features = false } # Terminal QR rendering for `login --qr`
+
+[build-dependencies]
+# Pure-Rust protobuf codegen (no protoc) for the CloudConfigStore messages used by
+# library collections; version tracks the `protobuf` runtime above.
+protobuf-codegen = "3.5"
 
 [target.'cfg(windows)'.dependencies]
 # Used to stop the detached daemon from inheriting the spawning process's stdio

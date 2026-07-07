@@ -23,6 +23,13 @@ of a specific command. `--version` prints the build version.
   - [`dlc`](#dlc)
   - [`achievements`](#achievements)
   - [`image`](#image)
+- [Collections](#collections)
+  - [`collections list`](#collections-list)
+  - [`collections show`](#collections-show)
+  - [`collections create` / `rename` / `delete`](#collections-create--rename--delete)
+  - [`collections add` / `remove`](#collections-add--remove)
+  - [`collections pull`](#collections-pull)
+  - [`collections push` / `sync`](#collections-push--sync)
 - [Installation & maintenance](#installation--maintenance)
   - [`install`](#install)
   - [`install list` / `install stop`](#install-list--install-stop)
@@ -255,18 +262,26 @@ aurelia logout
 List games in your library (owned games merged with locally installed ones).
 
 ```text
-aurelia list [-i] [-s <TEXT>] [--online] [--json]
+aurelia list [-i] [-s <TEXT>] [--collection <NAME>] [--online] [--json]
 ```
 
 | Option | Description |
 | --- | --- |
 | `-i, --installed` | Only show installed games. |
 | `-s, --search <TEXT>` | Filter by case-insensitive substring of the name. |
+| `--collection <NAME>` | Only show games in the named [collection](#collections) (by name or id). Static collections only. |
 | `--online` | Add an `ONLINE` column indicating whether each game appears to require an internet connection (see below). |
 | `--json` | Emit JSON instead of a table. |
 
 The `STATUS` column shows `installed`, `update` (installed with an update available), or
 `-` (not installed). A non-default branch is shown in brackets after the name.
+
+The `COLLECTIONS` column lists the [collections](#collections) each game belongs to
+(comma-joined names of the **static** collections whose membership includes it; dynamic
+collections are skipped since they can't be resolved offline). It is empty (`-`) when a game is
+in no collection. The `--collection <NAME>` filter narrows the listing to a single collection's
+members — resolve by name (case-insensitive) or id; an unknown name is an error, and dynamic
+collections can't be used offline. The `--json` output includes a `collections` array per game.
 
 Steam **tooling** — Proton, the Steam Linux Runtimes, and Steamworks Common
 Redistributables — is filtered out, so the list shows only real games rather than the
@@ -491,6 +506,105 @@ aurelia image 1245620                 # cache it, print the cached path
 aurelia image 1245620 -o cover.jpg    # save to a specific file
 aurelia image 1245620 --force         # refresh the cached copy
 ```
+
+---
+
+## Collections
+
+Steam **library collections** are the named categories you group games into in the Steam
+client (e.g. "RPGs", "Finished", plus the built-in **Favorites** and **Hidden**). Aurelia keeps
+a **local working copy** in `~/.config/Aurelia/collections.json` that you edit **offline** —
+create/rename/delete collections and add/remove games with no login. Those edits reach your
+Steam account only when you explicitly [`pull`](#collections-pull),
+[`push`](#collections-push--sync), or [`sync`](#collections-push--sync).
+
+Collections come in two kinds:
+
+- **Static** — an explicit list of games. These are the ones you create and edit here.
+- **Dynamic** — membership is a saved filter (tags, platforms, …) that Steam evaluates. Aurelia
+  round-trips these **verbatim** and never edits them, so a sync won't clobber them. `add`,
+  `remove`, and `delete` refuse to touch a dynamic collection.
+
+The built-in **`favorite`** and **`hidden`** collections can have games added/removed but
+**cannot be deleted**.
+
+> [!CAUTION]
+> `push` and `sync` **write to your real Steam cloud account** and change the collections you
+> see in the Steam client on every device. They ask for confirmation first; pass `--yes` to
+> skip the prompt. In `--json` mode there is no prompt, so `--yes` is **required**. `pull` and
+> all local edits are safe. If a `push` is rejected because your local copy is stale, run
+> `aurelia collections pull` first, then push again.
+
+Every subcommand honors the global `--json` flag.
+
+### `collections list`
+
+List every collection with its kind and static game count.
+
+```bash
+aurelia collections list
+aurelia collections list --json
+```
+
+### `collections show`
+
+Show a collection's member app ids. Accepts a **name** (case-insensitive) or an **id**. Dynamic
+collections can't be listed offline (Steam computes their members).
+
+```bash
+aurelia collections show "RPGs"
+aurelia collections show uc-1a2b3c4d --json
+```
+
+### `collections create` / `rename` / `delete`
+
+```bash
+aurelia collections create "RPGs"              # new static collection
+aurelia collections rename "RPGs" "Role-Playing"
+aurelia collections delete "Role-Playing"      # marked deleted locally; removed from Steam on push
+```
+
+`delete` marks the collection for deletion locally; it is tombstoned in Steam on the next
+`push`/`sync`. Built-in `favorite`/`hidden` can't be deleted.
+
+### `collections add` / `remove`
+
+Add or remove one or more games (by app id) to/from a collection. `remove` records the game as
+excluded even if it was previously added.
+
+```bash
+aurelia collections add "RPGs" 570 730 1245620
+aurelia collections remove "RPGs" 730
+```
+
+### `collections pull`
+
+Download your collections from Steam and **merge** them into the local store: memberships are
+unioned per collection, brand-new remote collections are added, and remote deletions are
+applied. Requires a logged-in session (`aurelia login`). Safe — it never writes to Steam.
+
+```bash
+aurelia collections pull
+aurelia collections pull --json
+```
+
+### `collections push` / `sync`
+
+`push` uploads every local collection to your Steam account. `sync` does a `pull` (to merge in
+any remote changes) followed by a `push`. Both **mutate your real Steam library** and require
+confirmation or `--yes`.
+
+```bash
+aurelia collections push            # prompts: "About to upload N collection(s)… Continue? [y/N]"
+aurelia collections push --yes      # skip the prompt
+aurelia collections sync --yes      # reconcile both sides
+aurelia collections push --yes --json
+```
+
+The `list` command also integrates collections: it shows a **COLLECTIONS** column (the
+comma-joined names of the static collections each game belongs to), and `aurelia list
+--collection "<name>"` filters the library to a single collection's members. See
+[`list`](#list).
 
 ---
 

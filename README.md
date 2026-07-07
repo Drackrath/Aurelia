@@ -126,7 +126,9 @@ sync, and Proton/Wine launching all work today.
 - [x] **Inventory & market (read-only)** — view your inventory, look up item prices, search
       the Community Market, and see your wallet and listings (buying & selling are planned —
       see [docs/community-market-plan.md](docs/community-market-plan.md))
-- [ ] Collections / categorization
+- [x] **Collections / categorization** — create/rename/delete library collections, add/remove
+      games, a `list` COLLECTIONS column and `--collection` filter, and on-demand pull/push/sync
+      with Steam's cloud collections
 
 ---
 
@@ -262,6 +264,17 @@ aurelia proton uninstall GE-Proton9-19  # delete an installed GE build
 aurelia steam-runtime status          # resolved master prefix, layout, steam.exe presence
 aurelia steam-runtime install         # install Steam into the master Wine prefix
 aurelia steam-runtime repair          # back up the prefix (keep one) and reinstall
+
+# Collections (library categories) — edit locally offline, sync to Steam on demand
+aurelia collections list                     # all collections + game counts
+aurelia collections create "RPGs"            # new (static) collection
+aurelia collections add "RPGs" 570 730       # add games by app id
+aurelia collections remove "RPGs" 730        # drop a game
+aurelia collections show "RPGs"              # list a collection's games
+aurelia list --collection "RPGs"             # filter the library to one collection
+aurelia collections pull                     # fetch Steam's collections and merge them in
+aurelia collections push --yes               # upload local collections to your Steam account
+aurelia collections sync --yes               # pull then push (reconcile both sides)
 
 # umu-launcher plugin (Linux only, optional — Proton via umu-run, downloaded on demand)
 aurelia umu enable                    # turn the plugin on (off by default)
