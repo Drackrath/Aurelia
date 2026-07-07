@@ -115,7 +115,124 @@ pub fn resolve_runner(name: &str, library_root: &Path) -> PathBuf {
     }
 
     // 3. Fallback to name as provided.
+    tracing::warn!(
+        runner = %name,
+        "could not resolve runner '{}' to an on-disk runtime under any known search path; \
+         returning the name verbatim as a path (the launch will likely fail resolving the binary)",
+        name
+    );
     name_path.to_path_buf()
+}
+
+/// Coarse classification of a runner directory tree, used to decide how a process
+/// must be invoked. See [`classify_runner`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum RunnerKind {
+    /// A Proton tree: has a `proton` python launch script at the root and/or the
+    /// Proton `files/bin/wine` layout. The game is launched through `proton run`
+    /// (so protonfixes apply), but a bare wine binary for background Steam must be
+    /// taken from `files/bin/wine64` directly — never `proton run`.
+    Proton,
+    /// A wine-tkg build: `bin/wine`(64) present, no `proton` script, name marks tkg.
+    WineTkg,
+    /// A plain upstream/custom Wine build: `bin/wine`(64) present, no `proton` script.
+    PlainWine,
+    /// None of the above — not a usable runner tree.
+    Unknown,
+}
+
+/// Classify a runner directory by inspecting its on-disk layout.
+///
+/// Detection order matters: a Proton tree is identified first (it owns a `proton`
+/// launch script and/or the `files/bin/wine` layout), then bare Wine trees
+/// (`bin/wine`/`bin/wine64` with no `proton` script), split into wine-tkg vs plain
+/// Wine by a name heuristic.
+pub(crate) fn classify_runner(runner_dir: &Path) -> RunnerKind {
+    // Proton: the `proton` launch script at the root is the canonical marker (it is
+    // what `build_runner_command` probes to append `run`). The Proton `files/bin/wine`
+    // layout is an additional signal.
+    if runner_dir.join("proton").exists()
+        || runner_dir.join("files/bin/wine").exists()
+        || runner_dir.join("files/bin/wine64").exists()
+    {
+        return RunnerKind::Proton;
+    }
+
+    // Bare Wine tree: wine binaries under `bin/` with no Proton wrapper.
+    if runner_dir.join("bin/wine").exists() || runner_dir.join("bin/wine64").exists() {
+        let name = runner_dir
+            .file_name()
+            .map(|n| n.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        if name.contains("tkg") {
+            return RunnerKind::WineTkg;
+        }
+        return RunnerKind::PlainWine;
+    }
+
+    RunnerKind::Unknown
+}
+
+/// Locate a Proton tree's bundled bare wine binary (prefer 64-bit).
+///
+/// Background Steam must run under a bare wine, not the `proton run` protonfixes
+/// wrapper. When the only runtime available is a Proton tree, this yields the wine
+/// binary shipped inside it (`files/bin/wine64`, then a few known fallbacks).
+pub(crate) fn proton_bundled_bare_wine(runner_dir: &Path) -> Option<PathBuf> {
+    let root = derive_runner_root(runner_dir);
+    for rel in ["files/bin/wine64", "files/bin/wine", "dist/bin/wine64", "dist/bin/wine"] {
+        let p = root.join(rel);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// Validate that `path` is a usable bare wine / plain-wine runner suitable for
+/// hosting the background Steam process.
+///
+/// Background Steam must NOT be hosted by a `proton run` wrapper — it needs a bare
+/// wine. This accepts a wine/wine64 binary directly, or a wine-tkg / plain-Wine
+/// directory tree; it rejects a missing path, a `proton` script/tree, and anything
+/// unrecognised.
+pub(crate) fn validate_steam_runtime_runner_path(path: &Path) -> Result<()> {
+    if !path.exists() {
+        bail!(
+            "Steam-runtime runner path does not exist: {}",
+            path.display()
+        );
+    }
+
+    // A direct binary is fine only if it is a bare wine/wine64 (not the `proton` script).
+    if path.is_file() {
+        match path.file_name().and_then(|f| f.to_str()) {
+            Some("wine") | Some("wine64") => return Ok(()),
+            Some("proton") => bail!(
+                "Steam-runtime runner points at a `proton` launch script ({}); background \
+                 Steam requires a bare wine binary, not a `proton run` wrapper",
+                path.display()
+            ),
+            _ => bail!(
+                "Steam-runtime runner binary is not a wine/wine64 executable: {}",
+                path.display()
+            ),
+        }
+    }
+
+    match classify_runner(path) {
+        RunnerKind::WineTkg | RunnerKind::PlainWine => Ok(()),
+        RunnerKind::Proton => bail!(
+            "Steam-runtime runner resolves to a Proton tree ({}); background Steam must run \
+             under a bare wine, not the `proton run` protonfixes wrapper. Point \
+             `steam_runtime_runner` at a wine-tkg or plain-Wine build",
+            path.display()
+        ),
+        RunnerKind::Unknown => bail!(
+            "Steam-runtime runner path is not a usable wine runner (no bin/wine[64]): {}",
+            path.display()
+        ),
+    }
 }
 
 pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<()> {
@@ -1293,5 +1410,117 @@ mod resolve_runner_tests {
         // A name that matches nothing on disk is returned as-is (caller errors clearly).
         let got = resolve_runner("NoSuchRuntimeXYZ", tmp.path());
         assert_eq!(got, std::path::Path::new("NoSuchRuntimeXYZ"));
+    }
+}
+
+#[cfg(test)]
+mod runner_classification_tests {
+    use super::*;
+
+    /// Create `dir/rel` as an empty marker file, creating parent dirs.
+    fn touch(dir: &Path, rel: &str) {
+        let p = dir.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, b"").unwrap();
+    }
+
+    #[test]
+    fn classify_proton_by_script() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("Proton - Experimental");
+        std::fs::create_dir_all(&root).unwrap();
+        touch(&root, "proton");
+        touch(&root, "files/bin/wine64");
+        assert_eq!(classify_runner(&root), RunnerKind::Proton);
+    }
+
+    #[test]
+    fn classify_proton_by_files_bin_wine_without_script() {
+        // A Proton-style tree missing the top-level script is still Proton by layout.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("GE-Proton9-20");
+        std::fs::create_dir_all(&root).unwrap();
+        touch(&root, "files/bin/wine");
+        assert_eq!(classify_runner(&root), RunnerKind::Proton);
+    }
+
+    #[test]
+    fn classify_plain_wine() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("wine-9.0");
+        std::fs::create_dir_all(&root).unwrap();
+        touch(&root, "bin/wine");
+        touch(&root, "bin/wine64");
+        assert_eq!(classify_runner(&root), RunnerKind::PlainWine);
+    }
+
+    #[test]
+    fn classify_wine_tkg_by_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("wine-tkg-staging-9.0");
+        std::fs::create_dir_all(&root).unwrap();
+        touch(&root, "bin/wine64");
+        assert_eq!(classify_runner(&root), RunnerKind::WineTkg);
+    }
+
+    #[test]
+    fn classify_unknown_empty_tree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("not-a-runner");
+        std::fs::create_dir_all(&root).unwrap();
+        assert_eq!(classify_runner(&root), RunnerKind::Unknown);
+    }
+
+    #[test]
+    fn validate_accepts_plain_wine_tree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("wine-9.0");
+        std::fs::create_dir_all(&root).unwrap();
+        touch(&root, "bin/wine64");
+        assert!(validate_steam_runtime_runner_path(&root).is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_wine_tkg_tree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("wine-tkg-9.0");
+        std::fs::create_dir_all(&root).unwrap();
+        touch(&root, "bin/wine");
+        assert!(validate_steam_runtime_runner_path(&root).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_proton_tree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("Proton 9.0");
+        std::fs::create_dir_all(&root).unwrap();
+        touch(&root, "proton");
+        touch(&root, "files/bin/wine64");
+        assert!(validate_steam_runtime_runner_path(&root).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_missing_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("nope");
+        assert!(validate_steam_runtime_runner_path(&missing).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_unknown_tree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("empty");
+        std::fs::create_dir_all(&root).unwrap();
+        assert!(validate_steam_runtime_runner_path(&root).is_err());
+    }
+
+    #[test]
+    fn proton_bundled_bare_wine_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("Proton 9.0");
+        std::fs::create_dir_all(&root).unwrap();
+        touch(&root, "files/bin/wine64");
+        let got = proton_bundled_bare_wine(&root);
+        assert_eq!(got, Some(root.join("files/bin/wine64")));
     }
 }

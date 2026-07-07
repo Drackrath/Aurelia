@@ -39,6 +39,7 @@ mod tests {
             steam_enabled: false,
             target_architecture: crate::models::ExecutableArchitecture::X86_64,
             dll_resolutions: Vec::new(),
+            game_fixups: Default::default(),
             verification_ptr: std::ptr::null_mut(),
         }
     }
@@ -120,6 +121,7 @@ mod tests {
             steam_enabled: false,
             target_architecture: crate::models::ExecutableArchitecture::X86_64,
             dll_resolutions: Vec::new(),
+            game_fixups: Default::default(),
             verification_ptr: std::ptr::null_mut(),
         };
 
@@ -140,6 +142,42 @@ mod tests {
         // Strict mode uses 'n', not 'n,b'
         assert!(overrides_dxvk.contains("d3d11=n"));
         assert!(!overrides_dxvk.contains("d3d11=n,b"));
+    }
+
+    #[tokio::test]
+    async fn test_fixup_fragments_merged_into_build_env() {
+        // A game with fixups should have both env and DLL-override fragments merged
+        // into the built environment.
+        let runner = WineTkgRunner;
+        let mut ctx = mock_context();
+        ctx.game_fixups = crate::launch::fixups::GameFixups {
+            env: vec![("PROTON_NO_ESYNC".to_string(), "1".to_string())],
+            dll_overrides: vec![("xlive".to_string(), "builtin".to_string())],
+        };
+
+        let env = runner.build_env(&ctx).await.unwrap();
+
+        assert_eq!(env.get("PROTON_NO_ESYNC").map(String::as_str), Some("1"));
+        let overrides = env.get("WINEDLLOVERRIDES").unwrap();
+        assert!(overrides.contains("xlive=builtin"), "overrides were: {overrides}");
+    }
+
+    #[tokio::test]
+    async fn test_user_env_wins_over_fixup() {
+        use crate::models::UserAppConfig;
+        let runner = WineTkgRunner;
+        let mut ctx = mock_context();
+        ctx.game_fixups = crate::launch::fixups::GameFixups {
+            env: vec![("PROTON_NO_ESYNC".to_string(), "1".to_string())],
+            dll_overrides: vec![],
+        };
+        let mut user = UserAppConfig::default();
+        user.env_variables.insert("PROTON_NO_ESYNC".to_string(), "0".to_string());
+        ctx.user_config = Some(user);
+
+        let env = runner.build_env(&ctx).await.unwrap();
+        // Explicit per-game value must win over the auto-fixup.
+        assert_eq!(env.get("PROTON_NO_ESYNC").map(String::as_str), Some("0"));
     }
 
     #[tokio::test]
