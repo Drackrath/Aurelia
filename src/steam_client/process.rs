@@ -350,6 +350,7 @@ NoSavePersonalInfo=1
         launcher_config: &crate::config::LauncherConfig,
         user_config: Option<&crate::models::UserAppConfig>,
         force_native_engine: bool,
+        force_umu: bool,
         steam_enabled: bool,
     ) -> Result<std::process::Child> {
         use crate::launch::pipeline::{LaunchPipeline, PipelineContext};
@@ -362,6 +363,7 @@ NoSavePersonalInfo=1
         ctx.user_config = user_config.cloned();
         ctx.proton_path = proton_path.map(|s| s.to_string());
         ctx.force_native_engine = force_native_engine;
+        ctx.force_umu = force_umu;
         ctx.steam_enabled = steam_enabled;
 
         if let Ok(config_dir) = crate::config::config_dir() {

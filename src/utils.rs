@@ -401,35 +401,6 @@ pub fn derive_runner_root(binary_path: &Path) -> PathBuf {
     parent.to_path_buf()
 }
 
-/// Resolve the effective umu-launcher setting for a game.
-///
-/// Mirrors how other per-game/global settings are resolved: a per-game override
-/// (`UserAppConfig::use_umu`) wins when present, otherwise the global default
-/// (`LauncherConfig::use_umu`) applies. `None` on the per-game side inherits.
-pub fn resolve_use_umu(
-    launcher_config: &crate::config::LauncherConfig,
-    user_config: Option<&crate::models::UserAppConfig>,
-) -> bool {
-    user_config
-        .and_then(|c| c.use_umu)
-        .unwrap_or(launcher_config.use_umu)
-}
-
-/// Locate the `umu-run` binary on the `PATH`, returning the first match.
-///
-/// umu-launcher installs `umu-run` as a system binary, so it is not an absolute
-/// path in Aurelia's config — we probe each `PATH` entry for it.
-pub fn umu_run_path() -> Option<PathBuf> {
-    let path_var = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path_var) {
-        let candidate = dir.join("umu-run");
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
-}
-
 pub fn detect_runner_components(
     runner_path: &Path,
     wineprefix: Option<&Path>,

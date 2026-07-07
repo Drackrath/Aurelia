@@ -867,24 +867,25 @@ impl Runner for WineTkgRunner {
             }
         }
 
-        // umu-launcher (when enabled) wraps the launch instead of resolving a runner
+        // umu-launcher (when active) wraps the launch instead of resolving a runner
         // command below; it selects Proton via PROTONPATH and spawns `umu-run` directly.
-        let use_umu = crate::utils::resolve_use_umu(&ctx.launcher_config, ctx.user_config.as_ref());
+        // The plugin-resolved absolute `umu-run` path is threaded in via the context.
+        let use_umu = ctx.use_umu;
 
         let mut spec = CommandSpec::default();
 
         if use_umu {
             // umu-launcher is the compatibility wrapper: it invokes Proton itself
             // (selected via PROTONPATH) so we spawn `umu-run` directly with the game
-            // executable — NO 'proton run' prefix and NO steam:// handoff. `umu-run`
-            // is a PATH binary; fail early with a clear error if it is missing.
-            if crate::utils::umu_run_path().is_none() {
-                return Err(LaunchError::new(
+            // executable — NO 'proton run' prefix and NO steam:// handoff. The umu-run
+            // binary is resolved by the umu plugin (ResolveComponentsStage).
+            let umu_run = ctx.umu_run.clone().ok_or_else(|| {
+                LaunchError::new(
                     LaunchErrorKind::Runner,
-                    "umu is enabled but `umu-run` was not found on PATH; install umu-launcher or disable use_umu",
-                ));
-            }
-            spec.program = PathBuf::from("umu-run");
+                    "umu is active but the plugin `umu-run` path was not resolved",
+                )
+            })?;
+            spec.program = umu_run;
         } else {
             // Build the base command (handles 'proton run' wrapper and directory resolution)
             let base_cmd = crate::utils::build_runner_command(&active_runner)
