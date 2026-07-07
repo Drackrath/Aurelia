@@ -101,10 +101,18 @@ sync, and Proton/Wine launching all work today.
       a `--lang` flag or the `config language` default (used by the Heroic Steam integration)
 - [x] **DLC** — install, enable/disable, and per-DLC ownership/install status
 - [x] **Steam Cloud** — enumerate, download, upload save data
-- [x] **Proton/Wine** — runtime discovery, a download manager (official Valve Proton + GE
-      builds), per-game version pinning, and launch integration; depot-aware executable
-      selection (native vs Proton), running-game tracking, and graceful/forced stop
-      (`running` / `stop --force`)
+- [x] **Proton/Wine** — runtime discovery, a download manager (official Valve Proton, GE
+      builds, and **Proton-CachyOS** with AVX2/`x86_64_v3` microarch selection), automatic
+      **modern unified-layout** discovery (Proton 11+/GE/CachyOS, WOW64-aware) with strict
+      bitness filtering, per-game version pinning, and launch integration; depot-aware
+      executable selection (native vs Proton), running-game tracking, and graceful/forced
+      stop (`running` / `stop --force`)
+- [x] **Self-contained Windows Steam runtime** — install/repair a master Wine Steam prefix
+      (`steam-runtime install` / `repair` / `status`) to satisfy Steamworks/DRM handshakes
+      without bridging the host Steam client
+- [x] **Optional launch plugins (Linux, opt-in, never bundled)** — **luxtorpeda** native
+      engines, and **umu-launcher** (Proton via `umu-run`); both downloaded on demand and
+      routed per-game
 - [x] **Steam integration (opt-in)** — launch with the host Steam client bridged in
       (`play --steam`, Steam started silently if needed) for Steamworks online features;
       required for and auto-enabled on Family-Shared games
@@ -244,10 +252,25 @@ aurelia config language german       # default language for info/achievements te
 aurelia config game 1245620 --proton GE-Proton9-20  # pin a Proton version for one game
 
 # Proton / Wine runtimes (download manager)
-aurelia proton list                  # installable runtimes (Valve + GE) and what's installed
+aurelia proton list                  # installable runtimes (Valve + GE + CachyOS) and what's installed
 aurelia proton install GE-Proton9-20 # download a GE build (or "Proton 9.0" via Steam)
+aurelia proton install Proton-CachyOS # CachyOS build (auto-picks x86_64_v3/AVX2 when supported)
 aurelia proton default GE-Proton9-20 # set the global default (used when a game has none set)
 aurelia proton uninstall GE-Proton9-19  # delete an installed GE build
+
+# Windows Steam runtime (self-contained Steamworks/DRM handshake, no host Steam client)
+aurelia steam-runtime status          # resolved master prefix, layout, steam.exe presence
+aurelia steam-runtime install         # install Steam into the master Wine prefix
+aurelia steam-runtime repair          # back up the prefix (keep one) and reinstall
+
+# umu-launcher plugin (Linux only, optional — Proton via umu-run, downloaded on demand)
+aurelia umu enable                    # turn the plugin on (off by default)
+aurelia umu install                   # download umu-run on demand (not bundled)
+aurelia umu path ~/umu                # use an existing install instead (skips the download)
+aurelia umu status                    # show enabled state + installed version
+aurelia config game 1245620 --umu     # route one game through umu (Proton via umu-run)
+aurelia play 1245620 --umu            # one-off launch via umu
+aurelia umu uninstall                 # remove the downloaded payload
 
 # Luxtorpeda native-engine plugin (Linux only, optional)
 aurelia luxtorpeda enable             # turn the plugin on (off by default)

@@ -81,6 +81,10 @@ of a specific command. `--version` prints the build version.
   - [`proton install`](#proton-install)
   - [`proton uninstall`](#proton-uninstall)
   - [`proton default`](#proton-default)
+- [Windows Steam runtime](#windows-steam-runtime)
+  - [`steam-runtime install` / `repair` / `status`](#windows-steam-runtime)
+- [Luxtorpeda native-engine plugin](#luxtorpeda-native-engine-plugin-linux-only)
+- [umu-launcher plugin](#umu-launcher-plugin-linux-only)
 - [Session daemon](#session-daemon)
   - [`daemon`](#daemon)
   - [`daemon list` / `daemon stop`](#daemon)
@@ -117,6 +121,10 @@ of a specific command. `--version` prints the build version.
   `~/.config/Aurelia` by default. Set **`AURELIA_CONFIG_DIR`** to relocate them — useful for
   an embedding driver (e.g. Heroic) that needs Aurelia's state isolated from a user's
   standalone install.
+- **`AURELIA_DIAGNOSE_INSTALL=1`:** opt-in diagnostic mode for the
+  [Windows Steam runtime](#windows-steam-runtime) install/repair flow — runs the installer
+  with verbose `WINEDEBUG` and captures output to a timestamped log under
+  `~/.config/Aurelia/logs/`. No effect on normal game launches.
 
 `<APP_ID>` is the numeric Steam application id (visible via `aurelia list`).
 
@@ -1598,6 +1606,8 @@ aurelia config game <APP_ID> [--proton <VERSION>] [--clear-proton] [--platform <
 | `--platform <windows\|linux>` | Force the platform target. `windows` runs through Proton/Wine on Linux. |
 | `--native-engine` | Route this game through the [luxtorpeda](#luxtorpeda-native-engine-plugin-linux-only) native-engine plugin (Linux only; requires `aurelia luxtorpeda enable`). |
 | `--no-native-engine` | Clear luxtorpeda routing, back to normal native/Proton selection. |
+| `--umu` | Route this game through the [umu-launcher](#umu-launcher-plugin-linux-only) plugin (Proton via umu; Linux only; requires `aurelia umu enable`). |
+| `--no-umu` | Clear umu routing, back to normal native/Proton selection. |
 
 At launch, the Proton version is resolved in this order: an explicit `play --proton` flag →
 this per-game version → the global default (only when the game targets Windows). The
@@ -1614,13 +1624,22 @@ aurelia config game 1245620 --platform windows
 
 ## Proton & Wine runtimes
 
-Download and manage the Proton/Wine runtimes games launch through. Two sources are
+Download and manage the Proton/Wine runtimes games launch through. Three sources are
 supported:
 
 - **Official Valve Proton** — free Steam apps (Proton Experimental, 9.0, 8.0, …), installed
   through the normal content pipeline into `steamapps/common` (needs an active session).
 - **GE community builds** — GloriousEggroll's **Proton-GE** and **Wine-GE**, downloaded from
   GitHub releases and extracted into `compatibilitytools.d` (no session needed).
+- **Proton-CachyOS** — the CachyOS community build, downloaded from GitHub. Aurelia detects
+  the host CPU and, when it supports AVX2, prefers the microarchitecture-optimized
+  `x86_64_v3` asset (labelled *AVX2 optimized* in `proton list`), otherwise the generic
+  `x86_64` build.
+
+> Modern **unified Proton layouts** (Proton 11+, GE, and Proton-CachyOS, which nest their
+> libraries under `files/lib/wine/…` with WOW64 `-unix`/`-windows` split components) are
+> discovered automatically, with strict 32-/64-bit filtering so a game never loads a
+> wrong-bitness DLL.
 
 The **global default** runtime is used when a game has no per-game version
 ([`config game`](#config-game)) set. **Installing a runtime makes it the new default** (the
@@ -1662,6 +1681,7 @@ aurelia proton install <VERSION>
 ```bash
 aurelia proton install GE-Proton9-20     # GE build from GitHub
 aurelia proton install "Proton 9.0"      # official Valve Proton via Steam
+aurelia proton install Proton-CachyOS    # CachyOS build (auto-picks the x86_64_v3 asset on AVX2 hosts)
 ```
 
 ### `proton uninstall`
@@ -1688,6 +1708,44 @@ aurelia proton default <VERSION>
 ```bash
 aurelia proton default GE-Proton9-20
 ```
+
+---
+
+## Windows Steam runtime
+
+Some Windows games require a live Steam client for their Steamworks/DRM handshake. Aurelia
+can host a self-contained **master Windows Steam prefix** — a Wine prefix with Steam
+installed inside it — and start that Steam in the background purely to answer the in-prefix
+handshake, while the game itself is still launched **directly** by Aurelia (never through a
+`steam://run` / `-applaunch` handoff). This is an alternative to bridging the host Steam
+client with [`play --steam`](#play).
+
+Installing/repairing the master prefix needs a plain Wine (or wine-tkg) runner configured as
+`steam_runtime_runner` in the launcher config — background Steam runs under bare Wine, not
+through Proton's `proton run` wrapper.
+
+```text
+aurelia steam-runtime install [--json]
+aurelia steam-runtime repair  [--json]
+aurelia steam-runtime status  [--json]
+```
+
+| Subcommand | Description |
+| --- | --- |
+| `install` | Download `SteamSetup.exe` (if needed) and install Steam into the master prefix. Requires `steam_runtime_runner` to be set. |
+| `repair` | Stop Steam, back up the master prefix (keeping a single `.bak`), then reinstall — recovers a corrupted install that passes the file-exists check but crashes on start. Requires `steam_runtime_runner`. |
+| `status` | Print the resolved master root, Wine prefix, layout kind, whether `steam.exe` is present, and whether a runtime runner is configured. |
+
+```bash
+aurelia steam-runtime status
+aurelia steam-runtime install
+aurelia steam-runtime repair
+```
+
+> **Diagnostics:** set `AURELIA_DIAGNOSE_INSTALL=1` before `install`/`repair` to run the
+> installer with verbose `WINEDEBUG` and capture its output to a timestamped log under
+> `~/.config/Aurelia/logs/` — useful for root-causing setupapi/file-copy failures. It has no
+> effect on normal game launches.
 
 ---
 
@@ -1746,6 +1804,52 @@ aurelia play 2270 --native-engine              # one-off, regardless of per-game
 > **Note:** engines run outside Steam's runtime (Sniper) container, so they rely on host
 > system libraries. If an engine fails to find a library for a given title, prefer Proton
 > for that game. `--native-engine` conflicts with `--proton`/`--windows`.
+
+---
+
+## umu-launcher plugin (Linux only)
+
+[umu-launcher](https://github.com/Open-Wine-Components/umu-launcher) is the unified launcher
+that runs Windows games through Proton **outside** Steam, applying the same Steam Linux
+Runtime and per-game protonfixes Steam would. Like [luxtorpeda](#luxtorpeda-native-engine-plugin-linux-only),
+it is an **optional plugin** that is **never bundled**: when you enable it and opt a game in,
+Aurelia downloads `umu-run` on the fly into `~/.config/Aurelia/plugins/umu` and wraps the
+launch with it (setting `GAMEID` and `PROTONPATH` to the selected Proton). Unlike luxtorpeda,
+umu **wraps Proton** rather than replacing it — the game still runs under the Proton build you
+choose, just invoked via `umu-run`.
+
+Routing is **explicit opt-in per game** — enabling the plugin never changes how an un-pinned
+game launches.
+
+```text
+aurelia umu enable | disable
+aurelia umu install | update
+aurelia umu path [<DIR>] [--clear]
+aurelia umu status [--json]
+aurelia umu uninstall [--json]
+```
+
+| Subcommand | Description |
+| --- | --- |
+| `enable` / `disable` | Master toggle (`umu_enabled`). Off by default. |
+| `install` / `update` | Download (or re-download) the latest `umu-run` from GitHub (`Open-Wine-Components/umu-launcher`). Refused when a custom path is set. |
+| `path <DIR>` | Point Aurelia at an **existing** umu install (a directory containing `umu-run`, or the `umu-run` binary directly). This **disables the managed download**. Omit the dir to print the current value, or `--clear` to revert to the managed download. |
+| `status` | Show enabled state, source (managed vs custom path), and installed version. |
+| `uninstall` | Remove the **managed** payload from disk (never touches a custom-path install). |
+
+Pin (or unpin) a game, or force a one-off launch:
+
+```bash
+aurelia umu enable                       # off by default
+aurelia config game 1245620 --umu        # route this game through umu (Proton via umu-run)
+aurelia config game 1245620 --no-umu     # back to normal native/Proton selection
+aurelia play 1245620 --umu               # one-off, regardless of per-game config
+aurelia play 1245620 --umu --proton GE-Proton9-20   # choose which Proton umu runs
+```
+
+The path is stored as `umu_path` in the launcher config. `--umu` is Linux-only and conflicts
+with `--windows`/`--native-engine`; it **combines** with `--proton`, which selects the Proton
+build umu runs the game through.
 
 ---
 
