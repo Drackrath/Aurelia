@@ -39,19 +39,12 @@ impl PipelineStage for PreflightStage {
 
         let mut final_res: std::result::Result<(), LaunchError> = Ok(());
 
-        // When umu-launcher is enabled the runner is `umu-run`, a system binary
-        // resolved from PATH rather than an absolute path — so the usual
-        // "must exist as an absolute file" check does not apply to it.
-        let umu_enabled = ctx.launcher_config.as_ref()
-            .map(|lc| crate::utils::resolve_use_umu(lc, ctx.user_config.as_ref()))
-            .unwrap_or(false);
-
-        // 1. Verify runner binary
+        // 1. Verify runner binary. When umu-launcher wraps the launch, `spec.program` is
+        // the absolute plugin-resolved `umu-run` path, so the normal existence check
+        // applies to it just like any other runner.
         let runner_file = &spec.program;
         let mut check = PreflightCheck { name: "Runner Existence".into(), status: true, details: "OK".into() };
-        if umu_enabled && !runner_file.is_absolute() {
-            check.details = "OK (umu-run resolved from PATH)".into();
-        } else if !runner_file.exists() {
+        if !runner_file.exists() {
             check.status = false;
             check.details = format!("Runner binary not found: {}", runner_file.display());
             final_res = Err(preflight_error(LaunchErrorKind::Runner, &check.details)
@@ -290,26 +283,33 @@ mod tests {
 
     #[tokio::test]
     async fn test_preflight_umu_run_allowed() {
-        // With umu enabled, the runner is the PATH binary `umu-run` (a relative,
-        // non-existent path) and preflight must still pass.
-        let mut ctx = PipelineContext::new(123);
-        let mut lc = crate::config::LauncherConfig::default();
-        lc.use_umu = true;
-        ctx.launcher_config = Some(lc);
+        // With the umu plugin active, `spec.program` is the absolute plugin-resolved
+        // `umu-run` binary; an existing absolute path must pass preflight normally.
+        let tmp = tempdir().unwrap();
+        let umu_run = tmp.path().join("umu-run");
+        fs::write(&umu_run, "#!/bin/sh\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&umu_run).unwrap().permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&umu_run, perms).unwrap();
+        }
 
+        let mut ctx = PipelineContext::new(123);
         let mut spec = CommandSpec::default();
-        spec.program = Path::new("umu-run").to_path_buf();
+        spec.program = umu_run;
         ctx.command_spec = Some(spec);
 
         let stage = PreflightStage;
         let res = stage.execute(&mut ctx).await;
 
-        assert!(res.is_ok(), "umu-run should pass preflight when use_umu is enabled: {:?}", res.err());
+        assert!(res.is_ok(), "resolved umu-run should pass preflight: {:?}", res.err());
     }
 
     #[tokio::test]
-    async fn test_preflight_umu_disabled_still_validates_runner() {
-        // Without umu, a bogus relative runner path must still fail preflight.
+    async fn test_preflight_bogus_relative_runner_fails() {
+        // A bogus relative, non-existent runner path must fail preflight.
         let mut ctx = PipelineContext::new(123);
         let mut spec = CommandSpec::default();
         spec.program = Path::new("umu-run").to_path_buf();
@@ -318,7 +318,7 @@ mod tests {
         let stage = PreflightStage;
         let res = stage.execute(&mut ctx).await;
 
-        assert!(res.is_err(), "non-existent runner should fail preflight when umu is disabled");
+        assert!(res.is_err(), "non-existent runner should fail preflight");
     }
 
     #[tokio::test]

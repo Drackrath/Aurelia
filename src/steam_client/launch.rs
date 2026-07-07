@@ -12,6 +12,7 @@ impl SteamClient {
         user_config: Option<&crate::models::UserAppConfig>,
         force_windows: bool,
         force_native_engine: bool,
+        force_umu: bool,
         steam_enabled: bool,
     ) -> Result<LaunchInfo> {
         // A Family-Shared game (licensed to another account) can only be authorised
@@ -133,7 +134,7 @@ impl SteamClient {
         let mut child = if native_windows {
             self.spawn_windows_native(app, &launch_info, user_config).await?
         } else {
-            self.spawn_game_process(app, &launch_info, chosen_proton_path, &launcher_config, user_config, force_native_engine, steam_enabled).await?
+            self.spawn_game_process(app, &launch_info, chosen_proton_path, &launcher_config, user_config, force_native_engine, force_umu, steam_enabled).await?
         };
 
         // Record the launch so a separate `aurelia stop <app_id>` invocation can
@@ -191,7 +192,7 @@ impl SteamClient {
         user_config: Option<&crate::models::UserAppConfig>,
     ) -> Result<()> {
         let launcher_config = load_launcher_config().await.unwrap_or_default();
-        self.spawn_game_process(app, launch_info, proton_path, &launcher_config, user_config, false, false).await?;
+        self.spawn_game_process(app, launch_info, proton_path, &launcher_config, user_config, false, false, false).await?;
         Ok(())
     }
 

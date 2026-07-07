@@ -124,10 +124,6 @@ pub struct UserAppConfig {
     pub graphics_layers: GraphicsLayerConfig,
     #[serde(default)]
     pub gpu_preference: Option<String>,
-    /// Per-game override for umu-launcher wrapping. `None` (default) inherits the
-    /// global `LauncherConfig::use_umu`; `Some(true/false)` forces it for this game.
-    #[serde(default)]
-    pub use_umu: Option<bool>,
     pub hidden: bool,   // Future use
     pub favorite: bool, // Future use
 }

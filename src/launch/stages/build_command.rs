@@ -18,6 +18,8 @@ impl PipelineStage for BuildCommandStage {
                 user_config: ctx.user_config.clone(),
                 proton_path: ctx.proton_path.clone(),
                 steam_enabled: ctx.steam_enabled,
+                use_umu: ctx.use_umu,
+                umu_run: ctx.umu_run.clone(),
                 target_architecture: ctx.target_architecture,
                 dll_resolutions: ctx.dll_resolutions.clone(),
                 game_fixups: ctx.game_fixups.clone(),

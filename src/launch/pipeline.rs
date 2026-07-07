@@ -82,6 +82,14 @@ pub struct PipelineContext {
     /// One-off request (e.g. `aurelia play --native-engine`) to force the luxtorpeda
     /// runner for this launch regardless of the per-game config.
     pub force_native_engine: bool,
+    /// One-off request (e.g. `aurelia play --umu`) to wrap this launch through the
+    /// umu-launcher plugin regardless of the per-game config.
+    pub force_umu: bool,
+    /// Whether umu wrapping is active for this launch, resolved in
+    /// `ResolveComponentsStage` and threaded into `LaunchContext`.
+    pub use_umu: bool,
+    /// The plugin-resolved absolute `umu-run` path (set when `use_umu`).
+    pub umu_run: Option<std::path::PathBuf>,
     /// Run the game with real Steam integration
     pub steam_enabled: bool,
 
@@ -115,6 +123,9 @@ impl PipelineContext {
             user_config: None,
             proton_path: None,
             force_native_engine: false,
+            force_umu: false,
+            use_umu: false,
+            umu_run: None,
             steam_enabled: false,
             resolved_install_dir: None,
             resolved_executable_path: None,

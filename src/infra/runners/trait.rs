@@ -13,6 +13,13 @@ pub struct LaunchContext {
     pub proton_path: Option<String>,
     /// Run with real Steam integration
     pub steam_enabled: bool,
+    /// Whether this launch is wrapped through the umu-launcher plugin (Proton via
+    /// `umu-run`). Resolved in `ResolveComponentsStage`; the WineTkg runner spawns
+    /// `umu_run` instead of a bare `proton run` when set.
+    pub use_umu: bool,
+    /// Absolute path to the plugin-resolved `umu-run` executable, populated when
+    /// `use_umu` is set.
+    pub umu_run: Option<std::path::PathBuf>,
     pub target_architecture: crate::models::ExecutableArchitecture,
     pub dll_resolutions: Vec<crate::launch::dll_provider_resolver::DllResolution>,
     /// Auto-resolved per-game fixups (env + DLL overrides) merged into the launch
