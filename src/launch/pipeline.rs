@@ -2,8 +2,8 @@ use std::fmt;
 use async_trait::async_trait;
 
 use std::collections::HashMap;
-use crate::models::{LibraryGame, UserAppConfig};
-use crate::config::LauncherConfig;
+use crate::core::models::{LibraryGame, UserAppConfig};
+use crate::core::config::LauncherConfig;
 use crate::steam_client::LaunchInfo;
 use crate::infra::runners::{Runner, CommandSpec};
 use crate::infra::logging::{LaunchSession, EventLogger};
@@ -36,7 +36,7 @@ pub struct GraphicsStackInfo {
     pub effective_nvapi: bool,
     pub requested_gpu: Option<String>,
     pub effective_gpu: Option<String>,
-    pub target_architecture: crate::models::ExecutableArchitecture,
+    pub target_architecture: crate::core::models::ExecutableArchitecture,
     pub fallback_reasons: HashMap<String, String>,
     pub runtime_evidence: RuntimeEvidence,
     pub env_propagation: HashMap<String, bool>,
@@ -96,7 +96,7 @@ pub struct PipelineContext {
     pub resolved_install_dir: Option<std::path::PathBuf>,
     pub resolved_executable_path: Option<std::path::PathBuf>,
     pub executable_exists: bool,
-    pub target_architecture: crate::models::ExecutableArchitecture,
+    pub target_architecture: crate::core::models::ExecutableArchitecture,
 
     pub runner: Option<Box<dyn Runner>>,
     pub command_spec: Option<CommandSpec>,
@@ -130,7 +130,7 @@ impl PipelineContext {
             resolved_install_dir: None,
             resolved_executable_path: None,
             executable_exists: false,
-            target_architecture: crate::models::ExecutableArchitecture::Unknown,
+            target_architecture: crate::core::models::ExecutableArchitecture::Unknown,
             runner: None,
             command_spec: None,
             child: None,
@@ -1191,8 +1191,8 @@ impl LaunchPipeline {
                                  ctx.proton_path.as_deref().unwrap_or("wine")
                              };
                              let library_root = ctx.launcher_config.as_ref().map(|c| std::path::PathBuf::from(&c.steam_library_path)).unwrap_or_default();
-                             let active_runner = crate::utils::resolve_runner(proton, &library_root);
-                             Some(crate::utils::derive_runner_root(&active_runner))
+                             let active_runner = crate::core::utils::resolve_runner(proton, &library_root);
+                             Some(crate::core::utils::derive_runner_root(&active_runner))
                          },
                      },
                      settings: EffectiveSettingsConfig {

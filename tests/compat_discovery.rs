@@ -1,6 +1,6 @@
 #[test]
 fn test_version_parsing() {
-    use aurelia::utils::parse_short_version;
+    use aurelia::core::utils::parse_short_version;
 
     assert_eq!(parse_short_version("dxvk (v2.7.1-404-g0bf876eb)"), "2.7.1-404");
     assert_eq!(parse_short_version("vkd3d-proton (v2.11-1-g0bf876eb)"), "2.11-1");
@@ -14,7 +14,7 @@ fn test_version_parsing() {
 fn test_path_discovery_roots() {
     use std::fs;
     use tempfile::tempdir;
-    use aurelia::utils::{detect_runner_components, ComponentSource};
+    use aurelia::core::utils::{detect_runner_components, ComponentSource};
 
     let tmp = tempdir().unwrap();
     let runner_root = tmp.path().to_path_buf();
@@ -57,7 +57,7 @@ fn test_path_discovery_roots() {
 fn test_unified_layout_detection() {
     use std::fs;
     use tempfile::tempdir;
-    use aurelia::utils::{detect_runner_components, ComponentSource};
+    use aurelia::core::utils::{detect_runner_components, ComponentSource};
 
     let tmp = tempdir().unwrap();
     let root = tmp.path();
@@ -93,8 +93,8 @@ fn test_arch_specific_resolution_excludes_64bit_for_32bit_game() {
     use std::fs;
     use tempfile::tempdir;
     use aurelia::launch::dll_provider_resolver::{DllProvider, DllProviderResolver};
-    use aurelia::models::{D3D12ProviderPolicy, ExecutableArchitecture};
-    use aurelia::utils::{ComponentInfo, ComponentSource, RunnerComponents};
+    use aurelia::core::models::{D3D12ProviderPolicy, ExecutableArchitecture};
+    use aurelia::core::utils::{ComponentInfo, ComponentSource, RunnerComponents};
 
     let tmp = tempdir().unwrap();
     let root = tmp.path().to_path_buf();

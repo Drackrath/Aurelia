@@ -10,7 +10,7 @@
 //!   downloaded and extracted into Steam's `compatibilitytools.d`.
 //!
 //! Installed runtimes are discovered by scanning both locations. The "global default"
-//! Proton lives in [`crate::config::LauncherConfig::proton_version`]; a fresh install
+//! Proton lives in [`crate::core::config::LauncherConfig::proton_version`]; a fresh install
 //! sets it (so the default is the most recently downloaded runtime).
 
 use anyhow::{bail, Context, Result};
@@ -161,10 +161,10 @@ pub(crate) fn host_cachyos_microarch() -> &'static str {
 /// Steam's `compatibilitytools.d` directory, where custom (GE) runtimes live.
 /// Derived from the detected Steam root, falling back to the conventional path.
 pub fn compat_tools_dir() -> Result<PathBuf> {
-    if let Some(steam) = crate::config::detect_steam_path() {
+    if let Some(steam) = crate::core::config::detect_steam_path() {
         return Ok(steam.join("compatibilitytools.d"));
     }
-    let home = crate::config::home_dir()?;
+    let home = crate::core::config::home_dir()?;
     Ok(home.join(".local/share/Steam/compatibilitytools.d"))
 }
 

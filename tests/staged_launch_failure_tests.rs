@@ -2,7 +2,7 @@ use aurelia::launch::pipeline::{LaunchPipeline, PipelineContext, LaunchErrorKind
 use aurelia::launch::stages::resolve_game::ResolveGameStage;
 use aurelia::launch::stages::resolve_profile::ResolveProfileStage;
 use aurelia::launch::stages::spawn_process::SpawnProcessStage;
-use aurelia::models::LibraryGame;
+use aurelia::core::models::LibraryGame;
 use std::collections::HashMap;
 
 #[tokio::test]
@@ -81,7 +81,7 @@ async fn test_stage_execution_failure_adhoc() {
         workingdir: None,
         target: aurelia::steam_client::LaunchTarget::NativeLinux,
     });
-    ctx.launcher_config = Some(aurelia::config::LauncherConfig::default());
+    ctx.launcher_config = Some(aurelia::core::config::LauncherConfig::default());
 
     let result = pipeline.run(&mut ctx).await;
     assert!(result.is_err());

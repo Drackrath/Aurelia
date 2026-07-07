@@ -117,7 +117,7 @@ impl SteamClient {
         appid: u32,
         dest_library: PathBuf,
     ) -> Result<Receiver<DownloadProgress>> {
-        use crate::relocate;
+        use crate::library::relocate;
 
         // --- Resolve the source layout from the appmanifest ---
         let (src_manifest, src_steamapps, src_lib_root, installdir) = self

@@ -25,7 +25,7 @@ impl Runner for LuxtorpedaRunner {
 
     async fn prepare_prefix(&self, ctx: &LaunchContext) -> Result<(), LaunchError> {
         // Use a configured external install if present, else download on first use.
-        crate::luxtorpeda::ensure_installed(custom_path(ctx).as_deref()).await.map_err(|e| {
+        crate::compat::luxtorpeda::ensure_installed(custom_path(ctx).as_deref()).await.map_err(|e| {
             LaunchError::new(
                 LaunchErrorKind::Environment,
                 "failed to install the luxtorpeda plugin",
@@ -59,10 +59,10 @@ impl Runner for LuxtorpedaRunner {
 
         // Luxtorpeda (like Proton) wants a Steam client install path. Reuse Aurelia's
         // fake-steam trap so it resolves without a running Steam client.
-        let config_dir = crate::config::config_dir().map_err(|e| {
+        let config_dir = crate::core::config::config_dir().map_err(|e| {
             LaunchError::new(LaunchErrorKind::Environment, "failed to get config dir").with_source(e)
         })?;
-        let fake_env = crate::utils::setup_fake_steam_trap(&config_dir).map_err(|e| {
+        let fake_env = crate::core::utils::setup_fake_steam_trap(&config_dir).map_err(|e| {
             LaunchError::new(LaunchErrorKind::Permission, "failed to setup fake steam trap")
                 .with_source(e)
         })?;
@@ -89,7 +89,7 @@ impl Runner for LuxtorpedaRunner {
     }
 
     async fn build_command(&self, ctx: &LaunchContext) -> Result<CommandSpec, LaunchError> {
-        let entry = crate::luxtorpeda::ensure_installed(custom_path(ctx).as_deref()).await.map_err(|e| {
+        let entry = crate::compat::luxtorpeda::ensure_installed(custom_path(ctx).as_deref()).await.map_err(|e| {
             LaunchError::new(
                 LaunchErrorKind::Environment,
                 "failed to resolve the luxtorpeda entry point",

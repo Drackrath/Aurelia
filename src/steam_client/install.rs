@@ -169,7 +169,7 @@ impl SteamClient {
         cached_vdf: Option<Vec<u8>>,
         filter_depots: Option<Vec<u64>>,
         library_override: Option<String>,
-        shared_state: Arc<std::sync::RwLock<crate::models::DownloadState>>,
+        shared_state: Arc<std::sync::RwLock<crate::core::models::DownloadState>>,
     ) -> Result<Receiver<DownloadProgress>> {
         let connection = self
             .connection
@@ -677,7 +677,7 @@ impl SteamClient {
         depot_id: u32,
         manifest_id: u64,
         dest: &std::path::Path,
-        shared_state: Arc<std::sync::RwLock<crate::models::DownloadState>>,
+        shared_state: Arc<std::sync::RwLock<crate::core::models::DownloadState>>,
     ) -> anyhow::Result<u64> {
         let connection = self
             .connection
@@ -719,7 +719,7 @@ impl SteamClient {
         depot_id: u32,
         manifest_id: u64,
         dest: &std::path::Path,
-        shared_state: Arc<std::sync::RwLock<crate::models::DownloadState>>,
+        shared_state: Arc<std::sync::RwLock<crate::core::models::DownloadState>>,
         hosts: &[String],
         grand_total_bytes: u64,
         connection: &Connection,

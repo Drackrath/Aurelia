@@ -7,20 +7,23 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 
-use aurelia::config::{
+use aurelia::core::config::{
     info_cache_ttl, load_info_cache, load_launcher_config, load_library_cache, load_session,
     load_user_configs, save_info_cache, save_launcher_config,
 };
 use aurelia::library::{build_game_library, scan_installed_app_info};
-use aurelia::models::{
+use aurelia::core::models::{
     DepotPlatform, DownloadProgress, DownloadProgressState, DownloadState, LibraryGame,
 };
 use aurelia::steam_client::{SharedApp, SteamClient, StoreAppInfo};
 
 #[macro_use]
+#[path = "core/output.rs"]
 mod output;
 mod daemon;
+#[path = "compat/proc_admin.rs"]
 mod proc_admin;
+#[path = "web/steam_urls.rs"]
 mod steam_urls;
 
 /// Aurelia — a command-line Steam launcher (auth, library, install, launch).
@@ -700,11 +703,11 @@ enum ChatPresenceArg {
     Offline,
 }
 
-impl From<ChatPresenceArg> for aurelia::config::ChatPresence {
+impl From<ChatPresenceArg> for aurelia::core::config::ChatPresence {
     fn from(value: ChatPresenceArg) -> Self {
         match value {
-            ChatPresenceArg::Online => aurelia::config::ChatPresence::Online,
-            ChatPresenceArg::Offline => aurelia::config::ChatPresence::Offline,
+            ChatPresenceArg::Online => aurelia::core::config::ChatPresence::Online,
+            ChatPresenceArg::Offline => aurelia::core::config::ChatPresence::Offline,
         }
     }
 }
@@ -718,11 +721,11 @@ enum CloudResolve {
     Local,
 }
 
-impl From<CloudResolve> for aurelia::cloud_sync::ConflictPolicy {
+impl From<CloudResolve> for aurelia::library::cloud_sync::ConflictPolicy {
     fn from(value: CloudResolve) -> Self {
         match value {
-            CloudResolve::Cloud => aurelia::cloud_sync::ConflictPolicy::TakeCloud,
-            CloudResolve::Local => aurelia::cloud_sync::ConflictPolicy::TakeLocal,
+            CloudResolve::Cloud => aurelia::library::cloud_sync::ConflictPolicy::TakeCloud,
+            CloudResolve::Local => aurelia::library::cloud_sync::ConflictPolicy::TakeLocal,
         }
     }
 }
@@ -938,7 +941,7 @@ async fn run_and_report(cli: Cli) -> i32 {
 }
 
 async fn run(cli: Cli) -> Result<()> {
-    aurelia::config::ensure_config_dirs().await?;
+    aurelia::core::config::ensure_config_dirs().await?;
 
     let json = cli.json;
     match cli.command {
@@ -1251,7 +1254,7 @@ async fn load_library(client: &mut SteamClient) -> Vec<LibraryGame> {
         // almost always already signed in on Linux and keeps the whole library
         // on disk, so fall back to reading its caches. This makes `list` show
         // the full library instead of only locally-installed games.
-        aurelia::local_library::discover_local_owned_games().await
+        aurelia::library::local_library::discover_local_owned_games().await
     };
     let installed = scan_installed_app_info().await.unwrap_or_default();
     build_game_library(owned, installed, client.steam_id()).games
@@ -1353,7 +1356,7 @@ async fn cmd_login(
             // If Steam asked for a Guard code and we don't have one yet, prompt and retry once.
             let needs_code = guard.is_none()
                 && client.pending_confirmations().iter().any(|p| {
-                    use aurelia::models::SteamGuardReq::{DeviceCode, EmailCode};
+                    use aurelia::core::models::SteamGuardReq::{DeviceCode, EmailCode};
                     matches!(p.requirement, EmailCode { .. } | DeviceCode)
                 });
 
@@ -1369,7 +1372,7 @@ async fn cmd_login(
             } else if client
                 .pending_confirmations()
                 .iter()
-                .any(|p| matches!(p.requirement, aurelia::models::SteamGuardReq::DeviceConfirmation))
+                .any(|p| matches!(p.requirement, aurelia::core::models::SteamGuardReq::DeviceConfirmation))
             {
                 tracing::info!("Login method awaited: Steam Mobile app approval");
                 bail!("approve this login in the Steam Mobile app, then run `aurelia login` again")
@@ -1411,7 +1414,7 @@ async fn login_with_timeout(
     username: &str,
     password: &str,
     guard: Option<String>,
-) -> Result<aurelia::models::SessionState> {
+) -> Result<aurelia::core::models::SessionState> {
     match tokio::time::timeout(
         LOGIN_TIMEOUT,
         client.login(username.to_string(), password.to_string(), guard, false),
@@ -1468,7 +1471,7 @@ async fn cmd_login_json(
             Ok(())
         }
         Err(err) => {
-            use aurelia::models::SteamGuardReq::{DeviceCode, DeviceConfirmation, EmailCode};
+            use aurelia::core::models::SteamGuardReq::{DeviceCode, DeviceConfirmation, EmailCode};
 
             // A typed Steam Guard code is needed (email or authenticator).
             let code_kind = guard.is_none().then(|| {
@@ -2998,7 +3001,7 @@ async fn cmd_play(
 /// `aurelia running`: list the games Aurelia currently has running (stale records
 /// whose process has exited are pruned).
 fn cmd_running(json: bool) -> Result<()> {
-    let running = aurelia::running::list_active();
+    let running = aurelia::compat::running::list_active();
     if json {
         let arr: Vec<_> = running
             .iter()
@@ -3206,7 +3209,7 @@ async fn cmd_set_branch(app_id: u32, branch: String, json: bool) -> Result<()> {
 
 /// Storefront-only `--extended` data for one app: the HTTPS `AppDetails` plus the
 /// SteamSpy user tags.
-type ExtendedInfo = (aurelia::store::AppDetails, Vec<String>);
+type ExtendedInfo = (aurelia::web::store::AppDetails, Vec<String>);
 
 async fn cmd_info(
     app_ids: Vec<u32>,
@@ -3297,8 +3300,8 @@ async fn cmd_info(
                     if !base.contains_key(&id) {
                         continue;
                     }
-                    let web = aurelia::store::fetch_app_details(&http, id, &lang).await.ok().flatten();
-                    let tags = aurelia::store::fetch_tags(&http, id).await;
+                    let web = aurelia::web::store::fetch_app_details(&http, id, &lang).await.ok().flatten();
+                    let tags = aurelia::web::store::fetch_tags(&http, id).await;
                     if let Some(d) = web {
                         extended_by_id.insert(id, (d, tags));
                     }
@@ -3553,7 +3556,7 @@ async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
         .dlc_states(app_id, &dlc_ids)
         .await
         .with_context(|| format!("failed to resolve DLC status for app {app_id}"))?;
-    let state_by_id: std::collections::HashMap<u32, &aurelia::models::DlcState> =
+    let state_by_id: std::collections::HashMap<u32, &aurelia::core::models::DlcState> =
         states.iter().map(|s| (s.app_id, s)).collect();
 
     if json {
@@ -3761,7 +3764,7 @@ async fn cmd_launch_options(app_id: u32, json: bool) -> Result<()> {
 }
 
 async fn cmd_image(app_id: u32, output: Option<PathBuf>, force: bool, json: bool) -> Result<()> {
-    let cache_dir = aurelia::config::opensteam_image_cache_dir()?;
+    let cache_dir = aurelia::core::config::opensteam_image_cache_dir()?;
     tokio::fs::create_dir_all(&cache_dir)
         .await
         .with_context(|| format!("failed creating {}", cache_dir.display()))?;
@@ -3826,7 +3829,7 @@ async fn cmd_config_show(_json: bool) -> Result<()> {
 /// announces for friends/chat. `offline` is an invisible presence — you appear
 /// offline to friends but still sync your friends list and receive chat.
 async fn cmd_config_presence(mode: Option<ChatPresenceArg>, json: bool) -> Result<()> {
-    use aurelia::config::ChatPresence;
+    use aurelia::core::config::ChatPresence;
     let mut config = load_launcher_config().await.unwrap_or_default();
     let changed = mode.is_some();
     if let Some(mode) = mode {
@@ -3880,7 +3883,7 @@ async fn cmd_config_language(lang: Option<String>, json: bool) -> Result<()> {
 /// Shares discovery with `proton list --installed` (no hardcoded placeholders).
 async fn cmd_config_protons(json: bool) -> Result<()> {
     let cfg = load_launcher_config().await.unwrap_or_default();
-    let installed = aurelia::proton::list_installed(std::path::Path::new(&cfg.steam_library_path));
+    let installed = aurelia::compat::proton::list_installed(std::path::Path::new(&cfg.steam_library_path));
     let steam: Vec<&str> = installed
         .iter()
         .filter(|i| i.location == "steam")
@@ -3933,7 +3936,7 @@ async fn cmd_config_game(
     no_umu: bool,
     json: bool,
 ) -> Result<()> {
-    use aurelia::config::GameRunner;
+    use aurelia::core::config::GameRunner;
 
     let mut cfg = load_launcher_config().await.unwrap_or_default();
     let mut changed = false;
@@ -4049,10 +4052,10 @@ async fn cmd_luxtorpeda_install(json: bool) -> Result<()> {
             cli_print!("\r  {pct:>3}%  ({} / {})        ", human_bytes(done), human_bytes(total));
         }
     };
-    let entry = aurelia::luxtorpeda::install(&mut on_progress)
+    let entry = aurelia::compat::luxtorpeda::install(&mut on_progress)
         .await
         .context("failed installing luxtorpeda")?;
-    let installed = aurelia::luxtorpeda::installed(None);
+    let installed = aurelia::compat::luxtorpeda::installed(None);
     let version = installed.as_ref().map(|i| i.version.clone()).unwrap_or_default();
 
     if json {
@@ -4072,7 +4075,7 @@ async fn cmd_luxtorpeda_install(json: bool) -> Result<()> {
 async fn cmd_luxtorpeda_status(json: bool) -> Result<()> {
     let cfg = load_launcher_config().await.unwrap_or_default();
     let custom = cfg.luxtorpeda_path.as_deref().map(std::path::Path::new);
-    let installed = aurelia::luxtorpeda::installed(custom);
+    let installed = aurelia::compat::luxtorpeda::installed(custom);
 
     if json {
         print_json(&serde_json::json!({
@@ -4120,7 +4123,7 @@ async fn cmd_luxtorpeda_path(path: Option<String>, clear: bool, json: bool) -> R
     } else if let Some(p) = path {
         // Reject anything that isn't actually a luxtorpeda install, so a typo can't
         // silently disable the managed download and then fail only at launch time.
-        if aurelia::luxtorpeda::installed(Some(std::path::Path::new(&p))).is_none() {
+        if aurelia::compat::luxtorpeda::installed(Some(std::path::Path::new(&p))).is_none() {
             anyhow::bail!(
                 "'{p}' is not a luxtorpeda install (no toolmanifest.vdf found there or in a subdirectory)"
             );
@@ -4143,7 +4146,7 @@ async fn cmd_luxtorpeda_path(path: Option<String>, clear: bool, json: bool) -> R
 
 /// `luxtorpeda uninstall`: delete the downloaded payload.
 async fn cmd_luxtorpeda_uninstall(json: bool) -> Result<()> {
-    let removed = aurelia::luxtorpeda::uninstall().context("failed removing luxtorpeda")?;
+    let removed = aurelia::compat::luxtorpeda::uninstall().context("failed removing luxtorpeda")?;
     if json {
         print_json(&serde_json::json!({ "status": if removed { "removed" } else { "not_installed" } }));
     } else if removed {
@@ -4201,10 +4204,10 @@ async fn cmd_umu_install(json: bool) -> Result<()> {
             cli_print!("\r  {pct:>3}%  ({} / {})        ", human_bytes(done), human_bytes(total));
         }
     };
-    let entry = aurelia::umu::install(&mut on_progress)
+    let entry = aurelia::compat::umu::install(&mut on_progress)
         .await
         .context("failed installing umu-launcher")?;
-    let installed = aurelia::umu::installed(None);
+    let installed = aurelia::compat::umu::installed(None);
     let version = installed.as_ref().map(|i| i.version.clone()).unwrap_or_default();
 
     if json {
@@ -4224,7 +4227,7 @@ async fn cmd_umu_install(json: bool) -> Result<()> {
 async fn cmd_umu_status(json: bool) -> Result<()> {
     let cfg = load_launcher_config().await.unwrap_or_default();
     let custom = cfg.umu_path.as_deref().map(std::path::Path::new);
-    let installed = aurelia::umu::installed(custom);
+    let installed = aurelia::compat::umu::installed(custom);
 
     if json {
         print_json(&serde_json::json!({
@@ -4267,7 +4270,7 @@ async fn cmd_umu_path(path: Option<String>, clear: bool, json: bool) -> Result<(
     } else if let Some(p) = path {
         // Reject anything that isn't actually a umu install, so a typo can't silently
         // disable the managed download and then fail only at launch time.
-        if aurelia::umu::installed(Some(std::path::Path::new(&p))).is_none() {
+        if aurelia::compat::umu::installed(Some(std::path::Path::new(&p))).is_none() {
             anyhow::bail!(
                 "'{p}' is not a umu install (no `umu-run` found there, in a subdirectory, or as the path itself)"
             );
@@ -4290,7 +4293,7 @@ async fn cmd_umu_path(path: Option<String>, clear: bool, json: bool) -> Result<(
 
 /// `umu uninstall`: delete the downloaded payload.
 async fn cmd_umu_uninstall(json: bool) -> Result<()> {
-    let removed = aurelia::umu::uninstall().context("failed removing umu-launcher")?;
+    let removed = aurelia::compat::umu::uninstall().context("failed removing umu-launcher")?;
     if json {
         print_json(&serde_json::json!({ "status": if removed { "removed" } else { "not_installed" } }));
     } else if removed {
@@ -4305,7 +4308,7 @@ async fn cmd_umu_uninstall(json: bool) -> Result<()> {
 async fn cmd_proton_list(installed_only: bool, json: bool) -> Result<()> {
     let cfg = load_launcher_config().await.unwrap_or_default();
     let installed =
-        aurelia::proton::list_installed(std::path::Path::new(&cfg.steam_library_path));
+        aurelia::compat::proton::list_installed(std::path::Path::new(&cfg.steam_library_path));
     let default = cfg.proton_version;
     let is_installed = |name: &str| installed.iter().any(|i| i.name.eq_ignore_ascii_case(name));
 
@@ -4326,7 +4329,7 @@ async fn cmd_proton_list(installed_only: bool, json: bool) -> Result<()> {
         return Ok(());
     }
 
-    let available = aurelia::proton::list_available().await.unwrap_or_default();
+    let available = aurelia::compat::proton::list_available().await.unwrap_or_default();
     if json {
         print_json(&serde_json::json!({
             "default": default,
@@ -4362,10 +4365,10 @@ async fn cmd_proton_list(installed_only: bool, json: bool) -> Result<()> {
 
 /// `proton install`: download/install a runtime and make it the global default.
 async fn cmd_proton_install(version: String, json: bool) -> Result<()> {
-    let pkg = aurelia::proton::resolve_package(&version).await?;
+    let pkg = aurelia::compat::proton::resolve_package(&version).await?;
 
     match &pkg.source {
-        aurelia::proton::ProtonSource::Valve { app_id } => {
+        aurelia::compat::proton::ProtonSource::Valve { app_id } => {
             let app_id = *app_id;
             if !json {
                 cli_println!("Installing {} via Steam (app {app_id}) ...", pkg.name);
@@ -4378,7 +4381,7 @@ async fn cmd_proton_install(version: String, json: bool) -> Result<()> {
                 .with_context(|| format!("failed to start installing {}", pkg.name))?;
             drive_progress(rx, json).await?;
         }
-        aurelia::proton::ProtonSource::Github { .. } => {
+        aurelia::compat::proton::ProtonSource::Github { .. } => {
             if !json {
                 cli_println!("Downloading {} ({}) ...", pkg.name, pkg.label);
             }
@@ -4397,7 +4400,7 @@ async fn cmd_proton_install(version: String, json: bool) -> Result<()> {
                     );
                 }
             };
-            let path = aurelia::proton::install_github_package(&pkg, &mut on_progress).await?;
+            let path = aurelia::compat::proton::install_github_package(&pkg, &mut on_progress).await?;
             if !json {
                 cli_println!("\n  Extracted to {}", path.display());
             }
@@ -4423,7 +4426,7 @@ async fn cmd_proton_install(version: String, json: bool) -> Result<()> {
 
 /// `proton uninstall`: delete an installed custom (GE) runtime.
 async fn cmd_proton_uninstall(version: String, json: bool) -> Result<()> {
-    aurelia::proton::remove(&version)
+    aurelia::compat::proton::remove(&version)
         .with_context(|| format!("failed to uninstall {version}"))?;
 
     // If it was the global default, the default now points at something gone; warn.
@@ -4452,7 +4455,7 @@ async fn cmd_proton_uninstall(version: String, json: bool) -> Result<()> {
 async fn cmd_proton_default(version: String, json: bool) -> Result<()> {
     let mut cfg = load_launcher_config().await.unwrap_or_default();
     let installed =
-        aurelia::proton::list_installed(std::path::Path::new(&cfg.steam_library_path));
+        aurelia::compat::proton::list_installed(std::path::Path::new(&cfg.steam_library_path));
     let present = installed.iter().any(|i| i.name.eq_ignore_ascii_case(&version));
 
     cfg.proton_version = version.clone();
@@ -4515,7 +4518,7 @@ async fn cmd_steam_runtime_repair(json: bool) -> Result<()> {
 /// `steam-runtime status`: report the resolved master prefix and configuration.
 async fn cmd_steam_runtime_status(json: bool) -> Result<()> {
     let config = load_launcher_config().await.unwrap_or_default();
-    let steam_cfg = aurelia::utils::get_master_steam_config();
+    let steam_cfg = aurelia::core::utils::get_master_steam_config();
     let steam_exe_present = steam_cfg.steam_exe.is_some();
     let runner = config.steam_runtime_runner.to_string_lossy().to_string();
     let runner_configured = !runner.is_empty();
@@ -4557,7 +4560,7 @@ async fn cmd_cloud_sync(
     resolve: Option<CloudResolve>,
     json: bool,
 ) -> Result<()> {
-    use aurelia::cloud_sync::{ConflictPolicy, SyncDirection};
+    use aurelia::library::cloud_sync::{ConflictPolicy, SyncDirection};
 
     let client = authed_client().await?;
     let cloud = client.cloud_client()?;
@@ -4567,13 +4570,13 @@ async fn cmd_cloud_sync(
     // only the classic base. `%GameInstall%` needs the game's install directory.
     let remote_root = match path {
         Some(p) => p,
-        None => aurelia::cloud_sync::default_cloud_root(cloud.steam_id(), app_id)
+        None => aurelia::library::cloud_sync::default_cloud_root(cloud.steam_id(), app_id)
             .context("could not resolve the local cloud save directory")?
             .join("remote"),
     };
     let (_, install_path) = client.is_game_available(app_id).await;
     let resolver =
-        aurelia::cloud_sync::CloudPathResolver::new(remote_root.clone(), install_path.map(PathBuf::from));
+        aurelia::library::cloud_sync::CloudPathResolver::new(remote_root.clone(), install_path.map(PathBuf::from));
 
     // No flag = full sync (down then up); `--down`/`--up` restrict the direction.
     let direction = if up {
@@ -4704,10 +4707,10 @@ async fn cmd_cloud_list(app_id: u32, json: bool) -> Result<()> {
 }
 
 /// Human label for a Workshop entry kind.
-fn workshop_kind_label(kind: aurelia::models::WorkshopItemKind) -> &'static str {
+fn workshop_kind_label(kind: aurelia::core::models::WorkshopItemKind) -> &'static str {
     match kind {
-        aurelia::models::WorkshopItemKind::Collection => "collection",
-        aurelia::models::WorkshopItemKind::Item => "item",
+        aurelia::core::models::WorkshopItemKind::Collection => "collection",
+        aurelia::core::models::WorkshopItemKind::Item => "item",
     }
 }
 
@@ -4775,7 +4778,7 @@ async fn cmd_workshop_info(ids: Vec<u64>, json: bool) -> Result<()> {
         cli_println!("Title   : {}", item.title);
         cli_println!("App     : {}", item.app_id);
         cli_println!("Type    : {}", workshop_kind_label(item.kind));
-        if item.kind == aurelia::models::WorkshopItemKind::Collection {
+        if item.kind == aurelia::core::models::WorkshopItemKind::Collection {
             cli_println!("Items   : {}", item.children.len());
         } else {
             cli_println!("Size    : {}", human_bytes(item.file_size));
@@ -4968,7 +4971,7 @@ async fn cmd_workshop_status(app_id: u32, json: bool) -> Result<()> {
     // Index details and the installed set once, so resolving each row is a hash
     // lookup rather than a linear scan per id (the loops below run twice over the
     // same data in the JSON and human paths).
-    let detail_by_id: std::collections::HashMap<u64, &aurelia::models::WorkshopItem> =
+    let detail_by_id: std::collections::HashMap<u64, &aurelia::core::models::WorkshopItem> =
         details.iter().map(|d| (d.id, d)).collect();
     let installed_by_id: std::collections::HashMap<u64, &_> =
         installed.iter().map(|i| (i.id, i)).collect();

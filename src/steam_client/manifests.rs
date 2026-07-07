@@ -524,7 +524,7 @@ impl SteamClient {
 
 /// Resolve an app's PICS `common` section, accounting for both appinfo layouts:
 /// either nested under an `appinfo` wrapper node or present at the root.
-fn appinfo_common(parsed: &crate::models::AppInfoRoot) -> Option<&crate::models::CommonNode> {
+fn appinfo_common(parsed: &crate::core::models::AppInfoRoot) -> Option<&crate::core::models::CommonNode> {
     parsed
         .appinfo
         .as_ref()

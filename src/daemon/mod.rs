@@ -131,7 +131,7 @@ fn init_state() -> &'static DaemonState {
 }
 
 async fn session_mtime() -> Option<SystemTime> {
-    let path = aurelia::config::config_dir().ok()?.join("session.json");
+    let path = aurelia::core::config::config_dir().ok()?.join("session.json");
     tokio::fs::metadata(&path).await.ok()?.modified().ok()
 }
 
@@ -327,7 +327,7 @@ async fn status_from_slot(slot: &Slot) -> SessionStatus {
     match &slot.client {
         Some(client) => SessionStatus {
             authenticated: true,
-            account: aurelia::config::load_session()
+            account: aurelia::core::config::load_session()
                 .await
                 .ok()
                 .and_then(|s| s.account_name),

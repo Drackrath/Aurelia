@@ -1,11 +1,11 @@
-use crate::cloud_sync::{default_cloud_root, CloudClient, CloudPathResolver, UfsSaveSpec};
-use crate::cm_list::get_cm_endpoints;
-use crate::config::{
+use crate::library::cloud_sync::{default_cloud_root, CloudClient, CloudPathResolver, UfsSaveSpec};
+use crate::web::cm_list::get_cm_endpoints;
+use crate::core::config::{
     delete_session, library_cache_path, load_launcher_config, load_library_cache, load_session,
     save_library_cache, save_session,
 };
-use crate::depot_browser::{self, DepotInfo as BrowserDepotInfo, ManifestFileEntry};
-use crate::models::{
+use crate::library::depot_browser::{self, DepotInfo as BrowserDepotInfo, ManifestFileEntry};
+use crate::core::models::{
     DepotPlatform, DlcState, DownloadProgress, DownloadProgressState, LibraryGame,
     ManifestSelection, OwnedGame, SessionState, SteamGuardReq, UserProfile,
 };
@@ -403,11 +403,11 @@ pub fn sanitize_install_dir(name: &str) -> String {
 /// Steam wraps the entire VDF in a top-level key that is the numeric app ID.
 /// This wrapper accepts that outer key transparently.
 #[derive(Debug, serde::Deserialize)]
-pub struct AppInfoEnvelope(pub HashMap<String, crate::models::AppInfoRoot>);
+pub struct AppInfoEnvelope(pub HashMap<String, crate::core::models::AppInfoRoot>);
 
 impl AppInfoEnvelope {
     /// Extract the inner AppInfoRoot regardless of the outer key name.
-    pub fn into_inner(self) -> Option<crate::models::AppInfoRoot> {
+    pub fn into_inner(self) -> Option<crate::core::models::AppInfoRoot> {
         self.0.into_values().next()
     }
 }
@@ -599,7 +599,7 @@ fn store_item_to_app_info(item: &StoreItem) -> StoreAppInfo {
         is_free: item.is_free(),
         is_early_access: item.is_early_access(),
         short_description: basic.map(|b| b.short_description().to_string()).unwrap_or_default(),
-        full_description: crate::store::strip_html(item.full_description()),
+        full_description: crate::web::store::strip_html(item.full_description()),
         developers: basic
             .map(|b| creator_names(&b.developers))
             .unwrap_or_default(),
@@ -703,9 +703,9 @@ pub fn unix_to_ymd(secs: i64) -> String {
     format!("{year:04}-{month:02}-{day:02}")
 }
 
-pub fn parse_appinfo(vdf: &str) -> Result<crate::models::AppInfoRoot> {
+pub fn parse_appinfo(vdf: &str) -> Result<crate::core::models::AppInfoRoot> {
     // Try direct parse first (in case steam-vent already strips the wrapper)
-    if let Ok(parsed) = keyvalues_serde::from_str::<crate::models::AppInfoRoot>(vdf) {
+    if let Ok(parsed) = keyvalues_serde::from_str::<crate::core::models::AppInfoRoot>(vdf) {
         return Ok(parsed);
     }
     // Fall back to envelope parse
@@ -748,15 +748,15 @@ pub fn category_online_required(categories: &HashMap<String, String>) -> bool {
 /// the appmanifests on its next launch.
 async fn update_libraryfolders_for(from_lib: &Path, to_lib: &Path, appid: u32, install_dir: &Path) {
     let roots = crate::library::all_library_roots().await;
-    let Some(vdf_path) = crate::relocate::find_libraryfolders_vdf(&roots) else {
+    let Some(vdf_path) = crate::library::relocate::find_libraryfolders_vdf(&roots) else {
         return;
     };
     let Ok(text) = std::fs::read_to_string(&vdf_path) else {
         tracing::warn!("could not read libraryfolders.vdf");
         return;
     };
-    let size = crate::relocate::dir_size(install_dir);
-    match crate::relocate::update_libraryfolders_apps(&text, appid, from_lib, to_lib, size) {
+    let size = crate::library::relocate::dir_size(install_dir);
+    match crate::library::relocate::update_libraryfolders_apps(&text, appid, from_lib, to_lib, size) {
         Some(updated) => {
             if let Err(e) = std::fs::write(&vdf_path, updated) {
                 tracing::warn!("could not write libraryfolders.vdf: {e}");
@@ -1631,7 +1631,7 @@ mod tests {
             workingdir: None,
             target: LaunchTarget::WindowsProton,
         };
-        let config = crate::config::LauncherConfig::default();
+        let config = crate::core::config::LauncherConfig::default();
 
         let result = client.internal_legacy_launch_adhoc(&app, &launch_info, None, &config, None).await;
 

@@ -94,7 +94,7 @@ struct SyncBaseline {
 
 impl SyncBaseline {
     fn path_for(appid: u32) -> Result<PathBuf> {
-        Ok(crate::config::config_dir()?
+        Ok(crate::core::config::config_dir()?
             .join("cloud_sync")
             .join(format!("{appid}.json")))
     }
@@ -848,7 +848,7 @@ fn build_header_map<'a>(headers: impl Iterator<Item = (&'a str, &'a str)>) -> Re
 }
 
 pub fn default_cloud_root(steam_id: u64, appid: u32) -> Result<PathBuf> {
-    let home = crate::config::home_dir()?;
+    let home = crate::core::config::home_dir()?;
     let account_id = steam_id as u32;
     Ok(home
         .join(".local/share/Steam/userdata")

@@ -44,7 +44,7 @@ impl PipelineStage for ResolveDllProvidersStage {
         // Actually, we can just detect them here or ensure ResolveComponentsStage provides them.
         let proton_path = ctx.proton_path.as_deref().unwrap_or("wine");
         let library_root = ctx.launcher_config.as_ref().map(|c| PathBuf::from(&c.steam_library_path)).unwrap_or_default();
-        let resolved_runner = crate::utils::resolve_runner(proton_path, &library_root);
+        let resolved_runner = crate::core::utils::resolve_runner(proton_path, &library_root);
 
         // Resolve WINEPREFIX for component detection
         let wineprefix = if let (Some(config), Some(app)) = (&ctx.launcher_config, &ctx.app) {
@@ -52,12 +52,12 @@ impl PipelineStage for ResolveDllProvidersStage {
             if let Some(user_config) = &ctx.user_config {
                 store.insert(app.app_id, user_config.clone());
             }
-            Some(crate::utils::steam_wineprefix_for_game(config, app.app_id, &store))
+            Some(crate::core::utils::steam_wineprefix_for_game(config, app.app_id, &store))
         } else {
             None
         };
 
-        let components = crate::utils::detect_runner_components(&resolved_runner, wineprefix.as_deref());
+        let components = crate::core::utils::detect_runner_components(&resolved_runner, wineprefix.as_deref());
         let d3d12_policy = ctx.user_config.as_ref().map(|c| c.graphics_layers.d3d12_policy.clone()).unwrap_or_default();
 
         let (custom_dxvk, custom_vkd3d, custom_vkd3d_proton) = if let Some(config) = &ctx.user_config {
@@ -72,7 +72,7 @@ impl PipelineStage for ResolveDllProvidersStage {
 
         // Detect architecture before resolution
         if exe_path.exists() {
-            ctx.target_architecture = crate::utils::detect_exe_architecture(&exe_path);
+            ctx.target_architecture = crate::core::utils::detect_exe_architecture(&exe_path);
             // Pre-populate this so downstream stages can use it
             ctx.resolved_executable_path = Some(exe_path.clone());
 
@@ -112,7 +112,7 @@ impl PipelineStage for ResolveDllProvidersStage {
         if let Some(config) = &ctx.user_config {
             let backend_policy = &config.graphics_layers.graphics_backend_policy;
 
-            if *backend_policy == crate::models::GraphicsBackendPolicy::DXVK {
+            if *backend_policy == crate::core::models::GraphicsBackendPolicy::DXVK {
                 let mut missing_capabilities = Vec::new();
 
                 let has_capability = |name: &str| -> bool {

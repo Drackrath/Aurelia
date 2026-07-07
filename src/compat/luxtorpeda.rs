@@ -43,7 +43,7 @@ struct LuxRelease {
 
 /// The directory Aurelia extracts the luxtorpeda payload into.
 pub fn plugin_dir() -> Result<PathBuf> {
-    Ok(crate::config::config_dir()?.join("plugins").join("luxtorpeda"))
+    Ok(crate::core::config::config_dir()?.join("plugins").join("luxtorpeda"))
 }
 
 /// Path of the file we stamp with the installed release tag.
@@ -196,11 +196,11 @@ pub async fn install(on_progress: &mut (dyn FnMut(u64, u64) + Send)) -> Result<P
         .with_context(|| format!("failed creating {}", base.display()))?;
 
     let tmp = base.join(format!(".download{}", release.ext));
-    crate::proton::download_to(&release.url, &tmp, on_progress)
+    crate::compat::proton::download_to(&release.url, &tmp, on_progress)
         .await
         .context("failed downloading luxtorpeda")?;
 
-    let result = crate::proton::extract_tarball(&tmp, &release.ext, &base)
+    let result = crate::compat::proton::extract_tarball(&tmp, &release.ext, &base)
         .context("failed extracting luxtorpeda");
     let _ = std::fs::remove_file(&tmp);
     result?;

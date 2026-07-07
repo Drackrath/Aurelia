@@ -36,7 +36,7 @@ impl PipelineStage for PreparePrefixStage {
         let user_configs = ctx.user_config.iter()
             .map(|c| (app_id, c.clone()))
             .collect();
-        let prefix_path = crate::utils::steam_wineprefix_for_game(
+        let prefix_path = crate::core::utils::steam_wineprefix_for_game(
             &runner_ctx.launcher_config,
             app_id,
             &user_configs,
@@ -44,12 +44,12 @@ impl PipelineStage for PreparePrefixStage {
 
         if !use_symlinks {
             // Cleanup if it was previously enabled
-            let _ = crate::utils::cleanup_dll_symlinks(&prefix_path);
+            let _ = crate::core::utils::cleanup_dll_symlinks(&prefix_path);
             return Ok(());
         }
 
         tracing::info!("Symlink mode enabled, deploying DLLs to prefix: {}", prefix_path.display());
-        let deployed = crate::utils::deploy_dll_symlinks(&prefix_path, &ctx.dll_resolutions, &ctx.target_architecture)
+        let deployed = crate::core::utils::deploy_dll_symlinks(&prefix_path, &ctx.dll_resolutions, &ctx.target_architecture)
             .map_err(|e| LaunchError::new(LaunchErrorKind::Permission, format!("failed to deploy symlinks into prefix: {}", e)).with_source(e))?;
 
         if let Some(logger) = &ctx.logger {

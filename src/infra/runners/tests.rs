@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod tests {
     use crate::infra::runners::{LaunchContext, CommandSpec, Runner, WineTkgRunner};
-    use crate::models::LibraryGame;
+    use crate::core::models::LibraryGame;
     use crate::steam_client::{LaunchInfo, LaunchTarget};
-    use crate::config::LauncherConfig;
+    use crate::core::config::LauncherConfig;
     use std::collections::HashMap;
     use std::path::PathBuf;
 
@@ -39,7 +39,7 @@ mod tests {
             steam_enabled: false,
             use_umu: false,
             umu_run: None,
-            target_architecture: crate::models::ExecutableArchitecture::X86_64,
+            target_architecture: crate::core::models::ExecutableArchitecture::X86_64,
             dll_resolutions: Vec::new(),
             game_fixups: Default::default(),
             verification_ptr: std::ptr::null_mut(),
@@ -68,7 +68,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_wine_tkg_runner_graphics_policy_autodetect() {
-        use crate::models::{GraphicsBackendPolicy, UserAppConfig};
+        use crate::core::models::{GraphicsBackendPolicy, UserAppConfig};
         use tempfile::tempdir;
         use std::fs;
 
@@ -123,7 +123,7 @@ mod tests {
             steam_enabled: false,
             use_umu: false,
             umu_run: None,
-            target_architecture: crate::models::ExecutableArchitecture::X86_64,
+            target_architecture: crate::core::models::ExecutableArchitecture::X86_64,
             dll_resolutions: Vec::new(),
             game_fixups: Default::default(),
             verification_ptr: std::ptr::null_mut(),
@@ -168,7 +168,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_user_env_wins_over_fixup() {
-        use crate::models::UserAppConfig;
+        use crate::core::models::UserAppConfig;
         let runner = WineTkgRunner;
         let mut ctx = mock_context();
         ctx.game_fixups = crate::launch::fixups::GameFixups {

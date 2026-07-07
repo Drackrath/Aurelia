@@ -132,7 +132,7 @@ pub struct EffectiveSettingsConfig {
     pub effective_nvapi: bool,
     pub requested_gpu: Option<String>,
     pub effective_gpu: Option<String>,
-    pub target_architecture: crate::models::ExecutableArchitecture,
+    pub target_architecture: crate::core::models::ExecutableArchitecture,
     pub dll_resolutions: Vec<crate::launch::dll_provider_resolver::DllResolution>,
     pub wine_dll_overrides: Option<String>,
     pub runtime_evidence: Option<crate::launch::pipeline::RuntimeEvidence>,
@@ -276,7 +276,7 @@ fn sanity_warning(
 pub fn check_environment_sanity(
     env_vars: &HashMap<String, String>,
     runner_name: &str,
-    user_config: Option<&crate::models::UserAppConfig>,
+    user_config: Option<&crate::core::models::UserAppConfig>,
 ) -> Vec<crate::launch::pipeline::CompatibilityWarning> {
     let mut warnings = Vec::new();
 
@@ -285,8 +285,8 @@ pub fn check_environment_sanity(
         let d3d_dlls = ["d3d9", "d3d11", "dxgi", "d3d12"];
         let is_baseline = user_config
             .map(|c| {
-                c.graphics_layers.graphics_backend_policy != crate::models::GraphicsBackendPolicy::DXVK
-                    && c.graphics_layers.d3d12_policy == crate::models::D3D12ProviderPolicy::Auto
+                c.graphics_layers.graphics_backend_policy != crate::core::models::GraphicsBackendPolicy::DXVK
+                    && c.graphics_layers.d3d12_policy == crate::core::models::D3D12ProviderPolicy::Auto
                     && !c.graphics_layers.dxvk_enabled
                     && !c.graphics_layers.vkd3d_proton_enabled
                     && !c.graphics_layers.vkd3d_enabled

@@ -84,8 +84,8 @@ impl SteamClient {
     /// Stop a game previously launched by `aurelia play`. With `force`, processes
     /// are killed immediately (SIGKILL / `taskkill /F`); otherwise they are first
     /// asked to exit (SIGTERM) so the game can shut down and save cleanly.
-    pub fn stop_game(app_id: u32, force: bool) -> Result<crate::running::RunningGame> {
-        let record = crate::running::load(app_id).ok_or_else(|| {
+    pub fn stop_game(app_id: u32, force: bool) -> Result<crate::compat::running::RunningGame> {
+        let record = crate::compat::running::load(app_id).ok_or_else(|| {
             anyhow!("app {app_id} is not running (no launch was recorded by Aurelia)")
         })?;
 
@@ -107,7 +107,7 @@ impl SteamClient {
         Self::kill_processes_for_app(app_id, force);
 
         kill_process_tree(record.pid, force);
-        crate::running::clear(app_id);
+        crate::compat::running::clear(app_id);
         Ok(record)
     }
 
@@ -292,7 +292,7 @@ NoSavePersonalInfo=1
         &self,
         app: &LibraryGame,
         launch_info: &LaunchInfo,
-        user_config: Option<&crate::models::UserAppConfig>,
+        user_config: Option<&crate::core::models::UserAppConfig>,
     ) -> Result<std::process::Child> {
         let install_dir = match app.install_path.as_ref().map(PathBuf::from) {
             Some(p) if p.exists() => p,
@@ -347,8 +347,8 @@ NoSavePersonalInfo=1
         app: &LibraryGame,
         launch_info: &LaunchInfo,
         proton_path: Option<&str>,
-        launcher_config: &crate::config::LauncherConfig,
-        user_config: Option<&crate::models::UserAppConfig>,
+        launcher_config: &crate::core::config::LauncherConfig,
+        user_config: Option<&crate::core::models::UserAppConfig>,
         force_native_engine: bool,
         force_umu: bool,
         steam_enabled: bool,
@@ -366,7 +366,7 @@ NoSavePersonalInfo=1
         ctx.force_umu = force_umu;
         ctx.steam_enabled = steam_enabled;
 
-        if let Ok(config_dir) = crate::config::config_dir() {
+        if let Ok(config_dir) = crate::core::config::config_dir() {
             let session = LaunchSession::new(&config_dir.join("logs"));
             if let Ok(logger) = EventLogger::new(&session) {
                 ctx.session = Some(session);
@@ -388,8 +388,8 @@ NoSavePersonalInfo=1
         app: &LibraryGame,
         launch_info: &LaunchInfo,
         _proton_path: Option<&str>,
-        _launcher_config: &crate::config::LauncherConfig,
-        user_config: Option<&crate::models::UserAppConfig>,
+        _launcher_config: &crate::core::config::LauncherConfig,
+        user_config: Option<&crate::core::models::UserAppConfig>,
     ) -> Result<std::process::Child> {
         let install_dir = match app.install_path.as_ref().map(PathBuf::from) {
             Some(p) if p.exists() => p,

@@ -117,7 +117,7 @@ mod tests {
     #[test]
     fn test_environment_sanity_checks() {
         use crate::infra::logging::check_environment_sanity;
-        use crate::models::{UserAppConfig, GraphicsLayerConfig};
+        use crate::core::models::{UserAppConfig, GraphicsLayerConfig};
 
         // Case 1: Baseline with unexpected overrides
         let mut env = HashMap::new();
@@ -129,8 +129,8 @@ mod tests {
             vkd3d_proton_enabled: false,
             vkd3d_enabled: false,
             nvapi_enabled: true,
-            graphics_backend_policy: crate::models::GraphicsBackendPolicy::WineD3D,
-            d3d12_policy: crate::models::D3D12ProviderPolicy::Auto,
+            graphics_backend_policy: crate::core::models::GraphicsBackendPolicy::WineD3D,
+            d3d12_policy: crate::core::models::D3D12ProviderPolicy::Auto,
             use_symlinks_in_prefix: false,
             custom_dxvk_path: None,
             custom_vkd3d_path: None,

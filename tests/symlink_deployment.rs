@@ -1,8 +1,8 @@
 use std::fs;
 use tempfile::tempdir;
-use aurelia::utils::{deploy_dll_symlinks, cleanup_dll_symlinks};
+use aurelia::core::utils::{deploy_dll_symlinks, cleanup_dll_symlinks};
 use aurelia::launch::dll_provider_resolver::{DllResolution, DllProvider};
-use aurelia::models::ExecutableArchitecture;
+use aurelia::core::models::ExecutableArchitecture;
 
 #[test]
 fn test_symlink_deployment_and_cleanup() {

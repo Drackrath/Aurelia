@@ -9,7 +9,7 @@ impl SteamClient {
         &mut self,
         app: &LibraryGame,
         proton_path: Option<&str>,
-        user_config: Option<&crate::models::UserAppConfig>,
+        user_config: Option<&crate::core::models::UserAppConfig>,
         force_windows: bool,
         force_native_engine: bool,
         force_umu: bool,
@@ -25,7 +25,7 @@ impl SteamClient {
         // initialise. Best-effort and Linux-only.
         #[cfg(target_os = "linux")]
         if steam_enabled {
-            crate::utils::ensure_steam_running();
+            crate::core::utils::ensure_steam_running();
         }
 
         let launch_options = self.get_product_info(app.app_id).await?;
@@ -97,7 +97,7 @@ impl SteamClient {
         let cloud_enabled = launcher_config.enable_cloud_sync && !self.is_offline();
         let mut cloud_client = None;
         let mut cloud_resolver = None;
-        let mut cloud_specs: Vec<crate::cloud_sync::UfsSaveSpec> = Vec::new();
+        let mut cloud_specs: Vec<crate::library::cloud_sync::UfsSaveSpec> = Vec::new();
 
         if cloud_enabled {
             let client = CloudClient::new(
@@ -142,24 +142,24 @@ impl SteamClient {
         let wineprefix = if native_windows {
             None
         } else {
-            let user_configs = crate::config::load_user_configs().await.unwrap_or_default();
-            let pfx = crate::utils::steam_wineprefix_for_game(&launcher_config, app.app_id, &user_configs);
+            let user_configs = crate::core::config::load_user_configs().await.unwrap_or_default();
+            let pfx = crate::core::utils::steam_wineprefix_for_game(&launcher_config, app.app_id, &user_configs);
             // Only record a per-game (compatdata) prefix — sweeping the shared
             // master prefix on stop would also kill the Steam client inside it.
             pfx.to_string_lossy().contains("compatdata").then_some(pfx)
         };
-        let record = crate::running::RunningGame {
+        let record = crate::compat::running::RunningGame {
             app_id: app.app_id,
             name: app.name.clone(),
             pid: child.id(),
             wineprefix,
         };
-        if let Err(e) = crate::running::record_launch(&record) {
+        if let Err(e) = crate::compat::running::record_launch(&record) {
             tracing::warn!(appid = app.app_id, "could not record running game: {e:#}");
         }
 
         let wait_result = child.wait().context("failed waiting for game process exit");
-        crate::running::clear(app.app_id);
+        crate::compat::running::clear(app.app_id);
         wait_result?;
 
         if cloud_enabled {
@@ -189,7 +189,7 @@ impl SteamClient {
         app: &LibraryGame,
         launch_info: &LaunchInfo,
         proton_path: Option<&str>,
-        user_config: Option<&crate::models::UserAppConfig>,
+        user_config: Option<&crate::core::models::UserAppConfig>,
     ) -> Result<()> {
         let launcher_config = load_launcher_config().await.unwrap_or_default();
         self.spawn_game_process(app, launch_info, proton_path, &launcher_config, user_config, false, false, false).await?;
@@ -199,7 +199,7 @@ impl SteamClient {
     pub async fn update_game(
         &self,
         appid: u32,
-        shared_state: Arc<std::sync::RwLock<crate::models::DownloadState>>,
+        shared_state: Arc<std::sync::RwLock<crate::core::models::DownloadState>>,
     ) -> Result<Receiver<DownloadProgress>> {
         self.start_manifest_download(appid, false, shared_state)
             .await
@@ -208,7 +208,7 @@ impl SteamClient {
     pub async fn verify_game(
         &self,
         appid: u32,
-        shared_state: Arc<std::sync::RwLock<crate::models::DownloadState>>,
+        shared_state: Arc<std::sync::RwLock<crate::core::models::DownloadState>>,
     ) -> Result<Receiver<DownloadProgress>> {
         self.start_manifest_download(appid, true, shared_state)
             .await
@@ -218,7 +218,7 @@ impl SteamClient {
         &self,
         appid: u32,
         verify_mode: bool,
-        shared_state: Arc<std::sync::RwLock<crate::models::DownloadState>>,
+        shared_state: Arc<std::sync::RwLock<crate::core::models::DownloadState>>,
     ) -> Result<Receiver<DownloadProgress>> {
         let connection = self
             .connection
@@ -579,7 +579,7 @@ impl SteamClient {
 /// Returns whether the user has signalled an abort for the in-progress
 /// download/verify. A poisoned lock is treated as "not aborted" so a transient
 /// lock failure can't spuriously cancel the operation.
-fn download_aborted(state: &Arc<std::sync::RwLock<crate::models::DownloadState>>) -> bool {
+fn download_aborted(state: &Arc<std::sync::RwLock<crate::core::models::DownloadState>>) -> bool {
     state
         .read()
         .map(|s| s.abort_signal.load(std::sync::atomic::Ordering::Relaxed))

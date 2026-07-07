@@ -1,5 +1,10 @@
-use crate::config::{detect_steam_path, load_launcher_config};
-use crate::models::{GameLibrary, GameModel, LibraryGame, LocalGame, OwnedGame};
+pub mod local_library;
+pub mod depot_browser;
+pub mod relocate;
+pub mod cloud_sync;
+
+use crate::core::config::{detect_steam_path, load_launcher_config};
+use crate::core::models::{GameLibrary, GameModel, LibraryGame, LocalGame, OwnedGame};
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -98,7 +103,7 @@ pub async fn scan_installed_app_info() -> Result<HashMap<u32, InstalledAppInfo>>
     let mut installed = scan_library_info(&root).await?;
 
     if config.is_some_and(|cfg| cfg.windows_steam_discovery_enabled) {
-        let master_steam = crate::utils::get_master_steam_config();
+        let master_steam = crate::core::utils::get_master_steam_config();
         if master_steam.wine_prefix.exists() {
             tracing::debug!("scanning Windows Steam root: {:?}", master_steam.wine_prefix);
             // Windows Steam layout is drive_c/Program Files (x86)/Steam

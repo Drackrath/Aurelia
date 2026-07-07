@@ -9,13 +9,13 @@ mod verification_tests;
 
 use std::path::{Path, PathBuf};
 use anyhow::{Result, Context, anyhow};
-use crate::config::{config_dir, LauncherConfig};
+use crate::core::config::{config_dir, LauncherConfig};
 use crate::steam_client::SteamClient;
-use crate::utils::build_runner_command;
+use crate::core::utils::build_runner_command;
 
 pub async fn install_master_steam(config: &LauncherConfig) -> Result<()> {
     let base_dir = config_dir()?;
-    let steam_cfg = crate::utils::get_master_steam_config();
+    let steam_cfg = crate::core::utils::get_master_steam_config();
     let runtimes_dir = base_dir.join("runtimes");
     std::fs::create_dir_all(&runtimes_dir)?;
 
@@ -30,7 +30,7 @@ pub async fn install_master_steam(config: &LauncherConfig) -> Result<()> {
     }
 
     let library_root = PathBuf::from(&config.steam_library_path);
-    let resolved_runner = crate::utils::resolve_runner(&runner_name, &library_root);
+    let resolved_runner = crate::core::utils::resolve_runner(&runner_name, &library_root);
     let mut cmd = build_runner_command(&resolved_runner)?;
 
     tracing::info!("Unified Master Steam resolution:");
@@ -54,7 +54,7 @@ pub async fn install_master_steam(config: &LauncherConfig) -> Result<()> {
     cmd.env("STEAM_COMPAT_DATA_PATH", &steam_cfg.root_dir);
     cmd.env("WINEPATH", "C:\\Program Files (x86)\\Steam");
 
-    let fake_env = crate::utils::setup_fake_steam_trap(&base_dir)?;
+    let fake_env = crate::core::utils::setup_fake_steam_trap(&base_dir)?;
     cmd.env("STEAM_COMPAT_CLIENT_INSTALL_PATH", &fake_env);
     cmd.env("WINEDLLOVERRIDES", "vstdlib_s=n;tier0_s=n;steamclient=n;steamclient64=n;steam_api=n;steam_api64=n;lsteamclient=");
 
@@ -128,7 +128,7 @@ pub async fn repair_master_steam(config: &LauncherConfig) -> Result<()> {
         ));
     }
 
-    let steam_cfg = crate::utils::get_master_steam_config();
+    let steam_cfg = crate::core::utils::get_master_steam_config();
 
     // 1. Kill any master-Steam / game processes still holding the prefix so the
     //    directory can be moved safely. Reuse the existing prefix-scoped killers

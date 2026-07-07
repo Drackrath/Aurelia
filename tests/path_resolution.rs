@@ -1,8 +1,8 @@
 use std::fs;
 use tempfile::tempdir;
 use aurelia::steam_client::{SteamClient, LaunchInfo, LaunchTarget, sanitize_install_dir};
-use aurelia::models::LibraryGame;
-use aurelia::config::LauncherConfig;
+use aurelia::core::models::LibraryGame;
+use aurelia::core::config::LauncherConfig;
 use std::collections::HashMap;
 
 #[tokio::test]

@@ -1,7 +1,7 @@
 use aurelia::launch::pipeline::PipelineContext;
 use aurelia::launch::validators::overrides::OverrideConflictValidator;
 use aurelia::launch::validators::LaunchValidator;
-use aurelia::models::UserAppConfig;
+use aurelia::core::models::UserAppConfig;
 
 #[tokio::test]
 async fn test_validator_detects_dxvk_conflict() {

@@ -13,7 +13,7 @@ pub struct PreflightCheck {
 pub struct PreflightReport {
     pub success: bool,
     pub checks: Vec<PreflightCheck>,
-    pub target_architecture: crate::models::ExecutableArchitecture,
+    pub target_architecture: crate::core::models::ExecutableArchitecture,
     pub runner_path: String,
 }
 

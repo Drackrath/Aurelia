@@ -1,4 +1,4 @@
-use crate::models::{OwnedGame, SessionState, SteamPrefixMode, UserConfigStore};
+use crate::core::models::{OwnedGame, SessionState, SteamPrefixMode, UserConfigStore};
 use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -89,7 +89,7 @@ pub struct LauncherConfig {
     pub enable_cloud_sync: bool,
     #[serde(default)]
     pub use_shared_compat_data: bool,
-    #[serde(default = "crate::models::default_true")]
+    #[serde(default = "crate::core::models::default_true")]
     pub windows_steam_discovery_enabled: bool,
     #[serde(default)]
     pub preferred_launch_options: HashMap<u32, String>,
