@@ -67,7 +67,7 @@ impl Runner for WineTkgRunner {
         tracing::info!("Steam Runtime Prefix Mode: {:?}", steam_prefix_mode);
 
         if use_steam_runtime {
-            let steam_cfg = crate::utils::get_master_steam_config();
+            let steam_cfg = crate::core::utils::get_master_steam_config();
             tracing::info!("Unified Master Steam resolution (Game Launch):");
             tracing::info!("  - Root Dir: {}", steam_cfg.root_dir.display());
             tracing::info!("  - Wine Prefix: {}", steam_cfg.wine_prefix.display());
@@ -90,10 +90,10 @@ impl Runner for WineTkgRunner {
             tracing::info!("  - Steam Exe: {}", steam_cfg.steam_exe.as_ref().unwrap().display());
 
             let (prefix_steam_dir, steam_wineprefix) = match steam_prefix_mode {
-                        crate::models::SteamPrefixMode::Shared => {
+                        crate::core::models::SteamPrefixMode::Shared => {
                             (master_steam_dir.clone(), steam_cfg.wine_prefix.clone())
                         }
-                        crate::models::SteamPrefixMode::PerGame => {
+                        crate::core::models::SteamPrefixMode::PerGame => {
                             let target_steam_dir = effective_game_prefix
                                 .join("drive_c/Program Files (x86)/Steam");
 
@@ -141,12 +141,12 @@ impl Runner for WineTkgRunner {
                                     {
                                         if let Err(e) = std::os::unix::fs::symlink(&src, &dst) {
                                             tracing::warn!("Symlink failed for {}, falling back to copy: {}", dir, e);
-                                            let _ = crate::utils::copy_dir_all(&src, &dst);
+                                            let _ = crate::core::utils::copy_dir_all(&src, &dst);
                                         }
                                     }
                                     #[cfg(not(unix))]
                                     {
-                                        let _ = crate::utils::copy_dir_all(&src, &dst);
+                                        let _ = crate::core::utils::copy_dir_all(&src, &dst);
                                     }
                                 }
                             }
@@ -200,9 +200,9 @@ impl Runner for WineTkgRunner {
                             v.steam_running_before_launch = steam_running;
                             v.effective_game_wineprefix = Some(effective_game_prefix.to_string_lossy().to_string());
                             v.effective_steam_wineprefix = Some(steam_wineprefix.to_string_lossy().to_string());
-                            v.per_game_prefix_requested = steam_prefix_mode == crate::models::SteamPrefixMode::PerGame;
+                            v.per_game_prefix_requested = steam_prefix_mode == crate::core::models::SteamPrefixMode::PerGame;
                             v.per_game_prefix_honored = effective_game_prefix == steam_wineprefix;
-                            v.steam_runtime_policy = format!("{:?}", ctx.user_config.as_ref().map(|c| &c.steam_runtime_policy).unwrap_or(&crate::models::SteamRuntimePolicy::Auto));
+                            v.steam_runtime_policy = format!("{:?}", ctx.user_config.as_ref().map(|c| &c.steam_runtime_policy).unwrap_or(&crate::core::models::SteamRuntimePolicy::Auto));
                             v.steam_runtime_source = runtime_source.to_string();
                             v.windows_steam_discovery_enabled = ctx.launcher_config.windows_steam_discovery_enabled;
                         }
@@ -410,7 +410,7 @@ impl Runner for WineTkgRunner {
         env.insert("STEAM_COMPAT_DATA_PATH".to_string(), compat_data_path.to_string_lossy().to_string());
 
         // Add user identity context if available
-        if let Ok(session) = crate::config::load_session().await {
+        if let Ok(session) = crate::core::config::load_session().await {
             if let Some(steam_id) = session.steam_id {
                 env.insert("SteamUser".to_string(), steam_id.to_string());
             }
@@ -433,8 +433,8 @@ impl Runner for WineTkgRunner {
             .or_else(|| ctx.proton_path.as_deref().filter(|p| !p.is_empty()))
             .unwrap_or("wine");
 
-        let active_runner_path = crate::utils::resolve_runner(proton, &library_root);
-        let _components = crate::utils::detect_runner_components(
+        let active_runner_path = crate::core::utils::resolve_runner(proton, &library_root);
+        let _components = crate::core::utils::detect_runner_components(
             &active_runner_path,
             Some(&effective_game_prefix),
         );
@@ -443,9 +443,9 @@ impl Runner for WineTkgRunner {
         let (policy_dxvk, force_builtin, strict_dxvk) = match glc.graphics_backend_policy {
             // Auto is now conservative: it does NOT automatically enable DXVK
             // even if detected on disk. It prefers default Wine behavior.
-            crate::models::GraphicsBackendPolicy::Auto => (false, false, false),
-            crate::models::GraphicsBackendPolicy::WineD3D => (false, true, false),
-            crate::models::GraphicsBackendPolicy::DXVK => (true, false, true),
+            crate::core::models::GraphicsBackendPolicy::Auto => (false, false, false),
+            crate::core::models::GraphicsBackendPolicy::WineD3D => (false, true, false),
+            crate::core::models::GraphicsBackendPolicy::DXVK => (true, false, true),
         };
 
         // Manual override takes precedence if enabled
@@ -457,9 +457,9 @@ impl Runner for WineTkgRunner {
         // 2. Resolve DX12 policy (D3D12ProviderPolicy) - CONSERVATIVE
         let (policy_vkd3dp, policy_vkd3dw) = match glc.d3d12_policy {
             // Auto is now conservative: no forced D3D12 provider unless explicitly requested.
-            crate::models::D3D12ProviderPolicy::Auto => (false, false),
-            crate::models::D3D12ProviderPolicy::Vkd3dProton => (true, false),
-            crate::models::D3D12ProviderPolicy::Vkd3dWine => (false, true),
+            crate::core::models::D3D12ProviderPolicy::Auto => (false, false),
+            crate::core::models::D3D12ProviderPolicy::Vkd3dProton => (true, false),
+            crate::core::models::D3D12ProviderPolicy::Vkd3dWine => (false, true),
         };
         // Manual overrides take precedence
         let effective_vkd3d_proton = glc.vkd3d_proton_enabled || policy_vkd3dp;
@@ -475,7 +475,7 @@ impl Runner for WineTkgRunner {
         }
 
         let use_symlinks = glc.use_symlinks_in_prefix;
-        let mut dll_overrides = crate::utils::build_dll_overrides(
+        let mut dll_overrides = crate::core::utils::build_dll_overrides(
             effective_dxvk,
             effective_vkd3d_proton,
             effective_vkd3d,
@@ -600,9 +600,9 @@ impl Runner for WineTkgRunner {
         // dirs (`files/lib`, `files/lib64`) where modern WOW64 builds keep their
         // unix-bridge `.so` libs (so ntdll.dll resolves in syswow64), and both the
         // `-windows` (PE) and `-unix` (WOW64 bridge) arch subdirs.
-        let active_runner = crate::utils::resolve_runner(proton, &library_root);
-        let runner_root = crate::utils::derive_runner_root(&active_runner);
-        for lib_sub in crate::proton::UNIFIED_LIB_SUBDIRS {
+        let active_runner = crate::core::utils::resolve_runner(proton, &library_root);
+        let runner_root = crate::core::utils::derive_runner_root(&active_runner);
+        for lib_sub in crate::compat::proton::UNIFIED_LIB_SUBDIRS {
             let p = runner_root.join(lib_sub);
             if p.exists() {
                 let s = p.to_string_lossy().to_string();
@@ -614,7 +614,7 @@ impl Runner for WineTkgRunner {
                 // This is critical for PE-based runners where Wine expects DLLs in
                 // x86_64-windows/i386-windows folders, and for WOW64 builds whose unix
                 // bridge libs live under x86_64-unix/i386-unix.
-                for arch in crate::proton::ARCH_SUBDIRS {
+                for arch in crate::compat::proton::ARCH_SUBDIRS {
                     let arch_p = p.join(arch);
                     if arch_p.exists() {
                         let arch_s = arch_p.to_string_lossy().to_string();
@@ -649,13 +649,13 @@ impl Runner for WineTkgRunner {
             // lsteamclient bridges to the running client (Steamworks online features,
             // Family-Shared licences). Falls back to the standalone trap if no host
             // Steam install is found.
-            let config_dir = crate::config::config_dir()
+            let config_dir = crate::core::config::config_dir()
                 .map_err(|e| LaunchError::new(LaunchErrorKind::Environment, "failed to get config dir").with_source(e))?;
-            let (path, source) = match crate::utils::host_steam_client_path() {
+            let (path, source) = match crate::core::utils::host_steam_client_path() {
                 Some(p) => (p, "real_host"),
                 None => {
                     tracing::warn!("steam-enabled launch requested but no host Steam install found; using standalone trap");
-                    let fake = crate::utils::setup_fake_steam_trap(&config_dir)
+                    let fake = crate::core::utils::setup_fake_steam_trap(&config_dir)
                         .map_err(|e| LaunchError::new(LaunchErrorKind::Permission, "failed to setup fake steam trap").with_source(e))?;
                     (fake, "fake_trap")
                 }
@@ -669,16 +669,16 @@ impl Runner for WineTkgRunner {
                 }
             }
         } else if use_steam_runtime {
-            let steam_cfg = crate::utils::get_master_steam_config();
+            let steam_cfg = crate::core::utils::get_master_steam_config();
             let steam_prefix_mode = ctx.user_config.as_ref()
                 .map(|c| c.steam_prefix_mode.clone())
                 .unwrap_or(ctx.launcher_config.steam_prefix_mode.clone());
 
             let steam_client_path = match steam_prefix_mode {
-                crate::models::SteamPrefixMode::Shared => {
+                crate::core::models::SteamPrefixMode::Shared => {
                     steam_cfg.steam_exe.as_ref().and_then(|e| e.parent().map(|p| p.to_path_buf()))
                 }
-                crate::models::SteamPrefixMode::PerGame => {
+                crate::core::models::SteamPrefixMode::PerGame => {
                     Some(effective_game_prefix.join("drive_c/Program Files (x86)/Steam"))
                 }
             };
@@ -693,8 +693,8 @@ impl Runner for WineTkgRunner {
                     }
                 }
             } else {
-                let config_dir = crate::config::config_dir().map_err(|e| LaunchError::new(LaunchErrorKind::Environment, "failed to get config dir").with_source(e))?;
-                let fake_env = crate::utils::setup_fake_steam_trap(&config_dir)
+                let config_dir = crate::core::config::config_dir().map_err(|e| LaunchError::new(LaunchErrorKind::Environment, "failed to get config dir").with_source(e))?;
+                let fake_env = crate::core::utils::setup_fake_steam_trap(&config_dir)
                     .map_err(|e| LaunchError::new(LaunchErrorKind::Permission, "failed to setup fake steam trap").with_source(e))?;
                 env.insert("STEAM_COMPAT_CLIENT_INSTALL_PATH".to_string(), fake_env.to_string_lossy().to_string());
                 unsafe {
@@ -706,8 +706,8 @@ impl Runner for WineTkgRunner {
                 }
             }
         } else {
-            let config_dir = crate::config::config_dir().map_err(|e| LaunchError::new(LaunchErrorKind::Environment, "failed to get config dir").with_source(e))?;
-            let fake_env = crate::utils::setup_fake_steam_trap(&config_dir)
+            let config_dir = crate::core::config::config_dir().map_err(|e| LaunchError::new(LaunchErrorKind::Environment, "failed to get config dir").with_source(e))?;
+            let fake_env = crate::core::utils::setup_fake_steam_trap(&config_dir)
                 .map_err(|e| LaunchError::new(LaunchErrorKind::Permission, "failed to setup fake steam trap").with_source(e))?;
             env.insert("STEAM_COMPAT_CLIENT_INSTALL_PATH".to_string(), fake_env.to_string_lossy().to_string());
             unsafe {
@@ -740,7 +740,7 @@ impl Runner for WineTkgRunner {
 
         // Apply GPU preference if specified. CONSERVATIVE: No forced offload if unset.
         if let Some(gpu_pref) = ctx.user_config.as_ref().and_then(|c| c.gpu_preference.as_ref()) {
-            let available_gpus = crate::utils::list_available_gpus();
+            let available_gpus = crate::core::utils::list_available_gpus();
             if let Some(gpu) = available_gpus.iter().find(|g| &g.name == gpu_pref) {
                 if gpu.name.contains("NVIDIA") {
                     env.insert("__NV_PRIME_RENDER_OFFLOAD".to_string(), "1".to_string());
@@ -828,7 +828,7 @@ impl Runner for WineTkgRunner {
 
         env.insert("WINEDEBUG".to_string(), "err+all,warn+module,warn+loaddll".to_string());
 
-        let log_dir = crate::config::config_dir()
+        let log_dir = crate::core::config::config_dir()
             .unwrap_or_else(|_| PathBuf::from("/tmp"))
             .join("logs");
         let log_path = log_dir.join(format!("wine_{}.log", ctx.app.app_id));
@@ -841,25 +841,25 @@ impl Runner for WineTkgRunner {
         let library_root = PathBuf::from(&ctx.launcher_config.steam_library_path);
 
         let proton = resolve_proton_required(ctx)?;
-        let active_runner = crate::utils::resolve_runner(proton, &library_root);
+        let active_runner = crate::core::utils::resolve_runner(proton, &library_root);
 
         // Classify the GAME runner to record the launch route. A real Proton tree is
         // launched via its `proton run` script (protonfixes apply naturally); plain
         // Wine / wine-tkg launch via bare wine and rely on the data-driven fixup layer
         // (merged in build_env). In every case the game binary is a DIRECT spawn arg
         // to the runner — never a `steam://run/<appid>` or `-applaunch` handoff.
-        match crate::utils::classify_runner(&active_runner) {
-            crate::utils::RunnerKind::Proton => {
+        match crate::core::utils::classify_runner(&active_runner) {
+            crate::core::utils::RunnerKind::Proton => {
                 tracing::info!("Game runner classified as Proton: launching via `proton run` (protonfixes active)");
             }
-            crate::utils::RunnerKind::WineTkg | crate::utils::RunnerKind::PlainWine => {
+            crate::core::utils::RunnerKind::WineTkg | crate::core::utils::RunnerKind::PlainWine => {
                 tracing::info!(
                     fixup_env = ctx.game_fixups.env.len(),
                     fixup_dll = ctx.game_fixups.dll_overrides.len(),
                     "Game runner classified as bare Wine: launching via wine + fixup layer"
                 );
             }
-            crate::utils::RunnerKind::Unknown => {
+            crate::core::utils::RunnerKind::Unknown => {
                 tracing::warn!(
                     "Game runner '{}' did not classify as Proton or Wine; relying on build_runner_command resolution",
                     active_runner.display()
@@ -888,7 +888,7 @@ impl Runner for WineTkgRunner {
             spec.program = umu_run;
         } else {
             // Build the base command (handles 'proton run' wrapper and directory resolution)
-            let base_cmd = crate::utils::build_runner_command(&active_runner)
+            let base_cmd = crate::core::utils::build_runner_command(&active_runner)
                 .map_err(|e| LaunchError::new(LaunchErrorKind::Runner, format!("Invalid Compatibility Layer path: {}", active_runner.display())).with_source(e))?;
             spec.program = base_cmd.get_program().into();
             spec.args = base_cmd.get_args().map(|s| s.to_string_lossy().to_string()).collect();
@@ -916,7 +916,7 @@ impl Runner for WineTkgRunner {
         if use_umu {
             // umu-run needs GAMEID (the Steam AppID) and PROTONPATH (the absolute
             // directory of the resolved Proton tool) to select and run the game.
-            let proton_root = crate::utils::derive_runner_root(&active_runner);
+            let proton_root = crate::core::utils::derive_runner_root(&active_runner);
             spec.env.insert("GAMEID".to_string(), ctx.app.app_id.to_string());
             spec.env.insert("PROTONPATH".to_string(), proton_root.to_string_lossy().to_string());
         }
@@ -964,13 +964,13 @@ impl Runner for WineTkgRunner {
 /// Wraps this game's per-app config (if any) in a single-entry `UserConfigStore`
 /// and resolves the prefix the same way the launcher does globally.
 fn effective_game_prefix(ctx: &LaunchContext) -> PathBuf {
-    let user_config_store: crate::models::UserConfigStore = ctx.user_config.as_ref().map(|c| {
+    let user_config_store: crate::core::models::UserConfigStore = ctx.user_config.as_ref().map(|c| {
         let mut store = HashMap::new();
         store.insert(ctx.app.app_id, c.clone());
         store
     }).unwrap_or_default().into();
 
-    crate::utils::steam_wineprefix_for_game(
+    crate::core::utils::steam_wineprefix_for_game(
         &ctx.launcher_config,
         ctx.app.app_id,
         &user_config_store,
@@ -984,9 +984,9 @@ fn effective_game_prefix(ctx: &LaunchContext) -> PathBuf {
 /// `use_steam_runtime` boolean when the policy is `Auto`/absent.
 fn resolve_steam_runtime(ctx: &LaunchContext) -> (bool, &'static str) {
     match ctx.user_config.as_ref().map(|c| &c.steam_runtime_policy) {
-        Some(crate::models::SteamRuntimePolicy::Enabled) => (true, "override"),
-        Some(crate::models::SteamRuntimePolicy::Disabled) => (false, "override"),
-        Some(crate::models::SteamRuntimePolicy::Auto) | None => {
+        Some(crate::core::models::SteamRuntimePolicy::Enabled) => (true, "override"),
+        Some(crate::core::models::SteamRuntimePolicy::Disabled) => (false, "override"),
+        Some(crate::core::models::SteamRuntimePolicy::Auto) | None => {
             // Fallback to deprecated boolean if policy is Auto/None for backward compat
             let manual_toggle = ctx.user_config.as_ref().map(|c| c.use_steam_runtime).unwrap_or(false);
             if manual_toggle {
@@ -1040,8 +1040,8 @@ fn resolve_background_steam_command(
     let configured = &ctx.launcher_config.steam_runtime_runner;
     if !configured.as_os_str().is_empty() {
         let name = configured.to_string_lossy();
-        let resolved = crate::utils::resolve_runner(&name, library_root);
-        crate::utils::validate_steam_runtime_runner_path(&resolved).map_err(|e| {
+        let resolved = crate::core::utils::resolve_runner(&name, library_root);
+        crate::core::utils::validate_steam_runtime_runner_path(&resolved).map_err(|e| {
             LaunchError::new(
                 LaunchErrorKind::Runner,
                 format!(
@@ -1052,7 +1052,7 @@ fn resolve_background_steam_command(
             .with_source(e)
         })?;
         tracing::info!("Background Steam runner: configured steam_runtime_runner {}", resolved.display());
-        return crate::utils::build_runner_command(&resolved).map_err(|e| {
+        return crate::core::utils::build_runner_command(&resolved).map_err(|e| {
             LaunchError::new(
                 LaunchErrorKind::Runner,
                 format!("Invalid steam_runtime_runner path: {}", resolved.display()),
@@ -1064,11 +1064,11 @@ fn resolve_background_steam_command(
     // 2/3. Otherwise resolve a bare-wine runtime from what is available. The game
     // runner is the runtime we know exists for this launch, so classify it.
     let proton = resolve_proton_required(ctx)?;
-    let game_runner = crate::utils::resolve_runner(proton, library_root);
-    match crate::utils::classify_runner(&game_runner) {
-        crate::utils::RunnerKind::WineTkg | crate::utils::RunnerKind::PlainWine => {
+    let game_runner = crate::core::utils::resolve_runner(proton, library_root);
+    match crate::core::utils::classify_runner(&game_runner) {
+        crate::core::utils::RunnerKind::WineTkg | crate::core::utils::RunnerKind::PlainWine => {
             tracing::info!("Background Steam runner: bare wine tree {}", game_runner.display());
-            crate::utils::build_runner_command(&game_runner).map_err(|e| {
+            crate::core::utils::build_runner_command(&game_runner).map_err(|e| {
                 LaunchError::new(
                     LaunchErrorKind::Runner,
                     format!("Invalid Compatibility Layer path: {}", game_runner.display()),
@@ -1076,10 +1076,10 @@ fn resolve_background_steam_command(
                 .with_source(e)
             })
         }
-        crate::utils::RunnerKind::Proton => {
+        crate::core::utils::RunnerKind::Proton => {
             // Only a Proton tree is available — use its bundled bare wine directly,
             // NOT `proton run` (the protonfixes wrapper is wrong for background Steam).
-            let bare = crate::utils::proton_bundled_bare_wine(&game_runner).ok_or_else(|| {
+            let bare = crate::core::utils::proton_bundled_bare_wine(&game_runner).ok_or_else(|| {
                 LaunchError::new(
                     LaunchErrorKind::Environment,
                     format!(
@@ -1092,7 +1092,7 @@ fn resolve_background_steam_command(
             tracing::info!("Background Steam runner: Proton-bundled bare wine {}", bare.display());
             Ok(Command::new(bare))
         }
-        crate::utils::RunnerKind::Unknown => Err(LaunchError::new(
+        crate::core::utils::RunnerKind::Unknown => Err(LaunchError::new(
             LaunchErrorKind::Runner,
             format!(
                 "no suitable Steam-runtime runner found for background Steam. Configure \

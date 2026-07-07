@@ -53,7 +53,7 @@ fn wants_luxtorpeda(ctx: &PipelineContext) -> bool {
         && config
             .game_configs
             .get(&ctx.app_id)
-            .map(|g| g.runner == crate::config::GameRunner::Luxtorpeda)
+            .map(|g| g.runner == crate::core::config::GameRunner::Luxtorpeda)
             .unwrap_or(false)
 }
 
@@ -68,7 +68,7 @@ fn wants_umu(ctx: &PipelineContext) -> bool {
         && config
             .game_configs
             .get(&ctx.app_id)
-            .map(|g| g.runner == crate::config::GameRunner::Umu)
+            .map(|g| g.runner == crate::core::config::GameRunner::Umu)
             .unwrap_or(false)
 }
 
@@ -105,7 +105,7 @@ impl PipelineStage for ResolveComponentsStage {
                     .as_ref()
                     .and_then(|c| c.umu_path.clone());
                 let custom_path = custom.as_deref().map(std::path::Path::new);
-                let umu_run = crate::umu::ensure_installed(custom_path).await.map_err(|e| {
+                let umu_run = crate::compat::umu::ensure_installed(custom_path).await.map_err(|e| {
                     LaunchError::new(
                         LaunchErrorKind::Runner,
                         format!("failed to resolve the umu-launcher plugin: {e:#}"),

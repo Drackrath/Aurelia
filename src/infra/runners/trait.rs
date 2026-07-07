@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use crate::models::{LibraryGame, UserAppConfig};
-use crate::config::LauncherConfig;
+use crate::core::models::{LibraryGame, UserAppConfig};
+use crate::core::config::LauncherConfig;
 use crate::steam_client::LaunchInfo;
 
 #[derive(Debug, Clone)]
@@ -20,7 +20,7 @@ pub struct LaunchContext {
     /// Absolute path to the plugin-resolved `umu-run` executable, populated when
     /// `use_umu` is set.
     pub umu_run: Option<std::path::PathBuf>,
-    pub target_architecture: crate::models::ExecutableArchitecture,
+    pub target_architecture: crate::core::models::ExecutableArchitecture,
     pub dll_resolutions: Vec<crate::launch::dll_provider_resolver::DllResolution>,
     /// Auto-resolved per-game fixups (env + DLL overrides) merged into the launch
     /// environment. Explicit user/per-game settings win over these on conflict.

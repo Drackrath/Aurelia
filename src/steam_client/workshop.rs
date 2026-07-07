@@ -9,7 +9,7 @@
 //! and free helpers live in the parent module (in scope via `use super::*`).
 use super::*;
 
-use crate::models::{WorkshopComment, WorkshopItem, WorkshopItemKind};
+use crate::core::models::{WorkshopComment, WorkshopItem, WorkshopItemKind};
 use steam_vent_proto::enums::ECommentThreadType;
 use steam_vent_proto::steammessages_clientserver_ucm::CMsgClientUCMEnumerateUserSubscribedFilesWithUpdates;
 use steam_vent_proto::steammessages_community_steamclient::{
@@ -126,7 +126,7 @@ impl SteamClient {
         cursor: &str,
         numperpage: u32,
         required_tags: &[String],
-    ) -> Result<crate::models::WorkshopQueryPage> {
+    ) -> Result<crate::core::models::WorkshopQueryPage> {
         let connection = self.require_connection()?;
 
         let mut request = CPublishedFile_QueryFiles_Request::new();
@@ -157,7 +157,7 @@ impl SteamClient {
             .map(|d| detail_to_workshop_item(d, app_id))
             .collect();
 
-        Ok(crate::models::WorkshopQueryPage {
+        Ok(crate::core::models::WorkshopQueryPage {
             items,
             total: response.total(),
             next_cursor: response.next_cursor().to_string(),
@@ -403,7 +403,7 @@ impl SteamClient {
     pub async fn install_workshop_item(
         &self,
         item: &WorkshopItem,
-        shared_state: Arc<std::sync::RwLock<crate::models::DownloadState>>,
+        shared_state: Arc<std::sync::RwLock<crate::core::models::DownloadState>>,
     ) -> Result<Receiver<DownloadProgress>> {
         if item.hcontent_file == 0 {
             bail!(
@@ -552,14 +552,14 @@ impl SteamClient {
     pub async fn read_installed_workshop(
         &self,
         app_id: u32,
-    ) -> Result<Vec<crate::models::WorkshopInstalledInfo>> {
+    ) -> Result<Vec<crate::core::models::WorkshopInstalledInfo>> {
         let cfg = load_launcher_config().await?;
         let library_root = PathBuf::from(&cfg.steam_library_path);
         let path = super::workshop_manifest::workshop_manifest_path(&library_root, app_id);
         let items = super::workshop_manifest::read_workshop_manifest(&path)?;
         Ok(items
             .into_iter()
-            .map(|i| crate::models::WorkshopInstalledInfo {
+            .map(|i| crate::core::models::WorkshopInstalledInfo {
                 id: i.published_file_id,
                 manifest_id: i.manifest_id,
                 size: i.size,

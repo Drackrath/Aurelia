@@ -1,8 +1,8 @@
 use std::fs;
 use tempfile::tempdir;
 use aurelia::launch::dll_provider_resolver::DllProviderResolver;
-use aurelia::utils::RunnerComponents;
-use aurelia::models::D3D12ProviderPolicy;
+use aurelia::core::utils::RunnerComponents;
+use aurelia::core::models::D3D12ProviderPolicy;
 
 #[test]
 fn test_dll_resolution_report_includes_runner_candidates() {
@@ -17,9 +17,9 @@ fn test_dll_resolution_report_includes_runner_candidates() {
     fs::write(&proton_script, "dummy").unwrap();
 
     let mut components = RunnerComponents::default();
-    components.dxvk = Some(aurelia::utils::ComponentInfo {
+    components.dxvk = Some(aurelia::core::utils::ComponentInfo {
         version: "2.3".into(),
-        source: aurelia::utils::ComponentSource::BundledWithRunner,
+        source: aurelia::core::utils::ComponentSource::BundledWithRunner,
         path: None,
     });
 
@@ -29,7 +29,7 @@ fn test_dll_resolution_report_includes_runner_candidates() {
         &proton_script,
         &components,
         &D3D12ProviderPolicy::Auto,
-        &aurelia::models::ExecutableArchitecture::X86_64,
+        &aurelia::core::models::ExecutableArchitecture::X86_64,
         None,
         None,
         None,

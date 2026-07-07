@@ -4,12 +4,12 @@
 //! session rather than the CM connection. [`SteamClient::web_session`] mints that
 //! session (Phase 0): it exchanges the CM session's refresh token for a short-lived
 //! **web access token** via `Authentication.GenerateAccessTokenForApp`, then builds
-//! the `steamLoginSecure`/`sessionid` cookies (see [`crate::web_session`]).
+//! the `steamLoginSecure`/`sessionid` cookies (see [`crate::web::web_session`]).
 //!
 //! Public lookups (item price, market search) need no session and are free functions;
 //! account-scoped reads (inventory, wallet, my listings) are `SteamClient` methods.
 use super::*;
-use crate::web_session::{WebSession, ECON_IMAGE_BASE};
+use crate::web::web_session::{WebSession, ECON_IMAGE_BASE};
 use serde_json::Value;
 use std::sync::LazyLock;
 use steam_vent_proto::steammessages_auth_steamclient::{

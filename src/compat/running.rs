@@ -8,7 +8,7 @@
 //! per-game Proton/Wine launch, the WINEPREFIX the game runs in). The launching
 //! process removes the file when the game exits.
 
-use crate::config::config_dir;
+use crate::core::config::config_dir;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

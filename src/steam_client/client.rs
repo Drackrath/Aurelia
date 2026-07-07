@@ -67,13 +67,13 @@ impl SteamClient {
     }
 
     /// Build a Steam Cloud client over the current connection (for save sync).
-    pub fn cloud_client(&self) -> Result<crate::cloud_sync::CloudClient> {
+    pub fn cloud_client(&self) -> Result<crate::library::cloud_sync::CloudClient> {
         let connection = self
             .connection
             .as_ref()
             .cloned()
             .context("steam connection not initialized")?;
-        Ok(crate::cloud_sync::CloudClient::new(connection))
+        Ok(crate::library::cloud_sync::CloudClient::new(connection))
     }
 
     /// SteamID64 of the logged-in account, if connected.

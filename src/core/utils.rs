@@ -68,7 +68,7 @@ pub fn resolve_runner(name: &str, library_root: &Path) -> PathBuf {
     ];
     // The Steam root's compatibilitytools.d (handles a non-standard / Flatpak Steam
     // whose root differs from `library_root`).
-    if let Ok(compat) = crate::proton::compat_tools_dir() {
+    if let Ok(compat) = crate::compat::proton::compat_tools_dir() {
         search_dirs.push(compat);
     }
     search_dirs.push(PathBuf::from(&home).join(".local/share/lutris/runners/wine"));
@@ -281,7 +281,7 @@ pub fn setup_fake_steam_trap(config_dir: &Path) -> Result<PathBuf> {
 /// the running Steam client (Steamworks online features, Family-Sharing licences).
 /// Returns the first existing standard location, or `None` if Steam isn't found.
 pub fn host_steam_client_path() -> Option<PathBuf> {
-    crate::config::detect_steam_path()
+    crate::core::config::detect_steam_path()
 }
 
 /// Whether the host's Steam client is currently running. Checks `~/.steam/steam.pid`
@@ -453,7 +453,7 @@ fn detect_dxvk(root: &Path, prefix: Option<&Path>) -> Option<ComponentInfo> {
     // 1. Bundled inside runner (Modern Wine-TKG layout)
     if let Some(info) = detect_bundled_modern(
         root,
-        &crate::proton::wine_component_dirs("dxvk"),
+        &crate::compat::proton::wine_component_dirs("dxvk"),
         |_| &["d3d11.dll", "dxgi.dll", "d3d9.dll", "d3d8.dll", "d3d10core.dll"],
     ) {
         return Some(info);
@@ -507,7 +507,7 @@ fn detect_vkd3d_proton(root: &Path, prefix: Option<&Path>) -> Option<ComponentIn
     // 1. Modern Wine-TKG layout
     if let Some(info) = detect_bundled_modern(
         root,
-        &crate::proton::wine_component_dirs("vkd3d-proton"),
+        &crate::compat::proton::wine_component_dirs("vkd3d-proton"),
         |_| &["d3d12.dll", "d3d12core.dll"],
     ) {
         return Some(info);
@@ -567,7 +567,7 @@ fn detect_nvapi(root: &Path, prefix: Option<&Path>) -> Option<ComponentInfo> {
     // 1. Bundled inside runner (Modern Wine-TKG layout)
     if let Some(info) = detect_bundled_modern(
         root,
-        &crate::proton::wine_component_dirs("nvapi"),
+        &crate::compat::proton::wine_component_dirs("nvapi"),
         |arch| {
             if arch == "x86_64-windows" {
                 &["nvapi64.dll"]
@@ -597,7 +597,7 @@ fn detect_vkd3d(root: &Path, prefix: Option<&Path>) -> Option<ComponentInfo> {
     // 1. Modern Wine-TKG layout
     if let Some(info) = detect_bundled_modern(
         root,
-        &crate::proton::wine_component_dirs("vkd3d"),
+        &crate::compat::proton::wine_component_dirs("vkd3d"),
         |_| &["libvkd3d-1.dll", "libvkd3d-shader-1.dll"],
     ) {
         return Some(info);
@@ -669,7 +669,7 @@ fn detect_bundled_modern<S: AsRef<str>>(
         }
         // Only the Windows PE arch dirs hold the DLLs we match here; the `-unix`
         // WOW64 bridge dirs from ARCH_SUBDIRS are irrelevant to this check.
-        for arch in crate::proton::ARCH_SUBDIRS.iter().filter(|a| a.ends_with("-windows")) {
+        for arch in crate::compat::proton::ARCH_SUBDIRS.iter().filter(|a| a.ends_with("-windows")) {
             let arch = *arch;
             let arch_path = comp_path.join(arch);
             let required = required_for_arch(arch);
@@ -987,7 +987,7 @@ pub struct MasterSteamConfig {
 }
 
 pub fn get_master_steam_config() -> MasterSteamConfig {
-    let root_dir = crate::config::config_dir()
+    let root_dir = crate::core::config::config_dir()
         .unwrap_or_default()
         .join("master_steam_prefix");
 
@@ -1103,56 +1103,56 @@ pub fn list_available_gpus() -> Vec<DetectedGpu> {
     gpus
 }
 
-pub fn detect_exe_architecture(exe_path: &Path) -> crate::models::ExecutableArchitecture {
+pub fn detect_exe_architecture(exe_path: &Path) -> crate::core::models::ExecutableArchitecture {
     use std::io::{Read, Seek, SeekFrom};
 
     let mut file = match std::fs::File::open(exe_path) {
         Ok(f) => f,
-        Err(_) => return crate::models::ExecutableArchitecture::Unknown,
+        Err(_) => return crate::core::models::ExecutableArchitecture::Unknown,
     };
 
     let mut mz_header = [0u8; 2];
     if file.read_exact(&mut mz_header).is_err() || &mz_header != b"MZ" {
-        return crate::models::ExecutableArchitecture::Unknown;
+        return crate::core::models::ExecutableArchitecture::Unknown;
     }
 
     // Offset 0x3C contains the offset to the PE header
     if file.seek(SeekFrom::Start(0x3C)).is_err() {
-        return crate::models::ExecutableArchitecture::Unknown;
+        return crate::core::models::ExecutableArchitecture::Unknown;
     }
 
     let mut pe_offset_buf = [0u8; 4];
     if file.read_exact(&mut pe_offset_buf).is_err() {
-        return crate::models::ExecutableArchitecture::Unknown;
+        return crate::core::models::ExecutableArchitecture::Unknown;
     }
     let pe_offset = u32::from_le_bytes(pe_offset_buf);
 
     if file.seek(SeekFrom::Start(pe_offset as u64)).is_err() {
-        return crate::models::ExecutableArchitecture::Unknown;
+        return crate::core::models::ExecutableArchitecture::Unknown;
     }
 
     let mut pe_signature = [0u8; 4];
     if file.read_exact(&mut pe_signature).is_err() || &pe_signature != b"PE\0\0" {
-        return crate::models::ExecutableArchitecture::Unknown;
+        return crate::core::models::ExecutableArchitecture::Unknown;
     }
 
     // COFF Header starts right after PE signature
     // Machine is the first 2 bytes
     let mut machine_buf = [0u8; 2];
     if file.read_exact(&mut machine_buf).is_err() {
-        return crate::models::ExecutableArchitecture::Unknown;
+        return crate::core::models::ExecutableArchitecture::Unknown;
     }
     let machine = u16::from_le_bytes(machine_buf);
 
     match machine {
-        0x014c => crate::models::ExecutableArchitecture::X86,
-        0x8664 => crate::models::ExecutableArchitecture::X86_64,
-        _ => crate::models::ExecutableArchitecture::Unknown,
+        0x014c => crate::core::models::ExecutableArchitecture::X86,
+        0x8664 => crate::core::models::ExecutableArchitecture::X86_64,
+        _ => crate::core::models::ExecutableArchitecture::Unknown,
     }
 }
 
-pub fn detect_custom_components(path: &Path) -> crate::utils::RunnerComponents {
-    crate::utils::RunnerComponents {
+pub fn detect_custom_components(path: &Path) -> crate::core::utils::RunnerComponents {
+    crate::core::utils::RunnerComponents {
         dxvk: detect_dxvk(path, None),
         vkd3d_proton: detect_vkd3d_proton(path, None),
         vkd3d: detect_vkd3d(path, None),
@@ -1202,7 +1202,7 @@ fn deploy_one_dll_symlink(src: &Path, dest: &Path, log: bool) -> Result<()> {
 pub fn deploy_dll_symlinks(
     prefix: &Path,
     resolutions: &[crate::launch::dll_provider_resolver::DllResolution],
-    target_arch: &crate::models::ExecutableArchitecture,
+    target_arch: &crate::core::models::ExecutableArchitecture,
 ) -> Result<Vec<PathBuf>> {
     let mut deployed = Vec::new();
     let is_64bit_prefix = prefix.join("drive_c/windows/syswow64").exists();
@@ -1218,10 +1218,10 @@ pub fn deploy_dll_symlinks(
 
             // Determine destination directory in prefix
             let dest_dir = match target_arch {
-                crate::models::ExecutableArchitecture::X86_64 => {
+                crate::core::models::ExecutableArchitecture::X86_64 => {
                     prefix.join("drive_c/windows/system32")
                 }
-                crate::models::ExecutableArchitecture::X86 => {
+                crate::core::models::ExecutableArchitecture::X86 => {
                     if is_64bit_prefix {
                         prefix.join("drive_c/windows/syswow64")
                     } else {
@@ -1244,12 +1244,12 @@ pub fn deploy_dll_symlinks(
             // Also try to deploy the "other" architecture if it's a 64-bit prefix and we have it
             if is_64bit_prefix {
                 let (other_arch, other_dir) = match target_arch {
-                    crate::models::ExecutableArchitecture::X86_64 => (
-                        crate::models::ExecutableArchitecture::X86,
+                    crate::core::models::ExecutableArchitecture::X86_64 => (
+                        crate::core::models::ExecutableArchitecture::X86,
                         prefix.join("drive_c/windows/syswow64")
                     ),
-                    crate::models::ExecutableArchitecture::X86 => (
-                        crate::models::ExecutableArchitecture::X86_64,
+                    crate::core::models::ExecutableArchitecture::X86 => (
+                        crate::core::models::ExecutableArchitecture::X86_64,
                         prefix.join("drive_c/windows/system32")
                     ),
                     _ => continue,
@@ -1272,12 +1272,12 @@ pub fn deploy_dll_symlinks(
 
 fn find_sibling_dll(
     path: &Path,
-    current_arch: &crate::models::ExecutableArchitecture,
-    target_arch: &crate::models::ExecutableArchitecture,
+    current_arch: &crate::core::models::ExecutableArchitecture,
+    target_arch: &crate::core::models::ExecutableArchitecture,
 ) -> Option<PathBuf> {
     let (current_tag, target_tag) = match (current_arch, target_arch) {
-        (crate::models::ExecutableArchitecture::X86_64, crate::models::ExecutableArchitecture::X86) => ("x86_64", "i386"),
-        (crate::models::ExecutableArchitecture::X86, crate::models::ExecutableArchitecture::X86_64) => ("i386", "x86_64"),
+        (crate::core::models::ExecutableArchitecture::X86_64, crate::core::models::ExecutableArchitecture::X86) => ("x86_64", "i386"),
+        (crate::core::models::ExecutableArchitecture::X86, crate::core::models::ExecutableArchitecture::X86_64) => ("i386", "x86_64"),
         _ => return None,
     };
 
@@ -1292,8 +1292,8 @@ fn find_sibling_dll(
 
     // Also check for x64/x32 variant
     let (current_tag2, target_tag2) = match (current_arch, target_arch) {
-        (crate::models::ExecutableArchitecture::X86_64, crate::models::ExecutableArchitecture::X86) => ("x64", "x32"),
-        (crate::models::ExecutableArchitecture::X86, crate::models::ExecutableArchitecture::X86_64) => ("x32", "x64"),
+        (crate::core::models::ExecutableArchitecture::X86_64, crate::core::models::ExecutableArchitecture::X86) => ("x64", "x32"),
+        (crate::core::models::ExecutableArchitecture::X86, crate::core::models::ExecutableArchitecture::X86_64) => ("x32", "x64"),
         _ => return None,
     };
     if path_str.contains(current_tag2) {
@@ -1343,22 +1343,22 @@ pub fn cleanup_dll_symlinks(prefix: &Path) -> Result<()> {
 }
 
 pub fn steam_wineprefix_for_game(
-    config: &crate::config::LauncherConfig,
+    config: &crate::core::config::LauncherConfig,
     app_id: u32,
-    user_configs: &crate::models::UserConfigStore,
+    user_configs: &crate::core::models::UserConfigStore,
 ) -> std::path::PathBuf {
     let user_config = user_configs.get(&app_id);
 
     let use_steam_runtime = match user_config.map(|c| &c.steam_runtime_policy) {
-        Some(crate::models::SteamRuntimePolicy::Enabled) => true,
-        Some(crate::models::SteamRuntimePolicy::Disabled) => false,
-        Some(crate::models::SteamRuntimePolicy::Auto) | None => {
+        Some(crate::core::models::SteamRuntimePolicy::Enabled) => true,
+        Some(crate::core::models::SteamRuntimePolicy::Disabled) => false,
+        Some(crate::core::models::SteamRuntimePolicy::Auto) | None => {
             user_config.map(|c| c.use_steam_runtime).unwrap_or(false)
         }
     };
 
     let use_per_game_compat_data = user_config
-        .map(|c| use_steam_runtime && c.steam_prefix_mode == crate::models::SteamPrefixMode::PerGame)
+        .map(|c| use_steam_runtime && c.steam_prefix_mode == crate::core::models::SteamPrefixMode::PerGame)
         .unwrap_or(config.use_shared_compat_data);
 
     if use_per_game_compat_data {
