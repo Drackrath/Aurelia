@@ -8,6 +8,32 @@ use crate::launch::pipeline::{LaunchError, LaunchErrorKind};
 
 pub struct WineTkgRunner;
 
+/// Outcome of the background-Steam liveness re-check performed after a readiness
+/// heuristic fires and the short grace window has elapsed.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ReadinessGrace {
+    /// Process still alive after the grace window — genuinely ready.
+    Ready,
+    /// Process exited within the grace window — a crash masquerading as ready.
+    ExitedEarly { code: Option<i32> },
+}
+
+/// Re-check a background-Steam process after the readiness grace window.
+///
+/// A readiness heuristic (config.vdf/steam.pid/log files) can fire on artifacts
+/// Steam writes *during* early init and then the process crashes a moment later.
+/// The caller sleeps a short grace window and then invokes this: if the process
+/// has since exited it is reclassified as an early exit (a crash) rather than
+/// genuine readiness, so the milestone downstream matches `steam_process_exited_early`.
+pub(crate) fn reclassify_after_grace(child: &mut std::process::Child) -> ReadinessGrace {
+    match child.try_wait() {
+        Ok(Some(status)) => ReadinessGrace::ExitedEarly { code: status.code() },
+        // Still running, or the wait itself errored (treat as still-alive: the
+        // subsequent launch path will surface any real problem).
+        _ => ReadinessGrace::Ready,
+    }
+}
+
 #[async_trait::async_trait]
 impl Runner for WineTkgRunner {
     fn name(&self) -> &str { "Wine-TKG" }
@@ -244,6 +270,11 @@ impl Runner for WineTkgRunner {
                         let steam_logs_dir   = prefix_steam_dir.join("logs");
 
                         let ready = 'wait: {
+                            // Which readiness heuristic fired, if any. We record it and
+                            // break the poll loop instead of returning `true` immediately
+                            // so a short liveness grace window below can still reclassify
+                            // a signal-then-crash as an early exit rather than "ready".
+                            let mut ready_signal: Option<String> = None;
                             for i in 0..readiness_timeout {
                                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
@@ -264,19 +295,22 @@ impl Runner for WineTkgRunner {
                                 // Signal 1: pid file (some Wine/Steam combos do write this)
                                 if steam_pid_path.exists() {
                                     println!("✅ Steam ready after {}s (steam.pid found)", i + 1);
-                                    break 'wait true;
+                                    ready_signal = Some(format!("steam.pid after {}s", i + 1));
+                                    break;
                                 }
 
                                 // Signal 2: .steampath in temp (Proton-style)
                                 if steam_pipe.exists() {
                                     println!("✅ Steam ready after {}s (.steampath found)", i + 1);
-                                    break 'wait true;
+                                    ready_signal = Some(format!(".steampath after {}s", i + 1));
+                                    break;
                                 }
 
                                 // Signal 3: config.vdf written — Steam has finished early init
                                 if steam_config_vdf.exists() {
                                     println!("✅ Steam ready after {}s (config.vdf found)", i + 1);
-                                    break 'wait true;
+                                    ready_signal = Some(format!("config.vdf after {}s", i + 1));
+                                    break;
                                 }
 
                                 // Signal 4: logs dir has multiple entries — Steam's subsystems are running
@@ -290,11 +324,43 @@ impl Runner for WineTkgRunner {
                                             (*ctx.verification_ptr).steam_runtime_milestone = "steam_ready_signal_observed".to_string();
                                         }
                                     }
-                                    break 'wait true;
+                                    ready_signal = Some(format!("{} log files after {}s", log_count, i + 1));
+                                    break;
                                 }
 
                                 println!("  Waiting... {}s", i + 1);
                             }
+
+                            // Liveness grace window: after a readiness heuristic fires, a
+                            // healthy Steam keeps running while a crashing one exits within
+                            // a second or two. Wait a short grace period and re-check the
+                            // process; if it has exited, this was a crash — not readiness —
+                            // so classify it as `steam_process_exited_early` (consumed by
+                            // pipeline.rs) exactly like the top-of-loop crash detection.
+                            if let Some(reason) = ready_signal {
+                                const READINESS_GRACE_SECS: u64 = 2;
+                                tokio::time::sleep(std::time::Duration::from_secs(READINESS_GRACE_SECS)).await;
+                                match reclassify_after_grace(&mut steam_process) {
+                                    ReadinessGrace::ExitedEarly { code } => {
+                                        println!(
+                                            "❌ FATAL: Background Steam signalled ready ({}) but exited within {}s grace (code {:?})",
+                                            reason, READINESS_GRACE_SECS, code
+                                        );
+                                        unsafe {
+                                            if !ctx.verification_ptr.is_null() {
+                                                let v = &mut *ctx.verification_ptr;
+                                                v.steam_runtime_exit_code = code;
+                                                v.steam_runtime_lifetime_ms = Some(start_time.elapsed().as_millis() as u64);
+                                                v.steam_runtime_milestone = "steam_process_exited_early".to_string();
+                                            }
+                                        }
+                                        break 'wait false;
+                                    }
+                                    // Still alive after the grace window — genuinely ready.
+                                    ReadinessGrace::Ready => break 'wait true,
+                                }
+                            }
+
                             println!("⚠️ Steam did not signal ready after {}s, launching game anyway", readiness_timeout);
                             unsafe {
                                 if !ctx.verification_ptr.is_null() {

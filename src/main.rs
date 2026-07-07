@@ -267,6 +267,11 @@ enum Command {
         #[command(subcommand)]
         command: ProtonCommand,
     },
+    /// Install, repair, or inspect the master Windows Steam runtime prefix.
+    SteamRuntime {
+        #[command(subcommand)]
+        command: SteamRuntimeCommand,
+    },
     /// Manage the optional luxtorpeda native-engine plugin.
     Luxtorpeda {
         #[command(subcommand)]
@@ -385,6 +390,19 @@ enum ProtonCommand {
     Uninstall { version: String },
     /// Set the global default Proton/Wine version (used when a game has none set).
     Default { version: String },
+}
+
+#[derive(Subcommand)]
+enum SteamRuntimeCommand {
+    /// Download SteamSetup.exe (if needed) and install Steam into the master prefix.
+    /// Requires `steam_runtime_runner` to be configured.
+    Install,
+    /// Stop Steam, back up the master prefix (keeping one `.bak`), then reinstall.
+    /// Requires `steam_runtime_runner` to be configured.
+    Repair,
+    /// Show the resolved master prefix, layout, whether steam.exe is present, and
+    /// whether a Steam-runtime runner is configured.
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -1071,6 +1089,11 @@ async fn run(cli: Cli) -> Result<()> {
             ProtonCommand::Install { version } => cmd_proton_install(version, json).await,
             ProtonCommand::Uninstall { version } => cmd_proton_uninstall(version, json).await,
             ProtonCommand::Default { version } => cmd_proton_default(version, json).await,
+        },
+        Command::SteamRuntime { command } => match command {
+            SteamRuntimeCommand::Install => cmd_steam_runtime_install(json).await,
+            SteamRuntimeCommand::Repair => cmd_steam_runtime_repair(json).await,
+            SteamRuntimeCommand::Status => cmd_steam_runtime_status(json).await,
         },
         Command::Luxtorpeda { command } => match command {
             LuxtorpedaCommand::Enable => cmd_luxtorpeda_toggle(true, json).await,
@@ -4233,6 +4256,81 @@ async fn cmd_proton_default(version: String, json: bool) -> Result<()> {
                 "Note: '{version}' is not installed — run `aurelia proton install {version}`."
             );
         }
+    }
+    Ok(())
+}
+
+/// `steam-runtime install`: install Steam into the master Windows prefix.
+async fn cmd_steam_runtime_install(json: bool) -> Result<()> {
+    let config = load_launcher_config().await.unwrap_or_default();
+    // Pre-check here (before install_master_steam downloads SteamSetup.exe) so an
+    // unconfigured runner fails fast with an actionable message and no wasted work.
+    if config.steam_runtime_runner.as_os_str().is_empty() {
+        bail!(
+            "no Steam Runtime Runner is configured — set `steam_runtime_runner` in the \
+             launcher config before installing the Windows Steam runtime"
+        );
+    }
+    aurelia::launch::install_master_steam(&config).await?;
+    if json {
+        print_json(&serde_json::json!({ "status": "install_started" }));
+    } else {
+        cli_println!("Master Steam runtime install started.");
+    }
+    Ok(())
+}
+
+/// `steam-runtime repair`: back up the master prefix and reinstall.
+async fn cmd_steam_runtime_repair(json: bool) -> Result<()> {
+    let config = load_launcher_config().await.unwrap_or_default();
+    if config.steam_runtime_runner.as_os_str().is_empty() {
+        bail!(
+            "no Steam Runtime Runner is configured — set `steam_runtime_runner` in the \
+             launcher config before repairing the Windows Steam runtime"
+        );
+    }
+    aurelia::launch::repair_master_steam(&config).await?;
+    if json {
+        print_json(&serde_json::json!({ "status": "repair_started" }));
+    } else {
+        cli_println!("Master Steam runtime repaired (backed up old prefix, reinstall started).");
+    }
+    Ok(())
+}
+
+/// `steam-runtime status`: report the resolved master prefix and configuration.
+async fn cmd_steam_runtime_status(json: bool) -> Result<()> {
+    let config = load_launcher_config().await.unwrap_or_default();
+    let steam_cfg = aurelia::utils::get_master_steam_config();
+    let steam_exe_present = steam_cfg.steam_exe.is_some();
+    let runner = config.steam_runtime_runner.to_string_lossy().to_string();
+    let runner_configured = !runner.is_empty();
+
+    if json {
+        print_json(&serde_json::json!({
+            "root_dir": steam_cfg.root_dir,
+            "wine_prefix": steam_cfg.wine_prefix,
+            "layout_kind": steam_cfg.layout_kind,
+            "steam_exe": steam_cfg.steam_exe,
+            "steam_exe_present": steam_exe_present,
+            "steam_runtime_runner": runner_configured.then_some(runner.clone()),
+            "steam_runtime_runner_configured": runner_configured,
+        }));
+    } else {
+        cli_println!("Master Steam root : {}", steam_cfg.root_dir.display());
+        cli_println!("Wine prefix       : {}", steam_cfg.wine_prefix.display());
+        cli_println!("Layout kind       : {}", steam_cfg.layout_kind);
+        cli_println!(
+            "steam.exe present : {}",
+            if steam_exe_present { "yes" } else { "no" }
+        );
+        if let Some(exe) = &steam_cfg.steam_exe {
+            cli_println!("steam.exe path    : {}", exe.display());
+        }
+        cli_println!(
+            "Runtime runner    : {}",
+            if runner_configured { runner.as_str() } else { "(unset)" }
+        );
     }
     Ok(())
 }
