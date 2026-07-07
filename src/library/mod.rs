@@ -5,6 +5,7 @@ pub mod cloud_sync;
 
 use crate::core::config::{detect_steam_path, load_launcher_config};
 use crate::core::models::{GameLibrary, GameModel, LibraryGame, LocalGame, OwnedGame};
+use crate::core::utils::extract_quoted_values;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -401,26 +402,6 @@ async fn parse_app_manifest_info(path: &Path) -> Result<Option<(u32, InstalledAp
             last_owner,
         },
     )))
-}
-
-fn extract_quoted_values(line: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut in_quote = false;
-    let mut current = String::new();
-    for ch in line.chars() {
-        if ch == '"' {
-            if in_quote {
-                out.push(current.clone());
-                current.clear();
-            }
-            in_quote = !in_quote;
-            continue;
-        }
-        if in_quote {
-            current.push(ch);
-        }
-    }
-    out
 }
 
 pub fn build_game_library(

@@ -11,6 +11,7 @@
 use anyhow::{Context, Result};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
+use crate::core::utils::extract_quoted_values;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -355,30 +356,6 @@ impl ItemDetails {
             _ => {}
         }
     }
-}
-
-/// Extract all double-quoted substrings from `line` in order.
-///
-/// This is a local copy of the same helper that lives in `steam_client.rs`
-/// (which is private to that module).  Duplicating it keeps this file
-/// self-contained, consistent with the task constraints.
-fn extract_quoted_values(line: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut in_quote = false;
-    let mut current = String::new();
-    for ch in line.chars() {
-        if ch == '"' {
-            if in_quote {
-                out.push(std::mem::take(&mut current));
-            }
-            in_quote = !in_quote;
-            continue;
-        }
-        if in_quote {
-            current.push(ch);
-        }
-    }
-    out
 }
 
 // ---------------------------------------------------------------------------

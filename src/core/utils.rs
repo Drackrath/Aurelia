@@ -3,6 +3,29 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Extract the double-quoted values from a single VDF/ACF-style line, in order.
+///
+/// e.g. `"installdir"  "Half-Life 2"` -> `["installdir", "Half-Life 2"]`. Shared by the
+/// appinfo/appmanifest/workshop-manifest parsers (see `steam_client`, `library`).
+pub fn extract_quoted_values(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut in_quote = false;
+    let mut current = String::new();
+    for ch in line.chars() {
+        if ch == '"' {
+            if in_quote {
+                out.push(std::mem::take(&mut current));
+            }
+            in_quote = !in_quote;
+            continue;
+        }
+        if in_quote {
+            current.push(ch);
+        }
+    }
+    out
+}
+
 pub fn build_runner_command(runner_path: &Path) -> Result<Command> {
     let mut final_path = runner_path.to_path_buf();
 
