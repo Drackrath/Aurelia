@@ -2,6 +2,7 @@ pub mod pipeline;
 pub mod stages;
 pub mod validators;
 pub mod dll_provider_resolver;
+pub mod fixups;
 
 #[cfg(test)]
 mod verification_tests;

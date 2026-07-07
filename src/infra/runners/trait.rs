@@ -15,6 +15,9 @@ pub struct LaunchContext {
     pub steam_enabled: bool,
     pub target_architecture: crate::models::ExecutableArchitecture,
     pub dll_resolutions: Vec<crate::launch::dll_provider_resolver::DllResolution>,
+    /// Auto-resolved per-game fixups (env + DLL overrides) merged into the launch
+    /// environment. Explicit user/per-game settings win over these on conflict.
+    pub game_fixups: crate::launch::fixups::GameFixups,
     pub verification_ptr: *mut crate::infra::logging::LaunchVerification, // HACK: for Runner to write diagnostics
 }
 

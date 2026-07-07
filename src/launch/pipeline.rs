@@ -99,6 +99,9 @@ pub struct PipelineContext {
     pub warnings: Vec<CompatibilityWarning>,
     pub graphics_stack: GraphicsStackInfo,
     pub dll_resolutions: Vec<crate::launch::dll_provider_resolver::DllResolution>,
+    /// Per-game auto-fixups resolved by `ResolveGameFixupsStage` and merged into the
+    /// launch environment by the runner. Empty when the game has no registry entry.
+    pub game_fixups: crate::launch::fixups::GameFixups,
     pub verification: crate::infra::logging::LaunchVerification,
 }
 
@@ -125,6 +128,7 @@ impl PipelineContext {
             warnings: Vec::new(),
             graphics_stack: GraphicsStackInfo::default(),
             dll_resolutions: Vec::new(),
+            game_fixups: crate::launch::fixups::GameFixups::default(),
             verification: crate::infra::logging::LaunchVerification::default(),
         }
     }
@@ -483,6 +487,7 @@ impl LaunchPipeline {
         let mut pipeline = Self::new();
         pipeline.add_stage(Box::new(crate::launch::stages::resolve_game::ResolveGameStage));
         pipeline.add_stage(Box::new(crate::launch::stages::resolve_profile::ResolveProfileStage));
+        pipeline.add_stage(Box::new(crate::launch::stages::resolve_game_fixups::ResolveGameFixupsStage));
         pipeline.add_stage(Box::new(crate::launch::stages::resolve_components::ResolveComponentsStage));
         pipeline.add_stage(Box::new(crate::launch::stages::resolve_dll_providers::ResolveDllProvidersStage));
         pipeline.add_stage(Box::new(crate::launch::stages::prepare_prefix::PreparePrefixStage));

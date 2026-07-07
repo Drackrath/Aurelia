@@ -185,11 +185,10 @@ impl Runner for WineTkgRunner {
                     if steam_running {
                         println!("✅ Steam already running in prefix — skipping spawn");
                     } else {
-                        let proton = resolve_proton_required(ctx)?;
-                        let active_runner = crate::utils::resolve_runner(proton, &library_root);
-
-                        let mut steam_cmd = crate::utils::build_runner_command(&active_runner)
-                            .map_err(|e| LaunchError::new(LaunchErrorKind::Runner, format!("Invalid Compatibility Layer path: {}", active_runner.display())).with_source(e))?;
+                        // Background Steam is hosted on a DEDICATED Steam-runtime runner —
+                        // NOT the game runner's `proton run` wrapper. It must run under a
+                        // bare wine so `steam.exe` starts as a plain Windows process.
+                        let mut steam_cmd = resolve_background_steam_command(ctx, &library_root)?;
                         steam_cmd.current_dir(&prefix_steam_dir);
                         steam_cmd
                             .arg("C:\\Program Files (x86)\\Steam\\steam.exe")
@@ -443,6 +442,30 @@ impl Runner for WineTkgRunner {
             }
         }
 
+        // Merge auto-fixup DLL overrides from the per-game registry. Existing
+        // entries (policy/provider-derived, i.e. the explicit resolution) WIN: a
+        // fixup is only appended for a DLL not already present in the override string.
+        if !ctx.game_fixups.dll_overrides.is_empty() {
+            let existing_names: std::collections::HashSet<String> = dll_overrides
+                .split(';')
+                .filter_map(|e| e.split('=').next())
+                .map(|s| s.trim().trim_end_matches(".dll").to_lowercase())
+                .filter(|s| !s.is_empty())
+                .collect();
+            for (dll, mode) in &ctx.game_fixups.dll_overrides {
+                let key = dll.trim_end_matches(".dll").to_lowercase();
+                if existing_names.contains(&key) {
+                    tracing::info!("Skipping fixup DLL override {}={} (explicit override already present)", dll, mode);
+                    continue;
+                }
+                tracing::info!("Applying fixup DLL override: {}={}", dll, mode);
+                if !dll_overrides.is_empty() {
+                    dll_overrides.push(';');
+                }
+                dll_overrides.push_str(&format!("{}={}", dll, mode));
+            }
+        }
+
         tracing::info!("Final WINEDLLOVERRIDES: {}", dll_overrides);
         env.insert("WINEDLLOVERRIDES".to_string(), dll_overrides);
 
@@ -676,6 +699,25 @@ impl Runner for WineTkgRunner {
             }
         }
 
+        // Merge auto-fixup env vars from the per-game registry. Applied BEFORE the
+        // user's explicit `env_variables` below so that on conflict the user's value
+        // wins (an explicit per-game env var overwrites the auto-fixup).
+        if !ctx.game_fixups.env.is_empty() {
+            let user_has = |key: &str| {
+                ctx.user_config
+                    .as_ref()
+                    .is_some_and(|c| c.env_variables.contains_key(key))
+            };
+            for (key, val) in &ctx.game_fixups.env {
+                if user_has(key) {
+                    tracing::info!("Skipping fixup env {} (explicit per-game value present)", key);
+                    continue;
+                }
+                tracing::info!("Applying fixup env: {}={}", key, val);
+                env.insert(key.clone(), val.clone());
+            }
+        }
+
         if let Some(config) = &ctx.user_config {
             for (key, val) in &config.env_variables {
                 env.insert(key.clone(), val.clone());
@@ -734,6 +776,30 @@ impl Runner for WineTkgRunner {
 
         let proton = resolve_proton_required(ctx)?;
         let active_runner = crate::utils::resolve_runner(proton, &library_root);
+
+        // Classify the GAME runner to record the launch route. A real Proton tree is
+        // launched via its `proton run` script (protonfixes apply naturally); plain
+        // Wine / wine-tkg launch via bare wine and rely on the data-driven fixup layer
+        // (merged in build_env). In every case the game binary is a DIRECT spawn arg
+        // to the runner — never a `steam://run/<appid>` or `-applaunch` handoff.
+        match crate::utils::classify_runner(&active_runner) {
+            crate::utils::RunnerKind::Proton => {
+                tracing::info!("Game runner classified as Proton: launching via `proton run` (protonfixes active)");
+            }
+            crate::utils::RunnerKind::WineTkg | crate::utils::RunnerKind::PlainWine => {
+                tracing::info!(
+                    fixup_env = ctx.game_fixups.env.len(),
+                    fixup_dll = ctx.game_fixups.dll_overrides.len(),
+                    "Game runner classified as bare Wine: launching via wine + fixup layer"
+                );
+            }
+            crate::utils::RunnerKind::Unknown => {
+                tracing::warn!(
+                    "Game runner '{}' did not classify as Proton or Wine; relying on build_runner_command resolution",
+                    active_runner.display()
+                );
+            }
+        }
 
         let mut spec = CommandSpec::default();
 
@@ -858,6 +924,90 @@ fn resolve_proton_required(ctx: &LaunchContext) -> std::result::Result<&str, Lau
         ctx.proton_path.as_deref()
             .filter(|p| !p.is_empty())
             .ok_or_else(|| LaunchError::new(LaunchErrorKind::Environment, "proton path is required for Windows launch"))
+    }
+}
+
+/// Resolve the command used to host the background Steam client under a BARE wine.
+///
+/// Background Steam must never be launched through the game runner's `proton run`
+/// protonfixes wrapper — it needs a plain wine so `steam.exe` runs as an ordinary
+/// Windows process. Resolution order:
+///   1. The explicitly configured `steam_runtime_runner` (validated as bare wine).
+///   2. A wine-tkg / plain-Wine runtime (based on the game runner when it already is
+///      one).
+///   3. If the only available runtime is a Proton tree, its bundled bare
+///      `files/bin/wine64` directly (NOT `proton run`).
+/// If none of these yield a usable bare wine, a clear [`LaunchError`] is returned —
+/// it NEVER silently falls back to hosting Steam on the game's `proton run` runner.
+fn resolve_background_steam_command(
+    ctx: &LaunchContext,
+    library_root: &Path,
+) -> std::result::Result<Command, LaunchError> {
+    // 1. Prefer the explicitly configured Steam-runtime runner.
+    let configured = &ctx.launcher_config.steam_runtime_runner;
+    if !configured.as_os_str().is_empty() {
+        let name = configured.to_string_lossy();
+        let resolved = crate::utils::resolve_runner(&name, library_root);
+        crate::utils::validate_steam_runtime_runner_path(&resolved).map_err(|e| {
+            LaunchError::new(
+                LaunchErrorKind::Runner,
+                format!(
+                    "configured steam_runtime_runner '{}' is not a usable bare-wine runner for background Steam",
+                    resolved.display()
+                ),
+            )
+            .with_source(e)
+        })?;
+        tracing::info!("Background Steam runner: configured steam_runtime_runner {}", resolved.display());
+        return crate::utils::build_runner_command(&resolved).map_err(|e| {
+            LaunchError::new(
+                LaunchErrorKind::Runner,
+                format!("Invalid steam_runtime_runner path: {}", resolved.display()),
+            )
+            .with_source(e)
+        });
+    }
+
+    // 2/3. Otherwise resolve a bare-wine runtime from what is available. The game
+    // runner is the runtime we know exists for this launch, so classify it.
+    let proton = resolve_proton_required(ctx)?;
+    let game_runner = crate::utils::resolve_runner(proton, library_root);
+    match crate::utils::classify_runner(&game_runner) {
+        crate::utils::RunnerKind::WineTkg | crate::utils::RunnerKind::PlainWine => {
+            tracing::info!("Background Steam runner: bare wine tree {}", game_runner.display());
+            crate::utils::build_runner_command(&game_runner).map_err(|e| {
+                LaunchError::new(
+                    LaunchErrorKind::Runner,
+                    format!("Invalid Compatibility Layer path: {}", game_runner.display()),
+                )
+                .with_source(e)
+            })
+        }
+        crate::utils::RunnerKind::Proton => {
+            // Only a Proton tree is available — use its bundled bare wine directly,
+            // NOT `proton run` (the protonfixes wrapper is wrong for background Steam).
+            let bare = crate::utils::proton_bundled_bare_wine(&game_runner).ok_or_else(|| {
+                LaunchError::new(
+                    LaunchErrorKind::Environment,
+                    format!(
+                        "the only available runtime is a Proton tree ({}) but its bundled bare wine \
+                         (files/bin/wine64) could not be found; background Steam needs a bare wine",
+                        game_runner.display()
+                    ),
+                )
+            })?;
+            tracing::info!("Background Steam runner: Proton-bundled bare wine {}", bare.display());
+            Ok(Command::new(bare))
+        }
+        crate::utils::RunnerKind::Unknown => Err(LaunchError::new(
+            LaunchErrorKind::Runner,
+            format!(
+                "no suitable Steam-runtime runner found for background Steam. Configure \
+                 `steam_runtime_runner` with a wine-tkg or plain-Wine build (the game runner '{}' \
+                 is not a usable bare-wine runtime)",
+                game_runner.display()
+            ),
+        )),
     }
 }
 

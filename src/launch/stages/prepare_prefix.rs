@@ -24,6 +24,7 @@ impl PipelineStage for PreparePrefixStage {
             steam_enabled: ctx.steam_enabled,
             target_architecture: ctx.target_architecture,
             dll_resolutions: ctx.dll_resolutions.clone(),
+            game_fixups: ctx.game_fixups.clone(),
             verification_ptr: &mut ctx.verification as *mut _,
         };
         runner.prepare_prefix(&runner_ctx).await?;
