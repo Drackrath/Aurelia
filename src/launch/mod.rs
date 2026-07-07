@@ -10,6 +10,7 @@ mod verification_tests;
 use std::path::{Path, PathBuf};
 use anyhow::{Result, Context, anyhow};
 use crate::config::{config_dir, LauncherConfig};
+use crate::steam_client::SteamClient;
 use crate::utils::build_runner_command;
 
 pub async fn install_master_steam(config: &LauncherConfig) -> Result<()> {
@@ -63,6 +64,47 @@ pub async fn install_master_steam(config: &LauncherConfig) -> Result<()> {
         }
     }
 
+    // --- P7: opt-in Steam-runtime install diagnostics -----------------------
+    // When AURELIA_DIAGNOSE_INSTALL=1 the install/repair flow runs with verbose
+    // WINEDEBUG channels (setupapi/file/module) that surface the file-copy and
+    // DLL-registration failures typical of a broken Steam install, and its
+    // stdout/stderr are captured to a timestamped log file under the app log
+    // directory (reusing config_dir()/logs, the same root the launch pipeline
+    // uses). This path is ISOLATED to master-Steam install/repair and never
+    // touches normal game launches. With the var unset, behavior is unchanged.
+    if std::env::var("AURELIA_DIAGNOSE_INSTALL").as_deref() == Ok("1") {
+        let logs_dir = base_dir.join("logs");
+        if let Err(e) = std::fs::create_dir_all(&logs_dir) {
+            tracing::warn!("AURELIA_DIAGNOSE_INSTALL set but could not create log dir {}: {}", logs_dir.display(), e);
+        } else {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let log_path = logs_dir.join(format!("steam_runtime_install_{stamp}.log"));
+            match std::fs::File::create(&log_path) {
+                Ok(file) => {
+                    // Verbose channels useful for setupapi / file-copy / module
+                    // load failures during the Steam install.
+                    cmd.env("WINEDEBUG", "+setupapi,+file,+module");
+                    if let Ok(err_file) = file.try_clone() {
+                        cmd.stderr(std::process::Stdio::from(err_file));
+                    }
+                    cmd.stdout(std::process::Stdio::from(file));
+                    tracing::info!(
+                        "AURELIA_DIAGNOSE_INSTALL=1: capturing Steam-runtime install diagnostics to {}",
+                        log_path.display()
+                    );
+                }
+                Err(e) => tracing::warn!(
+                    "AURELIA_DIAGNOSE_INSTALL set but could not create diagnostic log {}: {}",
+                    log_path.display(), e
+                ),
+            }
+        }
+    }
+    // --- end P7 diagnostics --------------------------------------------------
+
     tracing::info!("Launching Master Steam: {:?}", cmd);
 
     let _child = cmd.spawn().context("Failed to spawn master steam process")?;
@@ -70,6 +112,62 @@ pub async fn install_master_steam(config: &LauncherConfig) -> Result<()> {
     // Spawned detached: this may be a long-running background Steam or an
     // interactive installer, so we must not block the caller waiting on it.
     Ok(())
+}
+
+/// Repair the master Windows-Steam prefix: stop anything holding it, snapshot the
+/// current prefix (retaining a single `.bak`), then re-run the installer into a
+/// fresh prefix.
+///
+/// Like [`install_master_steam`], this needs a configured `steam_runtime_runner`
+/// to drive the installer under a bare wine. The runner is validated up front so
+/// the destructive backup step never runs when the reinstall would fail anyway.
+pub async fn repair_master_steam(config: &LauncherConfig) -> Result<()> {
+    if config.steam_runtime_runner.as_os_str().is_empty() {
+        return Err(anyhow!(
+            "No Steam Runtime Runner selected — set `steam_runtime_runner` in Global Settings before repairing"
+        ));
+    }
+
+    let steam_cfg = crate::utils::get_master_steam_config();
+
+    // 1. Kill any master-Steam / game processes still holding the prefix so the
+    //    directory can be moved safely. Reuse the existing prefix-scoped killers
+    //    rather than inventing a new mechanism. `kill_steam_in_prefix` is
+    //    cross-platform (a no-op on Windows); the broader wine sweep is unix-only.
+    tracing::info!(
+        "Repair: stopping any processes holding the master prefix {}",
+        steam_cfg.wine_prefix.display()
+    );
+    SteamClient::kill_steam_in_prefix(&steam_cfg.wine_prefix);
+    #[cfg(unix)]
+    SteamClient::kill_wine_processes_in_prefix(&steam_cfg.wine_prefix, true);
+
+    // 2. Snapshot the current prefix, retaining only ONE backup. Only if present.
+    if steam_cfg.wine_prefix.exists() {
+        let mut bak = steam_cfg.wine_prefix.clone().into_os_string();
+        bak.push(".bak");
+        let bak = PathBuf::from(bak);
+        if bak.exists() {
+            tracing::info!("Repair: removing previous backup {}", bak.display());
+            std::fs::remove_dir_all(&bak)
+                .with_context(|| format!("failed removing previous backup {}", bak.display()))?;
+        }
+        tracing::info!(
+            "Repair: backing up {} -> {}",
+            steam_cfg.wine_prefix.display(),
+            bak.display()
+        );
+        std::fs::rename(&steam_cfg.wine_prefix, &bak)
+            .with_context(|| format!("failed backing up master prefix to {}", bak.display()))?;
+    } else {
+        tracing::info!(
+            "Repair: no existing master prefix at {} — nothing to back up",
+            steam_cfg.wine_prefix.display()
+        );
+    }
+
+    // 3. Re-run the installer into the now-clean prefix.
+    install_master_steam(config).await
 }
 
 async fn download_steam_setup(path: &Path) -> Result<()> {

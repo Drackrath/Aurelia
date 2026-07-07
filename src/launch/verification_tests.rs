@@ -97,3 +97,53 @@ async fn test_launch_verification_success() {
         let _ = child.kill();
     }
 }
+
+/// Background-Steam readiness grace window: a readiness heuristic fires while the
+/// process is alive, but the process then exits within the grace window. It must
+/// be reclassified as an early exit (a crash), NOT reported as ready.
+///
+/// Spawns a real short-lived process (like the other verification tests), so it
+/// is gated to unix where `sh` is available.
+#[cfg(unix)]
+#[tokio::test]
+async fn test_background_steam_signal_then_exit_within_grace_is_early_exit() {
+    use crate::infra::runners::wine_tkg::{reclassify_after_grace, ReadinessGrace};
+
+    // Stand-in for Steam: writes its "readiness" artifact, stays alive briefly,
+    // then crashes with a non-zero code — all within the grace window.
+    let mut child = std::process::Command::new("sh")
+        .arg("-c")
+        .arg("sleep 0.2; exit 3")
+        .spawn()
+        .unwrap();
+
+    // At signal time the process is still alive (the heuristic legitimately fired).
+    assert!(child.try_wait().unwrap().is_none());
+
+    // The grace window elapses; the process has exited within it.
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    match reclassify_after_grace(&mut child) {
+        ReadinessGrace::ExitedEarly { code } => assert_eq!(code, Some(3)),
+        ReadinessGrace::Ready => {
+            panic!("process exited within the grace window but was classified as Ready")
+        }
+    }
+}
+
+/// Counterpart: a process still alive after the grace window is genuinely ready.
+#[cfg(unix)]
+#[tokio::test]
+async fn test_background_steam_alive_after_grace_is_ready() {
+    use crate::infra::runners::wine_tkg::{reclassify_after_grace, ReadinessGrace};
+
+    let mut child = std::process::Command::new("sh")
+        .arg("-c")
+        .arg("sleep 10")
+        .spawn()
+        .unwrap();
+
+    let outcome = reclassify_after_grace(&mut child);
+    let _ = child.kill();
+    assert_eq!(outcome, ReadinessGrace::Ready);
+}
