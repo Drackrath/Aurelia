@@ -368,7 +368,8 @@ standalone install.
 
 ## Contributing
 
-Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. By
+participating, you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Acknowledgments
 

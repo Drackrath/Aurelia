@@ -1,6 +1,8 @@
 # Contributing to Aurelia
 
-Thanks for your interest in Aurelia! Contributions of every kind are welcome:
+Thanks for your interest in Aurelia! This project and everyone participating in it is
+governed by our [Code of Conduct](CODE_OF_CONDUCT.md) — by taking part, you agree to uphold
+it. Contributions of every kind are welcome:
 
 - Reporting a bug
 - Discussing the current state of the code
