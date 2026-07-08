@@ -372,17 +372,24 @@ Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for guideli
 
 ## Acknowledgments
 
-Special thanks to the developers of **steam-vent** for their
-invaluable reverse-engineering and protocol documentation. Aurelia is powered by a
-vendored, modified `steam-cdn` and the `zip` crate.
+Aurelia grew directly out of **[SteamFlow](https://github.com/weter11/SteamFlow)** — the
+earlier project it is derived from and the foundation this work is built on. Our deepest
+thanks to its author: SteamFlow did the hard groundwork that made Aurelia possible.
+
+It stands, in turn, on **[steam-vent](https://codeberg.org/steam-vent/steam-vent)** and
+**[steam-vent-chat](https://codeberg.org/steam-vent/chat)**, whose reverse-engineering and
+protocol work let Aurelia speak Steam's real network protocols — and on a vendored, modified
+`steam-cdn` (plus the `zip` crate) for the content pipeline.
 
 ### Credits
 
-- [steam-vent](https://codeberg.org/steam-vent/steam-vent) - Steam protocol implementation
-- [SteamFlow](https://github.com/weter11/SteamFlow) - earlier project work that Aurelia is derived from. Thank you!
-- [steam-vent-chat](https://codeberg.org/steam-vent/chat) - Steam Chat protocol implementation 
-- [SteamKit2](https://github.com/SteamRE/SteamKit) - Steam .Net research code
-- [SteamKit2](https://github.com/saskenuba/SteamHelper-rs) - SteamKit Rust port
+- [SteamFlow](https://github.com/weter11/SteamFlow) — the project Aurelia is derived from; its groundwork is the base everything here is built on. Thank you!
+- [steam-vent](https://codeberg.org/steam-vent/steam-vent) — Steam network protocol implementation
+- [steam-vent-chat](https://codeberg.org/steam-vent/chat) — Steam Chat protocol implementation
+- [steam-cdn](https://crates.io/crates/steam-cdn) — content-delivery / depot download engine (vendored & modified)
+- [SteamKit2](https://github.com/SteamRE/SteamKit) — Steam .NET research code
+- [SteamHelper-rs](https://github.com/saskenuba/SteamHelper-rs) — SteamKit Rust port
+
 ---
 
 ## License
