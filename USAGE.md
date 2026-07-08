@@ -50,6 +50,10 @@ of a specific command. `--version` prints the build version.
   - [`set-branch`](#set-branch)
   - [`depots`](#depots)
   - [`launch-options`](#launch-options)
+- [Downgrade & version pinning](#downgrade--version-pinning)
+  - [`manifests`](#manifests)
+  - [`downgrade`](#downgrade)
+  - [`pin` / `unpin`](#pin--unpin)
 - [Steam Cloud](#steam-cloud)
   - [`cloud sync`](#cloud-sync)
   - [`cloud list`](#cloud-list)
@@ -686,11 +690,17 @@ aurelia install stop 1245620
 
 ### `update`
 
-Download the latest manifest for an installed game (apply a pending update).
+Download the latest manifest for an installed game (apply a pending update). With no
+app id it lists every installed game that has an update available.
 
 ```bash
 aurelia update 1245620
 ```
+
+A **pinned** game (see [Downgrade & version pinning](#downgrade--version-pinning)) is not
+upgraded: `aurelia update <id>` refuses with a message pointing at `aurelia unpin <id>`.
+Pass `--force` to update it anyway (the pin is left in place). `aurelia update` with no id
+lists pinned games separately, never as "update available".
 
 ### `verify`
 
@@ -996,6 +1006,100 @@ oslist, osarch, type } ] }`.
 aurelia launch-options 1245620
 aurelia launch-options 1245620 --json
 ```
+
+---
+
+## Downgrade & version pinning
+
+Steam's client only ever installs the *current* manifest for a branch. These commands let
+you install an **older build** of a game (a specific depot manifest) and keep it from being
+updated back. This modifies real game files and Steam metadata — respect the at-your-own-risk
+stance and test on a game you can re-verify.
+
+### `manifests`
+
+List, per depot, the **current** manifest id on every branch Steam advertises (version
+discovery). Steam does **not** expose historical/older ids — for those, use the printed
+[SteamDB](https://steamdb.info) depot pages.
+
+```text
+aurelia manifests <APP_ID> [--depot <DEPOT_ID>] [--json]
+```
+
+| Option | Description |
+| --- | --- |
+| `--depot <DEPOT_ID>` | Only show this depot. |
+| `--json` | Emit `[ { depot_id, depot_name, branch, manifest_id, size } ]`. |
+
+```bash
+aurelia manifests 1245620
+aurelia manifests 1245620 --depot 1245621
+```
+
+Text output is a `DEPOT · BRANCH · MANIFEST_ID · SIZE · NAME` table followed by the SteamDB
+manifest-history link for each depot (`https://steamdb.info/depot/<depot_id>/manifests/`),
+where older manifest ids can be found.
+
+### `downgrade`
+
+Install specific (usually older) depot manifests and, by default, **pin** them. Downgrading
+requires an authenticated, **owning** session (an anonymous login can't fetch request codes /
+depot keys for owned content). Progress streams like `install`.
+
+```text
+aurelia downgrade <APP_ID> --depot <DEPOT_ID> --manifest <MANIFEST_ID>  # repeatable pair
+aurelia downgrade <APP_ID> --manifest <DEPOT_ID>:<MANIFEST_ID> ...       # combined form
+                  [--branch <name>] [--branch-password <p>]
+                  [--library <path>] [--verify] [--no-pin] [--json]
+```
+
+| Option | Description |
+| --- | --- |
+| `--depot <DEPOT_ID>` | Target depot (repeatable). Pairs by position with a bare `--manifest`. |
+| `--manifest <ID>` | Target manifest id: a bare id (paired with `--depot`) or `<depot>:<manifest>`. |
+| `--branch <name>` | Branch whose build id is recorded in the appmanifest (default `public`). |
+| `--branch-password <p>` | Password for a protected branch (recorded for reference only). |
+| `--library <path>` | Steam library folder to install into. |
+| `--verify` | Run an integrity pass after downloading (against the downgraded manifests). |
+| `--no-pin` | Don't pin afterward (Aurelia's update commands may then re-upgrade it). |
+
+`--depot` and `--manifest` are **parallel repeatable lists** paired by index and must be
+equal in length (unequal counts are rejected). Depots you don't name keep their current
+manifest, so you can pin just the one depot that matters. Only the named depots are
+downgraded; a full downgrade of a multi-depot build may need several depots at matching ids.
+
+```bash
+# Find the depot, get an old manifest id from SteamDB, then:
+aurelia downgrade 1245620 --depot 1245621 --manifest 8593343465227540543
+# Two depots at once (combined form):
+aurelia downgrade 1245620 --manifest 1245621:8593343465227540543 --manifest 1245622:1234567890
+```
+
+If Steam declines a manifest request code (typical for very old manifests, HTTP 401), the
+command fails with a clear message — the manifest may be too old, or you may need to own the
+game with a non-anonymous login.
+
+### `pin` / `unpin`
+
+Manage Aurelia's update lock directly. `pin` records a game's currently-installed manifests
+and blocks Aurelia's `update` / `check-updates` from upgrading it; `unpin` releases it.
+
+```text
+aurelia pin <APP_ID>      [--json]
+aurelia unpin <APP_ID>    [--json]
+```
+
+```bash
+aurelia pin 1245620
+aurelia update 1245620      # -> refuses: "app is pinned — run `aurelia unpin 1245620` first"
+aurelia unpin 1245620
+```
+
+> **The pin is soft.** It writes `AutoUpdateBehavior "1"` (update only on launch) into the
+> `.acf` and records the pin in Aurelia's config, and it is authoritative for **Aurelia's own
+> commands**. The **official Steam client** can still re-queue an update — for example when
+> you launch the game through Steam. The reliable way to keep a downgraded build is to launch
+> it via Aurelia and avoid updating it in the Steam client.
 
 ---
 

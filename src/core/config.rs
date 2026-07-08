@@ -46,6 +46,15 @@ pub struct GameConfig {
     /// over the auto-detected `<script_dir>/<app_id>.sh|bat`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_script: Option<String>,
+    /// Depot → manifest ids this game is pinned to (recorded when the game is
+    /// downgraded or pinned). Used to display what an update lock is holding the
+    /// game at; empty when the game isn't pinned.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub pinned_manifests: HashMap<u32, u64>,
+    /// Whether Aurelia's update commands are locked for this game. A pinned game is
+    /// not upgraded by `update` / `check-updates` (which report it as pinned).
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 /// Per-game launch backend selection.
@@ -279,6 +288,40 @@ pub async fn save_launcher_config(config: &LauncherConfig) -> Result<()> {
     write_json_pretty(&path, config).await
 }
 
+/// Pin a game to `manifests` (depot → manifest ids), locking Aurelia's update
+/// commands for it. Preserves the game's other `GameConfig` fields.
+pub async fn set_game_pin(app_id: u32, manifests: HashMap<u32, u64>) -> Result<()> {
+    let mut cfg = load_launcher_config().await?;
+    let gc = cfg.game_configs.entry(app_id).or_default();
+    gc.pinned = true;
+    gc.pinned_manifests = manifests;
+    save_launcher_config(&cfg).await
+}
+
+/// Clear a game's version pin (unlock Aurelia's update commands). No-op if the
+/// game was never pinned.
+pub async fn clear_game_pin(app_id: u32) -> Result<()> {
+    let mut cfg = load_launcher_config().await?;
+    if let Some(gc) = cfg.game_configs.get_mut(&app_id) {
+        gc.pinned = false;
+        gc.pinned_manifests.clear();
+    }
+    save_launcher_config(&cfg).await
+}
+
+/// Return `(pinned, pinned_manifests)` for a game, reading the launcher config.
+/// `(false, empty)` when the game has no pin (or the config can't be read).
+pub async fn game_pin_state(app_id: u32) -> (bool, HashMap<u32, u64>) {
+    match load_launcher_config().await {
+        Ok(cfg) => cfg
+            .game_configs
+            .get(&app_id)
+            .map(|gc| (gc.pinned, gc.pinned_manifests.clone()))
+            .unwrap_or((false, HashMap::new())),
+        Err(_) => (false, HashMap::new()),
+    }
+}
+
 pub fn library_cache_path() -> Result<PathBuf> {
     Ok(data_dir()?.join("library_cache.json"))
 }
@@ -411,6 +454,32 @@ mod tests {
         assert!(json.contains("\"luxtorpeda\""), "got: {json}");
         let back: GameConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(back.runner, GameRunner::Luxtorpeda);
+    }
+
+    #[test]
+    fn game_config_without_pin_fields_defaults_unpinned() {
+        // A config written before pinning existed must still parse, unpinned.
+        let legacy = r#"{ "forced_proton_version": null, "platform_preference": null }"#;
+        let cfg: GameConfig = serde_json::from_str(legacy).unwrap();
+        assert!(!cfg.pinned);
+        assert!(cfg.pinned_manifests.is_empty());
+    }
+
+    #[test]
+    fn game_config_pin_round_trips_and_omits_empty() {
+        // An unpinned config must not emit the pin fields (skip_serializing_if).
+        let unpinned = GameConfig::default();
+        let json = serde_json::to_string(&unpinned).unwrap();
+        assert!(!json.contains("pinned_manifests"), "got: {json}");
+
+        // A pinned config round-trips its depot→manifest map.
+        let mut manifests = HashMap::new();
+        manifests.insert(1234u32, 5678u64);
+        let pinned = GameConfig { pinned: true, pinned_manifests: manifests.clone(), ..Default::default() };
+        let json = serde_json::to_string(&pinned).unwrap();
+        let back: GameConfig = serde_json::from_str(&json).unwrap();
+        assert!(back.pinned);
+        assert_eq!(back.pinned_manifests, manifests);
     }
 
     #[test]

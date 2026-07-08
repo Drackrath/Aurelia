@@ -36,6 +36,14 @@ impl SteamClient {
         Ok((manifests, branch))
     }
 
+    /// The depot → manifest ids currently recorded as installed in a game's local
+    /// appmanifest (`InstalledDepots`). Empty when the game isn't installed. Used by
+    /// `aurelia pin` to snapshot what version the pin should hold the game at.
+    pub async fn installed_depot_manifests(&self, appid: u32) -> Result<HashMap<u32, u64>> {
+        let (manifests, _branch) = self.local_manifest_info_for_appid(appid).await?;
+        Ok(manifests.into_iter().map(|(d, m)| (d as u32, m)).collect())
+    }
+
     pub(crate) async fn install_root_for_app(&self, appid: u32) -> Result<PathBuf> {
         let manifest_path = self.appmanifest_path(appid).await?;
         let steamapps = manifest_path
@@ -321,6 +329,10 @@ impl SteamClient {
     /// `StateFlags`. When `fully_installed` is false the manifest is written in the
     /// "update required" state (4 → fully installed, 2 → update required) so an install
     /// in progress is registered with Steam rather than appearing as a fresh download.
+    ///
+    /// `pin_updates` writes `AutoUpdateBehavior "1"` ("only update on launch") instead
+    /// of the default `"0"`, so the official Steam client won't eagerly re-patch a
+    /// downgraded/pinned install out from under Aurelia. Normal installs pass `false`.
     pub fn write_appmanifest(
         path: &Path,
         appid: u32,
@@ -329,6 +341,7 @@ impl SteamClient {
         installed_depots: Vec<(u32, u64, u64)>,
         buildid: Option<&str>,
         fully_installed: bool,
+        pin_updates: bool,
     ) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -342,6 +355,9 @@ impl SteamClient {
         let size_on_disk: u64 = installed_depots.iter().map(|(_, _, size)| *size).sum();
         // 4 = StateFullyInstalled, 2 = StateUpdateRequired.
         let state_flags = if fully_installed { 4 } else { 2 };
+        // 0 = auto-update always, 1 = only update on launch (used to hold a pinned/
+        // downgraded build in place against the official client's eager re-patching).
+        let auto_update_behavior = if pin_updates { 1 } else { 0 };
         let bytes_have = if fully_installed { size_on_disk } else { 0 };
         let last_updated = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -365,7 +381,7 @@ impl SteamClient {
              \t\"BytesDownloaded\"\t\t\"{bytes_have}\"\n\
              \t\"BytesToStage\"\t\t\"{size_on_disk}\"\n\
              \t\"BytesStaged\"\t\t\"{bytes_have}\"\n\
-             \t\"AutoUpdateBehavior\"\t\t\"0\"\n\
+             \t\"AutoUpdateBehavior\"\t\t\"{auto_update_behavior}\"\n\
              \t\"AllowOtherDownloadsWhileRunning\"\t\t\"0\"\n\
              \t\"ScheduledAutoUpdate\"\t\t\"0\"\n"
         );

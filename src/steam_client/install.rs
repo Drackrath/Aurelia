@@ -162,6 +162,19 @@ impl SteamClient {
         Ok((platforms, buffer))
     }
 
+    /// Install `appid`'s depots for `platform`.
+    ///
+    /// `manifest_overrides` (depot → manifest) pins specific depots to an explicit
+    /// (typically older) manifest id instead of the branch's current one — the
+    /// engine behind `aurelia downgrade`. Overridden depots are always included even
+    /// if the platform/language filter would otherwise drop them; depots without an
+    /// override keep their current manifest. When any override is present the written
+    /// appmanifest sets `AutoUpdateBehavior "1"` so the official client won't eagerly
+    /// re-patch the pinned build.
+    ///
+    /// `branch`, when given, is used to resolve the build id recorded in the
+    /// appmanifest (via PICS); `None` keeps the appinfo-derived (public) build id.
+    #[allow(clippy::too_many_arguments)]
     pub async fn install_game(
         &self,
         appid: u32,
@@ -169,6 +182,8 @@ impl SteamClient {
         cached_vdf: Option<Vec<u8>>,
         filter_depots: Option<Vec<u64>>,
         library_override: Option<String>,
+        manifest_overrides: Option<std::collections::HashMap<u32, u64>>,
+        branch: Option<String>,
         shared_state: Arc<std::sync::RwLock<crate::core::models::DownloadState>>,
     ) -> Result<Receiver<DownloadProgress>> {
         let connection = self
@@ -229,6 +244,9 @@ impl SteamClient {
         let (tx, rx) = tokio::sync::mpsc::channel(128);
         let client_clone = self.clone();
         let shared_state_clone = shared_state.clone();
+        // A downgrade (any manifest override present) writes the appmanifest with
+        // AutoUpdateBehavior "1" so the official client won't re-patch the pin.
+        let pin_updates = manifest_overrides.is_some();
 
         tokio::task::spawn(async move {
             let _ = tx
@@ -326,58 +344,74 @@ impl SteamClient {
                                     has_windows = true;
                                 }
 
-                                let mut match_os = should_keep_depot(oslist, platform);
+                                // A manifest override for this depot takes precedence over
+                                // its current manifest AND over the platform/language/filter
+                                // gating — the user named this depot explicitly for a
+                                // downgrade, so it is always included.
+                                let override_mid = manifest_overrides
+                                    .as_ref()
+                                    .and_then(|m| m.get(&d_id).copied());
 
-                                if match_os {
-                                    // 1. LANGUAGE CHECK
-                                    let lang = value
-                                        .get_obj(&["config"])
-                                        .and_then(|c| c.get("language"))
-                                        .and_then(|l| l.as_str());
-                                    if let Some(lang) = lang {
-                                        if lang != "english" && !lang.is_empty() {
-                                            match_os = false;
+                                let manifest_id = if let Some(mid) = override_mid {
+                                    Some(mid)
+                                } else {
+                                    let mut match_os = should_keep_depot(oslist, platform);
+
+                                    if match_os {
+                                        // 1. LANGUAGE CHECK
+                                        let lang = value
+                                            .get_obj(&["config"])
+                                            .and_then(|c| c.get("language"))
+                                            .and_then(|l| l.as_str());
+                                        if let Some(lang) = lang {
+                                            if lang != "english" && !lang.is_empty() {
+                                                match_os = false;
+                                            }
                                         }
                                     }
-                                }
 
-                                if match_os {
                                     let depot_id_u64 = d_id as u64;
                                     let is_allowed = filter_depots
                                         .as_ref()
                                         .is_none_or(|list| list.contains(&depot_id_u64));
 
-                                    if is_allowed {
-                                        if let Some(m_id) = map.get(&depot_id_u64) {
-                                            // Uncompressed size for this depot. Prefer the
-                                            // per-manifest size (present even when the
-                                            // depot-level "maxsize" is absent/zero).
-                                            grand_total_bytes += value
-                                                .get_obj(&["manifests", "public"])
-                                                .and_then(|m| m.get("size"))
+                                    if match_os && is_allowed {
+                                        map.get(&depot_id_u64).copied()
+                                    } else {
+                                        None
+                                    }
+                                };
+
+                                if let Some(manifest_id) = manifest_id {
+                                    // Uncompressed size for this depot. Prefer the
+                                    // per-manifest size (present even when the
+                                    // depot-level "maxsize" is absent/zero). For an
+                                    // overridden (older) manifest this is only the
+                                    // current build's size — a progress-bar estimate.
+                                    grand_total_bytes += value
+                                        .get_obj(&["manifests", "public"])
+                                        .and_then(|m| m.get("size"))
+                                        .and_then(|v| v.as_str())
+                                        .and_then(|s| s.parse::<u64>().ok())
+                                        .or_else(|| {
+                                            value
+                                                .get("maxsize")
                                                 .and_then(|v| v.as_str())
                                                 .and_then(|s| s.parse::<u64>().ok())
-                                                .or_else(|| {
-                                                    value
-                                                        .get("maxsize")
-                                                        .and_then(|v| v.as_str())
-                                                        .and_then(|s| s.parse::<u64>().ok())
-                                                })
-                                                .unwrap_or(0);
-                                            selections.push(ManifestSelection {
-                                                app_id: appid,
-                                                depot_id: d_id,
-                                                manifest_id: *m_id,
-                                                // The download loop below consumes only
-                                                // depot_id / manifest_id; the appinfo VDF is
-                                                // never read from these selections, so avoid
-                                                // cloning the (potentially multi-MB) VDF text
-                                                // once per depot. (Mirrors launch.rs, which
-                                                // also leaves this empty.)
-                                                appinfo_vdf: String::new(),
-                                            });
-                                        }
-                                    }
+                                        })
+                                        .unwrap_or(0);
+                                    selections.push(ManifestSelection {
+                                        app_id: appid,
+                                        depot_id: d_id,
+                                        manifest_id,
+                                        // The download loop below consumes only
+                                        // depot_id / manifest_id; the appinfo VDF is
+                                        // never read from these selections, so avoid
+                                        // cloning the (potentially multi-MB) VDF text
+                                        // once per depot. (Mirrors launch.rs, which
+                                        // also leaves this empty.)
+                                        appinfo_vdf: String::new(),
+                                    });
                                 }
                             }
                         }
@@ -402,6 +436,16 @@ impl SteamClient {
                     })
                     .await;
                 return;
+            }
+
+            // For a downgrade against a named branch, record that branch's build id in
+            // the appmanifest instead of the appinfo-derived (public) one.
+            if let Some(branch_name) = branch.as_deref() {
+                if let Some(bid) =
+                    SteamClient::remote_buildid_static(&connection, appid, branch_name).await
+                {
+                    build_id = Some(bid);
+                }
             }
 
             let _ = tx
@@ -439,6 +483,7 @@ impl SteamClient {
                     Vec::new(),
                     build_id.as_deref(),
                     false,
+                    pin_updates,
                 ) {
                     tracing::warn!("failed writing initial appmanifest for app {appid}: {e}");
                 } else {
@@ -539,12 +584,61 @@ impl SteamClient {
                     state.depot_total_bytes = 0;
                 }
 
+                // A downgrade names this depot's manifest explicitly, so a request
+                // code that comes back 401/empty (typical for very old manifests) is a
+                // hard, clearly-reported failure rather than a silent skip.
+                let is_override = manifest_overrides
+                    .as_ref()
+                    .is_some_and(|m| m.contains_key(&selection.depot_id));
+                if is_override {
+                    let ok = matches!(
+                        client_clone
+                            .get_manifest_request_code(
+                                appid,
+                                selection.depot_id,
+                                selection.manifest_id,
+                            )
+                            .await,
+                        Ok(code) if code != 0
+                    );
+                    if !ok {
+                        let _ = tx
+                            .send(DownloadProgress {
+                                state: DownloadProgressState::Failed,
+                                current_file: format!(
+                                    "Steam declined a request code for manifest {} on depot {} — it may be too old, or require owning the game with a non-anonymous login",
+                                    selection.manifest_id, selection.depot_id
+                                ),
+                                ..Default::default()
+                            })
+                            .await;
+                        success = false;
+                        break;
+                    }
+                }
+
                 // Fetch the depot decryption key here so that a missing key
                 // (not owned) silently skips this depot and continues to the
-                // next — preserving the original install_game behavior.
+                // next — preserving the original install_game behavior. For an
+                // overridden (downgrade) depot a missing key is instead a hard
+                // error, since the user asked for that specific depot.
                 let key = match client_clone.get_depot_key(appid, selection.depot_id).await {
                     Ok(k) => k,
                     Err(e) => {
+                        if is_override {
+                            let _ = tx
+                                .send(DownloadProgress {
+                                    state: DownloadProgressState::Failed,
+                                    current_file: format!(
+                                        "No depot key for depot {} — downgrade requires owning the game with a non-anonymous login: {}",
+                                        selection.depot_id, e
+                                    ),
+                                    ..Default::default()
+                                })
+                                .await;
+                            success = false;
+                            break;
+                        }
                         tracing::warn!(
                             "Skipping Depot {} (No Key/Not Owned): {}",
                             selection.depot_id,
@@ -632,6 +726,7 @@ impl SteamClient {
                         successful_depots,
                         build_id.as_deref(),
                         true,
+                        pin_updates,
                     )
                 };
                 if let Err(err) = manifest_result {

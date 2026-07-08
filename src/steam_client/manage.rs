@@ -460,6 +460,7 @@ impl SteamClient {
             installed_depots,
             buildid.as_deref(),
             true,
+            false,
         )?;
 
         // Register in libraryfolders.vdf (add to this library; nothing to remove).

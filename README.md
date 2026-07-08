@@ -97,6 +97,8 @@ sync, and Proton/Wine launching all work today.
       updates, uninstall, integrity verification, and moving installs between library
       folders (with Steam's `appmanifest`/`libraryfolders.vdf` kept in sync); installs run
       in the background daemon and can be listed and cancelled (`install list` / `install stop`)
+- [x] **Version pinning / downgrade** — install & pin a specific depot manifest
+      (`downgrade` / `manifests` / `pin` / `unpin`), holding a game at an older build
 - [x] **Localized metadata** — store text (`info`) and achievement names/descriptions follow
       a `--lang` flag or the `config language` default (used by the Heroic Steam integration)
 - [x] **DLC** — install, enable/disable, and per-DLC ownership/install status
@@ -198,6 +200,14 @@ aurelia move 1245620 D:\SteamLibrary # move an install to another library (updat
 aurelia relink 1245620 D:\SteamLibrary  # re-point Steam at already-moved files (no copy)
 aurelia import 1245620 D:\SteamLibrary  # register existing on-disk files with Steam
 aurelia available 1245620            # is it installed and present on disk?
+
+# Downgrade & version pinning
+aurelia manifests 1245620            # each depot's current manifest id per branch
+aurelia downgrade 1245620 --depot 1245621 --manifest 8593343465227540543  # install an older build & pin it
+aurelia pin 1245620                  # lock the current install (block Aurelia updates)
+aurelia unpin 1245620                # release the pin
+# Older manifest ids aren't exposed by Steam — find them on SteamDB:
+#   https://steamdb.info/depot/<depot_id>/manifests/
 
 # DLC
 aurelia enable 2001                  # enable an installed DLC for its base game
