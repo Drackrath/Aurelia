@@ -551,6 +551,7 @@ impl SteamClient {
                     successful_depots,
                     build_id.as_deref(),
                     true,
+                    false,
                 ) {
                     tracing::warn!("failed writing appmanifest for {}: {}", appid, err);
                 }

@@ -115,6 +115,9 @@ pub(crate) enum Command {
     Update {
         /// Game to update. Omit to list every installed game that needs an update.
         app_id: Option<u32>,
+        /// Update even if the game is pinned (see `aurelia pin`), overriding the lock.
+        #[arg(long)]
+        force: bool,
     },
     /// Launch a game and wait for it to exit.
     Play {
@@ -251,6 +254,20 @@ pub(crate) enum Command {
     SetBranch { app_id: u32, branch: String },
     /// List depots for a game.
     Depots { app_id: u32 },
+    /// List each depot's current manifest id per branch (version discovery for
+    /// `downgrade`). Steam only exposes current ids — older ones live on SteamDB.
+    Manifests {
+        app_id: u32,
+        /// Only show this depot.
+        #[arg(long)]
+        depot: Option<u32>,
+    },
+    /// Install a specific (usually older) depot manifest and pin it — a downgrade.
+    Downgrade(DowngradeArgs),
+    /// Pin a game to its currently-installed manifests, locking Aurelia's updates.
+    Pin { app_id: u32 },
+    /// Remove a game's version pin (unlock Aurelia's updates).
+    Unpin { app_id: u32 },
     /// List a game's launch options.
     LaunchOptions { app_id: u32 },
     /// Manage Steam Cloud saves for a game.
@@ -763,6 +780,37 @@ pub(crate) enum InstallAction {
     List,
     /// Stop a running install by app id.
     Stop { app_id: u32 },
+}
+
+/// `aurelia downgrade`: install specific depot manifests (an older version) and
+/// pin them. `--depot`/`--manifest` are parallel repeatable lists paired by
+/// position; `--manifest <depot>:<manifest>` is an alternative combined form.
+#[derive(clap::Args)]
+pub(crate) struct DowngradeArgs {
+    /// App id to downgrade.
+    pub(crate) app_id: u32,
+    /// Target depot id (repeatable). Paired by position with a bare `--manifest`.
+    #[arg(long = "depot", value_name = "DEPOT_ID")]
+    pub(crate) depots: Vec<u32>,
+    /// Target manifest id (repeatable). Either a bare id (paired by position with
+    /// `--depot`) or the combined `<depot>:<manifest>` form.
+    #[arg(long = "manifest", value_name = "MANIFEST_ID")]
+    pub(crate) manifests: Vec<String>,
+    /// Branch whose build id to record in the appmanifest (default: public).
+    #[arg(long)]
+    pub(crate) branch: Option<String>,
+    /// Password for a protected branch (recorded only; see the downgrade docs).
+    #[arg(long)]
+    pub(crate) branch_password: Option<String>,
+    /// Steam library folder (drive/location) to install into.
+    #[arg(long)]
+    pub(crate) library: Option<String>,
+    /// Verify the install after downloading (integrity pass).
+    #[arg(long)]
+    pub(crate) verify: bool,
+    /// Don't pin after downgrading (Aurelia's update commands may re-upgrade it).
+    #[arg(long)]
+    pub(crate) no_pin: bool,
 }
 
 #[derive(Clone, Copy, ValueEnum)]

@@ -238,6 +238,19 @@ pub struct DepotInfo {
     pub is_owned: Option<bool>,
 }
 
+/// One depot's current manifest on one branch, as advertised by PICS appinfo.
+/// Steam only exposes the *current* id per branch — historical (older) ids are
+/// not enumerable here and must be looked up on SteamDB. Emitted by
+/// [`SteamClient::list_depot_manifests`] (the `aurelia manifests` command).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DepotManifestInfo {
+    pub depot_id: u32,
+    pub depot_name: Option<String>,
+    pub branch: String,
+    pub manifest_id: u64,
+    pub size: u64,
+}
+
 /// A pre-install size estimate for a game on a given platform, derived purely
 /// from PICS appinfo (no manifest/CDN fetch). `download_size` is the compressed
 /// bytes transferred; `disk_size` is the installed (uncompressed) footprint.

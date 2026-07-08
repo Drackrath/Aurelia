@@ -79,7 +79,7 @@ pub(crate) async fn cmd_proton_install(version: String, json: bool) -> Result<()
             let client = authed_client().await?;
             let state = Arc::new(RwLock::new(DownloadState::default()));
             let rx = client
-                .install_game(app_id, DepotPlatform::Linux, None, None, None, state)
+                .install_game(app_id, DepotPlatform::Linux, None, None, None, None, None, state)
                 .await
                 .with_context(|| format!("failed to start installing {}", pkg.name))?;
             drive_progress(rx, json).await?;

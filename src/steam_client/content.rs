@@ -201,6 +201,69 @@ impl SteamClient {
         Ok(out)
     }
 
+    /// List, per depot, the *current* manifest id on every branch that PICS
+    /// advertises (the version-discovery data behind `aurelia manifests`).
+    ///
+    /// Steam's protocol only exposes the current manifest per branch, so this
+    /// never returns historical/older ids — those live on SteamDB. Reuses the same
+    /// appinfo `depots -> <depot> -> manifests -> <branch> -> gid/size` walk the
+    /// install pipeline reads.
+    pub async fn list_depot_manifests(&self, app_id: u32) -> Result<Vec<DepotManifestInfo>> {
+        let buffer = self
+            .request_app_pics_buffer(app_id, "failed requesting appinfo product info for manifests")
+            .await?;
+
+        // Parse a gid value that may be encoded as a quoted string or a raw u64.
+        fn parse_gid(v: &steam_vdf_parser::Value) -> Option<u64> {
+            if let Some(s) = v.as_str() {
+                return s.parse::<u64>().ok();
+            }
+            v.as_u64()
+        }
+
+        let mut out = Vec::new();
+        if let Ok(vdf) = find_vdf_in_pics(&buffer) {
+            let depots_val = Self::locate_depots_value(&vdf, app_id);
+            if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
+                for (key, value) in depots.iter() {
+                    let Ok(depot_id) = key.parse::<u32>() else { continue };
+                    let Some(obj) = value.as_obj() else { continue };
+                    let depot_name = obj.get("name").and_then(|v| v.as_str()).map(str::to_string);
+
+                    let Some(manifests) = obj.get("manifests").and_then(|v| v.as_obj()) else {
+                        continue;
+                    };
+                    for (branch, entry) in manifests.iter() {
+                        // A branch entry is either an object ({ gid, size, download })
+                        // or, on older appinfo, a bare gid string.
+                        let (manifest_id, size) = match entry.as_obj() {
+                            Some(bo) => (
+                                bo.get("gid").and_then(parse_gid),
+                                bo.get("size")
+                                    .and_then(|v| v.as_str())
+                                    .and_then(|s| s.parse::<u64>().ok())
+                                    .unwrap_or(0),
+                            ),
+                            None => (parse_gid(entry), 0),
+                        };
+                        if let Some(manifest_id) = manifest_id {
+                            out.push(DepotManifestInfo {
+                                depot_id,
+                                depot_name: depot_name.clone(),
+                                branch: branch.to_string(),
+                                manifest_id,
+                                size,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        out.sort_by(|a, b| a.depot_id.cmp(&b.depot_id).then(a.branch.cmp(&b.branch)));
+        Ok(out)
+    }
+
     /// Estimate the download and on-disk size of installing `app_id` on `platform`,
     /// without fetching any manifests. Reads each depot's `manifests.public.size`
     /// (disk) and `manifests.public.download` (compressed) from PICS appinfo and

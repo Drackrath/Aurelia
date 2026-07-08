@@ -292,10 +292,14 @@ async fn run(cli: Cli) -> Result<()> {
         } => cmd_import(app_id, library, platform, restart_steam, json).await,
         Command::Available { app_id } => cmd_available(app_id, json).await,
         Command::Verify { app_id } => cmd_verify(app_id, json).await,
-        Command::Update { app_id } => match app_id {
-            Some(id) => cmd_update(id, json).await,
+        Command::Update { app_id, force } => match app_id {
+            Some(id) => cmd_update(id, force, json).await,
             None => cmd_check_updates(json).await,
         },
+        Command::Manifests { app_id, depot } => cmd_manifests(app_id, depot, json).await,
+        Command::Downgrade(args) => cmd_downgrade(args, json).await,
+        Command::Pin { app_id } => cmd_pin(app_id, json).await,
+        Command::Unpin { app_id } => cmd_unpin(app_id, json).await,
         Command::Play {
             app_id,
             proton,
