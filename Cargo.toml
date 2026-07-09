@@ -15,7 +15,7 @@ keyvalues-serde = "0.2" # Used for text VDF deserialization into structs
 prost = "0.13"
 protobuf = "3.5" # rust-protobuf runtime; matches steam-vent-proto's MessageField/EnumOrUnknown so we can build StoreBrowse requests
 rand = "0.10" # Match steam-vent's rand version so only one copy is linked
-reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls", "socks"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 steam-vdf-parser = "0.1.1" # Needed for raw binary PICS VDF parsing (not supported by keyvalues-serde or steam-vent yet)

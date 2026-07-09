@@ -28,6 +28,13 @@ fn print_banner_and_help() {
 }
 
 fn main() {
+    // Translate any configured network proxy into the standard proxy environment
+    // variables *before* the async runtime or worker threads start, so every reqwest
+    // client in the process (including those in vendored crates) routes through it.
+    // Doing this while the process is still single-threaded keeps the env mutation
+    // sound. A spawned `daemon` subprocess re-runs this through its own `main`.
+    aurelia::core::net::install_proxy_env(&aurelia::core::config::load_proxy_config_blocking());
+
     // The CLI's top-level async future is large (every command arm) and the Steam
     // connect/auth path is deeply nested; in debug builds this can overflow the OS
     // main thread's default stack (~1 MB on Windows) before any command runs. Run
@@ -343,6 +350,9 @@ async fn run(cli: Cli) -> Result<()> {
             ConfigCommand::Protons => cmd_config_protons(json).await,
             ConfigCommand::Presence { mode } => cmd_config_presence(mode, json).await,
             ConfigCommand::Language { lang } => cmd_config_language(lang, json).await,
+            ConfigCommand::Proxy { url, no_proxy, clear } => {
+                cmd_config_proxy(url, no_proxy, clear, json).await
+            }
             ConfigCommand::Game {
                 app_id,
                 proton,

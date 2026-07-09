@@ -69,6 +69,65 @@ pub(crate) async fn cmd_config_language(lang: Option<String>, json: bool) -> Res
     Ok(())
 }
 
+/// `config proxy [<url>] [--no-proxy <list>] [--clear]`: view or set the network
+/// proxy used for all HTTP(S) communication (Steam web endpoints, depot downloads, and
+/// Proton/plugin release lookups). With no arguments, prints the current setting.
+pub(crate) async fn cmd_config_proxy(
+    url: Option<String>,
+    no_proxy: Option<String>,
+    clear: bool,
+    json: bool,
+) -> Result<()> {
+    use aurelia::core::net::validate_proxy_url;
+
+    let mut config = load_launcher_config().await.unwrap_or_default();
+    let changed = clear || url.is_some() || no_proxy.is_some();
+
+    if clear {
+        config.proxy.url = None;
+        config.proxy.no_proxy = None;
+    } else {
+        if let Some(url) = url {
+            let value = url.trim();
+            if value.is_empty() {
+                config.proxy.url = None;
+            } else {
+                validate_proxy_url(value)?;
+                config.proxy.url = Some(value.to_string());
+            }
+        }
+        if let Some(no_proxy) = no_proxy {
+            let value = no_proxy.trim();
+            config.proxy.no_proxy = (!value.is_empty()).then(|| value.to_string());
+        }
+    }
+
+    if changed {
+        save_launcher_config(&config).await.context("failed saving proxy config")?;
+    }
+
+    if json {
+        print_json(&serde_json::json!({
+            "url": config.proxy.url,
+            "no_proxy": config.proxy.no_proxy,
+        }));
+    } else {
+        match config.proxy.url.as_deref() {
+            Some(url) => cli_println!("Proxy: {url}"),
+            None => cli_println!("Proxy: (none — direct connection)"),
+        }
+        if let Some(no_proxy) = config.proxy.no_proxy.as_deref() {
+            cli_println!("Bypass: {no_proxy}");
+        }
+        if changed {
+            cli_println!(
+                "Saved. Takes effect on the next command; restart the session daemon (`aurelia daemon stop`) to apply it there."
+            );
+        }
+    }
+    Ok(())
+}
+
 /// `config protons`: list the Proton/Wine runtimes actually installed on disk.
 /// Shares discovery with `proton list --installed` (no hardcoded placeholders).
 pub(crate) async fn cmd_config_protons(json: bool) -> Result<()> {

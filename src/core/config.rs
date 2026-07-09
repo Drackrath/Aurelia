@@ -70,6 +70,22 @@ pub enum GameRunner {
     Umu,
 }
 
+/// Network proxy settings applied to all of Aurelia's HTTP(S) traffic: the Steam
+/// Community/store/market web endpoints, depot content downloads (steam-cdn), and the
+/// GitHub/Codeberg release lookups used by the Proton/plugin managers. Empty by default
+/// (a direct connection). See [`crate::core::net`] for how these are applied.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct ProxyConfig {
+    /// Proxy URL for all HTTP(S) requests, e.g. `http://host:8080`,
+    /// `http://user:pass@host:8080`, or `socks5://host:1080`. `None` = direct.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Comma-separated hosts/domains that bypass the proxy (`NO_PROXY` semantics),
+    /// e.g. `localhost,127.0.0.1,.internal`. `None` = no exceptions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub no_proxy: Option<String>,
+}
+
 /// Steam presence the session daemon
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -131,6 +147,10 @@ pub struct LauncherConfig {
     /// `aurelia achievements` when `--lang` is not given. `None` = use "english".
     #[serde(default)]
     pub language: Option<String>,
+    /// Network proxy for all HTTP(S) communication. Empty by default (a direct
+    /// connection). Applied process-wide at startup; see [`crate::core::net`].
+    #[serde(default)]
+    pub proxy: ProxyConfig,
 }
 
 impl LauncherConfig {
@@ -171,6 +191,7 @@ impl Default for LauncherConfig {
             umu_enabled: false,
             umu_path: None,
             language: None,
+            proxy: ProxyConfig::default(),
         }
     }
 }
@@ -286,6 +307,23 @@ pub async fn load_launcher_config() -> Result<LauncherConfig> {
 pub async fn save_launcher_config(config: &LauncherConfig) -> Result<()> {
     let path = config_dir()?.join("config.json");
     write_json_pretty(&path, config).await
+}
+
+/// Synchronously read just the proxy settings from `config.json`. Used at process
+/// startup — before the async runtime and worker threads exist — to install the proxy
+/// environment variables (see [`crate::core::net::install_proxy_env`]), which is why it
+/// can't use the async loader. Returns the default (direct connection) on a missing,
+/// unreadable, or unparseable config.
+pub fn load_proxy_config_blocking() -> ProxyConfig {
+    let Ok(path) = config_dir().map(|dir| dir.join("config.json")) else {
+        return ProxyConfig::default();
+    };
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return ProxyConfig::default();
+    };
+    serde_json::from_str::<LauncherConfig>(&raw)
+        .map(|config| config.proxy)
+        .unwrap_or_default()
 }
 
 /// Pin a game to `manifests` (depot → manifest ids), locking Aurelia's update
@@ -489,5 +527,31 @@ mod tests {
             "enable_cloud_sync": true }"#;
         let cfg: LauncherConfig = serde_json::from_str(legacy).unwrap();
         assert!(!cfg.luxtorpeda_enabled);
+    }
+
+    #[test]
+    fn launcher_config_without_proxy_defaults_to_direct() {
+        // A config written before the `proxy` field existed must still parse, direct.
+        let legacy = r#"{ "steam_library_path": "/x", "proton_version": "experimental",
+            "enable_cloud_sync": true }"#;
+        let cfg: LauncherConfig = serde_json::from_str(legacy).unwrap();
+        assert_eq!(cfg.proxy, ProxyConfig::default());
+        assert!(cfg.proxy.url.is_none());
+    }
+
+    #[test]
+    fn proxy_config_omits_empty_and_round_trips() {
+        // An empty proxy must not emit either field (skip_serializing_if).
+        let json = serde_json::to_string(&ProxyConfig::default()).unwrap();
+        assert!(!json.contains("url"), "got: {json}");
+        assert!(!json.contains("no_proxy"), "got: {json}");
+
+        // A populated proxy round-trips both fields.
+        let proxy = ProxyConfig {
+            url: Some("socks5://127.0.0.1:1080".to_string()),
+            no_proxy: Some("localhost,.internal".to_string()),
+        };
+        let back: ProxyConfig = serde_json::from_str(&serde_json::to_string(&proxy).unwrap()).unwrap();
+        assert_eq!(back, proxy);
     }
 }

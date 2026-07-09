@@ -383,6 +383,24 @@ pub(crate) enum ConfigCommand {
         /// given. Omit the value to print the current setting.
         lang: Option<String>,
     },
+    /// View or set the network proxy used for all HTTP(S) communication.
+    ///
+    /// Applies to the Steam web endpoints, depot downloads, and Proton/plugin
+    /// release lookups. Takes effect on the next command (and requires restarting
+    /// the session daemon). An explicit `HTTP(S)_PROXY`/`ALL_PROXY` environment
+    /// variable still overrides this. The Steam CM connection is not proxied.
+    Proxy {
+        /// Proxy URL, e.g. `http://host:8080`, `http://user:pass@host:8080`, or
+        /// `socks5://host:1080`. Omit to print the current setting.
+        url: Option<String>,
+        /// Comma-separated hosts/domains that bypass the proxy (`NO_PROXY`), e.g.
+        /// `localhost,127.0.0.1,.internal`.
+        #[arg(long, value_name = "LIST")]
+        no_proxy: Option<String>,
+        /// Clear the configured proxy (revert to a direct connection).
+        #[arg(long, conflicts_with_all = ["url", "no_proxy"])]
+        clear: bool,
+    },
     /// View or set per-game launch settings (Proton version, platform).
     Game {
         app_id: u32,
