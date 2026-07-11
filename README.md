@@ -191,6 +191,8 @@ aurelia image 1245620 -o cover.jpg   # save artwork to a specific file
 
 # Install & maintain
 aurelia install 1245620              # download & install a game by app id
+aurelia install 1245620 --library D:\SteamLibrary  # install onto a specific drive/library
+aurelia libraries                    # list Steam library folders (one per drive) + free space
 aurelia install list                 # show installs running in the daemon (with progress)
 aurelia install stop 1245620         # cancel a running install
 aurelia update 1245620               # download the latest manifest

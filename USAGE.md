@@ -33,6 +33,7 @@ of a specific command. `--version` prints the build version.
 - [Installation & maintenance](#installation--maintenance)
   - [`install`](#install)
   - [`install list` / `install stop`](#install-list--install-stop)
+  - [`libraries`](#libraries)
   - [`update`](#update)
   - [`verify`](#verify)
   - [`uninstall`](#uninstall)
@@ -622,17 +623,24 @@ These commands require an active session.
 Download and install a game.
 
 ```text
-aurelia install <APP_ID> [-p <windows|linux>] [--dry-run]
+aurelia install <APP_ID> [-p <windows|linux>] [--library <PATH>] [--dry-run] [--restart-steam]
 ```
 
 | Option | Description |
 | --- | --- |
 | `-p, --platform <windows\|linux>` | Depot platform to install. Auto-detected if omitted. |
+| `--library <PATH>` | Steam library folder (drive/location) to install into — a library root containing a `steamapps` directory, as listed by [`aurelia libraries`](#libraries). Defaults to the configured `steam_library_path`. |
 | `--dry-run` | Don't install — just report the estimated download and on-disk size. |
+| `--restart-steam` | When installing a DLC, stop the Steam client and restart it afterward so the running client picks up the change (Windows). Without it, it only warns. |
 
 If `--platform` is omitted, the available platforms are detected and the first one is
 chosen (printed as `Auto-selected platform: ...`). Progress is streamed to the terminal;
 the command exits non-zero if the download fails.
+
+By default the game is installed into Aurelia's configured Steam library
+(`steam_library_path`); pass `--library <PATH>` to install onto a specific drive/location
+instead. List the available library folders — one per drive — with
+[`aurelia libraries`](#libraries).
 
 With `--dry-run`, nothing is downloaded; Aurelia prints the estimated **download size**
 (compressed transfer) and **disk size** (installed footprint) for the target platform,
@@ -687,6 +695,28 @@ aurelia install stop 1245620
 > command — the normal path, since commands auto-forward to the daemon. A foreground
 > install started in a separate process (e.g. with the daemon disabled) can't be stopped
 > from another process.
+
+### `libraries`
+
+List the Steam library folders games can be installed into — one per drive/location —
+each with its free space. These are the roots accepted by [`install --library`](#install)
+(and `move`/`relink`/`import`). Only roots that actually contain a `steamapps` directory
+are reported. No session required (a local, offline check).
+
+```text
+aurelia libraries [--json]
+```
+
+The text view prints one library per line with its free space, e.g.
+`C:\Program Files (x86)\Steam  (123.4 GiB free)`. The `--json` output is
+`{ "libraries": [ { "path", "free_bytes" } ] }` (`path` is the library root; `free_bytes`
+is the free space on that drive in bytes, or `null` when it couldn't be determined) —
+useful for populating an install-drive picker.
+
+```bash
+aurelia libraries
+aurelia libraries --json
+```
 
 ### `update`
 
