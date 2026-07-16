@@ -73,7 +73,10 @@ fn setting_an_uninstalled_runner_saves_but_warns_cleanly() {
     )
     .unwrap();
 
-    let o = aurelia(tmp.path(), &["config", "steam-runtime-runner", "GE-Proton9-20"]);
+    // A name that can't exist anywhere — resolve_runner also searches the machine's real
+    // Steam compatibilitytools.d, so a real GE-Proton on the dev box would resolve here.
+    let missing = "aurelia-nonexistent-runner-9x7";
+    let o = aurelia(tmp.path(), &["config", "steam-runtime-runner", missing]);
     assert!(o.status.success(), "{}", out(&o));
     let text = out(&o);
     assert!(text.contains("does not resolve"), "{text}");

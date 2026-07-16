@@ -54,6 +54,7 @@ async fn watch_for_upgrade(startup: Option<(SystemTime, u64)>) {
                 "daemon: binary changed on disk; exiting so the next command starts a \
                  fresh daemon"
             );
+            super::clear_daemon_info();
             std::process::exit(0);
         }
     }
@@ -87,6 +88,10 @@ pub async fn run_server() -> Result<()> {
         }
     };
     tracing::info!("aurelia daemon listening on {}", transport::endpoint());
+
+    // Record our version + pid so a differently-versioned thin client can detect the
+    // mismatch and restart us instead of forwarding a command our CLI can't parse.
+    super::write_daemon_info();
 
     // Establish the shared session in the background (one logon if a token exists),
     // then keep it alive: the liveness loop reconnects if the socket later dies.

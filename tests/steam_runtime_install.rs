@@ -106,11 +106,13 @@ fn empty_runner_name_is_rejected() {
 #[test]
 fn unknown_runner_name_reports_what_it_looked_for() {
     let (_tmp, lib) = library();
-    let err = resolve_steam_runtime_wine("GE-Proton9-20", &lib)
-        .unwrap_err()
-        .to_string();
+    // A name that cannot exist on any real system — resolve_runner also searches the
+    // machine's Steam compatibilitytools.d, so a plausible name like "GE-Proton9-20"
+    // would resolve on a dev box that happens to have it installed.
+    let missing = "aurelia-nonexistent-runner-9x7";
+    let err = resolve_steam_runtime_wine(missing, &lib).unwrap_err().to_string();
     assert!(err.contains("could not be found"), "unexpected error: {err}");
-    assert!(err.contains("GE-Proton9-20"), "unexpected error: {err}");
+    assert!(err.contains(missing), "unexpected error: {err}");
 }
 
 #[test]
@@ -215,7 +217,8 @@ fn quiet_resolver_finds_installed_runner() {
 #[test]
 fn quiet_resolver_returns_none_for_unknown_runner() {
     let (_tmp, lib) = library();
-    assert_eq!(resolve_runner_opt("GE-Proton9-20", &lib), None);
+    // Bogus name so a system-installed GE-Proton on the dev box can't satisfy it.
+    assert_eq!(resolve_runner_opt("aurelia-nonexistent-runner-9x7", &lib), None);
 }
 
 /// The quiet resolver matches fuzzily just like resolve_runner, so a config-setter probe

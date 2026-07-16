@@ -27,10 +27,37 @@ pub async fn try_forward() -> Result<Option<i32>> {
 }
 
 /// Connect to the daemon; if none is listening, spawn one and wait for it.
+///
+/// A daemon left over from a previous `aurelia` build parses forwarded commands with its
+/// own (stale) CLI, so it rejects newly added subcommands with "unrecognized subcommand".
+/// So when an existing daemon is a different version from this binary, stop it and start a
+/// fresh one before forwarding.
 async fn connect_or_spawn() -> Option<impl AsyncRead + AsyncWrite + Unpin + Send> {
     if let Ok(stream) = transport::connect().await {
-        return Some(stream);
+        let current = env!("CARGO_PKG_VERSION");
+        let info = super::read_daemon_info();
+        if !daemon_needs_restart(info.as_ref(), current) {
+            return Some(stream);
+        }
+        // Version mismatch, or an old daemon predating the marker (absent -> "unknown").
+        drop(stream);
+        let reported = info.as_ref().map_or("unknown", |i| i.version.as_str());
+        tracing::info!(
+            "restarting aurelia daemon: it is running v{reported} but this binary is v{current}"
+        );
+        restart_daemon(info.as_ref().map(|i| i.pid));
+
+        // Wait (bounded) for the stopped daemon to release the socket, so the replacement
+        // we spawn below doesn't bow out to it and we don't reconnect to the very daemon
+        // we just stopped.
+        for _ in 0..SPAWN_ATTEMPTS {
+            if transport::connect().await.is_err() {
+                break;
+            }
+            tokio::time::sleep(SPAWN_WAIT).await;
+        }
     }
+
     spawn_daemon().ok()?;
     for _ in 0..SPAWN_ATTEMPTS {
         tokio::time::sleep(SPAWN_WAIT).await;
@@ -39,6 +66,35 @@ async fn connect_or_spawn() -> Option<impl AsyncRead + AsyncWrite + Unpin + Send
         }
     }
     None
+}
+
+/// Whether an existing daemon described by `info` must be restarted before use.
+///
+/// True when its version differs from `current`, or the marker is absent/unparseable
+/// (`info == None`) — a daemon predating this marker can't be trusted to parse newer
+/// commands either, so treat "unknown" as a mismatch.
+fn daemon_needs_restart(info: Option<&super::DaemonInfo>, current: &str) -> bool {
+    info.map_or(true, |i| i.version != current)
+}
+
+/// Stop a stale-version daemon so the next connect spawns a fresh one. `pid` is the
+/// daemon's own pid from its marker when available — kill exactly that process. Without a
+/// marker (a daemon predating this mechanism) fall back to stopping every session daemon,
+/// since we can't otherwise identify which process owns the socket.
+fn restart_daemon(pid: Option<u32>) {
+    let killed = match pid {
+        Some(pid) => crate::proc_admin::kill_pids(&[pid]),
+        None => {
+            let daemons: Vec<u32> = crate::proc_admin::find_aurelia_processes()
+                .into_iter()
+                .filter(|p| p.is_daemon)
+                .map(|p| p.pid)
+                .collect();
+            crate::proc_admin::kill_pids(&daemons)
+        }
+    };
+    tracing::info!("stopped {killed} stale aurelia daemon(s)");
+    super::clear_daemon_info();
 }
 
 /// Launch a detached `aurelia daemon` process.
@@ -167,3 +223,7 @@ where
     stdin_task.abort();
     Ok(code)
 }
+
+#[cfg(test)]
+#[path = "client_tests.rs"]
+mod tests;

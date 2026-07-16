@@ -37,6 +37,52 @@ struct Header {
     argv: Vec<String>,
 }
 
+/// Identity marker a running daemon writes next to its socket so a thin client can tell
+/// whether the daemon it is about to use was built from the same binary.
+///
+/// This is deliberately an out-of-band file, not a socket handshake: the problem case is
+/// a daemon from an *older* build that doesn't understand a newly added command, and such
+/// a daemon can't answer a new protocol query either. A daemon predating this marker
+/// leaves it absent — which the client reads as a mismatch and restarts, exactly the
+/// desired behavior. The pid lets the client stop precisely that daemon rather than every
+/// `aurelia` process on the machine.
+#[derive(Debug, Serialize, Deserialize)]
+struct DaemonInfo {
+    /// The daemon's compiled crate version (`CARGO_PKG_VERSION`).
+    version: String,
+    /// The daemon's process id.
+    pid: u32,
+}
+
+/// Record this daemon's identity marker. Best-effort — a missing marker just makes
+/// clients conservatively restart the daemon.
+fn write_daemon_info() {
+    let info = DaemonInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        pid: std::process::id(),
+    };
+    let path = transport::version_marker_path();
+    match serde_json::to_vec(&info) {
+        Ok(bytes) => {
+            if let Err(e) = std::fs::write(&path, bytes) {
+                tracing::warn!("daemon: could not write version marker {}: {e}", path.display());
+            }
+        }
+        Err(e) => tracing::warn!("daemon: could not serialize version marker: {e}"),
+    }
+}
+
+/// Read the running daemon's identity marker, if present and parseable.
+fn read_daemon_info() -> Option<DaemonInfo> {
+    let bytes = std::fs::read(transport::version_marker_path()).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// Remove the marker (best-effort) on clean daemon shutdown.
+fn clear_daemon_info() {
+    let _ = std::fs::remove_file(transport::version_marker_path());
+}
+
 /// Process-global daemon session. Present (`Some`) only inside the daemon process;
 /// a normal CLI invocation never initializes it, which is how [`in_daemon`]
 /// distinguishes the two.

@@ -10,6 +10,13 @@ pub fn endpoint() -> String {
     imp::endpoint()
 }
 
+/// Filesystem path of the daemon's identity marker (version + pid), written by the
+/// running daemon and read by thin clients to detect a version mismatch. Kept next to
+/// the socket so a custom `AURELIA_DAEMON_SOCKET` gets its own isolated marker.
+pub fn version_marker_path() -> std::path::PathBuf {
+    imp::version_marker_path()
+}
+
 #[cfg(unix)]
 mod imp {
     use std::path::PathBuf;
@@ -28,6 +35,12 @@ mod imp {
         base.join(format!("aurelia-{uid}.sock"))
             .to_string_lossy()
             .into_owned()
+    }
+
+    pub fn version_marker_path() -> PathBuf {
+        // Alongside the socket (`aurelia-{uid}.info`), so it inherits any
+        // AURELIA_DAEMON_SOCKET override the endpoint uses.
+        PathBuf::from(endpoint()).with_extension("info")
     }
 
     pub struct Listener(UnixListener);
@@ -68,6 +81,13 @@ mod imp {
         }
         let user = std::env::var("USERNAME").unwrap_or_else(|_| "default".to_string());
         format!(r"\\.\pipe\aurelia-{user}")
+    }
+
+    pub fn version_marker_path() -> std::path::PathBuf {
+        // A named pipe has no filesystem path, so keep the marker in the temp dir keyed
+        // by user (mirrors the pipe name).
+        let user = std::env::var("USERNAME").unwrap_or_else(|_| "default".to_string());
+        std::env::temp_dir().join(format!("aurelia-{user}.info"))
     }
 
     pub struct Listener {
