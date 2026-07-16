@@ -6,8 +6,8 @@
 //! sets and expects the Steam Linux Runtime container.
 
 use aurelia::core::utils::{
-    build_runner_command, resolve_runner_opt, resolve_steam_runtime_wine,
-    steam_runtime_runner_unset_msg,
+    build_runner_command, find_steam_exe_in_prefix, resolve_runner_opt,
+    resolve_steam_runtime_wine, steam_runtime_runner_unset_msg,
 };
 use aurelia::launch::is_valid_setup_exe;
 use std::fs;
@@ -189,6 +189,41 @@ fn cached_empty_file_is_rejected() {
 fn missing_setup_exe_is_rejected() {
     let tmp = tempdir().unwrap();
     assert!(!is_valid_setup_exe(&tmp.path().join("nope.exe")));
+}
+
+// --- steam.exe detection is case-insensitive -------------------------------
+//
+// The real Steam installer writes `Steam.exe` (capital S). On a case-sensitive Linux
+// filesystem a hardcoded lowercase `steam.exe` misses it, so a *successful* install used
+// to report "no steam.exe appeared". (The "and that's it" half of issue #2 once the
+// installer itself was fixed to run silently.)
+
+fn prefix_with_steam(leaf: &str) -> (TempDir, PathBuf) {
+    let tmp = tempdir().unwrap();
+    let dir = tmp.path().join("drive_c/Program Files (x86)/Steam");
+    fs::create_dir_all(&dir).unwrap();
+    let exe = dir.join(leaf);
+    fs::write(&exe, b"MZ").unwrap();
+    (tmp, exe)
+}
+
+#[test]
+fn finds_capital_s_steam_exe() {
+    let (tmp, exe) = prefix_with_steam("Steam.exe");
+    assert_eq!(find_steam_exe_in_prefix(tmp.path()), Some(exe));
+}
+
+#[test]
+fn finds_lowercase_steam_exe() {
+    let (tmp, exe) = prefix_with_steam("steam.exe");
+    assert_eq!(find_steam_exe_in_prefix(tmp.path()), Some(exe));
+}
+
+#[test]
+fn no_steam_exe_returns_none() {
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join("drive_c/Program Files (x86)/Steam")).unwrap();
+    assert_eq!(find_steam_exe_in_prefix(tmp.path()), None);
 }
 
 // --- runner selection UX (issue: "not clear what to set the runner to") -----

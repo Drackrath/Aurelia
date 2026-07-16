@@ -1117,15 +1117,29 @@ pub fn get_master_steam_config() -> MasterSteamConfig {
 }
 
 pub fn find_steam_exe_in_prefix(prefix: &Path) -> Option<PathBuf> {
-    let candidates = [
-        "drive_c/Program Files (x86)/Steam/steam.exe",
-        "drive_c/Program Files/Steam/steam.exe",
+    // Steam's own installer writes `Steam.exe` (capital S). Windows/Wine treat filenames
+    // case-insensitively, but the underlying Linux filesystem does not — so a hardcoded
+    // lowercase `steam.exe` misses a real install and (before this) made a *successful*
+    // `steam-runtime install` report "no steam.exe appeared". Match the leaf
+    // case-insensitively within each candidate Steam directory instead.
+    let steam_dirs = [
+        "drive_c/Program Files (x86)/Steam",
+        "drive_c/Program Files/Steam",
     ];
 
-    for rel_path in candidates {
-        let full_path = prefix.join(rel_path);
-        if full_path.exists() {
-            return Some(full_path);
+    for rel_dir in steam_dirs {
+        let dir = prefix.join(rel_dir);
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .eq_ignore_ascii_case("steam.exe")
+            {
+                return Some(entry.path());
+            }
         }
     }
 
