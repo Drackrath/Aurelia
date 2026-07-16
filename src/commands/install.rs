@@ -460,7 +460,7 @@ pub(crate) async fn cmd_check_updates(json: bool) -> Result<()> {
 
     // A pinned game is deliberately held at an older build — report it as pinned,
     // never as "update available".
-    let cfg = load_launcher_config().await.unwrap_or_default();
+    let cfg = load_launcher_config().await?;
     let is_pinned = |app_id: u32| cfg.game_configs.get(&app_id).is_some_and(|g| g.pinned);
 
     let mut updates: Vec<&LibraryGame> = games

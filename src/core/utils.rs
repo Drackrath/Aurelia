@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -256,6 +256,62 @@ pub(crate) fn validate_steam_runtime_runner_path(path: &Path) -> Result<()> {
             path.display()
         ),
     }
+}
+
+/// Resolve the configured `steam_runtime_runner` *name* to the bare wine binary that
+/// must host the Windows-Steam installer and the background Steam process.
+///
+/// This is deliberately NOT [`build_runner_command`]: that helper prefers a Proton
+/// tree's `proton` script and yields `proton run <exe>`, which is wrong here on two
+/// counts. `proton run` derives its own prefix from `STEAM_COMPAT_DATA_PATH` and
+/// silently ignores the `WINEPREFIX` the caller set, and it expects to be inside the
+/// Steam Linux Runtime container. When the configured runner is a Proton tree we use
+/// the bare wine it bundles instead — the invariant [`proton_bundled_bare_wine`] and
+/// [`validate_steam_runtime_runner_path`] already document.
+pub fn resolve_steam_runtime_wine(runner_name: &str, library_root: &Path) -> Result<PathBuf> {
+    if runner_name.trim().is_empty() {
+        bail!("No Steam Runtime Runner selected in Global Settings");
+    }
+
+    let resolved = resolve_runner(runner_name, library_root);
+    if !resolved.exists() {
+        bail!(
+            "Steam Runtime Runner `{runner_name}` could not be found on disk (resolved to {}). \
+             Install it, or point `steam_runtime_runner` at a wine build.",
+            resolved.display()
+        );
+    }
+
+    // A Proton tree, or the `proton` script itself: take the wine it bundles rather
+    // than the `proton run` wrapper.
+    let is_proton_script =
+        resolved.is_file() && resolved.file_name().and_then(|f| f.to_str()) == Some("proton");
+    let is_proton_tree = resolved.is_dir() && classify_runner(&resolved) == RunnerKind::Proton;
+    if is_proton_script || is_proton_tree {
+        return proton_bundled_bare_wine(&resolved).ok_or_else(|| {
+            anyhow!(
+                "Steam Runtime Runner `{runner_name}` is a Proton tree with no bundled wine \
+                 binary (looked for files/bin/wine64 and dist/bin/wine64 under {})",
+                derive_runner_root(&resolved).display()
+            )
+        });
+    }
+
+    // Otherwise it must already be a bare wine binary or a bare wine tree.
+    validate_steam_runtime_runner_path(&resolved)?;
+    if resolved.is_file() {
+        return Ok(resolved);
+    }
+    for rel in ["bin/wine64", "bin/wine"] {
+        let candidate = resolved.join(rel);
+        if candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    bail!(
+        "Steam Runtime Runner `{runner_name}` has no wine binary under {}",
+        resolved.display()
+    )
 }
 
 pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<()> {

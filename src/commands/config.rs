@@ -10,7 +10,7 @@ use aurelia::core::config::save_launcher_config;
 
 pub(crate) async fn cmd_config_show(_json: bool) -> Result<()> {
     // The launcher configuration is structured data; it always renders as JSON.
-    let config = load_launcher_config().await.unwrap_or_default();
+    let config = load_launcher_config().await?;
     cli_println!("{}", serde_json::to_string_pretty(&config)?);
     Ok(())
 }
@@ -20,7 +20,7 @@ pub(crate) async fn cmd_config_show(_json: bool) -> Result<()> {
 /// offline to friends but still sync your friends list and receive chat.
 pub(crate) async fn cmd_config_presence(mode: Option<ChatPresenceArg>, json: bool) -> Result<()> {
     use aurelia::core::config::ChatPresence;
-    let mut config = load_launcher_config().await.unwrap_or_default();
+    let mut config = load_launcher_config().await?;
     let changed = mode.is_some();
     if let Some(mode) = mode {
         config.chat_presence = mode.into();
@@ -47,7 +47,7 @@ pub(crate) async fn cmd_config_presence(mode: Option<ChatPresenceArg>, json: boo
 /// used by `aurelia achievements` when `--lang` is not given. Pass an empty
 /// value to clear it (falling back to English).
 pub(crate) async fn cmd_config_language(lang: Option<String>, json: bool) -> Result<()> {
-    let mut config = load_launcher_config().await.unwrap_or_default();
+    let mut config = load_launcher_config().await?;
     let changed = lang.is_some();
     if let Some(lang) = lang {
         let value = lang.trim().to_ascii_lowercase();
@@ -80,7 +80,7 @@ pub(crate) async fn cmd_config_proxy(
 ) -> Result<()> {
     use aurelia::core::net::validate_proxy_url;
 
-    let mut config = load_launcher_config().await.unwrap_or_default();
+    let mut config = load_launcher_config().await?;
     let changed = clear || url.is_some() || no_proxy.is_some();
 
     if clear {
@@ -131,7 +131,7 @@ pub(crate) async fn cmd_config_proxy(
 /// `config protons`: list the Proton/Wine runtimes actually installed on disk.
 /// Shares discovery with `proton list --installed` (no hardcoded placeholders).
 pub(crate) async fn cmd_config_protons(json: bool) -> Result<()> {
-    let cfg = load_launcher_config().await.unwrap_or_default();
+    let cfg = load_launcher_config().await?;
     let installed = aurelia::compat::proton::list_installed(std::path::Path::new(&cfg.steam_library_path));
     let steam: Vec<&str> = installed
         .iter()
@@ -189,7 +189,7 @@ pub(crate) async fn cmd_config_game(
 ) -> Result<()> {
     use aurelia::core::config::GameRunner;
 
-    let mut cfg = load_launcher_config().await.unwrap_or_default();
+    let mut cfg = load_launcher_config().await?;
     let mut changed = false;
     {
         let entry = cfg.game_configs.entry(app_id).or_default();

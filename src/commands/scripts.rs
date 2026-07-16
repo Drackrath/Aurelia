@@ -21,7 +21,7 @@ pub(crate) async fn cmd_scripts_dir(json: bool) -> Result<()> {
 /// their resolved paths.
 pub(crate) async fn cmd_scripts_list(json: bool) -> Result<()> {
     use aurelia::launch::launch_script;
-    let cfg = load_launcher_config().await.unwrap_or_default();
+    let cfg = load_launcher_config().await?;
     let ids = launch_script::list_script_app_ids(Some(&cfg));
 
     // Best-effort name resolution from the offline library cache.
@@ -97,7 +97,7 @@ pub(crate) async fn cmd_scripts_new(app_id: u32, force: bool, json: bool) -> Res
 /// `scripts show`: print the resolved launch-script path for a game and its contents.
 pub(crate) async fn cmd_scripts_show(app_id: u32, json: bool) -> Result<()> {
     use aurelia::launch::launch_script;
-    let cfg = load_launcher_config().await.unwrap_or_default();
+    let cfg = load_launcher_config().await?;
     let Some(path) = launch_script::resolve(app_id, Some(&cfg), None, false) else {
         if json {
             print_json(&serde_json::json!({ "app_id": app_id, "path": null, "exists": false }));

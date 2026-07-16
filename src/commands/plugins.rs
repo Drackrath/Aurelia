@@ -7,7 +7,7 @@ use aurelia::core::config::load_launcher_config;
 
 /// `luxtorpeda enable|disable`: flip the master toggle for the native-engine plugin.
 pub(crate) async fn cmd_luxtorpeda_toggle(enable: bool, json: bool) -> Result<()> {
-    let mut cfg = load_launcher_config().await.unwrap_or_default();
+    let mut cfg = load_launcher_config().await?;
     cfg.luxtorpeda_enabled = enable;
     cfg.save().await.context("failed saving launcher config")?;
 
@@ -30,7 +30,7 @@ pub(crate) async fn cmd_luxtorpeda_toggle(enable: bool, json: bool) -> Result<()
 
 /// `luxtorpeda install|update`: download the latest client into Aurelia's data dir.
 pub(crate) async fn cmd_luxtorpeda_install(json: bool) -> Result<()> {
-    let cfg = load_launcher_config().await.unwrap_or_default();
+    let cfg = load_launcher_config().await?;
     if let Some(p) = &cfg.luxtorpeda_path {
         anyhow::bail!(
             "a custom luxtorpeda path is configured ({p}); Aurelia uses that install and \
@@ -73,7 +73,7 @@ pub(crate) async fn cmd_luxtorpeda_install(json: bool) -> Result<()> {
 
 /// `luxtorpeda status`: report enabled state and installed version.
 pub(crate) async fn cmd_luxtorpeda_status(json: bool) -> Result<()> {
-    let cfg = load_launcher_config().await.unwrap_or_default();
+    let cfg = load_launcher_config().await?;
     let custom = cfg.luxtorpeda_path.as_deref().map(std::path::Path::new);
     let installed = aurelia::compat::luxtorpeda::installed(custom);
 
@@ -115,7 +115,7 @@ pub(crate) async fn cmd_luxtorpeda_status(json: bool) -> Result<()> {
 
 /// `luxtorpeda path`: set, show, or clear the external luxtorpeda install path.
 pub(crate) async fn cmd_luxtorpeda_path(path: Option<String>, clear: bool, json: bool) -> Result<()> {
-    let mut cfg = load_launcher_config().await.unwrap_or_default();
+    let mut cfg = load_launcher_config().await?;
 
     if clear {
         cfg.luxtorpeda_path = None;
@@ -159,7 +159,7 @@ pub(crate) async fn cmd_luxtorpeda_uninstall(json: bool) -> Result<()> {
 
 /// `umu enable|disable`: flip the master toggle for the umu-launcher plugin.
 pub(crate) async fn cmd_umu_toggle(enable: bool, json: bool) -> Result<()> {
-    let mut cfg = load_launcher_config().await.unwrap_or_default();
+    let mut cfg = load_launcher_config().await?;
     cfg.umu_enabled = enable;
     cfg.save().await.context("failed saving launcher config")?;
 
@@ -182,7 +182,7 @@ pub(crate) async fn cmd_umu_toggle(enable: bool, json: bool) -> Result<()> {
 
 /// `umu install|update`: download the latest umu-launcher into Aurelia's data dir.
 pub(crate) async fn cmd_umu_install(json: bool) -> Result<()> {
-    let cfg = load_launcher_config().await.unwrap_or_default();
+    let cfg = load_launcher_config().await?;
     if let Some(p) = &cfg.umu_path {
         anyhow::bail!(
             "a custom umu path is configured ({p}); Aurelia uses that install and \
@@ -225,7 +225,7 @@ pub(crate) async fn cmd_umu_install(json: bool) -> Result<()> {
 
 /// `umu status`: report enabled state and installed version.
 pub(crate) async fn cmd_umu_status(json: bool) -> Result<()> {
-    let cfg = load_launcher_config().await.unwrap_or_default();
+    let cfg = load_launcher_config().await?;
     let custom = cfg.umu_path.as_deref().map(std::path::Path::new);
     let installed = aurelia::compat::umu::installed(custom);
 
@@ -262,7 +262,7 @@ pub(crate) async fn cmd_umu_status(json: bool) -> Result<()> {
 
 /// `umu path`: set, show, or clear the external umu install path.
 pub(crate) async fn cmd_umu_path(path: Option<String>, clear: bool, json: bool) -> Result<()> {
-    let mut cfg = load_launcher_config().await.unwrap_or_default();
+    let mut cfg = load_launcher_config().await?;
 
     if clear {
         cfg.umu_path = None;

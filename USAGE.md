@@ -1981,7 +1981,7 @@ aurelia steam-runtime status  [--json]
 
 | Subcommand | Description |
 | --- | --- |
-| `install` | Download `SteamSetup.exe` (if needed) and install Steam into the master prefix. Requires `steam_runtime_runner` to be set. |
+| `install` | Download `SteamSetup.exe` (if needed), install Steam into the master prefix, then start the Steam client. Waits for the installer and fails loudly if `steam.exe` does not appear. Requires `steam_runtime_runner` to be set. |
 | `repair` | Stop Steam, back up the master prefix (keeping a single `.bak`), then reinstall — recovers a corrupted install that passes the file-exists check but crashes on start. Requires `steam_runtime_runner`. |
 | `status` | Print the resolved master root, Wine prefix, layout kind, whether `steam.exe` is present, and whether a runtime runner is configured. |
 
@@ -1990,6 +1990,12 @@ aurelia steam-runtime status
 aurelia steam-runtime install
 aurelia steam-runtime repair
 ```
+
+> **Runner:** the Windows-Steam installer and the background Steam client always run under a
+> **bare wine**, never `proton run` (that wrapper derives its own prefix and expects the Steam
+> Linux Runtime container). Pointing `steam_runtime_runner` at a Proton tree such as
+> `GE-Proton9-20` is still fine — the wine bundled inside it (`files/bin/wine64`) is used
+> automatically.
 
 > **Diagnostics:** set `AURELIA_DIAGNOSE_INSTALL=1` before `install`/`repair` to run the
 > installer with verbose `WINEDEBUG` and capture its output to a timestamped log under

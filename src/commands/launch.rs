@@ -89,7 +89,7 @@ pub(crate) async fn cmd_play(
     // Proton/Wine is Linux-only; on Windows we always run the game natively.
     let force_windows = windows || cfg!(target_os = "windows");
 
-    let launcher_config = load_launcher_config().await.unwrap_or_default();
+    let launcher_config = load_launcher_config().await?;
     let game_cfg = launcher_config.game_configs.get(&app_id);
     let forced_proton = game_cfg.and_then(|c| c.forced_proton_version.clone());
     let prefers_windows =

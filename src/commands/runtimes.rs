@@ -9,7 +9,7 @@ use aurelia::core::models::{DepotPlatform, DownloadState};
 
 /// `proton list`: show installable runtimes and what's installed.
 pub(crate) async fn cmd_proton_list(installed_only: bool, json: bool) -> Result<()> {
-    let cfg = load_launcher_config().await.unwrap_or_default();
+    let cfg = load_launcher_config().await?;
     let installed =
         aurelia::compat::proton::list_installed(std::path::Path::new(&cfg.steam_library_path));
     let default = cfg.proton_version;
@@ -111,7 +111,7 @@ pub(crate) async fn cmd_proton_install(version: String, json: bool) -> Result<()
     }
 
     // The freshly installed runtime becomes the global default ("last downloaded").
-    let mut cfg = load_launcher_config().await.unwrap_or_default();
+    let mut cfg = load_launcher_config().await?;
     cfg.proton_version = pkg.name.clone();
     cfg.save().await.context("failed saving the default Proton version")?;
 
@@ -133,7 +133,7 @@ pub(crate) async fn cmd_proton_uninstall(version: String, json: bool) -> Result<
         .with_context(|| format!("failed to uninstall {version}"))?;
 
     // If it was the global default, the default now points at something gone; warn.
-    let cfg = load_launcher_config().await.unwrap_or_default();
+    let cfg = load_launcher_config().await?;
     let was_default = cfg.proton_version.eq_ignore_ascii_case(&version);
 
     if json {
@@ -156,7 +156,7 @@ pub(crate) async fn cmd_proton_uninstall(version: String, json: bool) -> Result<
 
 /// `proton default`: set the global default Proton/Wine version.
 pub(crate) async fn cmd_proton_default(version: String, json: bool) -> Result<()> {
-    let mut cfg = load_launcher_config().await.unwrap_or_default();
+    let mut cfg = load_launcher_config().await?;
     let installed =
         aurelia::compat::proton::list_installed(std::path::Path::new(&cfg.steam_library_path));
     let present = installed.iter().any(|i| i.name.eq_ignore_ascii_case(&version));
@@ -182,7 +182,7 @@ pub(crate) async fn cmd_proton_default(version: String, json: bool) -> Result<()
 
 /// `steam-runtime install`: install Steam into the master Windows prefix.
 pub(crate) async fn cmd_steam_runtime_install(json: bool) -> Result<()> {
-    let config = load_launcher_config().await.unwrap_or_default();
+    let config = load_launcher_config().await?;
     // Pre-check here (before install_master_steam downloads SteamSetup.exe) so an
     // unconfigured runner fails fast with an actionable message and no wasted work.
     if config.steam_runtime_runner.as_os_str().is_empty() {
@@ -192,17 +192,26 @@ pub(crate) async fn cmd_steam_runtime_install(json: bool) -> Result<()> {
         );
     }
     aurelia::launch::install_master_steam(&config).await?;
+    // install_master_steam now waits for SteamSetup.exe and verifies steam.exe exists
+    // before returning, so reaching this point means the install genuinely landed.
+    let steam_cfg = aurelia::core::utils::get_master_steam_config();
     if json {
-        print_json(&serde_json::json!({ "status": "install_started" }));
+        print_json(&serde_json::json!({
+            "status": "installed",
+            "steam_exe": steam_cfg.steam_exe,
+        }));
     } else {
-        cli_println!("Master Steam runtime install started.");
+        cli_println!("Master Steam runtime installed; Steam client started.");
+        if let Some(exe) = &steam_cfg.steam_exe {
+            cli_println!("steam.exe path    : {}", exe.display());
+        }
     }
     Ok(())
 }
 
 /// `steam-runtime repair`: back up the master prefix and reinstall.
 pub(crate) async fn cmd_steam_runtime_repair(json: bool) -> Result<()> {
-    let config = load_launcher_config().await.unwrap_or_default();
+    let config = load_launcher_config().await?;
     if config.steam_runtime_runner.as_os_str().is_empty() {
         bail!(
             "no Steam Runtime Runner is configured — set `steam_runtime_runner` in the \
@@ -210,17 +219,21 @@ pub(crate) async fn cmd_steam_runtime_repair(json: bool) -> Result<()> {
         );
     }
     aurelia::launch::repair_master_steam(&config).await?;
+    let steam_cfg = aurelia::core::utils::get_master_steam_config();
     if json {
-        print_json(&serde_json::json!({ "status": "repair_started" }));
+        print_json(&serde_json::json!({
+            "status": "repaired",
+            "steam_exe": steam_cfg.steam_exe,
+        }));
     } else {
-        cli_println!("Master Steam runtime repaired (backed up old prefix, reinstall started).");
+        cli_println!("Master Steam runtime repaired (backed up old prefix, reinstalled).");
     }
     Ok(())
 }
 
 /// `steam-runtime status`: report the resolved master prefix and configuration.
 pub(crate) async fn cmd_steam_runtime_status(json: bool) -> Result<()> {
-    let config = load_launcher_config().await.unwrap_or_default();
+    let config = load_launcher_config().await?;
     let steam_cfg = aurelia::core::utils::get_master_steam_config();
     let steam_exe_present = steam_cfg.steam_exe.is_some();
     let runner = config.steam_runtime_runner.to_string_lossy().to_string();

@@ -78,7 +78,7 @@ impl SteamClient {
         }
         .ok_or_else(|| anyhow!("no launch options"))?;
 
-        let launcher_config = load_launcher_config().await.unwrap_or_default();
+        let launcher_config = load_launcher_config().await?;
 
         // Proton/Wine only exists on Linux. On Windows, a Windows game runs natively, so
         // run its executable directly instead of routing through the Proton pipeline.
@@ -193,7 +193,7 @@ impl SteamClient {
         proton_path: Option<&str>,
         user_config: Option<&crate::core::models::UserAppConfig>,
     ) -> Result<()> {
-        let launcher_config = load_launcher_config().await.unwrap_or_default();
+        let launcher_config = load_launcher_config().await?;
         self.spawn_game_process(app, launch_info, proton_path, &launcher_config, user_config, false, false, None, false, false).await?;
         Ok(())
     }

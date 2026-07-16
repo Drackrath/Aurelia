@@ -292,6 +292,14 @@ pub async fn delete_session() -> Result<()> {
     Ok(())
 }
 
+/// Load `config.json`.
+///
+/// A *missing* config is not an error: it yields defaults with the Steam library
+/// auto-detected. So an `Err` here always means the file exists but could not be read
+/// or parsed — never "you have no config yet". Callers must therefore propagate it
+/// rather than falling back to defaults: doing so would silently discard every setting
+/// the user has, and any caller that then saves would write those defaults straight
+/// over the file it failed to read.
 pub async fn load_launcher_config() -> Result<LauncherConfig> {
     let path = config_dir()?.join("config.json");
     if !path.exists() {
@@ -301,7 +309,12 @@ pub async fn load_launcher_config() -> Result<LauncherConfig> {
         }
         return Ok(config);
     }
-    read_json(&path).await
+    read_json(&path).await.with_context(|| {
+        format!(
+            "invalid launcher config — fix the JSON in {}, or delete it to regenerate defaults",
+            path.display()
+        )
+    })
 }
 
 pub async fn save_launcher_config(config: &LauncherConfig) -> Result<()> {
