@@ -79,9 +79,27 @@ fn normalize_runner_name(s: &str) -> String {
 /// still finds Steam's `Proton - Experimental` directory. Returns the name as a
 /// path if nothing matches (the caller surfaces a clear error).
 pub fn resolve_runner(name: &str, library_root: &Path) -> PathBuf {
+    resolve_runner_opt(name, library_root).unwrap_or_else(|| {
+        // Fallback: return the name verbatim as a path so the caller surfaces a clear
+        // "binary not found" error. The warn lives here (not in resolve_runner_opt) so
+        // callers that only want to *probe* resolvability can do so quietly.
+        tracing::warn!(
+            runner = %name,
+            "could not resolve runner '{}' to an on-disk runtime under any known search path; \
+             returning the name verbatim as a path (the launch will likely fail resolving the binary)",
+            name
+        );
+        Path::new(name).to_path_buf()
+    })
+}
+
+/// The resolution core behind [`resolve_runner`], returning `None` (quietly) when the
+/// name matches no on-disk runtime. Use this when you want to *check* whether a runner
+/// resolves without emitting the not-found warning [`resolve_runner`] logs.
+pub fn resolve_runner_opt(name: &str, library_root: &Path) -> Option<PathBuf> {
     let name_path = Path::new(name);
     if name_path.is_absolute() || name_path.exists() {
-        return name_path.to_path_buf();
+        return Some(name_path.to_path_buf());
     }
 
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
@@ -100,7 +118,7 @@ pub fn resolve_runner(name: &str, library_root: &Path) -> PathBuf {
     for dir in &search_dirs {
         let exact = dir.join(name);
         if exact.exists() {
-            return exact;
+            return Some(exact);
         }
     }
 
@@ -130,21 +148,14 @@ pub fn resolve_runner(name: &str, library_root: &Path) -> PathBuf {
         if let Some(exact) = matches.iter().find(|p| {
             normalize_runner_name(&p.file_name().unwrap_or_default().to_string_lossy()) == needle
         }) {
-            return exact.clone();
+            return Some(exact.clone());
         }
         if let Some(first) = matches.into_iter().next() {
-            return first;
+            return Some(first);
         }
     }
 
-    // 3. Fallback to name as provided.
-    tracing::warn!(
-        runner = %name,
-        "could not resolve runner '{}' to an on-disk runtime under any known search path; \
-         returning the name verbatim as a path (the launch will likely fail resolving the binary)",
-        name
-    );
-    name_path.to_path_buf()
+    None
 }
 
 /// Coarse classification of a runner directory tree, used to decide how a process
@@ -258,6 +269,19 @@ pub(crate) fn validate_steam_runtime_runner_path(path: &Path) -> Result<()> {
     }
 }
 
+/// Actionable message for when `steam_runtime_runner` is unset. `action` is the verb
+/// phrase for the failing operation, e.g. "installing" / "repairing". Kept in one place
+/// so every entry point tells the user the same concrete next steps: which runtimes are
+/// available and exactly how to select one.
+pub fn steam_runtime_runner_unset_msg(action: &str) -> String {
+    format!(
+        "no Steam Runtime Runner is configured — required for {action} the Windows Steam \
+         runtime.\n  1. See installed runtimes: `aurelia proton list`\n  2. Select one: \
+         `aurelia config steam-runtime-runner <NAME>` (e.g. GE-Proton9-20 or experimental)\n\
+         A Proton runtime works — its bundled bare Wine is used automatically."
+    )
+}
+
 /// Resolve the configured `steam_runtime_runner` *name* to the bare wine binary that
 /// must host the Windows-Steam installer and the background Steam process.
 ///
@@ -273,14 +297,16 @@ pub fn resolve_steam_runtime_wine(runner_name: &str, library_root: &Path) -> Res
         bail!("No Steam Runtime Runner selected in Global Settings");
     }
 
-    let resolved = resolve_runner(runner_name, library_root);
-    if !resolved.exists() {
-        bail!(
-            "Steam Runtime Runner `{runner_name}` could not be found on disk (resolved to {}). \
-             Install it, or point `steam_runtime_runner` at a wine build.",
-            resolved.display()
-        );
-    }
+    // Quiet resolution: this function returns a proper Err on failure, so we don't want
+    // resolve_runner's separate not-found warning firing here (it would double up with a
+    // config-setter probe or the caller's own error).
+    let resolved = resolve_runner_opt(runner_name, library_root).ok_or_else(|| {
+        anyhow!(
+            "Steam Runtime Runner `{runner_name}` could not be found on disk. \
+             Install it (`aurelia proton install {runner_name}`), or point \
+             `steam_runtime_runner` at a wine build. See `aurelia proton list`."
+        )
+    })?;
 
     // A Proton tree, or the `proton` script itself: take the wine it bundles rather
     // than the `proton run` wrapper.

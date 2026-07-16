@@ -5,7 +5,10 @@
 //! driven through `proton run` — a wrapper that ignores the `WINEPREFIX` the caller
 //! sets and expects the Steam Linux Runtime container.
 
-use aurelia::core::utils::{build_runner_command, resolve_steam_runtime_wine};
+use aurelia::core::utils::{
+    build_runner_command, resolve_runner_opt, resolve_steam_runtime_wine,
+    steam_runtime_runner_unset_msg,
+};
 use aurelia::launch::is_valid_setup_exe;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -184,4 +187,46 @@ fn cached_empty_file_is_rejected() {
 fn missing_setup_exe_is_rejected() {
     let tmp = tempdir().unwrap();
     assert!(!is_valid_setup_exe(&tmp.path().join("nope.exe")));
+}
+
+// --- runner selection UX (issue: "not clear what to set the runner to") -----
+//
+// A first-time user hit `install` with no runner set and had no idea what value was
+// valid. The guidance must name the discovery command and the setter, and resolution
+// used by the config setter must be quiet (no stray warning log) so the setter can
+// probe validity cleanly.
+
+#[test]
+fn unset_message_points_to_discovery_and_setter() {
+    let msg = steam_runtime_runner_unset_msg("installing");
+    assert!(msg.contains("installing"), "{msg}");
+    assert!(msg.contains("aurelia proton list"), "{msg}");
+    assert!(msg.contains("aurelia config steam-runtime-runner"), "{msg}");
+}
+
+#[test]
+fn quiet_resolver_finds_installed_runner() {
+    let (_tmp, lib) = library();
+    let proton = fake_proton_tree(&lib, "GE-Proton9-20");
+    // Same result as resolve_runner, but returns Option so callers can probe silently.
+    assert_eq!(resolve_runner_opt("GE-Proton9-20", &lib), Some(proton));
+}
+
+#[test]
+fn quiet_resolver_returns_none_for_unknown_runner() {
+    let (_tmp, lib) = library();
+    assert_eq!(resolve_runner_opt("GE-Proton9-20", &lib), None);
+}
+
+/// The quiet resolver matches fuzzily just like resolve_runner, so a config-setter probe
+/// won't false-negative a valid runtime the user typed loosely.
+#[test]
+fn quiet_resolver_matches_fuzzily() {
+    let (_tmp, lib) = library();
+    let dir = lib.join("steamapps/common/Proton - Experimental");
+    fs::create_dir_all(dir.join("files/bin")).unwrap();
+    fs::write(dir.join("proton"), "#!/usr/bin/env python3\n").unwrap();
+    fs::write(dir.join("files/bin/wine64"), "#!/bin/sh\n").unwrap();
+
+    assert_eq!(resolve_runner_opt("experimental", &lib), Some(dir));
 }

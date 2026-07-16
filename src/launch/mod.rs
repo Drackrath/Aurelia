@@ -201,7 +201,8 @@ fn apply_install_diagnostics(cmd: &mut Command, base_dir: &Path) {
 pub async fn repair_master_steam(config: &LauncherConfig) -> Result<()> {
     if config.steam_runtime_runner.as_os_str().is_empty() {
         return Err(anyhow!(
-            "No Steam Runtime Runner selected — set `steam_runtime_runner` in Global Settings before repairing"
+            "{}",
+            crate::core::utils::steam_runtime_runner_unset_msg("repairing")
         ));
     }
 

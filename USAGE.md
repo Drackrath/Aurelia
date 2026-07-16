@@ -1969,14 +1969,30 @@ handshake, while the game itself is still launched **directly** by Aurelia (neve
 `steam://run` / `-applaunch` handoff). This is an alternative to bridging the host Steam
 client with [`play --steam`](#play).
 
-Installing/repairing the master prefix needs a plain Wine (or wine-tkg) runner configured as
-`steam_runtime_runner` in the launcher config — background Steam runs under bare Wine, not
-through Proton's `proton run` wrapper.
+Installing/repairing the master prefix needs a Wine/Proton runner configured as
+`steam_runtime_runner` — background Steam runs under bare Wine, not through Proton's
+`proton run` wrapper.
+
+**First-time setup.** `steam-runtime install` fails until a runner is selected. Pick one
+from your installed runtimes and set it:
+
+```bash
+aurelia proton list                              # see installed runtime names
+aurelia config steam-runtime-runner GE-Proton9-20 # select one (or `experimental`, or a Wine path)
+aurelia config steam-runtime-runner              # verify — prints the bare Wine it resolves to
+aurelia steam-runtime install                    # now proceeds
+```
+
+The value is an **installed runtime name** (as shown by `aurelia proton list`) or an
+**absolute path** to a Wine build. A Proton runtime is accepted — Aurelia uses the bare
+Wine bundled inside it (`files/bin/wine64`) automatically, never `proton run`. If you have
+no runtime yet, install one first with `aurelia proton install <NAME>`.
 
 ```text
 aurelia steam-runtime install [--json]
 aurelia steam-runtime repair  [--json]
 aurelia steam-runtime status  [--json]
+aurelia config steam-runtime-runner [<NAME>]   # view/set the runner (empty string clears)
 ```
 
 | Subcommand | Description |

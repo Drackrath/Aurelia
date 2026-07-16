@@ -383,6 +383,18 @@ pub(crate) enum ConfigCommand {
         /// given. Omit the value to print the current setting.
         lang: Option<String>,
     },
+    /// View or set the Wine/Proton runner that hosts the Windows Steam runtime.
+    ///
+    /// Used by `steam-runtime install`/`repair` to drive `SteamSetup.exe` and the
+    /// background Steam client under a bare Wine. Accepts an installed runtime name
+    /// (see `aurelia proton list`) such as `GE-Proton9-20` or `experimental`, or an
+    /// absolute path to a Wine build. A Proton tree is fine — its bundled bare Wine
+    /// is used automatically. Pass an empty value to clear it.
+    SteamRuntimeRunner {
+        /// Installed runtime name or absolute Wine path. Omit to print the current
+        /// setting; pass `""` to clear it.
+        runner: Option<String>,
+    },
     /// View or set the network proxy used for all HTTP(S) communication.
     ///
     /// Applies to the Steam web endpoints, depot downloads, and Proton/plugin

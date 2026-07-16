@@ -1,4 +1,4 @@
-<img src="assets/aurelia_logo.png" alt="Aurelia logo" title="Aurelia" align="left" height="80" />
+<img src="assets/aurelia_logo_v3.png" alt="Aurelia logo" title="Aurelia" align="left" height="80" />
 
 # Aurelia
 
@@ -273,6 +273,7 @@ aurelia proton default GE-Proton9-20 # set the global default (used when a game 
 aurelia proton uninstall GE-Proton9-19  # delete an installed GE build
 
 # Windows Steam runtime (self-contained Steamworks/DRM handshake, no host Steam client)
+aurelia config steam-runtime-runner GE-Proton9-20  # select the Wine/Proton runner (required first)
 aurelia steam-runtime status          # resolved master prefix, layout, steam.exe presence
 aurelia steam-runtime install         # install Steam into the master Wine prefix
 aurelia steam-runtime repair          # back up the prefix (keep one) and reinstall

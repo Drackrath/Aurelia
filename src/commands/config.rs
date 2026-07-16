@@ -128,6 +128,74 @@ pub(crate) async fn cmd_config_proxy(
     Ok(())
 }
 
+/// `config steam-runtime-runner [<name>]`: view or set the Wine/Proton runner that
+/// hosts the Windows Steam runtime (`steam-runtime install`/`repair`). Pass an empty
+/// string to clear it. On set, the value is resolved against the installed runtimes so
+/// a typo is caught immediately rather than at install time.
+pub(crate) async fn cmd_config_steam_runtime_runner(
+    runner: Option<String>,
+    json: bool,
+) -> Result<()> {
+    use std::path::PathBuf;
+
+    let mut config = load_launcher_config().await?;
+    let changed = runner.is_some();
+
+    if let Some(runner) = runner {
+        let value = runner.trim();
+        config.steam_runtime_runner = PathBuf::from(value);
+        save_launcher_config(&config).await?;
+    }
+
+    let current = config.steam_runtime_runner.to_string_lossy().to_string();
+    let configured = !current.is_empty();
+
+    // Soft validation: resolve the saved name to a bare Wine binary so the user learns
+    // now (not at install time) whether it points at something usable. `resolve_steam_
+    // runtime_wine` resolves quietly (no stray log) and returns Err when the name matches
+    // no installed runtime — mirroring how `proton default` warns on an uninstalled pick.
+    let library_root = PathBuf::from(&config.steam_library_path);
+    let resolved = if configured {
+        aurelia::core::utils::resolve_steam_runtime_wine(&current, &library_root).ok()
+    } else {
+        None
+    };
+
+    if json {
+        print_json(&serde_json::json!({
+            "steam_runtime_runner": configured.then(|| current.clone()),
+            "resolved_wine": resolved.as_ref().map(|p: &PathBuf| p.display().to_string()),
+        }));
+        return Ok(());
+    }
+
+    match (configured, &resolved) {
+        (false, _) => {
+            cli_println!("Steam runtime runner: (unset)");
+            cli_println!(
+                "Set one with `aurelia config steam-runtime-runner <NAME>` — see \
+                 `aurelia proton list` for installed runtime names (e.g. GE-Proton9-20)."
+            );
+        }
+        (true, Some(wine)) => {
+            cli_println!("Steam runtime runner: {current}");
+            cli_println!("Resolves to bare Wine   : {}", wine.display());
+        }
+        (true, None) => {
+            cli_println!("Steam runtime runner: {current}");
+            cli_eprintln!(
+                "Warning: '{current}' does not resolve to an installed Wine/Proton runtime yet. \
+                 Install it (`aurelia proton install {current}`) or pick another — \
+                 see `aurelia proton list`."
+            );
+        }
+    }
+    if changed {
+        cli_println!("Saved.");
+    }
+    Ok(())
+}
+
 /// `config protons`: list the Proton/Wine runtimes actually installed on disk.
 /// Shares discovery with `proton list --installed` (no hardcoded placeholders).
 pub(crate) async fn cmd_config_protons(json: bool) -> Result<()> {

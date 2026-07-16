@@ -186,10 +186,7 @@ pub(crate) async fn cmd_steam_runtime_install(json: bool) -> Result<()> {
     // Pre-check here (before install_master_steam downloads SteamSetup.exe) so an
     // unconfigured runner fails fast with an actionable message and no wasted work.
     if config.steam_runtime_runner.as_os_str().is_empty() {
-        bail!(
-            "no Steam Runtime Runner is configured — set `steam_runtime_runner` in the \
-             launcher config before installing the Windows Steam runtime"
-        );
+        bail!("{}", aurelia::core::utils::steam_runtime_runner_unset_msg("installing"));
     }
     aurelia::launch::install_master_steam(&config).await?;
     // install_master_steam now waits for SteamSetup.exe and verifies steam.exe exists
@@ -213,10 +210,7 @@ pub(crate) async fn cmd_steam_runtime_install(json: bool) -> Result<()> {
 pub(crate) async fn cmd_steam_runtime_repair(json: bool) -> Result<()> {
     let config = load_launcher_config().await?;
     if config.steam_runtime_runner.as_os_str().is_empty() {
-        bail!(
-            "no Steam Runtime Runner is configured — set `steam_runtime_runner` in the \
-             launcher config before repairing the Windows Steam runtime"
-        );
+        bail!("{}", aurelia::core::utils::steam_runtime_runner_unset_msg("repairing"));
     }
     aurelia::launch::repair_master_steam(&config).await?;
     let steam_cfg = aurelia::core::utils::get_master_steam_config();
