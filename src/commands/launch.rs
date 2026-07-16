@@ -101,7 +101,7 @@ pub(crate) async fn cmd_play(
         .or(forced_proton)
         .or_else(|| prefers_windows.then(|| launcher_config.proton_version.clone()));
 
-    let user_configs = load_user_configs().await.unwrap_or_default();
+    let user_configs = load_user_configs().await?;
     let user_config = user_configs.get(&app_id);
 
     if !json {

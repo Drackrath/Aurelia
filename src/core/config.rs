@@ -472,12 +472,24 @@ pub async fn save_info_cache(
     write_json_pretty(&info_cache_path(app_id, language)?, &record).await
 }
 
+/// Load the per-game user config store (`user_apps.json`).
+///
+/// A *missing* file is not an error — it yields an empty store. So an `Err` here always
+/// means the file exists but could not be parsed, and callers must propagate it rather
+/// than falling back to an empty store: silently dropping every per-game setting (launch
+/// options, env vars, the Steam-runtime policy) on one typo is exactly the footgun this
+/// avoids. See the same contract on [`load_launcher_config`].
 pub async fn load_user_configs() -> Result<UserConfigStore> {
     let path = config_dir()?.join("user_apps.json");
     if !path.exists() {
         return Ok(UserConfigStore::new());
     }
-    read_json(&path).await
+    read_json(&path).await.with_context(|| {
+        format!(
+            "invalid per-game config — fix the JSON in {}, or delete it to start fresh",
+            path.display()
+        )
+    })
 }
 
 pub async fn save_user_configs(configs: &UserConfigStore) -> Result<()> {

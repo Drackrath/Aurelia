@@ -367,7 +367,9 @@ async fn run(cli: Cli) -> Result<()> {
                 no_umu,
                 launch_script,
                 no_launch_script,
-            } => cmd_config_game(app_id, proton, clear_proton, platform, native_engine, no_native_engine, umu, no_umu, launch_script, no_launch_script, json).await,
+                steam_runtime,
+                steam_prefix_mode,
+            } => cmd_config_game(app_id, proton, clear_proton, platform, native_engine, no_native_engine, umu, no_umu, launch_script, no_launch_script, steam_runtime, steam_prefix_mode, json).await,
         },
         Command::Cloud { command } => match command {
             CloudCommand::Sync {

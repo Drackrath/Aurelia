@@ -144,7 +144,7 @@ impl SteamClient {
         let wineprefix = if native_windows {
             None
         } else {
-            let user_configs = crate::core::config::load_user_configs().await.unwrap_or_default();
+            let user_configs = crate::core::config::load_user_configs().await?;
             let pfx = crate::core::utils::steam_wineprefix_for_game(&launcher_config, app.app_id, &user_configs);
             // Only record a per-game (compatdata) prefix — sweeping the shared
             // master prefix on stop would also kill the Steam client inside it.

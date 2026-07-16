@@ -1977,16 +1977,27 @@ Installing/repairing the master prefix needs a Wine/Proton runner configured as
 from your installed runtimes and set it:
 
 ```bash
-aurelia proton list                              # see installed runtime names
-aurelia config steam-runtime-runner GE-Proton9-20 # select one (or `experimental`, or a Wine path)
-aurelia config steam-runtime-runner              # verify — prints the bare Wine it resolves to
-aurelia steam-runtime install                    # now proceeds
+aurelia proton list                                 # see installed runtime names
+aurelia config steam-runtime-runner GE-Proton9-20   # select one (or `experimental`, or a Wine path)
+aurelia config steam-runtime-runner                 # verify — prints the bare Wine it resolves to
+aurelia steam-runtime install                       # install Steam into the master prefix
+aurelia config game <APP_ID> --steam-runtime on     # opt a game into using it at launch
 ```
 
-The value is an **installed runtime name** (as shown by `aurelia proton list`) or an
+The runner value is an **installed runtime name** (as shown by `aurelia proton list`) or an
 **absolute path** to a Wine build. A Proton runtime is accepted — Aurelia uses the bare
 Wine bundled inside it (`files/bin/wine64`) automatically, never `proton run`. If you have
 no runtime yet, install one first with `aurelia proton install <NAME>`.
+
+**Enabling it per game.** Installing the master prefix does not, by itself, route any game
+through it — that is a **per-game** opt-in. `aurelia config game <APP_ID> --steam-runtime on`
+sets the game's policy so that at launch Aurelia starts the master Steam client in Wine (on
+the configured runner) and points the game at it via `STEAM_COMPAT_CLIENT_INSTALL_PATH`,
+satisfying the Steamworks/DRM handshake without your host Steam client. Use `off` to force
+it off or `auto` for the default (off). `--steam-prefix-mode shared|per-game` chooses whether
+the game runs in the master prefix directly (`shared`, default) or gets its own copy
+(`per-game`). This is distinct from [`play --steam`](#play), which bridges your *host* Steam
+client instead.
 
 ```text
 aurelia steam-runtime install [--json]

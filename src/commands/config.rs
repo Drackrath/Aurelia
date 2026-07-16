@@ -242,6 +242,7 @@ pub(crate) async fn cmd_config_protons(json: bool) -> Result<()> {
 }
 
 /// `config game`: view or set a game's per-game launch settings.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn cmd_config_game(
     app_id: u32,
     proton: Option<String>,
@@ -253,9 +254,40 @@ pub(crate) async fn cmd_config_game(
     no_umu: bool,
     launch_script: Option<PathBuf>,
     no_launch_script: bool,
+    steam_runtime: Option<SteamRuntimeArg>,
+    steam_prefix_mode: Option<SteamPrefixModeArg>,
     json: bool,
 ) -> Result<()> {
     use aurelia::core::config::GameRunner;
+    use aurelia::core::models::{SteamPrefixMode, SteamRuntimePolicy};
+
+    // The Steam-runtime knobs live in a separate per-game store (user_apps.json) from the
+    // GameConfig fields above (config.json). Update whichever store each flag targets.
+    let mut user_configs = aurelia::core::config::load_user_configs().await?;
+    let mut user_changed = false;
+    {
+        let ua = user_configs.entry(app_id).or_default();
+        if let Some(sr) = steam_runtime {
+            ua.steam_runtime_policy = match sr {
+                SteamRuntimeArg::Auto => SteamRuntimePolicy::Auto,
+                SteamRuntimeArg::On => SteamRuntimePolicy::Enabled,
+                SteamRuntimeArg::Off => SteamRuntimePolicy::Disabled,
+            };
+            user_changed = true;
+        }
+        if let Some(pm) = steam_prefix_mode {
+            ua.steam_prefix_mode = match pm {
+                SteamPrefixModeArg::Shared => SteamPrefixMode::Shared,
+                SteamPrefixModeArg::PerGame => SteamPrefixMode::PerGame,
+            };
+            user_changed = true;
+        }
+    }
+    if user_changed {
+        aurelia::core::config::save_user_configs(&user_configs)
+            .await
+            .context("failed saving per-game Steam-runtime config")?;
+    }
 
     let mut cfg = load_launcher_config().await?;
     let mut changed = false;
@@ -309,6 +341,16 @@ pub(crate) async fn cmd_config_game(
         GameRunner::Luxtorpeda => "luxtorpeda (native engine)",
         GameRunner::Umu => "umu (Proton via umu-launcher)",
     };
+    let ua = user_configs.get(&app_id).cloned().unwrap_or_default();
+    let steam_runtime_label = match ua.steam_runtime_policy {
+        SteamRuntimePolicy::Auto => "auto (off)",
+        SteamRuntimePolicy::Enabled => "on",
+        SteamRuntimePolicy::Disabled => "off",
+    };
+    let prefix_mode_label = match ua.steam_prefix_mode {
+        SteamPrefixMode::Shared => "shared",
+        SteamPrefixMode::PerGame => "per-game",
+    };
     if json {
         print_json(&serde_json::json!({
             "app_id": app_id,
@@ -316,22 +358,26 @@ pub(crate) async fn cmd_config_game(
             "platform_preference": entry.platform_preference,
             "runner": entry.runner,
             "launch_script": entry.launch_script,
+            "steam_runtime_policy": ua.steam_runtime_policy,
+            "steam_prefix_mode": ua.steam_prefix_mode,
         }));
     } else {
         cli_println!("App {app_id}:");
         cli_println!(
-            "  Proton  : {}",
+            "  Proton       : {}",
             entry.forced_proton_version.as_deref().unwrap_or("(global default)")
         );
         cli_println!(
-            "  Platform: {}",
+            "  Platform     : {}",
             entry.platform_preference.as_deref().unwrap_or("(auto)")
         );
-        cli_println!("  Runner  : {runner_label}");
+        cli_println!("  Runner       : {runner_label}");
         cli_println!(
-            "  Script  : {}",
+            "  Script       : {}",
             entry.launch_script.as_deref().unwrap_or("(auto-detected / none)")
         );
+        cli_println!("  Steam runtime: {steam_runtime_label}");
+        cli_println!("  Prefix mode  : {prefix_mode_label}");
     }
     Ok(())
 }

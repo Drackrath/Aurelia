@@ -447,6 +447,16 @@ pub(crate) enum ConfigCommand {
         /// Clear the per-game launch script (falls back to the auto-detected script).
         #[arg(long, conflicts_with = "launch_script")]
         no_launch_script: bool,
+        /// Use the self-contained Windows Steam runtime for this game: `on` starts the
+        /// master Steam client in Wine to satisfy Steamworks/DRM handshakes without the
+        /// host Steam client. Requires `aurelia config steam-runtime-runner` and
+        /// `aurelia steam-runtime install`. `auto` is the default (off).
+        #[arg(long, value_name = "auto|on|off")]
+        steam_runtime: Option<SteamRuntimeArg>,
+        /// How the master Steam prefix backs this game: `shared` runs it in the master
+        /// prefix directly; `per-game` copies Steam into the game's own prefix.
+        #[arg(long, value_name = "shared|per-game")]
+        steam_prefix_mode: Option<SteamPrefixModeArg>,
     },
 }
 
@@ -847,6 +857,27 @@ pub(crate) struct DowngradeArgs {
 pub(crate) enum PlatformArg {
     Windows,
     Linux,
+}
+
+/// `--steam-runtime auto|on|off`: per-game policy for the self-contained Windows Steam
+/// runtime (background master Steam in Wine).
+#[derive(Clone, Copy, ValueEnum)]
+pub(crate) enum SteamRuntimeArg {
+    /// Default behavior (currently off).
+    Auto,
+    /// Start the master Steam client in Wine for this game's Steamworks/DRM handshake.
+    On,
+    /// Never use the master Steam runtime for this game.
+    Off,
+}
+
+/// `--steam-prefix-mode shared|per-game`: how the master Steam prefix backs a game.
+#[derive(Clone, Copy, ValueEnum)]
+pub(crate) enum SteamPrefixModeArg {
+    /// Run the game in the master Steam prefix directly.
+    Shared,
+    /// Copy/symlink Steam into the game's own prefix.
+    PerGame,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
