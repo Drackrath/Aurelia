@@ -136,6 +136,11 @@ pub struct SessionState {
     pub steam_id: Option<u64>,
     pub refresh_token: Option<String>,
     pub client_instance_id: Option<u64>,
+    /// Web-scoped access token pasted from the browser (`login --web-token`).
+    /// Enables the web-surface commands (inventory/wallet/listings) without a
+    /// CM session; short-lived (expiry is inside the JWT). Not a refresh token.
+    #[serde(default)]
+    pub web_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

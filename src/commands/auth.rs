@@ -6,7 +6,7 @@ use crate::output;
 use crate::commands::common::*;
 
 use anyhow::{bail, Context, Result};
-use aurelia::core::config::load_session;
+use aurelia::core::config::{load_session, save_session};
 use aurelia::steam_client::SteamClient;
 
 #[allow(clippy::too_many_arguments)]
@@ -16,6 +16,8 @@ pub(crate) async fn cmd_login(
     guard: Option<String>,
     qr: bool,
     code: bool,
+    openid: bool,
+    web_token: Option<Option<String>>,
     health: bool,
     reconnect: bool,
     json: bool,
@@ -28,6 +30,12 @@ pub(crate) async fn cmd_login(
     }
     if qr {
         return cmd_login_qr(json).await;
+    }
+    if openid {
+        return cmd_login_openid(json).await;
+    }
+    if let Some(pasted) = web_token {
+        return cmd_login_web_token(pasted, json).await;
     }
 
     // In `--json` mode the login is driven non-interactively (e.g. by Heroic): no
@@ -107,6 +115,168 @@ pub(crate) async fn cmd_login_qr(json: bool) -> Result<()> {
     let session = result.context("QR login failed")?;
     let account = session.account_name.clone().unwrap_or_default();
     report_login_success(&account, json);
+    Ok(())
+}
+
+/// Verify the user's identity on the official Steam sign-in page in the browser
+/// (Steam OpenID 2.0 — Valve offers no OpenID Connect / OAuth2 endpoint).
+///
+/// The password is only ever typed on `steamcommunity.com`; Aurelia receives a
+/// signed assertion naming the SteamID64 and confirms it with Steam directly.
+/// Steam issues **no session token** over OpenID, so this verifies identity but
+/// cannot mint a client session — it never touches the persisted session, and
+/// the output says so explicitly.
+///
+/// In `--json` mode the sign-in URL is streamed as `{event:"openid_challenge",url}`
+/// (the driver opens/renders it); otherwise the default browser is opened.
+pub(crate) async fn cmd_login_openid(json: bool) -> Result<()> {
+    let steam_id = aurelia::web::openid::verify_identity_via_browser(|url| {
+        if json {
+            eprint_json_line(&serde_json::json!({ "event": "openid_challenge", "url": url }));
+        } else {
+            cli_eprintln!("\nComplete the sign-in on the official Steam page:\n  {url}\n");
+            if aurelia::web::openid::open_in_browser(url) {
+                cli_eprintln!("(opened in your default browser)");
+            } else {
+                cli_eprintln!("(could not open a browser automatically — open the link yourself)");
+            }
+        }
+    })
+    .await
+    .context("browser (OpenID) sign-in failed")?;
+
+    // Cross-check against the persisted session, if any, so a mismatch between
+    // the browser account and the stored client session is surfaced.
+    let matches_session = load_session()
+        .await
+        .ok()
+        .and_then(|s| s.steam_id)
+        .map(|stored| stored == steam_id);
+
+    if json {
+        print_json(&serde_json::json!({
+            "openid_verified": true,
+            "steam_id": steam_id,
+            "matches_stored_session": matches_session,
+            // Explicit: no session was created — Steam's OpenID attests identity only.
+            "logged_in": false,
+        }));
+    } else {
+        cli_println!("Steam identity verified on the official sign-in page.");
+        cli_println!("SteamID64 : {steam_id}");
+        match matches_session {
+            Some(true) => cli_println!("Session   : matches the stored session's account"),
+            Some(false) => cli_println!(
+                "Session   : WARNING — this is a different account than the stored session"
+            ),
+            None => {}
+        }
+        cli_eprintln!(
+            "\nNote: Steam's OpenID sign-in proves who you are, but Valve issues no client\n\
+             session token over it. Commands that need a session still require\n\
+             `aurelia login` or `aurelia login --qr`.\n\
+             Your browser is now signed in, though — run `aurelia login --web-token` to\n\
+             also enable the web commands (inventory, wallet, market listings)."
+        );
+    }
+    Ok(())
+}
+
+/// Store a browser **web token** (the Legendary-style "paste the code" entry
+/// point) so the web-surface commands work without a client login.
+///
+/// The token comes from `https://steamcommunity.com/chat/clientjstoken`, opened
+/// in a browser signed in to Steam — e.g. straight after `login --openid`. A
+/// driver with its own webview (Heroic) can capture that JSON automatically and
+/// pass it as the flag's value or over stdin in `--json` mode (after a
+/// `{event:"web_token_required"}` line, mirroring the Guard-code handshake).
+///
+/// Web-audience and short-lived (~24h): it powers inventory/wallet/market
+/// listings, never CM commands, so it complements rather than replaces `login`.
+/// Refuses a token for a different account than the stored session.
+pub(crate) async fn cmd_login_web_token(pasted: Option<String>, json: bool) -> Result<()> {
+    let raw = match pasted.filter(|v| !v.trim().is_empty()) {
+        Some(v) => v,
+        None if json => {
+            eprint_json_line(&serde_json::json!({
+                "event": "web_token_required",
+                "url": aurelia::web::web_token::CLIENTJSTOKEN_URL,
+            }));
+            read_stdin_line().await?
+        }
+        None => {
+            cli_eprintln!(
+                "\nIn the browser where you are signed in to Steam, open:\n  {}\n",
+                aurelia::web::web_token::CLIENTJSTOKEN_URL
+            );
+            prompt_line("Paste the entire JSON line from that page: ")?
+        }
+    };
+
+    // The stored session's SteamID doubles as the identity for bare opaque
+    // tokens, which carry none of their own.
+    let mut session = load_session().await.unwrap_or_default();
+    let info = aurelia::web::web_token::parse_web_token(&raw, session.steam_id)?;
+    let now = aurelia::web::web_token::now_unix();
+    if info.expires_at.is_some_and(|exp| exp <= now) {
+        bail!(
+            "this web token already expired — reload the clientjstoken page in a signed-in \
+             browser and paste the fresh JSON"
+        );
+    }
+
+    // Never let a web token silently operate a different account than the one
+    // the stored session belongs to.
+    if let Some(stored) = session.steam_id
+        && stored != info.steam_id
+    {
+        bail!(
+            "this web token belongs to SteamID {} but the stored session is for {stored} — \
+             run `aurelia logout` first if you really want to switch accounts",
+            info.steam_id
+        );
+    }
+    session.web_token = Some(info.token.clone());
+    if session.steam_id.is_none() {
+        session.steam_id = Some(info.steam_id);
+    }
+    if session.account_name.is_none() {
+        session.account_name = info.account_name.clone();
+    }
+    let full_session = session.refresh_token.is_some();
+    save_session(&session).await?;
+
+    if json {
+        print_json(&serde_json::json!({
+            "web_token_saved": true,
+            "steam_id": info.steam_id,
+            "account": info.account_name,
+            // null for opaque (non-JWT) tokens — only Steam knows their expiry.
+            "expires_at": info.expires_at,
+            // Web-audience token: the web commands work, CM commands do not.
+            "logged_in": full_session,
+        }));
+    } else {
+        cli_println!("Web token saved.");
+        if let Some(account) = &info.account_name {
+            cli_println!("Account   : {account}");
+        }
+        cli_println!("SteamID64 : {}", info.steam_id);
+        match info.expires_at {
+            Some(exp) => cli_println!(
+                "Expires   : {} UTC",
+                crate::commands::common::format_unix_timestamp(exp)
+            ),
+            None => cli_println!("Expires   : unknown (typically ~24h — Steam decides)"),
+        }
+        if !full_session {
+            cli_eprintln!(
+                "\nThis enables the web commands (inventory, wallet, market listings) only.\n\
+                 Library/install/launch still need a full `aurelia login` or `aurelia login --qr`.\n\
+                 When it expires, reload the clientjstoken page and re-run `aurelia login --web-token`."
+            );
+        }
+    }
     Ok(())
 }
 

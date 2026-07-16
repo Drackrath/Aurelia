@@ -50,13 +50,27 @@ pub(crate) enum Command {
         /// approving the login in the Steam Mobile app. (Alias: --pin)
         #[arg(long, visible_alias = "pin", conflicts_with = "guard")]
         code: bool,
+        /// Verify your identity in the browser on the official Steam sign-in page
+        /// (OpenID) — the password is only ever typed on steamcommunity.com.
+        /// Identity-only: Steam issues no session token over OpenID, so commands
+        /// that need a session still require one of the other login methods.
+        #[arg(long, conflicts_with_all = ["username", "password", "guard", "qr", "code"])]
+        openid: bool,
+        /// Store a browser web token to enable the web-surface commands
+        /// (inventory, wallet, market listings) without a client login: open
+        /// https://steamcommunity.com/chat/clientjstoken in a signed-in browser
+        /// (e.g. right after `login --openid`) and paste the JSON shown — as this
+        /// flag's value, or when prompted if the value is omitted. Web-only and
+        /// short-lived (~24h); it cannot replace a full login.
+        #[arg(long, num_args = 0..=1, conflicts_with_all = ["username", "password", "guard", "qr", "code", "openid"])]
+        web_token: Option<Option<String>>,
         /// Report the current session health (authenticated? which account?) without
         /// logging in. Reflects the daemon's shared session when one is in use.
-        #[arg(long, conflicts_with_all = ["username", "password", "guard", "qr", "code", "reconnect"])]
+        #[arg(long, conflicts_with_all = ["username", "password", "guard", "qr", "code", "openid", "web_token", "reconnect"])]
         health: bool,
         /// Tear down and re-establish the daemon's shared session from the stored
         /// token — use after the live connection dropped. Requires a running daemon.
-        #[arg(long, conflicts_with_all = ["username", "password", "guard", "qr", "code", "health"])]
+        #[arg(long, conflicts_with_all = ["username", "password", "guard", "qr", "code", "openid", "web_token", "health"])]
         reconnect: bool,
     },
     /// List games in your library.

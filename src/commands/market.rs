@@ -6,8 +6,8 @@ use anyhow::Result;
 
 /// `aurelia inventory <appid>`: list the logged-in account's inventory for a game.
 pub(crate) async fn cmd_inventory(app_id: u32, context: u32, json: bool) -> Result<()> {
-    let client = authed_client().await?;
-    let items = client.inventory(app_id, context).await?;
+    let web = web_access().await?;
+    let items = aurelia::steam_client::inventory_via(&web, app_id, context).await?;
     if json {
         cli_println!("{}", serde_json::to_string_pretty(&items)?);
         return Ok(());
@@ -32,8 +32,8 @@ pub(crate) async fn cmd_inventory(app_id: u32, context: u32, json: bool) -> Resu
 
 /// `aurelia wallet`: show the account's Steam Wallet balance.
 pub(crate) async fn cmd_wallet(json: bool) -> Result<()> {
-    let client = authed_client().await?;
-    let w = client.wallet().await?;
+    let web = web_access().await?;
+    let w = aurelia::steam_client::wallet_via(&web).await?;
     if json {
         print_json(&serde_json::json!({
             "balance_cents": w.balance_cents,
@@ -107,8 +107,8 @@ pub(crate) async fn cmd_market_search(
 
 /// `aurelia market listings`: the account's active listings and open buy orders.
 pub(crate) async fn cmd_market_listings(json: bool) -> Result<()> {
-    let client = authed_client().await?;
-    let state = client.my_market_listings().await?;
+    let web = web_access().await?;
+    let state = aurelia::steam_client::my_listings_via(&web).await?;
     if json {
         cli_println!("{}", serde_json::to_string_pretty(&state)?);
         return Ok(());

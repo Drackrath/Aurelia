@@ -198,9 +198,16 @@ async fn run(cli: Cli) -> Result<()> {
             guard,
             qr,
             code,
+            openid,
+            web_token,
             health,
             reconnect,
-        } => cmd_login(username, password, guard, qr, code, health, reconnect, json).await,
+        } => {
+            cmd_login(
+                username, password, guard, qr, code, openid, web_token, health, reconnect, json,
+            )
+            .await
+        }
         Command::Logout => cmd_logout(json).await,
         Command::List {
             installed,

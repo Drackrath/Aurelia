@@ -150,7 +150,8 @@ of a specific command. `--version` prints the build version.
 Authenticate with Steam and persist the session.
 
 ```text
-aurelia login [-u <USERNAME>] [-p <PASSWORD>] [-g <GUARD_CODE>] [--code] [--qr]
+aurelia login [-u <USERNAME>] [-p <PASSWORD>] [-g <GUARD_CODE>] [--code] [--qr] [--openid]
+aurelia login --web-token [JSON]   # store a browser web token (web-only access)
 aurelia login --health      # report session status (no login)
 aurelia login --reconnect   # rebuild the daemon's shared session
 ```
@@ -162,10 +163,12 @@ aurelia login --reconnect   # rebuild the daemon's shared session
 | `-g, --guard <GUARD_CODE>` | Steam Guard code (email or mobile authenticator), supplied up front. |
 | `--code` (alias `--pin`) | Enter the Steam Guard code **interactively** when prompted, instead of approving in the Steam Mobile app. Conflicts with `-g`. |
 | `--qr` | Log in by **scanning a QR code** with the Steam Mobile app — no username/password needed. Conflicts with the credential options. |
+| `--openid` | Verify your identity **in the browser on the official Steam sign-in page** (OpenID). Identity-only — see below. Conflicts with the credential options. |
+| `--web-token [JSON]` | Store a **browser web token** enabling the web-surface commands (inventory, wallet, market listings) without a client login. Pass the `clientjstoken` JSON as the value, or omit it to be prompted. See [Web-only access](#web-only-access---web-token). Conflicts with the other login options. |
 | `--health` | Report current session status **without logging in** (see below). Conflicts with all login options. |
 | `--reconnect` | Rebuild the [daemon's](#daemon) shared session from the stored token. Conflicts with all login options. |
 
-There are three ways to authenticate:
+There are three ways to authenticate (plus a browser-based identity check):
 
 1. **Password + Steam Guard.** Provide `-u`/`-p` (or be prompted). Then, depending on your
    account: pass `-g <CODE>` up front, use `--code`/`--pin` to type the code when prompted,
@@ -174,6 +177,59 @@ There are three ways to authenticate:
    credentials, Steam asks for the code (email or authenticator) and you type it in.
 3. **`--qr`.** Renders a QR code in the terminal (with a `https://s.team/…` link as a
    fallback). Scan it with the Steam Mobile app to approve; no password is entered.
+4. **`--openid` (identity check only).** Opens the **official Steam sign-in page**
+   (`steamcommunity.com`) in your browser; after you sign in there, Steam redirects back to a
+   localhost-only callback with a signed OpenID assertion, which Aurelia verifies directly
+   with Steam. Your password is only ever typed on Steam's own page — never in Aurelia.
+
+> **Why `--openid` can't be a full login.** Steam's browser sign-in for third parties is
+> OpenID 2.0 (Valve offers no OAuth2/OpenID Connect endpoint), and it attests **identity
+> only** — Steam never issues a client session/refresh token through it. So `--openid`
+> proves *who you are* (your SteamID64, cross-checked against the stored session's account)
+> but cannot create a session; commands that need one still require a `login` via password
+> or `--qr`. For keeping the password out of Aurelia entirely *and* getting a session, `--qr`
+> is the recommended flow. The browser left signed in by `--openid` can, however, hand over
+> a **web token** — see [`--web-token`](#web-only-access---web-token) below.
+
+#### Web-only access (`--web-token`)
+
+While Valve issues no *client* tokens to browsers, a signed-in browser session does carry a
+short-lived **web-audience token**: `https://steamcommunity.com/chat/clientjstoken` returns
+`{"logged_in":true,"steamid":…,"account_name":…,"token":…}` for whoever is signed in on
+`steamcommunity.com`. `aurelia login --web-token` stores that token (pasted as the flag's
+value, or at a prompt), after which the **web-surface commands — [`inventory`](#inventory),
+[`wallet`](#wallet), [`market listings`](#market-listings) — work with no client login**.
+The OpenID success page links to the `clientjstoken` URL directly, so
+`login --openid` → copy JSON → `login --web-token` is a complete browser-only setup.
+
+Limits, so there are no surprises:
+
+- **Web surface only.** CM-backed commands (library, install, launch, friends, cloud) are
+  unaffected — they still need a full `login`/`--qr` session.
+- **Short-lived (~24 h), no refresh token.** When it expires, reload the `clientjstoken`
+  page in the (still signed-in) browser and re-run `login --web-token`. The command prints
+  the expiry when the token carries one; Steam issues both JWT-format tokens (readable
+  expiry) and opaque ones (expiry known only to Steam — shown as `unknown`).
+- **Accepted pastes:** the full `clientjstoken` JSON (recommended), a bare token value, or
+  a `steamLoginSecure` cookie value (`<steamid>||<token>`, `%7C%7C` accepted). A bare
+  *opaque* (non-JWT) token carries no identity of its own, so it binds to the stored
+  session's account — with no stored session, paste the full JSON instead.
+- **Account-safe.** The paste's identity is cross-checked (JSON/cookie `steamid` vs. a JWT
+  token's `sub` claim) and refused if it belongs to a different account than the stored
+  session.
+- A full `login` supersedes the stored web token (a CM session mints fresh web tokens
+  itself), and `logout` deletes it along with the rest of the session.
+
+For a GUI driver (e.g. Heroic): render `login --openid` in your own webview; once signed in,
+fetch `clientjstoken` with the webview's session and feed the JSON to
+`aurelia login --web-token --json` (see the NDJSON table below). Keeping the webview profile
+persistent lets you silently re-fetch a fresh token whenever the stored one expires.
+
+```bash
+aurelia login --web-token                      # prompts for the pasted JSON
+aurelia login --web-token '{"logged_in":true,"steamid":"…","account_name":"…","token":"…"}'
+aurelia wallet                                 # now works without a client login
+```
 
 A single log line — shown even without `-v` — reports which method is being awaited, e.g.
 `Login method awaited: QR code — scan it with the Steam Mobile app` or
@@ -189,6 +245,9 @@ aurelia login --code            # or: aurelia login --pin
 
 # Scan a QR code with the Steam Mobile app (no password)
 aurelia login --qr
+
+# Verify your identity on the official Steam page in the browser (no session)
+aurelia login --openid
 
 # Fully non-interactive
 aurelia login -u myname -p 'secret' -g ABCDE
@@ -234,8 +293,19 @@ NDJSON lines on stdout/stdin:
   `{"event":"guard_required","type":"device_confirmation"}`.
 - **QR:** `aurelia login --qr --json` streams `{"event":"qr_challenge","url":"https://s.team/…"}`
   (re-emitted whenever Steam rotates the code); render the URL as a QR and wait.
-- **Result:** both end with `{"logged_in":true,"account":"<name>"}` on success, or
-  `{"error":"…"}` (non-zero exit) on failure.
+- **OpenID:** `aurelia login --openid --json` emits `{"event":"openid_challenge","url":"https://steamcommunity.com/openid/login?…"}`;
+  the driver opens the URL in a browser (Aurelia does not auto-open one in `--json` mode)
+  and waits while the user signs in on the Steam page.
+- **Web token:** `aurelia login --web-token --json` (no value) emits
+  `{"event":"web_token_required","url":"https://steamcommunity.com/chat/clientjstoken"}`,
+  then reads the `clientjstoken` JSON as **one line from stdin** — or skip the exchange
+  entirely by passing the JSON as the flag's value.
+- **Result:** password and QR logins end with `{"logged_in":true,"account":"<name>"}` on
+  success. `--openid` ends with
+  `{"openid_verified":true,"steam_id":…,"matches_stored_session":true|false|null,"logged_in":false}` —
+  `logged_in` is always `false` because the OpenID flow verifies identity without creating a
+  session (`matches_stored_session` is `null` when no session is stored). Failures always end
+  with `{"error":"…"}` (non-zero exit).
 
 The complete NDJSON event sequence a driver may observe, in order:
 
@@ -243,9 +313,13 @@ The complete NDJSON event sequence a driver may observe, in order:
 | --- | --- | --- |
 | `{"event":"awaiting_confirmation","message":"…"}` | Immediately, on password login, before the attempt blocks. | Show the message; prompt the user to approve on their device if asked. |
 | `{"event":"qr_challenge","url":"…"}` | QR login; re-emitted on each code rotation. | Render `url` as a QR code and wait. |
+| `{"event":"openid_challenge","url":"…"}` | OpenID identity check; once, at the start. | Open `url` in a browser; the user signs in on the Steam page. |
+| `{"event":"web_token_required","url":"…"}` | `--web-token` without a value. | Fetch `url` with the signed-in browser/webview session, write the JSON as one line to the child's **stdin**. |
 | `{"event":"guard_required","type":"email"\|"device"}` | A typed Steam Guard code is needed. | Read a code from the user, write it as one line to the child's **stdin**. |
 | `{"event":"guard_required","type":"device_confirmation"}` | The account approves via the Steam Mobile app. | Tell the user to approve in the app; the command then completes or times out. |
-| `{"logged_in":true,"account":"<name>"}` | Terminal — success. | Done; the session is persisted. |
+| `{"logged_in":true,"account":"<name>"}` | Terminal — success (password/QR). | Done; the session is persisted. |
+| `{"openid_verified":true,"steam_id":…,"logged_in":false}` | Terminal — success (`--openid`). | Identity verified; **no session was created**. |
+| `{"web_token_saved":true,"steam_id":…,"expires_at":…,"logged_in":…}` | Terminal — success (`--web-token`). | Web commands now work until `expires_at`; `logged_in` reflects whether a full client session also exists. |
 | `{"error":"…"}` | Terminal — failure (non-zero exit). | Surface the error. |
 
 In `--json` mode the username/password must be provided up front (no interactive prompt);
@@ -1664,7 +1738,10 @@ aurelia chat open 76561198042323314 --json            # NDJSON event stream
 
 Read-only access to your Steam **inventory**, **wallet** balance, and the **Community
 Market** (item prices, search, and your own listings). Item price and market search are
-**public** and need no login; inventory, wallet, and your listings require an active session.
+**public** and need no login; inventory, wallet, and your listings require an active session
+— or a browser **web token** stored via
+[`login --web-token`](#web-only-access---web-token), which powers exactly these commands
+without a client login.
 
 > **Market eligibility.** Wallet and market features require the account to be eligible for
 > the Steam Community Market — Steam mandates the Steam Guard Mobile Authenticator enabled for

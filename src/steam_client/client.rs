@@ -452,6 +452,9 @@ impl SteamClient {
                     steam_id,
                     refresh_token: Some(refresh_token.to_string()),
                     client_instance_id: None,
+                    // A full client session supersedes any pasted web token
+                    // (web tokens are minted fresh off the CM session instead).
+                    web_token: None,
                 };
                 save_session(&session).await?;
                 self.state = LoginState::Complete;
@@ -469,6 +472,7 @@ impl SteamClient {
             steam_id: Some(steam_id),
             refresh_token: connection.access_token().map(ToString::to_string),
             client_instance_id: None,
+            web_token: None,
         })
     }
 

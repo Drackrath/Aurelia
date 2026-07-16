@@ -142,29 +142,50 @@ impl SteamClient {
     /// List the logged-in account's inventory for an app. `context_id` is the
     /// inventory context (usually 2; e.g. Steam community items use 6).
     pub async fn inventory(&self, app_id: u32, context_id: u32) -> Result<Vec<InventoryItem>> {
-        let web = self.web_session().await?;
-        let steam_id = web.steam_id();
-        let url = format!(
-            "https://steamcommunity.com/inventory/{steam_id}/{app_id}/{context_id}?l=english&count=2000"
-        );
-        parse_inventory(&web.get_text(&url).await?)
+        inventory_via(&self.web_session().await?, app_id, context_id).await
     }
 
     /// Fetch the account's active market listings and open buy orders.
     pub async fn my_market_listings(&self) -> Result<MyMarketState> {
-        let web = self.web_session().await?;
-        let body = web
-            .get_text("https://steamcommunity.com/market/mylistings/?norender=1&count=100")
-            .await?;
-        parse_my_listings(&body)
+        my_listings_via(&self.web_session().await?).await
     }
 
     /// Fetch the account's Steam Wallet balance.
     pub async fn wallet(&self) -> Result<WalletBalance> {
-        let web = self.web_session().await?;
-        let body = web.get_text("https://steamcommunity.com/market/").await?;
-        parse_wallet(&body)
+        wallet_via(&self.web_session().await?).await
     }
+}
+
+// The web-surface fetchers take any [`WebSession`] — minted off the CM session
+// (methods above) or built from a pasted browser token (`login --web-token`) —
+// so these features work without a client login.
+
+/// List an account's inventory for an app over an existing web session.
+pub async fn inventory_via(
+    web: &WebSession,
+    app_id: u32,
+    context_id: u32,
+) -> Result<Vec<InventoryItem>> {
+    let steam_id = web.steam_id();
+    let url = format!(
+        "https://steamcommunity.com/inventory/{steam_id}/{app_id}/{context_id}?l=english&count=2000"
+    );
+    parse_inventory(&web.get_text(&url).await?)
+}
+
+/// Fetch the account's active market listings and open buy orders over an
+/// existing web session.
+pub async fn my_listings_via(web: &WebSession) -> Result<MyMarketState> {
+    let body = web
+        .get_text("https://steamcommunity.com/market/mylistings/?norender=1&count=100")
+        .await?;
+    parse_my_listings(&body)
+}
+
+/// Fetch the account's Steam Wallet balance over an existing web session.
+pub async fn wallet_via(web: &WebSession) -> Result<WalletBalance> {
+    let body = web.get_text("https://steamcommunity.com/market/").await?;
+    parse_wallet(&body)
 }
 
 /// A `reqwest` client for public (no-auth) market lookups.

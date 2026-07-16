@@ -363,8 +363,8 @@ mod collections;
 pub use collections::RemoteNamespace;
 pub use friends::{resolve_steam_id, AddedFriend, Friend, ResolvedUser, Roster};
 pub use market::{
-    market_price, market_search, InventoryItem, MarketPrice, MarketSearchResult, MyMarketState,
-    WalletBalance,
+    inventory_via, market_price, market_search, my_listings_via, wallet_via, InventoryItem,
+    MarketPrice, MarketSearchResult, MyMarketState, WalletBalance,
 };
 
 /// Terminate the process with `pid` and any children it spawned.

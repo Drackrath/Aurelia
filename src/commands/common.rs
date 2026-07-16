@@ -69,6 +69,35 @@ pub(crate) async fn authed_client() -> Result<SteamClient> {
     Ok(client)
 }
 
+/// A web session for the web-surface commands (inventory, wallet, market
+/// listings): minted off the CM session when one exists, otherwise built from
+/// the browser web token stored by `login --web-token` (if unexpired). Only
+/// with neither does this error.
+pub(crate) async fn web_access() -> Result<aurelia::web::web_session::WebSession> {
+    let client = restored_client().await?;
+    if client.is_authenticated() {
+        return client.web_session().await;
+    }
+    let session = load_session().await.unwrap_or_default();
+    let Some(token) = session.web_token.as_deref().filter(|t| !t.trim().is_empty()) else {
+        bail!(
+            "not logged in — run `aurelia login` first, or `aurelia login --web-token` for \
+             web-only (inventory/wallet/market) access"
+        );
+    };
+    let steam_id = session.steam_id.context(
+        "the stored session has a web token but no SteamID — re-run `aurelia login --web-token`",
+    )?;
+    // 60 s of leeway so a token about to lapse doesn't fail mid-command. Opaque
+    // tokens carry no readable expiry; Steam rejects those server-side instead.
+    aurelia::web::web_token::check_stored_expiry(
+        token,
+        aurelia::web::web_token::now_unix(),
+        60,
+    )?;
+    aurelia::web::web_session::WebSession::new(steam_id, token, None)
+}
+
 /// Build the merged owned + installed library.
 pub(crate) async fn load_library(client: &mut SteamClient) -> Vec<LibraryGame> {
     let cached = load_library_cache().await.unwrap_or_default();
