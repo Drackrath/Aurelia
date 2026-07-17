@@ -51,6 +51,10 @@ pub async fn install_master_steam(config: &LauncherConfig) -> Result<()> {
         }
     };
 
+    // Bare-wine prefixes miss the runner's dxvk/vkd3d PE libs the Steam CEF UI
+    // needs (see ensure_steam_runtime_prefix_libs) — sync them before launching.
+    crate::core::utils::ensure_steam_runtime_prefix_libs(&wine, &steam_cfg.wine_prefix);
+
     launch_master_steam(&wine, &steam_exe, &steam_cfg, &base_dir)
 }
 
@@ -127,9 +131,15 @@ fn launch_master_steam(
 ) -> Result<()> {
     let mut cmd = Command::new(wine);
     cmd.arg(steam_exe);
-    // Steam *client* flags — these mean nothing to the installer and were previously
-    // passed to it as well.
+    // Steam *client* flags tuned for running under Wine. Steam's CEF UI
+    // (steamwebhelper) is fragile under Wine: with GPU/sandbox left on it flashes
+    // the "Steam is updating" bootstrapper and then vanishes instead of showing the
+    // login window. These are the same flags the in-Wine background Steam uses for
+    // game launches, minus `-silent` (here we WANT the UI so the user can sign in).
     cmd.arg("-tcp");
+    cmd.arg("-noreactlogin");
+    cmd.arg("-cef-disable-gpu");
+    cmd.arg("-cef-disable-sandbox");
     cmd.arg("-cef-disable-gpu-compositing");
     apply_master_steam_env(&mut cmd, steam_cfg, base_dir)?;
     apply_install_diagnostics(&mut cmd, base_dir);
@@ -153,7 +163,12 @@ fn apply_master_steam_env(
     cmd.env("STEAM_COMPAT_CLIENT_INSTALL_PATH", &fake_env);
     cmd.env("WINEDLLOVERRIDES", "vstdlib_s=n;tier0_s=n;steamclient=n;steamclient64=n;steam_api=n;steam_api64=n;lsteamclient=");
 
-    for var in ["DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR"] {
+    // Forward the display environment so the Steam client can actually draw a window.
+    // XAUTHORITY is essential on X servers that use cookie authentication (most modern
+    // desktops place the cookie under $XDG_RUNTIME_DIR, not ~/.Xauthority): without it
+    // Wine's winex11 driver can't authenticate to the X server and Steam runs
+    // *invisibly* even though DISPLAY is set — so `steam-runtime login` shows no window.
+    for var in ["DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "XAUTHORITY"] {
         if let Ok(value) = std::env::var(var) {
             cmd.env(var, value);
         }
@@ -259,6 +274,32 @@ pub async fn repair_master_steam(config: &LauncherConfig) -> Result<()> {
     install_master_steam(config).await
 }
 
+/// Remove the master Windows Steam prefix entirely — the opposite of
+/// [`install_master_steam`]. Stops any Steam still running in the prefix first (so no
+/// files are held open), then deletes the whole master Steam root (the prefix **and**
+/// any `.bak` a previous [`repair_master_steam`] left). A no-op if nothing is
+/// installed. Unlike `repair`, this keeps no backup — it's the clean-slate path for a
+/// corrupted install.
+pub async fn uninstall_master_steam() -> Result<()> {
+    let steam_cfg = crate::core::utils::get_master_steam_config();
+
+    SteamClient::kill_steam_in_prefix(&steam_cfg.wine_prefix);
+    #[cfg(unix)]
+    SteamClient::kill_wine_processes_in_prefix(&steam_cfg.wine_prefix, true);
+    // Give the wineserver a moment to release open file handles before deletion.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    if steam_cfg.root_dir.exists() {
+        std::fs::remove_dir_all(&steam_cfg.root_dir).with_context(|| {
+            format!(
+                "failed to remove the master Steam prefix at {}",
+                steam_cfg.root_dir.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
 /// (Re-)start the master Steam client **interactively** so the user can sign in —
 /// e.g. after the in-prefix Steam session expired. Unlike a game launch (which starts
 /// Steam `-silent`), this brings up the client UI. Any Steam already running in the
@@ -287,6 +328,10 @@ pub async fn relogin_master_steam(config: &LauncherConfig) -> Result<()> {
     SteamClient::kill_steam_in_prefix(&steam_cfg.wine_prefix);
     #[cfg(unix)]
     SteamClient::kill_wine_processes_in_prefix(&steam_cfg.wine_prefix, true);
+
+    // The CEF login UI needs the runner's dxvk/vkd3d PE libs in the prefix (a
+    // bare-wine prefix misses them and the UI crash-loops invisibly).
+    crate::core::utils::ensure_steam_runtime_prefix_libs(&wine, &steam_cfg.wine_prefix);
 
     launch_master_steam(&wine, &steam_exe, &steam_cfg, &base_dir)
 }

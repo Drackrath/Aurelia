@@ -216,6 +216,14 @@ impl Runner for WineTkgRunner {
                         // NOT the game runner's `proton run` wrapper. It must run under a
                         // bare wine so `steam.exe` starts as a plain Windows process.
                         let mut steam_cmd = resolve_background_steam_command(ctx, &library_root)?;
+                        // Background Steam's CEF UI needs the runner's dxvk/vkd3d PE
+                        // libs in the prefix — a bare-wine prefix misses them and the
+                        // webhelper GPU process crash-loops (Steam then misreports a
+                        // broken installation).
+                        crate::core::utils::ensure_steam_runtime_prefix_libs(
+                            &PathBuf::from(steam_cmd.get_program()),
+                            &steam_wineprefix,
+                        );
                         steam_cmd.current_dir(&prefix_steam_dir);
                         steam_cmd
                             .arg("C:\\Program Files (x86)\\Steam\\steam.exe")

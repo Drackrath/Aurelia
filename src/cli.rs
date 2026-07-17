@@ -524,10 +524,20 @@ pub(crate) enum ProtonCommand {
 pub(crate) enum SteamRuntimeCommand {
     /// Download SteamSetup.exe (if needed) and install Steam into the master prefix.
     /// Requires `steam_runtime_runner` to be configured.
-    Install,
+    Install {
+        /// Remove the existing master Steam prefix first, then install a fresh copy.
+        /// Use when Steam reports a corrupted install ("please reinstall"). Unlike
+        /// `repair` (which keeps a `.bak`), this deletes the old prefix outright.
+        #[arg(long)]
+        reinstall: bool,
+    },
     /// Stop Steam, back up the master prefix (keeping one `.bak`), then reinstall.
     /// Requires `steam_runtime_runner` to be configured.
     Repair,
+    /// Remove the master Windows Steam prefix entirely (uninstall the runtime).
+    /// Stops any Steam running in it first, then deletes the whole master prefix
+    /// (including any `.bak`). Reinstall later with `steam-runtime install`.
+    Uninstall,
     /// (Re-)start the in-Wine Steam client interactively so you can sign in — use
     /// after the runtime's Steam session expired, or to switch accounts. Does NOT
     /// reinstall. The in-Wine Steam keeps its own login (separate from `aurelia

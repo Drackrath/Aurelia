@@ -90,8 +90,26 @@ fn must_run_locally(cli: &Cli) -> bool {
         }
     );
 
+    // The Steam-runtime install/repair/login flows spawn the Windows Steam installer
+    // and the Steam **client GUI** under Wine. Those must inherit the user's *live*
+    // session — DISPLAY/WAYLAND_DISPLAY/XAUTHORITY/XDG_RUNTIME_DIR and per-invocation
+    // env like AURELIA_DIAGNOSE_INSTALL — so the window actually appears. A long-lived
+    // daemon has a stale/absent display env, so a forwarded launch spawns Steam
+    // headless (no window) or attached to the wrong session. Run them locally.
+    // (`status` reads config only and may still forward.)
+    let steam_runtime_gui = matches!(
+        cli.command,
+        Command::SteamRuntime {
+            command: SteamRuntimeCommand::Install { .. }
+                | SteamRuntimeCommand::Repair
+                | SteamRuntimeCommand::Uninstall
+                | SteamRuntimeCommand::Login,
+        }
+    );
+
     interactive_login
         || web_token_login
+        || steam_runtime_gui
         || matches!(
             cli.command,
             Command::Kill | Command::Daemon { command: Some(_), .. }
@@ -447,8 +465,11 @@ async fn run(cli: Cli) -> Result<()> {
             ProtonCommand::Default { version } => cmd_proton_default(version, json).await,
         },
         Command::SteamRuntime { command } => match command {
-            SteamRuntimeCommand::Install => cmd_steam_runtime_install(json).await,
+            SteamRuntimeCommand::Install { reinstall } => {
+                cmd_steam_runtime_install(reinstall, json).await
+            }
             SteamRuntimeCommand::Repair => cmd_steam_runtime_repair(json).await,
+            SteamRuntimeCommand::Uninstall => cmd_steam_runtime_uninstall(json).await,
             SteamRuntimeCommand::Login => cmd_steam_runtime_login(json).await,
             SteamRuntimeCommand::Status => cmd_steam_runtime_status(json).await,
         },

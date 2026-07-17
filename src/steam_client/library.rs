@@ -391,9 +391,32 @@ impl SteamClient {
     }
 
     pub async fn get_product_info(&mut self, appid: u32) -> Result<Vec<LaunchInfo>> {
-        let buffer = self
+        let buffer = match self
             .fetch_pics_buffer(appid, "failed requesting appinfo product info for launch metadata")
-            .await?;
+            .await
+        {
+            Ok(buffer) => buffer,
+            // A long download/update can leave Steam having dropped the CM connection;
+            // the launch-metadata request then fails with "closed connection". Rebuild
+            // the session from the stored refresh token and retry the request once.
+            Err(err) if Self::is_closed_connection_text(&format!("{err:#}")) => {
+                tracing::warn!(
+                    appid,
+                    "launch-metadata request hit a closed Steam connection ({err:#}); \
+                     reconnecting and retrying once"
+                );
+                self.restore_session().await.context(
+                    "the Steam connection dropped (e.g. after a long download) and could not be \
+                     re-established for the launch-metadata request",
+                )?;
+                self.fetch_pics_buffer(
+                    appid,
+                    "failed requesting appinfo product info for launch metadata (after reconnect)",
+                )
+                .await?
+            }
+            Err(err) => return Err(err),
+        };
 
         let raw_vdf = String::from_utf8_lossy(&buffer);
         if raw_vdf.trim().is_empty() {

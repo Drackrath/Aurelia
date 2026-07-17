@@ -208,6 +208,18 @@ impl SteamClient {
             || msg.contains("session")
     }
 
+    /// Whether an error indicates the CM connection was dropped/closed rather than a
+    /// logical failure. Steam commonly drops a long-idle connection — e.g. while a big
+    /// depot download monopolises it — so a request issued afterwards fails with
+    /// "closed connection". Callers use this to reconnect and retry once.
+    pub fn is_closed_connection_text(message: &str) -> bool {
+        let msg = message.to_ascii_lowercase();
+        msg.contains("closed connection")
+            || msg.contains("connection closed")
+            || msg.contains("connection reset")
+            || msg.contains("broken pipe")
+    }
+
     pub async fn connect(&mut self) -> Result<()> {
         tracing::debug!("Connecting to Steam: resolving CM server list ...");
         match self.resolve_server_list().await {

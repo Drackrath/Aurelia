@@ -181,12 +181,19 @@ pub(crate) async fn cmd_proton_default(version: String, json: bool) -> Result<()
 }
 
 /// `steam-runtime install`: install Steam into the master Windows prefix.
-pub(crate) async fn cmd_steam_runtime_install(json: bool) -> Result<()> {
+pub(crate) async fn cmd_steam_runtime_install(reinstall: bool, json: bool) -> Result<()> {
     let config = load_launcher_config().await?;
     // Pre-check here (before install_master_steam downloads SteamSetup.exe) so an
     // unconfigured runner fails fast with an actionable message and no wasted work.
     if config.steam_runtime_runner.as_os_str().is_empty() {
         bail!("{}", aurelia::core::utils::steam_runtime_runner_unset_msg("installing"));
+    }
+    // `--reinstall`: wipe the old (possibly corrupted) prefix first, then install fresh.
+    if reinstall {
+        if !json {
+            cli_println!("Removing the existing Windows Steam runtime ...");
+        }
+        aurelia::launch::uninstall_master_steam().await?;
     }
     aurelia::launch::install_master_steam(&config).await?;
     // install_master_steam now waits for SteamSetup.exe and verifies steam.exe exists
@@ -194,14 +201,34 @@ pub(crate) async fn cmd_steam_runtime_install(json: bool) -> Result<()> {
     let steam_cfg = aurelia::core::utils::get_master_steam_config();
     if json {
         print_json(&serde_json::json!({
-            "status": "installed",
+            "status": if reinstall { "reinstalled" } else { "installed" },
             "steam_exe": steam_cfg.steam_exe,
         }));
     } else {
-        cli_println!("Master Steam runtime installed; Steam client started.");
+        let verb = if reinstall { "reinstalled" } else { "installed" };
+        cli_println!("Master Steam runtime {verb}; Steam client started.");
         if let Some(exe) = &steam_cfg.steam_exe {
             cli_println!("steam.exe path    : {}", exe.display());
         }
+    }
+    Ok(())
+}
+
+/// `steam-runtime uninstall`: remove the master Windows Steam prefix entirely.
+pub(crate) async fn cmd_steam_runtime_uninstall(json: bool) -> Result<()> {
+    let steam_cfg = aurelia::core::utils::get_master_steam_config();
+    let existed = steam_cfg.root_dir.exists();
+    aurelia::launch::uninstall_master_steam().await?;
+    if json {
+        print_json(&serde_json::json!({
+            "status": if existed { "uninstalled" } else { "not_installed" },
+            "removed_path": steam_cfg.root_dir,
+        }));
+    } else if existed {
+        cli_println!("Removed the master Windows Steam runtime ({}).", steam_cfg.root_dir.display());
+        cli_println!("Reinstall with `aurelia steam-runtime install`.");
+    } else {
+        cli_println!("No master Windows Steam runtime was installed — nothing to remove.");
     }
     Ok(())
 }

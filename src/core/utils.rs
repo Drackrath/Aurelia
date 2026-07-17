@@ -340,6 +340,86 @@ pub fn resolve_steam_runtime_wine(runner_name: &str, library_root: &Path) -> Res
     )
 }
 
+/// Ensure the master Steam prefix has the runner's graphics support DLLs that a
+/// **bare-wine** launch cannot otherwise resolve.
+///
+/// The `proton` wrapper script normally makes the runner's `vkd3d` and `dxvk`
+/// PE libraries findable; a prefix driven by bare `wine64` (how Aurelia hosts the
+/// Windows Steam runtime) misses them. The visible failure is Steam's CEF UI:
+/// Chromium's GPU process does `LoadLibrary(dxgi.dll)` → Wine's `dxgi` needs
+/// `wined3d` → `wined3d` needs `libvkd3d-1.dll`/`libvkd3d-shader-1.dll` → not
+/// found → the load fails → Chromium CHECK-crashes (on real Windows `dxgi` can
+/// never be absent) → `steamwebhelper` gives up after 3 GPU restarts → Steam
+/// shows "There was a problem with your Steam installation. Please reinstall."
+///
+/// Copies into `system32` (and `syswow64` when present):
+///   - the runner's DXVK `dxgi`/`d3d11`/… (self-contained, Vulkan-backed), and
+///   - the runner's `libvkd3d-*` PE libs (so Wine's own `wined3d` chain also loads).
+/// Handles both runner layouts (Proton 9: `lib64/…` + `lib/…`; Proton 10:
+/// `lib/wine/dxvk/<arch>-windows`). Best-effort and idempotent: existing files are
+/// overwritten so a stale copy from a different Wine can't wedge the prefix.
+pub fn ensure_steam_runtime_prefix_libs(bare_wine: &Path, wine_prefix: &Path) {
+    // <root>/files/bin/wine64 -> <root>/files
+    let files_root = match bare_wine.parent().and_then(|p| p.parent()) {
+        Some(root) => root.to_path_buf(),
+        None => return,
+    };
+
+    // (candidate source dirs, destination) per architecture. The first candidate
+    // that exists and contains DLLs wins for each group.
+    let sys32 = wine_prefix.join("drive_c/windows/system32");
+    let syswow = wine_prefix.join("drive_c/windows/syswow64");
+    let groups: [(&[&str], &Path); 4] = [
+        // 64-bit DXVK → system32
+        (&["lib64/wine/dxvk", "lib/wine/dxvk/x86_64-windows"], &sys32),
+        // 64-bit vkd3d support libs → system32
+        (&["lib64/vkd3d", "lib/vkd3d/x86_64-windows"], &sys32),
+        // 32-bit DXVK → syswow64
+        (&["lib/wine/dxvk", "lib/wine/dxvk/i386-windows"], &syswow),
+        // 32-bit vkd3d support libs → syswow64
+        (&["lib/vkd3d", "lib/vkd3d/i386-windows"], &syswow),
+    ];
+
+    for (candidates, dest) in groups {
+        if !dest.is_dir() {
+            continue;
+        }
+        for rel in candidates {
+            let src = files_root.join(rel);
+            let Ok(entries) = std::fs::read_dir(&src) else { continue };
+            let mut copied = 0usize;
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let is_dll = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e.eq_ignore_ascii_case("dll"));
+                if !is_dll {
+                    continue;
+                }
+                if let Some(name) = path.file_name() {
+                    match std::fs::copy(&path, dest.join(name)) {
+                        Ok(_) => copied += 1,
+                        Err(e) => tracing::warn!(
+                            "could not copy {} into {}: {e}",
+                            path.display(),
+                            dest.display()
+                        ),
+                    }
+                }
+            }
+            if copied > 0 {
+                tracing::info!(
+                    "Steam-runtime prefix libs: copied {copied} DLL(s) from {} to {}",
+                    src.display(),
+                    dest.display()
+                );
+                break; // first matching layout wins for this group
+            }
+        }
+    }
+}
+
 pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<()> {
     std::fs::create_dir_all(&dst)?;
     for entry in std::fs::read_dir(src)? {
