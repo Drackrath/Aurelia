@@ -151,6 +151,13 @@ pub struct LauncherConfig {
     /// connection). Applied process-wide at startup; see [`crate::core::net`].
     #[serde(default)]
     pub proxy: ProxyConfig,
+    /// Global default Steam-integration policy for game launches, applied when a
+    /// game's own `steam_runtime_policy` is `Auto`. `Auto` (default) prefers the host
+    /// Steam client and falls back to the in-Wine Steam runtime when `--steam` is used
+    /// and no host Steam is installed; `Enabled` always uses the in-Wine runtime;
+    /// `Disabled` never does. Set with `aurelia config steam-runtime-policy`.
+    #[serde(default)]
+    pub steam_runtime_policy: crate::core::models::SteamRuntimePolicy,
     /// Opt-in gate for experimental features. Off by default. Currently gates the
     /// browser/OpenID identity check (`login --openid`) and web-token auth
     /// (`login --web-token`), which prove identity / enable web-surface commands
@@ -199,6 +206,7 @@ impl Default for LauncherConfig {
             umu_path: None,
             language: None,
             proxy: ProxyConfig::default(),
+            steam_runtime_policy: crate::core::models::SteamRuntimePolicy::default(),
             experimental: false,
         }
     }

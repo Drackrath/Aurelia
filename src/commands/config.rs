@@ -237,6 +237,49 @@ pub(crate) async fn cmd_config_steam_runtime_runner(
     Ok(())
 }
 
+/// `config steam-runtime-policy [auto|on|off]`: view or set the global default
+/// Steam-integration policy applied when a game's own policy is `auto`. Governs how
+/// `aurelia play --steam` provides Steam DRM/Steamworks (host client vs the in-Wine
+/// Steam runtime). See [`crate::cli::ConfigCommand::SteamRuntimePolicy`].
+pub(crate) async fn cmd_config_steam_runtime_policy(
+    policy: Option<SteamRuntimeArg>,
+    json: bool,
+) -> Result<()> {
+    use aurelia::core::models::SteamRuntimePolicy;
+
+    let mut config = load_launcher_config().await?;
+    let changed = policy.is_some();
+    if let Some(arg) = policy {
+        config.steam_runtime_policy = match arg {
+            SteamRuntimeArg::Auto => SteamRuntimePolicy::Auto,
+            SteamRuntimeArg::On => SteamRuntimePolicy::Enabled,
+            SteamRuntimeArg::Off => SteamRuntimePolicy::Disabled,
+        };
+        save_launcher_config(&config)
+            .await
+            .context("failed saving steam-runtime-policy")?;
+    }
+
+    let label = match config.steam_runtime_policy {
+        SteamRuntimePolicy::Auto => {
+            "auto (host Steam preferred; in-Wine runtime used under --steam when no host Steam)"
+        }
+        SteamRuntimePolicy::Enabled => "on (always use the in-Wine Steam runtime)",
+        SteamRuntimePolicy::Disabled => "off (host Steam only; never the in-Wine runtime)",
+    };
+    if json {
+        print_json(&serde_json::json!({
+            "steam_runtime_policy": config.steam_runtime_policy,
+        }));
+    } else {
+        cli_println!("Steam runtime policy (global default): {label}");
+        if changed {
+            cli_println!("Saved. Applies to games whose own policy is `auto`.");
+        }
+    }
+    Ok(())
+}
+
 /// `config protons`: list the Proton/Wine runtimes actually installed on disk.
 /// Shares discovery with `proton list --installed` (no hardcoded placeholders).
 pub(crate) async fn cmd_config_protons(json: bool) -> Result<()> {
@@ -384,7 +427,7 @@ pub(crate) async fn cmd_config_game(
     };
     let ua = user_configs.get(&app_id).cloned().unwrap_or_default();
     let steam_runtime_label = match ua.steam_runtime_policy {
-        SteamRuntimePolicy::Auto => "auto (off)",
+        SteamRuntimePolicy::Auto => "auto (inherits global `config steam-runtime-policy`)",
         SteamRuntimePolicy::Enabled => "on",
         SteamRuntimePolicy::Disabled => "off",
     };

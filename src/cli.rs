@@ -425,6 +425,17 @@ pub(crate) enum ConfigCommand {
         /// setting; pass `""` to clear it.
         runner: Option<String>,
     },
+    /// View or set the global default Steam-integration policy for launches.
+    ///
+    /// Applied when a game's own policy (`config game <id> --steam-runtime …`) is
+    /// `auto`. Controls how `aurelia play --steam` provides Steam DRM / Steamworks:
+    /// `auto` prefers the host Steam client and falls back to the in-Wine Steam
+    /// runtime when no host Steam is installed; `on` always uses the in-Wine runtime;
+    /// `off` never does (host Steam only). Omit the value to print the current setting.
+    SteamRuntimePolicy {
+        /// `auto`, `on`, or `off`. Omit to print the current setting.
+        policy: Option<SteamRuntimeArg>,
+    },
     /// View or set the network proxy used for all HTTP(S) communication.
     ///
     /// Applies to the Steam web endpoints, depot downloads, and Proton/plugin

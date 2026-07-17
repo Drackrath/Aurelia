@@ -11,7 +11,7 @@ pub enum SteamPrefixMode {
     PerGame, // copy/symlink Steam into game's own compatdata prefix
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum SteamRuntimePolicy {
     #[default]
     Auto,

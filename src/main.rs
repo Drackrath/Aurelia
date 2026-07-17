@@ -372,6 +372,9 @@ async fn run(cli: Cli) -> Result<()> {
             ConfigCommand::Experimental { enabled } => {
                 cmd_config_experimental(enabled, json).await
             }
+            ConfigCommand::SteamRuntimePolicy { policy } => {
+                cmd_config_steam_runtime_policy(policy, json).await
+            }
             ConfigCommand::SteamRuntimeRunner { runner } => {
                 cmd_config_steam_runtime_runner(runner, json).await
             }

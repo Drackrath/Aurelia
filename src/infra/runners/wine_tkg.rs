@@ -40,7 +40,8 @@ impl Runner for WineTkgRunner {
     async fn prepare_prefix(&self, ctx: &LaunchContext) -> std::result::Result<(), LaunchError> {
         let library_root = PathBuf::from(&ctx.launcher_config.steam_library_path);
 
-        let (use_steam_runtime, runtime_source) = resolve_steam_runtime(ctx);
+        let (steam_mode, runtime_source) = resolve_steam_mode(ctx);
+        let use_steam_runtime = steam_mode == SteamMode::InWineRuntime;
         let steam_prefix_mode = ctx.user_config.as_ref()
             .map(|c| c.steam_prefix_mode.clone())
             .unwrap_or(ctx.launcher_config.steam_prefix_mode.clone());
@@ -474,6 +475,14 @@ impl Runner for WineTkgRunner {
             tracing::info!("NVAPI component detected but disabled by per-game settings");
         }
 
+        // Resolve the Steam-integration mode once for the whole env build. Only the
+        // host-bridge mode leaves Steam's client DLLs at Proton's defaults (so
+        // `lsteamclient` bridges to the host client). The in-Wine runtime and
+        // standalone modes both want the native/neutralised set (`steamclient=n`, …)
+        // so the game loads the in-Wine `steamclient.dll` (or none at all).
+        let (steam_mode, _steam_mode_source) = resolve_steam_mode(ctx);
+        let host_bridge = steam_mode == SteamMode::HostBridge;
+
         let use_symlinks = glc.use_symlinks_in_prefix;
         let mut dll_overrides = crate::core::utils::build_dll_overrides(
             effective_dxvk,
@@ -483,7 +492,7 @@ impl Runner for WineTkgRunner {
             force_builtin_d3d,
             Some(&game_working_dir),
             strict_dxvk,
-            ctx.steam_enabled,
+            host_bridge,
         );
 
         // Enhance overrides with resolved DLL providers
@@ -642,71 +651,16 @@ impl Runner for WineTkgRunner {
         wine_path.extend(wine_dll_dirs.iter().cloned());
         env.insert("WINEPATH".to_string(), wine_path.join(";"));
 
-        let (use_steam_runtime, _runtime_source) = resolve_steam_runtime(ctx);
-
-        if ctx.steam_enabled {
-            // Steam-enabled launch: expose the host's real Steam client so Proton's
-            // lsteamclient bridges to the running client (Steamworks online features,
-            // Family-Shared licences). Falls back to the standalone trap if no host
-            // Steam install is found.
+        // Expose the Steam client install path the game's DRM/Steamworks bootstrap
+        // reads (`STEAM_COMPAT_CLIENT_INSTALL_PATH`), matching the resolved mode:
+        //   - HostBridge    → the host Steam install (Proton's lsteamclient bridges).
+        //   - InWineRuntime → the in-Wine Steam runtime (real steamclient.dll +
+        //                     the steam.exe prepare_prefix starts) — provides DRM
+        //                     with no host Steam (issue #3).
+        //   - Standalone    → the fake-Steam trap (no DRM).
+        let fake_trap = |env: &mut HashMap<String, String>| -> std::result::Result<(), LaunchError> {
             let config_dir = crate::core::config::config_dir()
                 .map_err(|e| LaunchError::new(LaunchErrorKind::Environment, "failed to get config dir").with_source(e))?;
-            let (path, source) = match crate::core::utils::host_steam_client_path() {
-                Some(p) => (p, "real_host"),
-                None => {
-                    tracing::warn!("steam-enabled launch requested but no host Steam install found; using standalone trap");
-                    let fake = crate::core::utils::setup_fake_steam_trap(&config_dir)
-                        .map_err(|e| LaunchError::new(LaunchErrorKind::Permission, "failed to setup fake steam trap").with_source(e))?;
-                    (fake, "fake_trap")
-                }
-            };
-            env.insert("STEAM_COMPAT_CLIENT_INSTALL_PATH".to_string(), path.to_string_lossy().to_string());
-            unsafe {
-                if !ctx.verification_ptr.is_null() {
-                    let v = &mut *ctx.verification_ptr;
-                    v.steam_client_install_path_exposed_to_game = Some(path.to_string_lossy().to_string());
-                    v.steam_client_install_path_source = Some(source.to_string());
-                }
-            }
-        } else if use_steam_runtime {
-            let steam_cfg = crate::core::utils::get_master_steam_config();
-            let steam_prefix_mode = ctx.user_config.as_ref()
-                .map(|c| c.steam_prefix_mode.clone())
-                .unwrap_or(ctx.launcher_config.steam_prefix_mode.clone());
-
-            let steam_client_path = match steam_prefix_mode {
-                crate::core::models::SteamPrefixMode::Shared => {
-                    steam_cfg.steam_exe.as_ref().and_then(|e| e.parent().map(|p| p.to_path_buf()))
-                }
-                crate::core::models::SteamPrefixMode::PerGame => {
-                    Some(effective_game_prefix.join("drive_c/Program Files (x86)/Steam"))
-                }
-            };
-
-            if let Some(path) = steam_client_path {
-                env.insert("STEAM_COMPAT_CLIENT_INSTALL_PATH".to_string(), path.to_string_lossy().to_string());
-                unsafe {
-                    if !ctx.verification_ptr.is_null() {
-                        let v = &mut *ctx.verification_ptr;
-                        v.steam_client_install_path_exposed_to_game = Some(path.to_string_lossy().to_string());
-                        v.steam_client_install_path_source = Some("real".to_string());
-                    }
-                }
-            } else {
-                let config_dir = crate::core::config::config_dir().map_err(|e| LaunchError::new(LaunchErrorKind::Environment, "failed to get config dir").with_source(e))?;
-                let fake_env = crate::core::utils::setup_fake_steam_trap(&config_dir)
-                    .map_err(|e| LaunchError::new(LaunchErrorKind::Permission, "failed to setup fake steam trap").with_source(e))?;
-                env.insert("STEAM_COMPAT_CLIENT_INSTALL_PATH".to_string(), fake_env.to_string_lossy().to_string());
-                unsafe {
-                    if !ctx.verification_ptr.is_null() {
-                        let v = &mut *ctx.verification_ptr;
-                        v.steam_client_install_path_exposed_to_game = Some(fake_env.to_string_lossy().to_string());
-                        v.steam_client_install_path_source = Some("fake_trap".to_string());
-                    }
-                }
-            }
-        } else {
-            let config_dir = crate::core::config::config_dir().map_err(|e| LaunchError::new(LaunchErrorKind::Environment, "failed to get config dir").with_source(e))?;
             let fake_env = crate::core::utils::setup_fake_steam_trap(&config_dir)
                 .map_err(|e| LaunchError::new(LaunchErrorKind::Permission, "failed to setup fake steam trap").with_source(e))?;
             env.insert("STEAM_COMPAT_CLIENT_INSTALL_PATH".to_string(), fake_env.to_string_lossy().to_string());
@@ -716,6 +670,56 @@ impl Runner for WineTkgRunner {
                     v.steam_client_install_path_exposed_to_game = Some(fake_env.to_string_lossy().to_string());
                     v.steam_client_install_path_source = Some("fake_trap".to_string());
                 }
+            }
+            Ok(())
+        };
+        let expose = |env: &mut HashMap<String, String>, path: PathBuf, source: &str| {
+            env.insert("STEAM_COMPAT_CLIENT_INSTALL_PATH".to_string(), path.to_string_lossy().to_string());
+            unsafe {
+                if !ctx.verification_ptr.is_null() {
+                    let v = &mut *ctx.verification_ptr;
+                    v.steam_client_install_path_exposed_to_game = Some(path.to_string_lossy().to_string());
+                    v.steam_client_install_path_source = Some(source.to_string());
+                }
+            }
+        };
+
+        match steam_mode {
+            SteamMode::HostBridge => match crate::core::utils::host_steam_client_path() {
+                Some(path) => expose(&mut env, path, "real_host"),
+                // resolve_steam_mode only picks HostBridge when host Steam exists, so
+                // this is defensive (a Steam install vanishing mid-launch).
+                None => fake_trap(&mut env)?,
+            },
+            SteamMode::InWineRuntime => {
+                let steam_cfg = crate::core::utils::get_master_steam_config();
+                let steam_prefix_mode = ctx.user_config.as_ref()
+                    .map(|c| c.steam_prefix_mode.clone())
+                    .unwrap_or(ctx.launcher_config.steam_prefix_mode.clone());
+
+                let steam_client_path = match steam_prefix_mode {
+                    crate::core::models::SteamPrefixMode::Shared => {
+                        steam_cfg.steam_exe.as_ref().and_then(|e| e.parent().map(|p| p.to_path_buf()))
+                    }
+                    crate::core::models::SteamPrefixMode::PerGame => {
+                        Some(effective_game_prefix.join("drive_c/Program Files (x86)/Steam"))
+                    }
+                };
+
+                match steam_client_path {
+                    Some(path) => expose(&mut env, path, "real"),
+                    None => fake_trap(&mut env)?,
+                }
+            }
+            SteamMode::Standalone => {
+                if ctx.steam_enabled {
+                    tracing::warn!(
+                        "--steam was requested but neither a host Steam client nor the in-Wine \
+                         Steam runtime is installed; launching standalone. DRM-protected games \
+                         will not run. Install the runtime with `aurelia steam-runtime install`."
+                    );
+                }
+                fake_trap(&mut env)?;
             }
         }
 
@@ -977,22 +981,92 @@ fn effective_game_prefix(ctx: &LaunchContext) -> PathBuf {
     )
 }
 
-/// Resolve whether the Windows Steam runtime should be used, plus the source
-/// label recorded in launch diagnostics.
+/// Which Steam-integration mode a launch runs in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SteamMode {
+    /// Bridge to the **host** Steam client via Proton's `lsteamclient` (full online
+    /// Steamworks, Family-Shared licences). Chosen for `--steam` when a host Steam
+    /// install is present. DLL overrides stay at Proton's defaults so `lsteamclient`
+    /// loads builtin and bridges to the running client.
+    HostBridge,
+    /// Run against the Windows Steam runtime installed **inside Wine**
+    /// (`aurelia steam-runtime install`): the game loads the real `steamclient.dll`
+    /// and connects to the in-Wine `steam.exe` Aurelia starts. Provides Steam DRM
+    /// (and offline Steamworks) with no host Steam install.
+    InWineRuntime,
+    /// No Steam client — the standalone fake-Steam trap. DRM-protected games can't run.
+    Standalone,
+}
+
+/// Resolve the Steam-integration mode, reconciling the `--steam` flag with the
+/// configurable [`SteamRuntimePolicy`] and which Steam installs are present.
 ///
-/// Honours the `SteamRuntimePolicy` and falls back to the deprecated
-/// `use_steam_runtime` boolean when the policy is `Auto`/absent.
-fn resolve_steam_runtime(ctx: &LaunchContext) -> (bool, &'static str) {
-    match ctx.user_config.as_ref().map(|c| &c.steam_runtime_policy) {
-        Some(crate::core::models::SteamRuntimePolicy::Enabled) => (true, "override"),
-        Some(crate::core::models::SteamRuntimePolicy::Disabled) => (false, "override"),
-        Some(crate::core::models::SteamRuntimePolicy::Auto) | None => {
-            // Fallback to deprecated boolean if policy is Auto/None for backward compat
-            let manual_toggle = ctx.user_config.as_ref().map(|c| c.use_steam_runtime).unwrap_or(false);
-            if manual_toggle {
-                (true, "override_legacy")
+/// The policy is the authoritative knob, resolved per-game first
+/// (`aurelia config game <id> --steam-runtime …`) and, when that is `Auto`, from the
+/// global default (`aurelia config steam-runtime-policy …`):
+///   - `Enabled`  — always use the in-Wine Steam runtime (real `steamclient.dll` +
+///                  the `steam.exe` Aurelia starts), even when a host Steam exists.
+///   - `Disabled` — never use the in-Wine runtime; `--steam` bridges to host Steam.
+///   - `Auto`     — `--steam` prefers the host client and falls back to the in-Wine
+///                  runtime when no host Steam is installed (previously it assumed a
+///                  host Steam and silently ran DRM-protected games without DRM,
+///                  issue #3). Without `--steam`, standalone.
+///
+/// Returns the mode and a short source label recorded in launch diagnostics.
+fn resolve_steam_mode(ctx: &LaunchContext) -> (SteamMode, &'static str) {
+    use crate::core::models::SteamRuntimePolicy;
+
+    // Per-game policy wins; `Auto` inherits the global default. The deprecated
+    // per-game `use_steam_runtime` boolean still forces the runtime on.
+    let per_game = ctx
+        .user_config
+        .as_ref()
+        .map(|c| c.steam_runtime_policy)
+        .unwrap_or_default();
+    let legacy_forced = ctx.user_config.as_ref().map(|c| c.use_steam_runtime).unwrap_or(false);
+    let effective = match per_game {
+        SteamRuntimePolicy::Auto if legacy_forced => SteamRuntimePolicy::Enabled,
+        SteamRuntimePolicy::Auto => ctx.launcher_config.steam_runtime_policy,
+        explicit => explicit,
+    };
+
+    let master_installed =
+        || crate::core::utils::get_master_steam_config().steam_exe.is_some();
+    let host_installed = || crate::core::utils::host_steam_client_path().is_some();
+
+    match effective {
+        // Explicitly configured to use the in-Wine runtime.
+        SteamRuntimePolicy::Enabled => {
+            if master_installed() {
+                (SteamMode::InWineRuntime, "policy_enabled")
+            } else if ctx.steam_enabled && host_installed() {
+                // Configured for the runtime but it isn't installed — honour --steam
+                // by bridging to host Steam rather than silently disabling DRM.
+                (SteamMode::HostBridge, "policy_enabled_host_fallback")
             } else {
-                (false, "default")
+                (SteamMode::Standalone, "policy_enabled_no_runtime")
+            }
+        }
+        // In-Wine runtime forbidden: --steam uses host Steam (or standalone).
+        SteamRuntimePolicy::Disabled => {
+            if ctx.steam_enabled && host_installed() {
+                (SteamMode::HostBridge, "host")
+            } else if ctx.steam_enabled {
+                (SteamMode::Standalone, "steam_flag_no_host")
+            } else {
+                (SteamMode::Standalone, "policy_disabled")
+            }
+        }
+        // Auto: --steam prefers host, else the in-Wine runtime, else standalone.
+        SteamRuntimePolicy::Auto => {
+            if !ctx.steam_enabled {
+                (SteamMode::Standalone, "default")
+            } else if host_installed() {
+                (SteamMode::HostBridge, "host")
+            } else if master_installed() {
+                (SteamMode::InWineRuntime, "steam_flag_no_host")
+            } else {
+                (SteamMode::Standalone, "steam_flag_no_steam")
             }
         }
     }
