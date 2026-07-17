@@ -1,6 +1,6 @@
 [package]
 name = "aurelia"
-version = "0.1.25"
+version = "0.1.26"
 edition = "2024"
 description = "Aurelia CLI Steam launcher"
 license = "GPL 3.0"

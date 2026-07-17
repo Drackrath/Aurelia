@@ -2068,6 +2068,10 @@ handshake, while the game itself is still launched **directly** by Aurelia (neve
 installed, Aurelia uses this in-Wine runtime for the DRM/Steamworks handshake (subject to the
 [policy](#steam-integration-policy) below).
 
+> **New here?** See **[WINDOWS_STEAM_RUNTIME.md](WINDOWS_STEAM_RUNTIME.md)** for the exact
+> step-by-step setup recipe, machine requirements (Vulkan + a DXVK/vkd3d runner), caveats,
+> and troubleshooting. The rest of this section is the command reference.
+
 Installing/repairing the master prefix needs a Wine/Proton runner configured as
 `steam_runtime_runner` — background Steam runs under bare Wine, not through Proton's
 `proton run` wrapper.
