@@ -437,80 +437,101 @@ impl SteamClient {
             .map_err(|e| anyhow!(e))
             .context("failed to open anonymous Steam connection for QR login")?;
 
-        let mut begin = CAuthentication_BeginAuthSessionViaQR_Request::new();
-        begin.set_device_friendly_name("Aurelia CLI".to_string());
-        begin.set_platform_type(EAuthTokenPlatformType::k_EAuthTokenPlatformType_SteamClient);
-        begin.set_website_id("Client".to_string());
-
-        let begin_resp: CAuthentication_BeginAuthSessionViaQR_Response = anon
-            .service_method(begin)
-            .await
-            .map_err(|e| anyhow!(e))
-            .context("Authentication.BeginAuthSessionViaQR failed")?;
-
-        let client_id = begin_resp.client_id();
-        let request_id = begin_resp.request_id().to_vec();
-        // Steam suggests a poll interval; clamp to a sane floor.
-        let poll_interval = Duration::from_secs_f32(begin_resp.interval().max(2.0));
-        let mut challenge_url = begin_resp.challenge_url().to_string();
-
-        on_challenge(&challenge_url);
-        tracing::info!("Login method awaited: QR code — scan it with the Steam Mobile app");
-
-        let deadline = Instant::now() + Duration::from_secs(180);
-        loop {
+        // Steam expires a whole QR auth session after a short while (well before the
+        // overall deadline). Rather than surfacing that as an error, transparently
+        // begin a fresh session and re-emit its challenge URL — mirroring the official
+        // Steam client, which silently regenerates the code — so the QR stays scannable
+        // for as long as the dialog is open (or until the caller aborts).
+        let deadline = Instant::now() + Duration::from_secs(600);
+        let mut last_emitted_url = String::new();
+        'session: loop {
             if Instant::now() >= deadline {
-                bail!("QR login timed out after 3 minutes without approval");
+                bail!("QR login timed out without approval");
             }
-            tokio::time::sleep(poll_interval).await;
 
-            let mut poll = CAuthentication_PollAuthSessionStatus_Request::new();
-            poll.set_client_id(client_id);
-            poll.set_request_id(request_id.clone());
+            let mut begin = CAuthentication_BeginAuthSessionViaQR_Request::new();
+            begin.set_device_friendly_name("Aurelia CLI".to_string());
+            begin.set_platform_type(EAuthTokenPlatformType::k_EAuthTokenPlatformType_SteamClient);
+            begin.set_website_id("Client".to_string());
 
-            let resp: CAuthentication_PollAuthSessionStatus_Response =
-                match tokio::time::timeout(CM_CONNECT_TIMEOUT, anon.service_method(poll)).await {
-                    Ok(Ok(resp)) => resp,
-                    Ok(Err(e)) => {
-                        return Err(anyhow!(e))
-                            .context("Authentication.PollAuthSessionStatus failed");
-                    }
-                    Err(_) => {
-                        tracing::warn!("QR status poll timed out; retrying ...");
-                        continue;
-                    }
-                };
+            let begin_resp: CAuthentication_BeginAuthSessionViaQR_Response = anon
+                .service_method(begin)
+                .await
+                .map_err(|e| anyhow!(e))
+                .context("Authentication.BeginAuthSessionViaQR failed")?;
 
-            // Steam periodically rotates the QR; re-render only on an actual change.
-            if resp.has_new_challenge_url() && resp.new_challenge_url() != challenge_url {
-                challenge_url = resp.new_challenge_url().to_string();
+            let client_id = begin_resp.client_id();
+            let request_id = begin_resp.request_id().to_vec();
+            // Steam suggests a poll interval; clamp to a sane floor.
+            let poll_interval = Duration::from_secs_f32(begin_resp.interval().max(2.0));
+            let mut challenge_url = begin_resp.challenge_url().to_string();
+
+            if challenge_url != last_emitted_url {
+                last_emitted_url = challenge_url.clone();
                 on_challenge(&challenge_url);
             }
+            tracing::info!("Login method awaited: QR code — scan it with the Steam Mobile app");
 
-            let refresh_token = resp.refresh_token();
-            if !refresh_token.is_empty() {
-                let account_name = resp.account_name().to_string();
-                tracing::info!(account = %account_name, "QR login approved");
+            loop {
+                if Instant::now() >= deadline {
+                    bail!("QR login timed out without approval");
+                }
+                tokio::time::sleep(poll_interval).await;
 
-                // Exchange the issued refresh token for a live connection.
-                let connection =
-                    access_with_retry(&server_list, &account_name, refresh_token).await?;
-                let steam_id = Some(u64::from(connection.steam_id()));
-                self.connection = Some(connection);
+                let mut poll = CAuthentication_PollAuthSessionStatus_Request::new();
+                poll.set_client_id(client_id);
+                poll.set_request_id(request_id.clone());
 
-                let session = SessionState {
-                    account_name: Some(account_name),
-                    steam_id,
-                    refresh_token: Some(refresh_token.to_string()),
-                    client_instance_id: None,
-                    // A full client session supersedes any pasted web token
-                    // (web tokens are minted fresh off the CM session instead).
-                    web_token: None,
-                };
-                save_session(&session).await?;
-                self.state = LoginState::Complete;
-                self.pending_confirmations.clear();
-                return Ok(session);
+                let resp: CAuthentication_PollAuthSessionStatus_Response =
+                    match tokio::time::timeout(CM_CONNECT_TIMEOUT, anon.service_method(poll)).await {
+                        Ok(Ok(resp)) => resp,
+                        // The auth session expired — begin a fresh one instead of failing.
+                        Ok(Err(steam_vent::NetworkError::ApiError(steam_vent::EResult::Expired))) => {
+                            tracing::info!("QR auth session expired; regenerating code");
+                            continue 'session;
+                        }
+                        Ok(Err(e)) => {
+                            return Err(anyhow!(e))
+                                .context("Authentication.PollAuthSessionStatus failed");
+                        }
+                        Err(_) => {
+                            tracing::warn!("QR status poll timed out; retrying ...");
+                            continue;
+                        }
+                    };
+
+                // Steam periodically rotates the QR; re-render only on an actual change.
+                if resp.has_new_challenge_url() && resp.new_challenge_url() != challenge_url {
+                    challenge_url = resp.new_challenge_url().to_string();
+                    last_emitted_url = challenge_url.clone();
+                    on_challenge(&challenge_url);
+                }
+
+                let refresh_token = resp.refresh_token();
+                if !refresh_token.is_empty() {
+                    let account_name = resp.account_name().to_string();
+                    tracing::info!(account = %account_name, "QR login approved");
+
+                    // Exchange the issued refresh token for a live connection.
+                    let connection =
+                        access_with_retry(&server_list, &account_name, refresh_token).await?;
+                    let steam_id = Some(u64::from(connection.steam_id()));
+                    self.connection = Some(connection);
+
+                    let session = SessionState {
+                        account_name: Some(account_name),
+                        steam_id,
+                        refresh_token: Some(refresh_token.to_string()),
+                        client_instance_id: None,
+                        // A full client session supersedes any pasted web token
+                        // (web tokens are minted fresh off the CM session instead).
+                        web_token: None,
+                    };
+                    save_session(&session).await?;
+                    self.state = LoginState::Complete;
+                    self.pending_confirmations.clear();
+                    return Ok(session);
+                }
             }
         }
     }

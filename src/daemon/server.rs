@@ -157,8 +157,12 @@ where
     })
 }
 
-/// Spawn the pump that forwards client stdin frames to the command's stdin. Dropping
-/// `in_tx` (when this task ends) signals stdin EOF to the command.
+/// Spawn the pump that forwards client stdin frames to the command's stdin.
+///
+/// The task returns only when the client's connection actually drops (socket closed
+/// or errored) — the caller treats that as a disconnect and aborts the command. A
+/// clean stdin-EOF frame instead just drops the stdin sender (signalling EOF to the
+/// command) while the connection, and thus disconnect detection, stays live.
 fn spawn_stdin_pump<R>(
     mut reader: R,
     in_tx: mpsc::UnboundedSender<Vec<u8>>,
@@ -167,16 +171,24 @@ where
     R: AsyncRead + Unpin + Send + 'static,
 {
     tokio::spawn(async move {
+        let mut in_tx = Some(in_tx);
         loop {
             match proto::read_frame(&mut reader).await {
                 Ok(Some((proto::C_STDIN, data))) => {
-                    if in_tx.send(data).is_err() {
-                        break;
+                    // Once the command drops its stdin receiver, stop forwarding but
+                    // keep watching the socket so a later disconnect is still caught.
+                    if let Some(tx) = in_tx.as_ref() {
+                        if tx.send(data).is_err() {
+                            in_tx = None;
+                        }
                     }
                 }
-                Ok(Some((proto::C_STDIN_EOF, _))) | Ok(None) => break,
+                // Client is done sending stdin but stays connected: signal EOF to the
+                // command by dropping the sender, and keep watching the socket.
+                Ok(Some((proto::C_STDIN_EOF, _))) => in_tx = None,
+                // Connection dropped — the client is gone.
+                Ok(None) | Err(_) => break,
                 Ok(Some(_)) => {} // ignore unexpected channels
-                Err(_) => break,
             }
         }
     })
@@ -202,12 +214,24 @@ where
 
     // Client stdin frames → the command's stdin.
     let (in_tx, in_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-    let reader_task = spawn_stdin_pump(reader, in_tx);
+    let mut reader_task = spawn_stdin_pump(reader, in_tx);
 
     // Run the command with IO routed to this connection. Dropping `ctx` when the
     // scope ends closes `out_tx`, which ends `writer_task`.
     let ctx = OutputCtx::new(out_tx, in_rx);
-    let code = crate::output::scoped(ctx, crate::run_argv(argv.clone())).await;
+    let command = crate::output::scoped(ctx, crate::run_argv(argv.clone()));
+    tokio::pin!(command);
+
+    // Run the command, but if the client's connection drops abort the command
+    // instead of leaving it running — a cancelled QR login must actually stop
+    // polling Steam.
+    let code = tokio::select! {
+        code = &mut command => code,
+        _ = &mut reader_task => {
+            tracing::info!("client disconnected; aborting in-flight command");
+            return Ok(());
+        }
+    };
 
     // login/logout change the persisted token — adopt/clear the shared session now.
     super::maybe_refresh_after(&argv).await;
