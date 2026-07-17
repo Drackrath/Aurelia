@@ -103,7 +103,8 @@ fn must_run_locally(cli: &Cli) -> bool {
             command: SteamRuntimeCommand::Install { .. }
                 | SteamRuntimeCommand::Repair
                 | SteamRuntimeCommand::Uninstall
-                | SteamRuntimeCommand::Login,
+                | SteamRuntimeCommand::Login
+                | SteamRuntimeCommand::Stop,
         }
     );
 
@@ -471,6 +472,7 @@ async fn run(cli: Cli) -> Result<()> {
             SteamRuntimeCommand::Repair => cmd_steam_runtime_repair(json).await,
             SteamRuntimeCommand::Uninstall => cmd_steam_runtime_uninstall(json).await,
             SteamRuntimeCommand::Login => cmd_steam_runtime_login(json).await,
+            SteamRuntimeCommand::Stop => cmd_steam_runtime_stop(json).await,
             SteamRuntimeCommand::Status => cmd_steam_runtime_status(json).await,
         },
         Command::Luxtorpeda { command } => match command {

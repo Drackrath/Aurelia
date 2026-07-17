@@ -544,6 +544,10 @@ pub(crate) enum SteamRuntimeCommand {
     /// login`). Requires `steam_runtime_runner` and an installed runtime.
     #[command(visible_alias = "relogin")]
     Login,
+    /// Stop the in-Wine Steam client running in the master prefix (kills its Wine
+    /// session), without uninstalling. Use to shut down a Steam started by `login`
+    /// or one left running after a game launch.
+    Stop,
     /// Show the resolved master prefix, layout, whether steam.exe is present, and
     /// whether a Steam-runtime runner is configured.
     Status,

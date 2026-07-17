@@ -87,6 +87,10 @@ async fn run_steam_installer(
     // interactive wizard and waits for a human, so an `install` on a headless or
     // unattended machine simply never completes.
     cmd.arg("/S");
+    // Keep the installer's Wine `fixme:`/NSIS chatter off the terminal by default;
+    // apply_install_diagnostics redirects it to a log file when diagnostics are on.
+    cmd.stdout(std::process::Stdio::null());
+    cmd.stderr(std::process::Stdio::null());
     apply_master_steam_env(&mut cmd, steam_cfg, base_dir)?;
     apply_install_diagnostics(&mut cmd, base_dir);
 
@@ -141,6 +145,12 @@ fn launch_master_steam(
     cmd.arg("-cef-disable-gpu");
     cmd.arg("-cef-disable-sandbox");
     cmd.arg("-cef-disable-gpu-compositing");
+    // Silence the background client's very chatty stdout/stderr (Wine `fixme:` spam
+    // + Steam bootstrapper logging) so it doesn't clutter the terminal — this is a
+    // detached GUI process, its console output is noise. `apply_install_diagnostics`
+    // redirects both to a log file instead when AURELIA_DIAGNOSE_INSTALL=1.
+    cmd.stdout(std::process::Stdio::null());
+    cmd.stderr(std::process::Stdio::null());
     apply_master_steam_env(&mut cmd, steam_cfg, base_dir)?;
     apply_install_diagnostics(&mut cmd, base_dir);
 
@@ -272,6 +282,19 @@ pub async fn repair_master_steam(config: &LauncherConfig) -> Result<()> {
 
     // 3. Re-run the installer into the now-clean prefix.
     install_master_steam(config).await
+}
+
+/// Stop the Windows Steam client running in the master prefix — kill its whole Wine
+/// session without removing anything. Use to shut down a Steam started by
+/// `steam-runtime login` or one left running by a game launch. Returns whether a
+/// Steam client was actually running.
+pub fn stop_master_steam() -> bool {
+    let steam_cfg = crate::core::utils::get_master_steam_config();
+    let was_running = SteamClient::is_steam_running_in_prefix(&steam_cfg.wine_prefix);
+    SteamClient::kill_steam_in_prefix(&steam_cfg.wine_prefix);
+    #[cfg(unix)]
+    SteamClient::kill_wine_processes_in_prefix(&steam_cfg.wine_prefix, true);
+    was_running
 }
 
 /// Remove the master Windows Steam prefix entirely — the opposite of

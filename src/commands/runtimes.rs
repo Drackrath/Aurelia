@@ -275,6 +275,21 @@ pub(crate) async fn cmd_steam_runtime_login(json: bool) -> Result<()> {
     Ok(())
 }
 
+/// `steam-runtime stop`: kill the in-Wine Steam client running in the master prefix.
+pub(crate) async fn cmd_steam_runtime_stop(json: bool) -> Result<()> {
+    let was_running = aurelia::launch::stop_master_steam();
+    if json {
+        print_json(&serde_json::json!({
+            "status": if was_running { "stopped" } else { "not_running" },
+        }));
+    } else if was_running {
+        cli_println!("Stopped the Windows Steam client running in the master prefix.");
+    } else {
+        cli_println!("No Windows Steam client is running in the master prefix.");
+    }
+    Ok(())
+}
+
 /// `steam-runtime status`: report the resolved master prefix and configuration.
 pub(crate) async fn cmd_steam_runtime_status(json: bool) -> Result<()> {
     let config = load_launcher_config().await?;
