@@ -411,11 +411,13 @@ impl SteamClient {
     ///
     /// Drives Steam's `Authentication.BeginAuthSessionViaQR` / `PollAuthSessionStatus`
     /// flow over an anonymous connection (these are unauthenticated service methods).
-    /// `on_challenge` is invoked with the challenge URL to display — initially and
-    /// again whenever Steam rotates the code — so the caller can render the QR.
-    pub async fn login_qr<F>(&mut self, mut on_challenge: F) -> Result<SessionState>
+    /// `on_event` receives [`QrEvent::Challenge`] with the URL to display — initially
+    /// and again whenever Steam rotates or regenerates the code — plus a one-shot
+    /// [`QrEvent::Scanned`] once the user scans the code, so the caller can swap the
+    /// QR for a "waiting for approval" spinner.
+    pub async fn login_qr<F>(&mut self, mut on_event: F) -> Result<SessionState>
     where
-        F: FnMut(&str),
+        F: FnMut(QrEvent),
     {
         use steam_vent_proto::steammessages_auth_steamclient::{
             CAuthentication_BeginAuthSessionViaQR_Request,
@@ -444,6 +446,7 @@ impl SteamClient {
         // for as long as the dialog is open (or until the caller aborts).
         let deadline = Instant::now() + Duration::from_secs(600);
         let mut last_emitted_url = String::new();
+        let mut scanned = false;
         'session: loop {
             if Instant::now() >= deadline {
                 bail!("QR login timed out without approval");
@@ -468,7 +471,7 @@ impl SteamClient {
 
             if challenge_url != last_emitted_url {
                 last_emitted_url = challenge_url.clone();
-                on_challenge(&challenge_url);
+                on_event(QrEvent::Challenge(&challenge_url));
             }
             tracing::info!("Login method awaited: QR code — scan it with the Steam Mobile app");
 
@@ -490,6 +493,14 @@ impl SteamClient {
                             tracing::info!("QR auth session expired; regenerating code");
                             continue 'session;
                         }
+                        // The session was cancelled or invalidated (e.g. superseded by
+                        // another sign-in attempt) — surface a clean cancellation rather
+                        // than a raw Steam error code.
+                        Ok(Err(steam_vent::NetworkError::ApiError(
+                            steam_vent::EResult::FileNotFound | steam_vent::EResult::Cancelled,
+                        ))) => {
+                            bail!("QR sign-in was cancelled");
+                        }
                         Ok(Err(e)) => {
                             return Err(anyhow!(e))
                                 .context("Authentication.PollAuthSessionStatus failed");
@@ -500,11 +511,19 @@ impl SteamClient {
                         }
                     };
 
+                // Once the user scans the code, tell the caller so it can show a
+                // "waiting for approval" spinner in place of the QR.
+                if resp.had_remote_interaction() && !scanned {
+                    scanned = true;
+                    tracing::info!("QR code scanned; awaiting approval in the Steam Mobile app");
+                    on_event(QrEvent::Scanned);
+                }
+
                 // Steam periodically rotates the QR; re-render only on an actual change.
                 if resp.has_new_challenge_url() && resp.new_challenge_url() != challenge_url {
                     challenge_url = resp.new_challenge_url().to_string();
                     last_emitted_url = challenge_url.clone();
-                    on_challenge(&challenge_url);
+                    on_event(QrEvent::Challenge(&challenge_url));
                 }
 
                 let refresh_token = resp.refresh_token();

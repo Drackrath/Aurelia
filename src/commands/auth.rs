@@ -7,6 +7,7 @@ use crate::commands::common::*;
 
 use anyhow::{bail, Context, Result};
 use aurelia::core::config::{experimental_enabled, load_session, save_session};
+use aurelia::core::models::QrEvent;
 use aurelia::steam_client::SteamClient;
 
 /// Refuse an experimental command unless experimental features are enabled.
@@ -418,8 +419,12 @@ pub(crate) async fn cmd_login_json(
 }
 
 /// Emit a QR login challenge URL as one NDJSON line
-pub(crate) fn emit_qr_challenge_json(url: &str) {
-    eprint_json_line(&serde_json::json!({ "event": "qr_challenge", "url": url }));
+pub(crate) fn emit_qr_challenge_json(event: QrEvent) {
+    let line = match event {
+        QrEvent::Challenge(url) => serde_json::json!({ "event": "qr_challenge", "url": url }),
+        QrEvent::Scanned => serde_json::json!({ "event": "qr_scanned" }),
+    };
+    eprint_json_line(&line);
 }
 
 /// Read a single line from stdin (used to receive a Guard code from a `--json`
@@ -434,7 +439,14 @@ pub(crate) async fn read_stdin_line() -> Result<String> {
 
 /// Render a Steam login challenge URL as a scannable QR code on stderr, with the
 /// raw URL as a fallback. Diagnostics go to stderr so stdout stays clean.
-pub(crate) fn render_login_qr(url: &str) {
+pub(crate) fn render_login_qr(event: QrEvent) {
+    let url = match event {
+        QrEvent::Challenge(url) => url,
+        QrEvent::Scanned => {
+            cli_eprintln!("\nQR code scanned — approve the sign-in in your Steam Mobile app.");
+            return;
+        }
+    };
     match qrcode::QrCode::new(url.as_bytes()) {
         Ok(code) => {
             let rendered = code

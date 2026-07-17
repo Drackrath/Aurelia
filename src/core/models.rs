@@ -285,6 +285,17 @@ pub enum SteamGuardReq {
     DeviceConfirmation,
 }
 
+/// A progress event from the QR login flow, handed to the caller's callback.
+#[derive(Debug, Clone, Copy)]
+pub enum QrEvent<'a> {
+    /// A challenge URL to render as a QR code — emitted initially and again each
+    /// time Steam rotates or regenerates the code.
+    Challenge(&'a str),
+    /// The code was scanned in the Steam Mobile app; Steam is now awaiting the
+    /// user's approval. Emitted once per session.
+    Scanned,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DownloadProgressState {
     #[default]

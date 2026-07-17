@@ -8,7 +8,7 @@ use crate::core::config::{
 use crate::library::depot_browser::{self, DepotInfo as BrowserDepotInfo, ManifestFileEntry};
 use crate::core::models::{
     DepotPlatform, DlcState, DownloadProgress, DownloadProgressState, LibraryGame,
-    ManifestSelection, OwnedGame, SessionState, SteamGuardReq, UserProfile,
+    ManifestSelection, OwnedGame, QrEvent, SessionState, SteamGuardReq, UserProfile,
 };
 use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
