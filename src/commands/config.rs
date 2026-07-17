@@ -69,6 +69,47 @@ pub(crate) async fn cmd_config_language(lang: Option<String>, json: bool) -> Res
     Ok(())
 }
 
+/// `config experimental [true|false]`: view or set the experimental-features gate
+/// that unlocks `login --openid` and `login --web-token`. See [`ConfigCommand::Experimental`].
+pub(crate) async fn cmd_config_experimental(enabled: Option<bool>, json: bool) -> Result<()> {
+    let mut config = load_launcher_config().await?;
+    let changed = enabled.is_some();
+    if let Some(value) = enabled {
+        config.experimental = value;
+        save_launcher_config(&config)
+            .await
+            .context("failed saving experimental config")?;
+    }
+    // The env var forces experimental on for a single run regardless of the file.
+    let env_override = std::env::var_os("AURELIA_EXPERIMENTAL").is_some_and(|v| {
+        let v = v.to_string_lossy();
+        let v = v.trim();
+        !v.is_empty() && !v.eq_ignore_ascii_case("0") && !v.eq_ignore_ascii_case("false")
+    });
+    let effective = config.experimental || env_override;
+
+    if json {
+        print_json(&serde_json::json!({
+            "experimental": config.experimental,
+            "env_override": env_override,
+            "effective": effective,
+        }));
+    } else {
+        cli_println!(
+            "Experimental features: {}",
+            if config.experimental { "enabled" } else { "disabled" }
+        );
+        if env_override && !config.experimental {
+            cli_println!("(AURELIA_EXPERIMENTAL is set — enabled for this run regardless)");
+        }
+        cli_println!("Gates: login --openid, login --web-token");
+        if changed {
+            cli_println!("Saved.");
+        }
+    }
+    Ok(())
+}
+
 /// `config proxy [<url>] [--no-proxy <list>] [--clear]`: view or set the network
 /// proxy used for all HTTP(S) communication (Steam web endpoints, depot downloads, and
 /// Proton/plugin release lookups). With no arguments, prints the current setting.

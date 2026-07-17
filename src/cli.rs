@@ -50,19 +50,23 @@ pub(crate) enum Command {
         /// approving the login in the Steam Mobile app. (Alias: --pin)
         #[arg(long, visible_alias = "pin", conflicts_with = "guard")]
         code: bool,
-        /// Verify your identity in the browser on the official Steam sign-in page
-        /// (OpenID) — the password is only ever typed on steamcommunity.com.
-        /// Identity-only: Steam issues no session token over OpenID, so commands
-        /// that need a session still require one of the other login methods.
-        #[arg(long, conflicts_with_all = ["username", "password", "guard", "qr", "code"])]
+        /// [EXPERIMENTAL] Verify your identity in the browser on the official Steam
+        /// sign-in page (OpenID) — the password is only ever typed on
+        /// steamcommunity.com. Identity-only: Steam issues no session token over
+        /// OpenID, so commands that need a session still require one of the other
+        /// login methods. Gated behind `aurelia config experimental true` (or
+        /// AURELIA_EXPERIMENTAL=1); hidden from the core help.
+        #[arg(long, hide = true, conflicts_with_all = ["username", "password", "guard", "qr", "code"])]
         openid: bool,
-        /// Store a browser web token to enable the web-surface commands
-        /// (inventory, wallet, market listings) without a client login: open
-        /// https://steamcommunity.com/chat/clientjstoken in a signed-in browser
+        /// [EXPERIMENTAL] Store a browser web token to enable the web-surface
+        /// commands (inventory, wallet, market listings) without a client login:
+        /// open https://steamcommunity.com/chat/clientjstoken in a signed-in browser
         /// (e.g. right after `login --openid`) and paste the JSON shown — as this
         /// flag's value, via AURELIA_WEB_TOKEN, or when prompted if both are
         /// omitted. Web-only and short-lived (~24h); it cannot replace a full login.
-        #[arg(long, num_args = 0..=1, conflicts_with_all = ["username", "password", "guard", "qr", "code", "openid"])]
+        /// Gated behind `aurelia config experimental true` (or AURELIA_EXPERIMENTAL=1);
+        /// hidden from the core help.
+        #[arg(long, hide = true, num_args = 0..=1, conflicts_with_all = ["username", "password", "guard", "qr", "code", "openid"])]
         web_token: Option<Option<String>>,
         /// Report the current session health (authenticated? which account?) without
         /// logging in. Reflects the daemon's shared session when one is in use.
@@ -396,6 +400,18 @@ pub(crate) enum ConfigCommand {
         /// `schinese`) used by `aurelia achievements` when `--lang` is not
         /// given. Omit the value to print the current setting.
         lang: Option<String>,
+    },
+    /// View or set the experimental-features gate.
+    ///
+    /// When enabled, unlocks experimental commands — currently `login --openid`
+    /// (browser identity check) and `login --web-token` (web-surface auth). These
+    /// prove identity or enable web-only commands (inventory/wallet/market) but
+    /// cannot create the full client session that library/install/launch need.
+    /// The `AURELIA_EXPERIMENTAL=1` environment variable enables them for a single
+    /// run without persisting this setting. Omit the value to print it.
+    Experimental {
+        /// `true` or `false`. Omit to print the current setting.
+        enabled: Option<bool>,
     },
     /// View or set the Wine/Proton runner that hosts the Windows Steam runtime.
     ///

@@ -369,6 +369,9 @@ async fn run(cli: Cli) -> Result<()> {
             ConfigCommand::Protons => cmd_config_protons(json).await,
             ConfigCommand::Presence { mode } => cmd_config_presence(mode, json).await,
             ConfigCommand::Language { lang } => cmd_config_language(lang, json).await,
+            ConfigCommand::Experimental { enabled } => {
+                cmd_config_experimental(enabled, json).await
+            }
             ConfigCommand::SteamRuntimeRunner { runner } => {
                 cmd_config_steam_runtime_runner(runner, json).await
             }

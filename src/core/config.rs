@@ -151,6 +151,13 @@ pub struct LauncherConfig {
     /// connection). Applied process-wide at startup; see [`crate::core::net`].
     #[serde(default)]
     pub proxy: ProxyConfig,
+    /// Opt-in gate for experimental features. Off by default. Currently gates the
+    /// browser/OpenID identity check (`login --openid`) and web-token auth
+    /// (`login --web-token`), which prove identity / enable web-surface commands
+    /// but cannot create the full client session that library/install/launch need.
+    /// Enable with `aurelia config experimental true` or `AURELIA_EXPERIMENTAL=1`.
+    #[serde(default)]
+    pub experimental: bool,
 }
 
 impl LauncherConfig {
@@ -192,8 +199,28 @@ impl Default for LauncherConfig {
             umu_path: None,
             language: None,
             proxy: ProxyConfig::default(),
+            experimental: false,
         }
     }
+}
+
+/// Whether experimental features are enabled: the `experimental` config toggle,
+/// or the `AURELIA_EXPERIMENTAL` environment variable set to a truthy value
+/// (anything other than empty, `0`, or `false`). The env var lets a driver or a
+/// one-off invocation opt in without persisting the setting.
+pub async fn experimental_enabled() -> bool {
+    if let Some(value) = std::env::var_os("AURELIA_EXPERIMENTAL") {
+        let value = value.to_string_lossy();
+        let value = value.trim();
+        if !value.is_empty() && !value.eq_ignore_ascii_case("0") && !value.eq_ignore_ascii_case("false")
+        {
+            return true;
+        }
+    }
+    load_launcher_config()
+        .await
+        .map(|config| config.experimental)
+        .unwrap_or(false)
 }
 
 pub fn detect_steam_path() -> Option<PathBuf> {

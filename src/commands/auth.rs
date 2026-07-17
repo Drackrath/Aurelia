@@ -6,8 +6,28 @@ use crate::output;
 use crate::commands::common::*;
 
 use anyhow::{bail, Context, Result};
-use aurelia::core::config::{load_session, save_session};
+use aurelia::core::config::{experimental_enabled, load_session, save_session};
 use aurelia::steam_client::SteamClient;
+
+/// Refuse an experimental command unless experimental features are enabled.
+///
+/// The browser/OpenID and web-token flows only prove identity / enable the
+/// web-surface commands — they never create the full client session that
+/// library/install/launch need — so they are kept out of the core feature set to
+/// avoid confusion. Opt in per-run with `AURELIA_EXPERIMENTAL=1` or persistently
+/// with `aurelia config experimental true`.
+async fn require_experimental(what: &str) -> Result<()> {
+    if experimental_enabled().await {
+        return Ok(());
+    }
+    bail!(
+        "`{what}` is an experimental feature and is disabled by default. It proves \
+         identity / enables web-only commands but cannot create a full session for \
+         library, install, or launch — use `aurelia login` or `aurelia login --qr` for \
+         those. To enable it, run `aurelia config experimental true` (or set \
+         AURELIA_EXPERIMENTAL=1)."
+    )
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn cmd_login(
@@ -32,9 +52,11 @@ pub(crate) async fn cmd_login(
         return cmd_login_qr(json).await;
     }
     if openid {
+        require_experimental("login --openid").await?;
         return cmd_login_openid(json).await;
     }
     if let Some(pasted) = web_token {
+        require_experimental("login --web-token").await?;
         return cmd_login_web_token(pasted, json).await;
     }
 
