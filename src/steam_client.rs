@@ -315,6 +315,8 @@ pub struct ConfirmationPrompt {
 pub struct AccountData {
     pub steam_id: u64,
     pub account_name: String,
+    /// Public persona 
+    pub persona_name: Option<String>,
     pub country: String,      // GeoIP Country
     pub authed_machines: u32, // Steam Guard count
     pub flags: u32,           // Account Flags

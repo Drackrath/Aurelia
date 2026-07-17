@@ -265,12 +265,15 @@ pub(crate) async fn cmd_list(
 
 pub(crate) async fn cmd_account(json: bool) -> Result<()> {
     let client = authed_client().await?;
-    let data = client.get_account_data().await;
+    let mut data = client.get_account_data().await;
+    // Resolve the public persona
+    data.persona_name = client.own_persona_name().await;
 
     if json {
         let value = serde_json::json!({
             "steam_id": data.steam_id,
             "account_name": data.account_name,
+            "persona_name": data.persona_name,
             "country": data.country,
             "email": data.email,
             "email_validated": data.email_validated,
@@ -284,6 +287,9 @@ pub(crate) async fn cmd_account(json: bool) -> Result<()> {
     }
 
     cli_println!("Account : {}", data.account_name);
+    if let Some(persona) = &data.persona_name {
+        cli_println!("Persona : {persona}");
+    }
     cli_println!("SteamID : {}", data.steam_id);
     cli_println!("Country : {}", data.country);
     cli_println!(

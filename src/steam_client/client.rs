@@ -3,6 +3,8 @@
 //! Split out of `steam_client.rs` for readability; the struct, shared imports
 //! and free helpers live in the parent module (in scope via `use super::*`).
 use super::*;
+use steam_vent_proto::steammessages_clientserver_friends::CMsgClientPersonaState;
+use tokio_stream::StreamExt;
 
 impl SteamClient {
     pub fn new() -> Result<Self> {
@@ -138,6 +140,55 @@ impl SteamClient {
         data.email_validated = true;
 
         data
+    }
+
+    /// Fetch the logged-in account's own persona (display) name directly over the
+    /// CM connection — no web request. Subscribes to persona state, announces the
+    /// configured presence so Steam delivers persona data, requests our own
+    /// SteamID's state, and reads `player_name` from the reply. Best-effort:
+    /// returns `None` if the connection isn't up or Steam doesn't answer in time.
+    ///
+    /// Steam withholds persona state from a refresh-token ("offline") logon until a
+    /// persona is announced *with* `need_persona_response` (the mechanism
+    /// `collect_friends` relies on); that response includes our own persona (Steam
+    /// sends self first) alongside the friends burst, which we scan for our own ID.
+    pub async fn own_persona_name(&self) -> Option<String> {
+        let connection = self.connection.as_ref()?;
+        let own_id = u64::from(connection.steam_id());
+        // Subscribe before announcing/requesting so the reply can't be missed.
+        let mut persona_stream = connection.on::<CMsgClientPersonaState>();
+
+        if let Err(e) = self.announce_configured_presence().await {
+            tracing::debug!("own_persona_name: announce failed: {e}");
+        }
+        if let Err(e) = self.request_friend_data(&[own_id]).await {
+            tracing::debug!("own_persona_name: request failed: {e}");
+        }
+
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(6);
+        let mut seen = 0usize;
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                tracing::debug!("own_persona_name: timed out after {seen} persona message(s)");
+                return None;
+            }
+            match tokio::time::timeout(remaining, persona_stream.next()).await {
+                Ok(Some(Ok(state))) => {
+                    seen += 1;
+                    for fr in &state.friends {
+                        if fr.friendid() == own_id && !fr.player_name().is_empty() {
+                            return Some(fr.player_name().to_string());
+                        }
+                    }
+                }
+                Ok(Some(Err(_))) => continue, // lagged — keep waiting
+                _ => {
+                    tracing::debug!("own_persona_name: stream ended after {seen} message(s)");
+                    return None;
+                }
+            }
+        }
     }
 
     pub fn pending_confirmations(&self) -> &[ConfirmationPrompt] {
