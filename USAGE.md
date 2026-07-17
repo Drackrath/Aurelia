@@ -94,6 +94,7 @@ of a specific command. `--version` prints the build version.
   - [`proton uninstall`](#proton-uninstall)
   - [`proton default`](#proton-default)
 - [Windows Steam runtime](#windows-steam-runtime)
+  - [Steam integration policy](#steam-integration-policy)
   - [`steam-runtime install` / `repair` / `status`](#windows-steam-runtime)
 - [Luxtorpeda native-engine plugin](#luxtorpeda-native-engine-plugin-linux-only)
 - [umu-launcher plugin](#umu-launcher-plugin-linux-only)
@@ -995,7 +996,7 @@ aurelia play <APP_ID> [-p <PROTON>] [-w] [--steam]
 | --- | --- |
 | `-p, --proton <PROTON>` | Force a specific Proton/Wine runner (Linux only). Implies a Windows target. |
 | `-w, --windows` | Run the Windows executable directly with no Proton/Wine layer. **Windows hosts only** — rejected on Linux, where a Windows `.exe` can't be run natively. |
-| `--steam` | Launch with real Steam integration (Proton's `lsteamclient` bridge + the host Steam client, started silently if not running) so Steamworks online features work. Without it, the game runs standalone. Implied for Family-Shared games, which require Steam to authorise the borrowed licence. |
+| `--steam` | Launch with real Steam integration so Steamworks/DRM work. Prefers the host Steam client (Proton's `lsteamclient` bridge, started silently if not running); when no host Steam is installed it falls back to the [Windows Steam runtime](#windows-steam-runtime) inside Wine. Without it, the game runs standalone. Implied for Family-Shared games, which require Steam to authorise the borrowed licence. The host-vs-in-Wine choice is configurable — see [`config steam-runtime-policy`](#windows-steam-runtime). |
 | `--native-engine` | Route this launch through the [luxtorpeda](#luxtorpeda-native-engine-plugin-linux-only) native-engine plugin (Linux only). Installs the plugin on first use. Conflicts with `--proton`/`--windows`. |
 
 Platform behavior:
@@ -1011,16 +1012,27 @@ Platform behavior:
 Steam integration (`--steam`):
 
 - **Standalone (default):** the game runs without a Steam client. Works for owned games with
-  lenient DRM; Steamworks online features may be unavailable.
-- **With `--steam`:** Aurelia exposes the host Steam client and enables Proton's Steam bridge,
-  starting Steam silently (`steam -silent`) if it isn't already running. Required for
-  Steamworks online features and for **Family-Shared** games (where it's forced on).
+  lenient DRM; Steam DRM and Steamworks online features are unavailable.
+- **With `--steam`:** Aurelia provides a real Steam client so DRM/Steamworks work. It resolves
+  the source from the [`steam-runtime-policy`](#windows-steam-runtime) (global default, or the
+  per-game policy set with `config game <id> --steam-runtime`):
+  - **`auto` (default):** use the **host** Steam client when one is installed (starting it
+    silently), otherwise fall back to the **Windows Steam runtime inside Wine** (see below).
+  - **`on`:** always use the in-Wine Steam runtime, even if a host Steam exists.
+  - **`off`:** host Steam only; never the in-Wine runtime.
+
+  The in-Wine fallback requires the runtime to be installed first
+  (`aurelia steam-runtime install`). If neither a host Steam nor the in-Wine runtime is
+  available, the launch runs standalone and DRM-protected games will not start.
+
+Required for Steamworks online features and for **Family-Shared** games (where `--steam` is
+forced on).
 
 ```bash
 aurelia play 1245620                 # native on Windows / auto on Linux, standalone
 aurelia play 1245620 --windows       # Windows host: force native execution
 aurelia play 1245620 --proton experimental   # Linux: pin a Proton version
-aurelia play 1245620 --steam         # run with Steam online features enabled
+aurelia play 1245620 --steam         # real Steam integration (host, else in-Wine runtime)
 ```
 
 ---
@@ -2050,8 +2062,10 @@ Some Windows games require a live Steam client for their Steamworks/DRM handshak
 can host a self-contained **master Windows Steam prefix** — a Wine prefix with Steam
 installed inside it — and start that Steam in the background purely to answer the in-prefix
 handshake, while the game itself is still launched **directly** by Aurelia (never through a
-`steam://run` / `-applaunch` handoff). This is an alternative to bridging the host Steam
-client with [`play --steam`](#play).
+`steam://run` / `-applaunch` handoff). It is the no-host-Steam path for
+[`play --steam`](#play): when you launch with `--steam` and no host Steam client is
+installed, Aurelia uses this in-Wine runtime for the DRM/Steamworks handshake (subject to the
+[policy](#steam-integration-policy) below).
 
 Installing/repairing the master prefix needs a Wine/Proton runner configured as
 `steam_runtime_runner` — background Steam runs under bare Wine, not through Proton's
@@ -2073,21 +2087,39 @@ The runner value is an **installed runtime name** (as shown by `aurelia proton l
 Wine bundled inside it (`files/bin/wine64`) automatically, never `proton run`. If you have
 no runtime yet, install one first with `aurelia proton install <NAME>`.
 
-**Enabling it per game.** Installing the master prefix does not, by itself, route any game
-through it — that is a **per-game** opt-in. `aurelia config game <APP_ID> --steam-runtime on`
-sets the game's policy so that at launch Aurelia starts the master Steam client in Wine (on
-the configured runner) and points the game at it via `STEAM_COMPAT_CLIENT_INSTALL_PATH`,
-satisfying the Steamworks/DRM handshake without your host Steam client. Use `off` to force
-it off or `auto` for the default (off). `--steam-prefix-mode shared|per-game` chooses whether
-the game runs in the master prefix directly (`shared`, default) or gets its own copy
-(`per-game`). This is distinct from [`play --steam`](#play), which bridges your *host* Steam
-client instead.
+### Steam integration policy
+
+A launch that asks for Steam integration ([`play --steam`](#play), forced on for
+Family-Shared games) resolves **where** the Steam client comes from from a policy, checked
+**per-game first, then the global default**:
+
+| Policy | Behavior |
+| --- | --- |
+| `auto` (default) | Prefer the **host** Steam client when one is installed; otherwise fall back to the **in-Wine** Steam runtime. |
+| `on` | **Always** use the in-Wine Steam runtime, even if a host Steam client exists. |
+| `off` | **Host** Steam only; never the in-Wine runtime. |
+
+```bash
+aurelia config steam-runtime-policy on         # global default: always use the in-Wine runtime
+aurelia config steam-runtime-policy            # view the current global default
+aurelia config game <APP_ID> --steam-runtime on   # per-game override (wins over the global default)
+```
+
+A game whose own policy is `auto` inherits the global default; `on`/`off` on the game
+override it. Installing the master prefix does not, by itself, route any game through it — a
+launch only uses the in-Wine runtime when it both asks for Steam (`--steam`) and the resolved
+policy selects it. When the policy selects the in-Wine runtime, Aurelia starts the master
+Steam client in Wine (on the configured runner) and points the game at it via
+`STEAM_COMPAT_CLIENT_INSTALL_PATH`, satisfying the Steamworks/DRM handshake without a host
+Steam client. `--steam-prefix-mode shared|per-game` chooses whether the game runs in the
+master prefix directly (`shared`, default) or gets its own copy (`per-game`).
 
 ```text
 aurelia steam-runtime install [--json]
 aurelia steam-runtime repair  [--json]
 aurelia steam-runtime status  [--json]
-aurelia config steam-runtime-runner [<NAME>]   # view/set the runner (empty string clears)
+aurelia config steam-runtime-runner [<NAME>]    # view/set the runner (empty string clears)
+aurelia config steam-runtime-policy [auto|on|off]   # view/set the global default policy
 ```
 
 | Subcommand | Description |

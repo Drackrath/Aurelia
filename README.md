@@ -111,13 +111,14 @@ sync, and Proton/Wine launching all work today.
       stop (`running` / `stop --force`)
 - [x] **Self-contained Windows Steam runtime** — install/repair a master Wine Steam prefix
       (`steam-runtime install` / `repair` / `status`) to satisfy Steamworks/DRM handshakes
-      without bridging the host Steam client
+      without a host Steam client; `play --steam` falls back to it automatically when no host
+      Steam is installed (`config steam-runtime-policy auto|on|off`)
 - [x] **Optional launch plugins (Linux, opt-in, never bundled)** — **luxtorpeda** native
       engines, and **umu-launcher** (Proton via `umu-run`); both downloaded on demand and
       routed per-game
-- [x] **Steam integration (opt-in)** — launch with the host Steam client bridged in
-      (`play --steam`, Steam started silently if needed) for Steamworks online features;
-      required for and auto-enabled on Family-Shared games
+- [x] **Steam integration (opt-in)** — launch with real Steam integration (`play --steam`):
+      the host Steam client bridged in (started silently if needed), or the in-Wine Steam
+      runtime when no host Steam exists, for Steamworks/DRM; auto-enabled on Family-Shared games
 - [x] **Depot browser** — list depots, inspect manifest trees, download single files
 - [x] **Workshop** — browse/search, install/uninstall, subscribe, collections, rate, and
       read/post comments
@@ -277,6 +278,8 @@ aurelia config steam-runtime-runner GE-Proton9-20  # select the Wine/Proton runn
 aurelia steam-runtime status          # resolved master prefix, layout, steam.exe presence
 aurelia steam-runtime install         # install Steam into the master Wine prefix
 aurelia steam-runtime repair          # back up the prefix (keep one) and reinstall
+aurelia config steam-runtime-policy on   # make `play --steam` always use the in-Wine runtime
+                                         # (default `auto`: host Steam if present, else in-Wine)
 
 # Collections (library categories) — edit locally offline, sync to Steam on demand
 aurelia collections list                     # all collections + game counts
