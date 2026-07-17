@@ -43,6 +43,45 @@ pub(crate) async fn cmd_play(
     let mut client = authed_client().await?;
     let mut game = find_game(&mut client, app_id).await?;
 
+    // A game whose only local copy lives in the in-Wine Steam runtime's own library
+    // (installed through the in-Wine Steam itself — the only route for Family-Shared
+    // titles Aurelia can't download) can't be run through the Proton pipeline: its
+    // Steamworks handshake needs the full context only the running Steam client sets
+    // up. Hand it to the in-Wine Steam, exactly as launching it from that Steam's GUI
+    // does. Its updates are the in-Wine Steam's responsibility, so skip Aurelia's
+    // pre-launch update flow (the game isn't in Aurelia's library to update anyway).
+    if game.from_windows_steam {
+        let launcher_config = load_launcher_config().await?;
+        let install_path = game.install_path.clone().unwrap_or_default();
+        if !json {
+            cli_println!(
+                "⚠ {} lives in the in-Wine Steam runtime's own library — launching it \
+                 through the in-Wine Steam (Wine). Aurelia's Proton/DXVK settings and \
+                 session tracking don't apply to this launch.",
+                game.name
+            );
+            cli_println!("Launching {} via the in-Wine Steam ...", game.name);
+        }
+        aurelia::launch::launch_game_via_master_steam(
+            &launcher_config,
+            app_id,
+            std::path::Path::new(&install_path),
+        )
+        .await
+        .with_context(|| format!("failed to launch {} via the in-Wine Steam", game.name))?;
+        if json {
+            print_json(&serde_json::json!({
+                "app_id": app_id,
+                "name": game.name,
+                "status": "finished",
+                "runtime": "in-wine-steam",
+            }));
+        } else {
+            cli_println!("Finished playing {}.", game.name);
+        }
+        return Ok(());
+    }
+
     // Family-Shared games are pinned to the owner's current build — a stale
     // install simply won't launch — so for them the pre-launch update is
     // *required*, not best-effort: any failure aborts the launch (running the old

@@ -270,6 +270,44 @@ impl SteamClient {
         }
     }
 
+    /// True while a **game** launched by the in-Wine Steam is running inside
+    /// `wineprefix`. The game is identified by `installdir` — the manifest install-dir
+    /// name (the last path component of its install path) — which appears in the
+    /// process cmdline as `…\steamapps\common\<installdir>\…exe`. The Steam client and
+    /// its helpers are excluded so this tracks only the game itself.
+    ///
+    /// Used to wait on a game the in-Wine Steam started (via `-applaunch`), which
+    /// Aurelia does not own directly and so cannot `wait()` on.
+    pub fn is_game_running_in_prefix(wineprefix: &Path, installdir: &str) -> bool {
+        #[cfg(unix)]
+        {
+            let prefix_str = wineprefix.to_string_lossy().to_string();
+            let needle = installdir.to_lowercase();
+            if needle.is_empty() {
+                return false;
+            }
+            Self::scan_proc_pids(|pid_path, _pid_str| {
+                let cmdline = std::fs::read(pid_path.join("cmdline")).ok()?;
+                let cmdline_str = String::from_utf8_lossy(&cmdline).replace('\0', " ").to_lowercase();
+                if !(cmdline_str.contains(&needle) && cmdline_str.contains(".exe")) {
+                    return None;
+                }
+                // Exclude the Steam client and its CEF helper processes.
+                if cmdline_str.contains("steam.exe") || cmdline_str.contains("steamwebhelper") {
+                    return None;
+                }
+                let environ = std::fs::read(pid_path.join("environ")).ok()?;
+                String::from_utf8_lossy(&environ).contains(&prefix_str).then_some(true)
+            })
+            .unwrap_or(false)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (wineprefix, installdir);
+            false
+        }
+    }
+
     /// Writes a steam.cfg into the Steam directory that minimises UI on startup.
     pub fn write_headless_steam_cfg(steam_dir: &Path) {
         let cfg_path = steam_dir.join("steam.cfg");

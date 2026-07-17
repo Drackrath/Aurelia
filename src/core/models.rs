@@ -230,6 +230,14 @@ pub struct LibraryGame {
     /// through Proton) without re-deriving it.
     #[serde(default)]
     pub platform: Option<String>,
+    /// Whether the only local copy lives in the **in-Wine Steam runtime's** own
+    /// library (inside the master prefix) rather than Aurelia's library — i.e. it was
+    /// installed through the in-Wine Steam client itself (the only route for
+    /// Family-Shared titles Aurelia can't download). Such games are launched by
+    /// handing them to the in-Wine Steam (`steam.exe -applaunch`), not the Proton
+    /// pipeline. Defaults to `false`.
+    #[serde(default)]
+    pub from_windows_steam: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

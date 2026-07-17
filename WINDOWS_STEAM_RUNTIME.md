@@ -85,6 +85,33 @@ Everything else that used to break the in-Wine Steam is handled automatically no
 
 ---
 
+## Games installed *through* the in-Wine Steam (incl. Family-Shared)
+
+Some titles can only be installed by a real Steam client — most notably **Family-Shared**
+games, which Aurelia can't download itself (they need the owner's authorisation). For
+those, sign in to the in-Wine Steam (`aurelia steam-runtime login`) and install the game
+from its window, into the in-Wine Steam's own library inside the master prefix.
+
+Aurelia discovers those installs and flags them in `list` with a **`[wine]`** tag:
+
+```
+  2874130  installed   family-shared  -   Berserk or Die [wine]
+```
+
+`aurelia play <APPID>` handles them automatically: instead of the Proton pipeline, it
+hands the game to the in-Wine Steam (`steam.exe -applaunch`), exactly as launching it
+from that Steam's own library would — the only way its Steamworks/DRM handshake succeeds.
+A one-line warning notes this, because:
+
+- Aurelia's **Proton/DXVK per-game settings don't apply** — the in-Wine Steam runs it in
+  the master prefix with that prefix's DXVK.
+- Aurelia doesn't own the process, so **session tracking is best-effort** (it waits for the
+  game to exit, then reports "Finished playing").
+
+Games you install with `aurelia install <APPID>` land in Aurelia's own library instead,
+run through the normal Proton pipeline, and carry no `[wine]` tag — the in-Wine runtime is
+then only their DRM backend.
+
 ## Choosing where Steam comes from (`steam-runtime-policy`)
 
 A launch that asks for Steam (`play --steam`, or forced for Family-Shared games)

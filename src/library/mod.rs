@@ -75,6 +75,10 @@ pub struct InstalledAppInfo {
     /// SteamID64 of the account that owns this local install (`LastOwner` in the
     /// appmanifest). Differs from the logged-in user for Family-Shared games.
     pub last_owner: Option<u64>,
+    /// This install was found in the in-Wine Steam runtime's own library (inside the
+    /// master prefix), not Aurelia's Linux library. Set by [`scan_installed_app_info`]
+    /// when merging the Windows-Steam discovery pass.
+    pub from_windows_steam: bool,
 }
 
 pub async fn find_local_games() -> Result<Vec<LocalGame>> {
@@ -112,8 +116,10 @@ pub async fn scan_installed_app_info() -> Result<HashMap<u32, InstalledAppInfo>>
             let windows_steam_root = master_steam.wine_prefix.join("drive_c/Program Files (x86)/Steam");
             if windows_steam_root.exists() {
                 let windows_installed = scan_library_info(&windows_steam_root).await.unwrap_or_default();
-                for (app_id, info) in windows_installed {
-                    // Prefer native/standard Linux Steam if duplicate
+                for (app_id, mut info) in windows_installed {
+                    // Mark the source so `list` can flag it and `play` routes it through
+                    // the in-Wine Steam. Prefer native/standard Linux Steam if duplicate.
+                    info.from_windows_steam = true;
                     installed.entry(app_id).or_insert(info);
                 }
             }
@@ -401,6 +407,7 @@ async fn parse_app_manifest_info(path: &Path) -> Result<Option<(u32, InstalledAp
             active_branch,
             name,
             last_owner,
+            from_windows_steam: false,
         },
     )))
 }
@@ -423,6 +430,7 @@ pub fn build_game_library(
         owned_app_ids.insert(owned_game.app_id);
         let info = installed_info.get(&owned_game.app_id);
         let install_path = info.map(|i| i.install_path.to_string_lossy().to_string());
+        let from_windows_steam = info.is_some_and(|i| i.from_windows_steam);
         let active_branch = info
             .map(|i| i.active_branch.clone())
             .unwrap_or_else(|| "public".to_string());
@@ -441,6 +449,7 @@ pub fn build_game_library(
             is_family_shared: false,
             online_required: None,
             platform: None,
+            from_windows_steam,
         });
     }
 
@@ -460,6 +469,7 @@ pub fn build_game_library(
         // a different account. If we can't determine the owner (e.g. not logged in,
         // or the manifest has no LastOwner), don't guess — avoid false positives.
         let family_shared = matches!((info.last_owner, steam_id), (Some(owner), Some(me)) if owner != me);
+        let from_windows_steam = info.from_windows_steam;
 
         games.push(LibraryGame {
             app_id,
@@ -475,6 +485,7 @@ pub fn build_game_library(
             is_family_shared: family_shared,
             online_required: None,
             platform: None,
+            from_windows_steam,
         });
     }
 

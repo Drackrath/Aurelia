@@ -121,6 +121,7 @@ async fn test_legacy_path_blocks_windows_proton() {
         is_family_shared: false,
         online_required: None,
         platform: None,
+        from_windows_steam: false,
     };
     let launch_info = LaunchInfo {
         app_id: 123,

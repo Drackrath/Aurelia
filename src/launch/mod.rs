@@ -359,6 +359,110 @@ pub async fn relogin_master_steam(config: &LauncherConfig) -> Result<()> {
     launch_master_steam(&wine, &steam_exe, &steam_cfg, &base_dir)
 }
 
+/// Launch a game that lives **only** in the in-Wine Steam runtime's own library by
+/// handing it to the in-Wine Steam client (`steam.exe -applaunch <app_id>`) — exactly
+/// how launching it from the in-Wine Steam GUI works.
+///
+/// Such a game (installed *through* the in-Wine Steam itself — the only route for
+/// Family-Shared titles Aurelia cannot download) can't be cold-launched through the
+/// Proton pipeline: its Steamworks handshake fails because it expects the full Steam
+/// context the running client sets up (registry `ActiveProcess`, a live client to load
+/// `steamclient64.dll` against, etc.). Handing it to the running in-Wine Steam gives it
+/// exactly that.
+///
+/// The game then runs as a child of the in-Wine Steam **inside the master prefix**, so
+/// Aurelia does not own or track the process directly. We ensure the client is up,
+/// dispatch the launch, then (best-effort) block until the game exits so the caller's
+/// "Launching…/Finished" flow stays meaningful.
+pub async fn launch_game_via_master_steam(
+    config: &LauncherConfig,
+    app_id: u32,
+    install_path: &Path,
+) -> Result<()> {
+    let base_dir = config_dir()?;
+    let steam_cfg = crate::core::utils::get_master_steam_config();
+    let steam_exe = steam_cfg.steam_exe.clone().ok_or_else(|| {
+        anyhow!(
+            "the Windows Steam runtime is not installed (no steam.exe under {}). \
+             Run `aurelia steam-runtime install` first.",
+            steam_cfg.wine_prefix.display()
+        )
+    })?;
+
+    let runner_name = config.steam_runtime_runner.to_string_lossy();
+    let library_root = PathBuf::from(&config.steam_library_path);
+    let wine = crate::core::utils::resolve_steam_runtime_wine(&runner_name, &library_root)?;
+
+    // The in-Wine Steam CEF UI and the game's DXVK both need the runner's PE libs in
+    // the prefix (a bare-wine prefix misses them).
+    crate::core::utils::ensure_steam_runtime_prefix_libs(&wine, &steam_cfg.wine_prefix);
+
+    // The in-Wine Steam client must be up to authorise the launch and serve DRM. If it
+    // isn't, start it silently and wait for it to come up before dispatching.
+    if !SteamClient::is_steam_running_in_prefix(&steam_cfg.wine_prefix) {
+        tracing::info!("in-Wine Steam not running; starting it before -applaunch");
+        launch_master_steam(&wine, &steam_exe, &steam_cfg, &base_dir)?;
+        let mut ready = false;
+        for _ in 0..40 {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            if SteamClient::is_steam_running_in_prefix(&steam_cfg.wine_prefix) {
+                ready = true;
+                break;
+            }
+        }
+        if !ready {
+            return Err(anyhow!(
+                "the in-Wine Steam client did not come up in time — sign in first with \
+                 `aurelia steam-runtime login`, then retry"
+            ));
+        }
+        // A freshly-started client needs a moment more before it can service launches.
+        tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+    }
+
+    // Dispatch the launch through the in-Wine Steam. With a client already running this
+    // forwards the request to it and returns quickly; the game starts as its child.
+    let mut cmd = Command::new(&wine);
+    cmd.arg(&steam_exe);
+    cmd.arg("-applaunch");
+    cmd.arg(app_id.to_string());
+    cmd.stdout(std::process::Stdio::null());
+    cmd.stderr(std::process::Stdio::null());
+    apply_master_steam_env(&mut cmd, &steam_cfg, &base_dir)?;
+    cmd.spawn()
+        .context("failed to dispatch -applaunch to the in-Wine Steam")?;
+
+    // Identify the game by its install-dir basename (the manifest `installdir`), which
+    // shows up in the running game's cmdline as `…\common\<installdir>\…exe`.
+    let Some(installdir) = install_path.file_name().map(|n| n.to_string_lossy().to_string())
+    else {
+        return Ok(());
+    };
+
+    // Wait (bounded) for the game to appear, then block until it exits. If it never
+    // appears (client showed an error, game is updating, or it exited instantly), don't
+    // hang the caller.
+    let mut appeared = false;
+    for _ in 0..30 {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        if SteamClient::is_game_running_in_prefix(&steam_cfg.wine_prefix, &installdir) {
+            appeared = true;
+            break;
+        }
+    }
+    if !appeared {
+        tracing::warn!(
+            "game process for app {app_id} did not appear within 30s of -applaunch; \
+             the in-Wine Steam may still be starting it, updating, or showing a prompt"
+        );
+        return Ok(());
+    }
+    while SteamClient::is_game_running_in_prefix(&steam_cfg.wine_prefix, &installdir) {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+    Ok(())
+}
+
 /// True when `path` looks like a real Windows executable.
 ///
 /// PE binaries open with the `MZ` DOS header. The previous code only checked
