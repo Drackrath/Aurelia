@@ -276,7 +276,8 @@ aurelia proton uninstall GE-Proton9-19  # delete an installed GE build
 # Windows Steam runtime (self-contained Steamworks/DRM handshake, no host Steam client)
 aurelia config steam-runtime-runner GE-Proton9-20  # select the Wine/Proton runner (required first)
 aurelia steam-runtime status          # resolved master prefix, layout, steam.exe presence
-aurelia steam-runtime install         # install Steam into the master Wine prefix
+aurelia steam-runtime install         # install Steam into the master Wine prefix (sign in here)
+aurelia steam-runtime login           # re-open the in-Wine Steam to sign in again (expired/switch)
 aurelia steam-runtime repair          # back up the prefix (keep one) and reinstall
 aurelia config steam-runtime-policy on   # make `play --steam` always use the in-Wine runtime
                                          # (default `auto`: host Steam if present, else in-Wine)

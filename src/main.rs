@@ -449,6 +449,7 @@ async fn run(cli: Cli) -> Result<()> {
         Command::SteamRuntime { command } => match command {
             SteamRuntimeCommand::Install => cmd_steam_runtime_install(json).await,
             SteamRuntimeCommand::Repair => cmd_steam_runtime_repair(json).await,
+            SteamRuntimeCommand::Login => cmd_steam_runtime_login(json).await,
             SteamRuntimeCommand::Status => cmd_steam_runtime_status(json).await,
         },
         Command::Luxtorpeda { command } => match command {

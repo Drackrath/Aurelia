@@ -528,6 +528,12 @@ pub(crate) enum SteamRuntimeCommand {
     /// Stop Steam, back up the master prefix (keeping one `.bak`), then reinstall.
     /// Requires `steam_runtime_runner` to be configured.
     Repair,
+    /// (Re-)start the in-Wine Steam client interactively so you can sign in — use
+    /// after the runtime's Steam session expired, or to switch accounts. Does NOT
+    /// reinstall. The in-Wine Steam keeps its own login (separate from `aurelia
+    /// login`). Requires `steam_runtime_runner` and an installed runtime.
+    #[command(visible_alias = "relogin")]
+    Login,
     /// Show the resolved master prefix, layout, whether steam.exe is present, and
     /// whether a Steam-runtime runner is configured.
     Status,

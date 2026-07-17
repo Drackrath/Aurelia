@@ -95,7 +95,8 @@ of a specific command. `--version` prints the build version.
   - [`proton default`](#proton-default)
 - [Windows Steam runtime](#windows-steam-runtime)
   - [Steam integration policy](#steam-integration-policy)
-  - [`steam-runtime install` / `repair` / `status`](#windows-steam-runtime)
+  - [`steam-runtime install` / `repair` / `login` / `status`](#windows-steam-runtime)
+  - [Runtime authentication](#runtime-authentication)
 - [Luxtorpeda native-engine plugin](#luxtorpeda-native-engine-plugin-linux-only)
 - [umu-launcher plugin](#umu-launcher-plugin-linux-only)
 - [Launch scripts](#launch-scripts)
@@ -2117,6 +2118,7 @@ master prefix directly (`shared`, default) or gets its own copy (`per-game`).
 ```text
 aurelia steam-runtime install [--json]
 aurelia steam-runtime repair  [--json]
+aurelia steam-runtime login   [--json]   # alias: relogin
 aurelia steam-runtime status  [--json]
 aurelia config steam-runtime-runner [<NAME>]    # view/set the runner (empty string clears)
 aurelia config steam-runtime-policy [auto|on|off]   # view/set the global default policy
@@ -2126,7 +2128,27 @@ aurelia config steam-runtime-policy [auto|on|off]   # view/set the global defaul
 | --- | --- |
 | `install` | Download `SteamSetup.exe` (if needed), install Steam into the master prefix, then start the Steam client. Waits for the installer and fails loudly if `steam.exe` does not appear. Requires `steam_runtime_runner` to be set. |
 | `repair` | Stop Steam, back up the master prefix (keeping a single `.bak`), then reinstall — recovers a corrupted install that passes the file-exists check but crashes on start. Requires `steam_runtime_runner`. |
+| `login` (alias `relogin`) | (Re-)start the in-Wine Steam client **interactively** so you can sign in again — after the runtime's Steam session expired, or to switch accounts — **without** reinstalling. Stops any silent background Steam in the prefix first so the login window opens. Requires an installed runtime. See [Authentication](#runtime-authentication) below. |
 | `status` | Print the resolved master root, Wine prefix, layout kind, whether `steam.exe` is present, and whether a runtime runner is configured. |
+
+### Runtime authentication
+
+The in-Wine Steam runtime is a real **Windows Steam client** and keeps its **own** login
+inside the master prefix — **separate from `aurelia login`** (which authenticates Aurelia's own
+CM session for the library/downloads). Aurelia never injects its session into the in-Wine
+client.
+
+- **First sign-in** happens when you run `steam-runtime install` (the Steam client starts;
+  sign in there, including Steam Guard). The login persists in the master prefix.
+- **Later launches** (`play --steam` in in-Wine mode) start that already-signed-in client
+  silently (`-silent`) — no per-launch login.
+- **When the session expires** (or to switch accounts), run `aurelia steam-runtime login` — it
+  restarts the client with its UI so you can sign in again. `install` is not the right command
+  for this (it's for a missing install), and `repair` is destructive (it reinstalls).
+
+The in-Wine client must be signed into an account that **owns/can access the game**, or the
+DRM/Steamworks handshake won't pass. That account is independent of the one `aurelia login`
+uses, though it's normally the same person.
 
 ```bash
 aurelia steam-runtime status

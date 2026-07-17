@@ -225,6 +225,29 @@ pub(crate) async fn cmd_steam_runtime_repair(json: bool) -> Result<()> {
     Ok(())
 }
 
+/// `steam-runtime login`: (re-)start the in-Wine Steam client interactively so the
+/// user can sign in again (expired session, or switching accounts) without a reinstall.
+pub(crate) async fn cmd_steam_runtime_login(json: bool) -> Result<()> {
+    let config = load_launcher_config().await?;
+    if config.steam_runtime_runner.as_os_str().is_empty() {
+        bail!("{}", aurelia::core::utils::steam_runtime_runner_unset_msg("signing in"));
+    }
+    aurelia::launch::relogin_master_steam(&config).await?;
+    let steam_cfg = aurelia::core::utils::get_master_steam_config();
+    if json {
+        print_json(&serde_json::json!({
+            "status": "started",
+            "wine_prefix": steam_cfg.wine_prefix,
+        }));
+    } else {
+        cli_println!("Started the Windows Steam client for the master runtime.");
+        cli_println!("Sign in (username/password + Steam Guard) in the Steam window that appears.");
+        cli_println!("The login is saved in the master prefix and reused by `play --steam`.");
+        cli_println!("You can close Steam once it shows you as signed in.");
+    }
+    Ok(())
+}
+
 /// `steam-runtime status`: report the resolved master prefix and configuration.
 pub(crate) async fn cmd_steam_runtime_status(json: bool) -> Result<()> {
     let config = load_launcher_config().await?;

@@ -259,6 +259,38 @@ pub async fn repair_master_steam(config: &LauncherConfig) -> Result<()> {
     install_master_steam(config).await
 }
 
+/// (Re-)start the master Steam client **interactively** so the user can sign in —
+/// e.g. after the in-prefix Steam session expired. Unlike a game launch (which starts
+/// Steam `-silent`), this brings up the client UI. Any Steam already running in the
+/// master prefix is stopped first so a real login window appears instead of the
+/// request re-attaching to a silent background instance.
+///
+/// The in-Wine Steam client keeps its **own** login state in the master prefix,
+/// independent of `aurelia login`; this is how you refresh it without reinstalling.
+pub async fn relogin_master_steam(config: &LauncherConfig) -> Result<()> {
+    let base_dir = config_dir()?;
+    let steam_cfg = crate::core::utils::get_master_steam_config();
+
+    let steam_exe = steam_cfg.steam_exe.clone().ok_or_else(|| {
+        anyhow!(
+            "the Windows Steam runtime is not installed yet (no steam.exe under {}). \
+             Run `aurelia steam-runtime install` first.",
+            steam_cfg.wine_prefix.display()
+        )
+    })?;
+
+    let runner_name = config.steam_runtime_runner.to_string_lossy();
+    let library_root = PathBuf::from(&config.steam_library_path);
+    let wine = crate::core::utils::resolve_steam_runtime_wine(&runner_name, &library_root)?;
+
+    // Stop any running (typically `-silent`) in-prefix Steam so the login UI opens.
+    SteamClient::kill_steam_in_prefix(&steam_cfg.wine_prefix);
+    #[cfg(unix)]
+    SteamClient::kill_wine_processes_in_prefix(&steam_cfg.wine_prefix, true);
+
+    launch_master_steam(&wine, &steam_exe, &steam_cfg, &base_dir)
+}
+
 /// True when `path` looks like a real Windows executable.
 ///
 /// PE binaries open with the `MZ` DOS header. The previous code only checked
