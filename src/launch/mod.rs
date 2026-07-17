@@ -66,6 +66,17 @@ async fn run_steam_installer(
     let setup_exe = runtimes_dir.join("SteamSetup.exe");
     ensure_steam_setup(&setup_exe).await?;
 
+    // Create the WINEPREFIX ourselves before invoking the installer. On a fresh
+    // install the `pfx` layout points WINEPREFIX at `root_dir/pfx`, whose parent
+    // does not exist yet; SteamSetup.exe then ran against a missing prefix and users
+    // had to `mkdir -p .../master_steam_prefix/pfx` by hand first (issue #2).
+    std::fs::create_dir_all(&steam_cfg.wine_prefix).with_context(|| {
+        format!(
+            "Failed to create master Steam prefix at {}",
+            steam_cfg.wine_prefix.display()
+        )
+    })?;
+
     let mut cmd = Command::new(wine);
     cmd.arg(&setup_exe);
     // `/S` is the NSIS silent-install switch. Without it SteamSetup.exe opens its
