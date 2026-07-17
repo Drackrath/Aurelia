@@ -1099,7 +1099,9 @@ fn resolve_proton_required(ctx: &LaunchContext) -> std::result::Result<&str, Lau
 /// Background Steam must never be launched through the game runner's `proton run`
 /// protonfixes wrapper — it needs a plain wine so `steam.exe` runs as an ordinary
 /// Windows process. Resolution order:
-///   1. The explicitly configured `steam_runtime_runner` (validated as bare wine).
+///   1. The explicitly configured `steam_runtime_runner`, resolved to its bare wine
+///      binary — a Proton tree is accepted and its bundled `files/bin/wine64` is used
+///      (NOT `proton run`), exactly as `steam-runtime install` resolves it.
 ///   2. A wine-tkg / plain-Wine runtime (based on the game runner when it already is
 ///      one).
 ///   3. If the only available runtime is a Proton tree, its bundled bare
@@ -1110,29 +1112,28 @@ fn resolve_background_steam_command(
     ctx: &LaunchContext,
     library_root: &Path,
 ) -> std::result::Result<Command, LaunchError> {
-    // 1. Prefer the explicitly configured Steam-runtime runner.
+    // 1. Prefer the explicitly configured Steam-runtime runner. Resolve it to the bare
+    //    wine binary the same way `steam-runtime install` does: this accepts a Proton
+    //    tree and uses the bare wine bundled inside it (`files/bin/wine64`), rather than
+    //    rejecting Proton or invoking the `proton run` wrapper.
     let configured = &ctx.launcher_config.steam_runtime_runner;
     if !configured.as_os_str().is_empty() {
         let name = configured.to_string_lossy();
-        let resolved = crate::core::utils::resolve_runner(&name, library_root);
-        crate::core::utils::validate_steam_runtime_runner_path(&resolved).map_err(|e| {
-            LaunchError::new(
-                LaunchErrorKind::Runner,
-                format!(
-                    "configured steam_runtime_runner '{}' is not a usable bare-wine runner for background Steam",
-                    resolved.display()
-                ),
-            )
-            .with_source(e)
-        })?;
-        tracing::info!("Background Steam runner: configured steam_runtime_runner {}", resolved.display());
-        return crate::core::utils::build_runner_command(&resolved).map_err(|e| {
-            LaunchError::new(
-                LaunchErrorKind::Runner,
-                format!("Invalid steam_runtime_runner path: {}", resolved.display()),
-            )
-            .with_source(e)
-        });
+        let bare_wine = crate::core::utils::resolve_steam_runtime_wine(&name, library_root)
+            .map_err(|e| {
+                LaunchError::new(
+                    LaunchErrorKind::Runner,
+                    format!(
+                        "configured steam_runtime_runner '{name}' could not be resolved to a bare wine for background Steam"
+                    ),
+                )
+                .with_source(e)
+            })?;
+        tracing::info!(
+            "Background Steam runner: configured steam_runtime_runner '{name}' -> bare wine {}",
+            bare_wine.display()
+        );
+        return Ok(Command::new(bare_wine));
     }
 
     // 2/3. Otherwise resolve a bare-wine runtime from what is available. The game
