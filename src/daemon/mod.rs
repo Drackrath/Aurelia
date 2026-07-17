@@ -367,19 +367,36 @@ pub struct SessionStatus {
     pub authenticated: bool,
     pub account: Option<String>,
     pub steam_id: Option<u64>,
+    /// Whether a browser web token is stored (`login --web-token`) — the
+    /// web-surface commands work even when `authenticated` is false.
+    pub web_token: bool,
 }
 
 async fn status_from_slot(slot: &Slot) -> SessionStatus {
+    // Identity comes from the persisted session file, not only the live slot:
+    // a web-token-only sign-in (`login --web-token`) has no CM session to hold
+    // a client, but its account/SteamID must still be reported (drivers like
+    // Heroic use `--health` to show who is signed in).
+    let persisted = aurelia::core::config::load_session().await.ok();
+    let account = persisted.as_ref().and_then(|s| s.account_name.clone());
+    let persisted_steam_id = persisted.as_ref().and_then(|s| s.steam_id);
+    let web_token = persisted
+        .as_ref()
+        .is_some_and(|s| s.web_token.as_deref().is_some_and(|t| !t.is_empty()));
+
     match &slot.client {
         Some(client) => SessionStatus {
             authenticated: true,
-            account: aurelia::core::config::load_session()
-                .await
-                .ok()
-                .and_then(|s| s.account_name),
-            steam_id: client.steam_id(),
+            account,
+            steam_id: client.steam_id().or(persisted_steam_id),
+            web_token,
         },
-        None => SessionStatus::default(),
+        None => SessionStatus {
+            authenticated: false,
+            account,
+            steam_id: persisted_steam_id,
+            web_token,
+        },
     }
 }
 

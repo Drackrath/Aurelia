@@ -79,7 +79,19 @@ fn must_run_locally(cli: &Cli) -> bool {
             }
         );
 
+    // `login --web-token` only writes the session file — no CM connection — and
+    // drivers may deliver the token via the AURELIA_WEB_TOKEN env var (dodging
+    // argv-quoting pitfalls), which a pre-existing daemon process would not see.
+    let web_token_login = matches!(
+        cli.command,
+        Command::Login {
+            web_token: Some(_),
+            ..
+        }
+    );
+
     interactive_login
+        || web_token_login
         || matches!(
             cli.command,
             Command::Kill | Command::Daemon { command: Some(_), .. }

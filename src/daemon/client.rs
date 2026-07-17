@@ -58,6 +58,15 @@ async fn connect_or_spawn() -> Option<impl AsyncRead + AsyncWrite + Unpin + Send
         }
     }
 
+    // Never auto-spawn when the driver manages the daemon lifecycle itself
+    // (AURELIA_NO_SPAWN, set e.g. by Heroic): some driver spawn chains — like
+    // `powershell Start-Process -Wait` — wait on the whole descendant tree, so
+    // a daemon spawned from this client process would keep that wait blocked
+    // for the daemon's lifetime. Run the command locally instead.
+    if std::env::var_os("AURELIA_NO_SPAWN").is_some_and(|v| !v.is_empty()) {
+        return None;
+    }
+
     spawn_daemon().ok()?;
     for _ in 0..SPAWN_ATTEMPTS {
         tokio::time::sleep(SPAWN_WAIT).await;

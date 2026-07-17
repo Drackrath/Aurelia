@@ -60,8 +60,8 @@ pub(crate) enum Command {
         /// (inventory, wallet, market listings) without a client login: open
         /// https://steamcommunity.com/chat/clientjstoken in a signed-in browser
         /// (e.g. right after `login --openid`) and paste the JSON shown — as this
-        /// flag's value, or when prompted if the value is omitted. Web-only and
-        /// short-lived (~24h); it cannot replace a full login.
+        /// flag's value, via AURELIA_WEB_TOKEN, or when prompted if both are
+        /// omitted. Web-only and short-lived (~24h); it cannot replace a full login.
         #[arg(long, num_args = 0..=1, conflicts_with_all = ["username", "password", "guard", "qr", "code", "openid"])]
         web_token: Option<Option<String>>,
         /// Report the current session health (authenticated? which account?) without

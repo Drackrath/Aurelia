@@ -195,7 +195,15 @@ pub(crate) async fn cmd_login_openid(json: bool) -> Result<()> {
 /// listings, never CM commands, so it complements rather than replaces `login`.
 /// Refuses a token for a different account than the stored session.
 pub(crate) async fn cmd_login_web_token(pasted: Option<String>, json: bool) -> Result<()> {
-    let raw = match pasted.filter(|v| !v.trim().is_empty()) {
+    // Token sources, in order: the flag's value, the AURELIA_WEB_TOKEN env var
+    // (drivers use it to avoid shell-quoting the JSON on the command line —
+    // Windows spawn chains mangle embedded quotes), then prompt/stdin.
+    let env_token = || {
+        std::env::var("AURELIA_WEB_TOKEN")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+    };
+    let raw = match pasted.filter(|v| !v.trim().is_empty()).or_else(env_token) {
         Some(v) => v,
         None if json => {
             eprint_json_line(&serde_json::json!({
@@ -446,10 +454,18 @@ pub(crate) async fn cmd_login_health(json: bool) -> Result<()> {
         daemon::session_status().await
     } else {
         let client = restored_client().await?;
+        let session = load_session().await.ok();
         daemon::SessionStatus {
             authenticated: client.is_authenticated(),
-            account: load_session().await.ok().and_then(|s| s.account_name),
-            steam_id: client.steam_id(),
+            account: session.as_ref().and_then(|s| s.account_name.clone()),
+            // Fall back to the persisted SteamID so a web-token-only session
+            // (no live connection) still reports who is signed in.
+            steam_id: client
+                .steam_id()
+                .or(session.as_ref().and_then(|s| s.steam_id)),
+            web_token: session
+                .as_ref()
+                .is_some_and(|s| s.web_token.as_deref().is_some_and(|t| !t.is_empty())),
         }
     };
     report_session_status(&status, via_daemon, json);
@@ -477,6 +493,7 @@ pub(crate) fn report_session_status(status: &daemon::SessionStatus, via_daemon: 
             "logged_in": status.authenticated,
             "account": status.account,
             "steam_id": status.steam_id,
+            "web_token": status.web_token,
             "daemon": via_daemon,
         }));
     } else {
@@ -489,6 +506,9 @@ pub(crate) fn report_session_status(status: &daemon::SessionStatus, via_daemon: 
         }
         if let Some(steam_id) = status.steam_id {
             cli_println!("SteamID : {steam_id}");
+        }
+        if status.web_token {
+            cli_println!("Web     : web token stored (inventory/wallet/market available)");
         }
         cli_println!(
             "Daemon  : {}",

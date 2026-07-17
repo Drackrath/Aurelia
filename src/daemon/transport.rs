@@ -84,10 +84,21 @@ mod imp {
     }
 
     pub fn version_marker_path() -> std::path::PathBuf {
-        // A named pipe has no filesystem path, so keep the marker in the temp dir keyed
-        // by user (mirrors the pipe name).
-        let user = std::env::var("USERNAME").unwrap_or_else(|_| "default".to_string());
-        std::env::temp_dir().join(format!("aurelia-{user}.info"))
+        // A named pipe has no filesystem path, so keep the marker in the temp dir —
+        // keyed by the *endpoint name* (sanitized), so an AURELIA_DAEMON_SOCKET
+        // override gets its own isolated marker instead of sharing (and clobbering)
+        // the default daemon's identity.
+        let name: String = endpoint()
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '.' {
+                    c
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+        std::env::temp_dir().join(format!("{name}.info"))
     }
 
     pub struct Listener {

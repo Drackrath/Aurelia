@@ -262,9 +262,12 @@ front-end that drives the [`daemon`](#daemon):
 - **`aurelia login --health`** reports whether a session is currently authenticated, without
   performing a login. When a daemon is in use it reads the daemon's **shared session state**
   (no new logon); standalone it does a one-off live restore check. Output (`--json`):
-  `{ "logged_in", "account", "steam_id", "daemon" }` — `daemon` indicating whether the answer
-  came from the shared daemon session. A poller can use this to decide whether `login` is
-  needed.
+  `{ "logged_in", "account", "steam_id", "web_token", "daemon" }` — `daemon` indicating
+  whether the answer came from the shared daemon session, `web_token` whether a browser web
+  token is stored ([`--web-token`](#web-only-access---web-token)). `account`/`steam_id` are
+  reported from the persisted session even when `logged_in` is false — e.g. a web-token-only
+  sign-in — so a driver can show who is signed in. A poller can use this to decide whether
+  `login` is needed.
 - **`aurelia login --reconnect`** tears down the daemon's shared session and re-establishes it
   from the stored token — use it if the live connection dropped (e.g. after a network blip)
   and commands start failing with auth errors. It returns the same status object as
@@ -296,10 +299,14 @@ NDJSON lines on stdout/stdin:
 - **OpenID:** `aurelia login --openid --json` emits `{"event":"openid_challenge","url":"https://steamcommunity.com/openid/login?…"}`;
   the driver opens the URL in a browser (Aurelia does not auto-open one in `--json` mode)
   and waits while the user signs in on the Steam page.
-- **Web token:** `aurelia login --web-token --json` (no value) emits
-  `{"event":"web_token_required","url":"https://steamcommunity.com/chat/clientjstoken"}`,
-  then reads the `clientjstoken` JSON as **one line from stdin** — or skip the exchange
-  entirely by passing the JSON as the flag's value.
+- **Web token:** `aurelia login --web-token --json` (no value) first checks the
+  `AURELIA_WEB_TOKEN` environment variable for the `clientjstoken` JSON — the recommended
+  driver channel, immune to shell/argv quoting of the embedded JSON quotes. Without it, the
+  command emits
+  `{"event":"web_token_required","url":"https://steamcommunity.com/chat/clientjstoken"}`
+  and reads the JSON as **one line from stdin**; passing the JSON as the flag's value also
+  works where quoting is under control. `--web-token` always runs locally (never through
+  the daemon), so the env var is reliably visible.
 - **Result:** password and QR logins end with `{"logged_in":true,"account":"<name>"}` on
   success. `--openid` ends with
   `{"openid_verified":true,"steam_id":…,"matches_stored_session":true|false|null,"logged_in":false}` —
