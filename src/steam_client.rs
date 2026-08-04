@@ -537,6 +537,81 @@ fn apply_dlc_disabled(content: &str, dlc_appid: u32, disabled: bool) -> String {
     content.to_string()
 }
 
+/// `SizeOnDisk` from an appmanifest, when present.
+pub(crate) fn acf_size_on_disk(content: &str) -> Option<u64> {
+    static RE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r#"(?i)"SizeOnDisk"\s*"(\d+)""#).unwrap());
+    RE.captures(content).and_then(|caps| caps[1].parse::<u64>().ok())
+}
+
+/// Sum of the per-depot `"size"` values inside an appmanifest's
+/// `InstalledDepots` block. Scoped to that block so `SharedDepots` (or any other
+/// block carrying a `size` key) is not counted.
+pub(crate) fn acf_installed_depots_size(content: &str) -> u64 {
+    let Some(key_pos) = content.find("\"InstalledDepots\"") else {
+        return 0;
+    };
+    let Some(open_rel) = content[key_pos..].find('{') else {
+        return 0;
+    };
+    let start = key_pos + open_rel;
+    let mut depth = 0usize;
+    let mut end = content.len();
+    for (i, ch) in content[start..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = start + i;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    static RE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r#"(?i)"size"\s*"(\d+)""#).unwrap());
+    RE.captures_iter(&content[start..end])
+        .filter_map(|caps| caps[1].parse::<u64>().ok())
+        .sum()
+}
+
+/// Ensure an appmanifest carries a usable `SizeOnDisk`, synthesizing it from the
+/// sum of its `InstalledDepots` sizes when it is missing or zero (orphaned ACFs
+/// — e.g. hand-copied installs — lack it, and the in-Wine Steam client's install
+/// gate distrusts such manifests). Returns the repaired manifest text (only when
+/// a repair was actually made) and the effective size.
+pub(crate) fn ensure_acf_size_on_disk(content: &str) -> (Option<String>, u64) {
+    if let Some(size) = acf_size_on_disk(content) {
+        if size > 0 {
+            return (None, size);
+        }
+    }
+    let sum = acf_installed_depots_size(content);
+    if sum == 0 {
+        return (None, 0);
+    }
+    static RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r#"(?i)"SizeOnDisk"(\s*)"(\d*)""#).unwrap()
+    });
+    let updated = if RE.is_match(content) {
+        RE.replace(content, |caps: &regex::Captures| {
+            format!("\"SizeOnDisk\"{}\"{sum}\"", &caps[1])
+        })
+        .into_owned()
+    } else {
+        // No SizeOnDisk key at all — insert one at the top of the AppState block
+        // (same insert style as apply_dlc_disabled above).
+        let mut out = content.to_string();
+        if let Some(pos) = out.find('{') {
+            out.insert_str(pos + 1, &format!("\n\t\"SizeOnDisk\"\t\t\"{sum}\""));
+        }
+        out
+    };
+    (Some(updated), sum)
+}
+
 /// Collect the non-empty display names from a list of `CreatorHomeLink`s
 /// (developers / publishers / franchises in a `StoreItem.basic_info`).
 fn creator_names(

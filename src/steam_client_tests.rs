@@ -295,3 +295,55 @@ fn parses_ufs_savefile_rules() {
     assert_eq!(specs[1].pattern, "*.sav");
     assert!(!specs[1].recursive); // absent recursive defaults to false
 }
+
+const DEPOTS_ACF: &str = "\"AppState\"\n{\n\t\"appid\"\t\t\"620\"\n\t\"InstalledDepots\"\n\t{\n\t\t\"620\"\n\t\t{\n\t\t\t\"manifest\"\t\t\"123\"\n\t\t\t\"size\"\t\t\"100\"\n\t\t}\n\t\t\"621\"\n\t\t{\n\t\t\t\"manifest\"\t\t\"456\"\n\t\t\t\"size\"\t\t\"250\"\n\t\t}\n\t}\n\t\"SharedDepots\"\n\t{\n\t\t\"228990\"\n\t\t{\n\t\t\t\"size\"\t\t\"999999\"\n\t\t}\n\t}\n}\n";
+
+#[test]
+fn installed_depots_size_scoped_to_its_block() {
+    // SharedDepots' size must NOT be counted.
+    assert_eq!(acf_installed_depots_size(DEPOTS_ACF), 350);
+    assert_eq!(acf_installed_depots_size("\"AppState\"\n{\n}\n"), 0);
+}
+
+#[test]
+fn size_on_disk_kept_when_present_and_nonzero() {
+    let acf = "\"AppState\"\n{\n\t\"SizeOnDisk\"\t\t\"9000\"\n}\n";
+    assert_eq!(acf_size_on_disk(acf), Some(9000));
+    let (updated, size) = ensure_acf_size_on_disk(acf);
+    assert!(updated.is_none(), "a usable SizeOnDisk needs no repair");
+    assert_eq!(size, 9000);
+}
+
+#[test]
+fn size_on_disk_synthesized_from_installed_depots_when_missing() {
+    let (updated, size) = ensure_acf_size_on_disk(DEPOTS_ACF);
+    assert_eq!(size, 350);
+    let updated = updated.expect("missing SizeOnDisk must be synthesized");
+    assert!(updated.contains("\"SizeOnDisk\"\t\t\"350\""));
+    // The repaired text round-trips.
+    assert_eq!(acf_size_on_disk(&updated), Some(350));
+    let (again, size_again) = ensure_acf_size_on_disk(&updated);
+    assert!(again.is_none());
+    assert_eq!(size_again, 350);
+}
+
+#[test]
+fn zero_size_on_disk_is_repaired_in_place() {
+    let acf = DEPOTS_ACF.replace(
+        "\t\"InstalledDepots\"",
+        "\t\"SizeOnDisk\"\t\t\"0\"\n\t\"InstalledDepots\"",
+    );
+    let (updated, size) = ensure_acf_size_on_disk(&acf);
+    assert_eq!(size, 350);
+    let updated = updated.expect("zero SizeOnDisk must be repaired");
+    assert!(updated.contains("\"SizeOnDisk\"\t\t\"350\""));
+    assert!(!updated.contains("\"SizeOnDisk\"\t\t\"0\""));
+}
+
+#[test]
+fn nothing_to_synthesize_without_depots() {
+    // No SizeOnDisk and no InstalledDepots: report 0, change nothing.
+    let (updated, size) = ensure_acf_size_on_disk("\"AppState\"\n{\n\t\"appid\"\t\t\"1\"\n}\n");
+    assert!(updated.is_none());
+    assert_eq!(size, 0);
+}

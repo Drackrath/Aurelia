@@ -54,6 +54,64 @@ fn missing_source_entry_still_adds_to_destination() {
 }
 
 #[test]
+fn to_wine_path_maps_unix_paths_to_z_drive() {
+    assert_eq!(
+        to_wine_path(Path::new("/home/user/SteamLibrary")),
+        "Z:\\home\\user\\SteamLibrary"
+    );
+    // Paths already carrying a drive letter are only separator-normalised.
+    assert_eq!(to_wine_path(Path::new("D:/SteamLibrary")), "D:\\SteamLibrary");
+}
+
+#[test]
+fn upsert_appends_new_library_entry_with_apps() {
+    let out = upsert_libraryfolders_library(
+        SAMPLE,
+        "Z:\\home\\user\\SteamLibrary",
+        &[(620, 350), (440, 9000)],
+    );
+    // Existing entries untouched.
+    assert!(out.contains("C:\\\\Program Files (x86)\\\\Steam"));
+    assert!(out.contains("D:\\\\SteamLibrary"));
+    // New entry under the next free key, path VDF-escaped, apps indexed.
+    assert!(out.contains("\"2\""), "next free numeric key is 2:\n{out}");
+    assert!(out.contains("\"Z:\\\\home\\\\user\\\\SteamLibrary\""));
+    assert!(out.contains("\"620\"\t\t\"350\""));
+    assert!(out.contains("\"440\"\t\t\"9000\""));
+    // Root block still closes after the insertion.
+    assert!(out.trim_end().ends_with('}'));
+}
+
+#[test]
+fn upsert_replaces_existing_entry_in_place() {
+    let once = upsert_libraryfolders_library(SAMPLE, "Z:\\lib", &[(620, 1)]);
+    let twice = upsert_libraryfolders_library(&once, "Z:\\lib", &[(620, 2), (730, 3)]);
+    assert_eq!(twice.matches("\"Z:\\\\lib\"").count(), 1, "no duplicate entry:\n{twice}");
+    assert!(twice.contains("\"620\"\t\t\"2\""));
+    assert!(twice.contains("\"730\"\t\t\"3\""));
+    assert!(!twice.contains("\"620\"\t\t\"1\""));
+}
+
+#[test]
+fn upsert_rebuilds_when_no_root_block_found() {
+    for garbage in ["", "not a vdf at all", "\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path"] {
+        let out = upsert_libraryfolders_library(garbage, "Z:\\lib", &[(620, 1)]);
+        assert!(out.starts_with("\"libraryfolders\""), "rebuilt from template:\n{out}");
+        assert!(out.contains("\"Z:\\\\lib\""));
+        assert!(out.contains("\"620\"\t\t\"1\""));
+        assert!(libraryfolders_registers_path(&out, "Z:\\lib"));
+    }
+}
+
+#[test]
+fn registers_path_detection() {
+    assert!(libraryfolders_registers_path(SAMPLE, "D:\\SteamLibrary"));
+    // Trailing separator and escaping differences are normalised away.
+    assert!(libraryfolders_registers_path(SAMPLE, "D:\\SteamLibrary\\"));
+    assert!(!libraryfolders_registers_path(SAMPLE, "Z:\\home\\user\\SteamLibrary"));
+}
+
+#[test]
 fn move_dir_copies_all_files() {
     let tmp = tempfile::tempdir().unwrap();
     let src = tmp.path().join("src");

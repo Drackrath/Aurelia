@@ -227,6 +227,166 @@ pub fn update_libraryfolders_apps(
     Some(result)
 }
 
+/// Minimal well-formed `libraryfolders.vdf` used to rebuild a file whose root
+/// block cannot be located (missing or malformed beyond line-level repair).
+const EMPTY_LIBRARYFOLDERS: &str = "\"libraryfolders\"\n{\n}\n";
+
+/// The Wine view of a native (host) absolute path: Wine maps the whole host
+/// filesystem at drive `Z:` by default, so `/home/x/SteamLibrary` becomes
+/// `Z:\home\x\SteamLibrary` — the only form the in-Wine Steam client can open.
+/// Paths already carrying a drive letter are only separator-normalised.
+pub fn to_wine_path(native: &Path) -> String {
+    let s = native.to_string_lossy().replace('/', "\\");
+    if s.len() >= 2 && s.as_bytes()[1] == b':' {
+        s
+    } else {
+        format!("Z:{s}")
+    }
+}
+
+/// Escape a path for use as a VDF string value (backslashes are doubled).
+fn vdf_escape(path: &str) -> String {
+    path.replace('\\', "\\\\")
+}
+
+/// Whether `libraryfolders.vdf` text already registers `lib_path` as a library
+/// folder (compared with the same normalisation the editors use).
+pub fn libraryfolders_registers_path(vdf: &str, lib_path: &str) -> bool {
+    let target = normalize_path(lib_path);
+    vdf.lines().any(|line| {
+        parse_kv(line.trim(), "path").is_some_and(|p| normalize_path(&p) == target)
+    })
+}
+
+/// Register (or refresh) a library-folder entry for `lib_path` in
+/// `libraryfolders.vdf` text, carrying an `apps` index of `(appid, size)` pairs.
+///
+/// If an entry with the same (normalised) path already exists it is replaced in
+/// place; otherwise a new entry is appended under the next free numeric key.
+/// Every other line is copied through unchanged. When the file has no
+/// recognisable root block at all (missing/corrupt), the entry is written into a
+/// fresh minimal file instead of appending to garbage the client would reject
+/// wholesale.
+pub fn upsert_libraryfolders_library(vdf: &str, lib_path: &str, apps: &[(u32, u64)]) -> String {
+    match try_upsert_library(vdf, lib_path, apps) {
+        Some(out) => out,
+        None => try_upsert_library(EMPTY_LIBRARYFOLDERS, lib_path, apps)
+            .expect("the empty libraryfolders template is well-formed"),
+    }
+}
+
+/// Core of [`upsert_libraryfolders_library`]; `None` when no root block closing
+/// brace can be found (the caller then rebuilds from the empty template).
+fn try_upsert_library(vdf: &str, lib_path: &str, apps: &[(u32, u64)]) -> Option<String> {
+    let newline = if vdf.contains("\r\n") { "\r\n" } else { "\n" };
+    let target = normalize_path(lib_path);
+    let lines: Vec<&str> = vdf.lines().collect();
+
+    let mut depth: usize = 0;
+    // (start line, key, normalised path) of the top-level entry being scanned.
+    let mut cur: Option<(usize, String, Option<String>)> = None;
+    // (start line, end line, key) of the entry matching `lib_path`, if any.
+    let mut replace: Option<(usize, usize, String)> = None;
+    let mut next_key: u32 = 0;
+    let mut root_close: Option<usize> = None;
+
+    for (idx, raw) in lines.iter().enumerate() {
+        let trimmed = raw.trim();
+        if depth == 1 && cur.is_none() {
+            if let Some(key) = lone_quoted_key(trimmed) {
+                if let Ok(n) = key.parse::<u32>() {
+                    next_key = next_key.max(n + 1);
+                }
+                cur = Some((idx, key, None));
+                continue;
+            }
+        }
+        if let Some((_, _, path_slot)) = cur.as_mut() {
+            if path_slot.is_none() {
+                if let Some(v) = parse_kv(trimmed, "path") {
+                    *path_slot = Some(normalize_path(&v));
+                }
+            }
+        }
+        if trimmed == "{" {
+            depth += 1;
+        } else if trimmed == "}" {
+            depth = depth.saturating_sub(1);
+            if depth == 1 {
+                if let Some((start, key, path)) = cur.take() {
+                    if replace.is_none() && path.as_deref() == Some(target.as_str()) {
+                        replace = Some((start, idx, key));
+                    }
+                }
+            }
+            if depth == 0 && root_close.is_none() {
+                root_close = Some(idx);
+            }
+        }
+    }
+
+    let key = replace
+        .as_ref()
+        .map(|(_, _, k)| k.clone())
+        .unwrap_or_else(|| next_key.to_string());
+    let rendered = render_library_entry(&key, lib_path, apps, newline);
+
+    let mut out: Vec<String> = Vec::new();
+    if let Some((start, end, _)) = replace {
+        for (idx, raw) in lines.iter().enumerate() {
+            if idx == start {
+                out.push(rendered.clone());
+            }
+            if (start..=end).contains(&idx) {
+                continue;
+            }
+            out.push((*raw).to_string());
+        }
+    } else {
+        let close = root_close?;
+        for (idx, raw) in lines.iter().enumerate() {
+            if idx == close {
+                out.push(rendered.clone());
+            }
+            out.push((*raw).to_string());
+        }
+    }
+
+    let mut result = out.join(newline);
+    if vdf.ends_with('\n') || vdf.is_empty() {
+        result.push_str(newline);
+    }
+    Some(result)
+}
+
+/// Render one library-folder entry block (Steam's own layout and indentation).
+fn render_library_entry(key: &str, lib_path: &str, apps: &[(u32, u64)], newline: &str) -> String {
+    let escaped = vdf_escape(lib_path);
+    let mut s = String::new();
+    s.push_str(&format!("\t\"{key}\"{newline}"));
+    s.push_str(&format!("\t{{{newline}"));
+    s.push_str(&format!("\t\t\"path\"\t\t\"{escaped}\"{newline}"));
+    s.push_str(&format!("\t\t\"label\"\t\t\"\"{newline}"));
+    s.push_str(&format!("\t\t\"apps\"{newline}"));
+    s.push_str(&format!("\t\t{{{newline}"));
+    for (appid, size) in apps {
+        s.push_str(&format!("\t\t\t\"{appid}\"\t\t\"{size}\"{newline}"));
+    }
+    s.push_str(&format!("\t\t}}{newline}"));
+    s.push_str("\t}");
+    s
+}
+
+/// A line consisting of a single quoted token (a VDF block key), e.g. `"0"`.
+fn lone_quoted_key(line: &str) -> Option<String> {
+    if !line.starts_with('"') {
+        return None;
+    }
+    let mut parts = line.split('"').filter(|s| !s.trim().is_empty());
+    let key = parts.next()?.to_string();
+    parts.next().is_none().then_some(key)
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Folder {
     From,
