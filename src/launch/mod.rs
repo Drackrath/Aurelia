@@ -8,6 +8,10 @@ pub mod launch_script;
 #[cfg(test)]
 mod verification_tests;
 
+#[cfg(test)]
+#[path = "registration_tests.rs"]
+mod registration_tests;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use anyhow::{Result, Context, anyhow};
@@ -54,6 +58,17 @@ pub async fn install_master_steam(config: &LauncherConfig) -> Result<()> {
     // Bare-wine prefixes miss the runner's dxvk/vkd3d PE libs the Steam CEF UI
     // needs (see ensure_steam_runtime_prefix_libs) — sync them before launching.
     crate::core::utils::ensure_steam_runtime_prefix_libs(&wine, &steam_cfg.wine_prefix);
+
+    // Register the native library BEFORE starting the client: it must be written
+    // while the client is down (it rewrites libraryfolders.vdf on exit). Non-fatal —
+    // the install gate only bites strict-Steamworks titles, and the manual command
+    // can retry any time.
+    if let Err(e) = register_native_library_in_master_steam(config).await {
+        tracing::warn!(
+            "could not register the native Steam library in the in-Wine client: {e}; \
+             retry later with `aurelia steam-runtime register-library`"
+        );
+    }
 
     launch_master_steam(&wine, &steam_exe, &steam_cfg, &base_dir)
 }
@@ -461,6 +476,222 @@ pub async fn launch_game_via_master_steam(
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
     Ok(())
+}
+
+/// Outcome of [`register_native_library_in_master_steam`], for CLI reporting.
+#[derive(Debug, serde::Serialize)]
+pub struct LibraryRegistration {
+    /// The native library as the in-Wine client sees it (`Z:\…`).
+    pub wine_path: String,
+    /// How many apps were indexed into the entry's `apps` map.
+    pub apps: usize,
+    /// Every `libraryfolders.vdf` the entry was written to.
+    pub updated_files: Vec<PathBuf>,
+    /// Whether an in-Wine Steam client had to be stopped to write the files.
+    pub steam_was_running: bool,
+}
+
+/// The native Linux Steam library root (the directory holding `steamapps/`),
+/// resolved from the configured `steam_library_path` — which may point either at
+/// the library itself or at a parent holding a `Steam/` dir, mirroring
+/// `scan_installed_app_info`.
+pub fn native_library_root(config: &LauncherConfig) -> Result<PathBuf> {
+    let root = PathBuf::from(&config.steam_library_path);
+    if root.join("steamapps").is_dir() {
+        return Ok(root);
+    }
+    let nested = root.join("Steam");
+    if nested.join("steamapps").is_dir() {
+        return Ok(nested);
+    }
+    Err(anyhow!(
+        "no Steam library found at {} (no steamapps/ directory); check the configured \
+         steam_library_path",
+        root.display()
+    ))
+}
+
+/// Login preflight for the in-Wine Steam client: it can only answer Steamworks
+/// *ownership* checks when a user is actually signed in — which leaves both
+/// `config/loginusers.vdf` and at least one machine-bound `ssfn*` sentry file in
+/// the Steam dir root. An anonymous client fails those checks and strict titles
+/// die ~2 s after launch with exit code 53. (Never copy the native client's
+/// `ssfn*` here: sentries are machine-bound and trip a Steam Guard email.)
+pub fn master_client_logged_in(steam_dir: &Path) -> bool {
+    if !steam_dir.join("config").join("loginusers.vdf").is_file() {
+        return false;
+    }
+    std::fs::read_dir(steam_dir)
+        .map(|entries| {
+            entries.flatten().any(|e| {
+                e.file_name().to_string_lossy().starts_with("ssfn") && e.path().is_file()
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// The candidate `libraryfolders.vdf` locations for the client at `steam_dir`:
+/// modern clients keep the authoritative copy in `config/`, older ones in
+/// `steamapps/`. Registration writes both so every client version sees it.
+fn master_libraryfolders_paths(steam_dir: &Path) -> [PathBuf; 2] {
+    [
+        steam_dir.join("config").join("libraryfolders.vdf"),
+        steam_dir.join("steamapps").join("libraryfolders.vdf"),
+    ]
+}
+
+/// Whether the client at `steam_dir` already registers `native_root` (as its
+/// wine `Z:\…` path) in any of its `libraryfolders.vdf` files.
+pub fn master_library_registered(steam_dir: &Path, native_root: &Path) -> bool {
+    let wine_path = crate::library::relocate::to_wine_path(native_root);
+    master_libraryfolders_paths(steam_dir).iter().any(|path| {
+        std::fs::read_to_string(path)
+            .map(|text| crate::library::relocate::libraryfolders_registers_path(&text, &wine_path))
+            .unwrap_or(false)
+    })
+}
+
+/// Default content for a master-client `libraryfolders.vdf` that does not exist
+/// yet: the client's own `C:` install as entry 0, so its in-prefix installs stay
+/// indexed once it adopts the file.
+const MASTER_LIBRARYFOLDERS_TEMPLATE: &str = "\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\t\"C:\\\\Program Files (x86)\\\\Steam\"\n\t\t\"label\"\t\t\"\"\n\t\t\"apps\"\n\t\t{\n\t\t}\n\t}\n}\n";
+
+/// Scan a native library's `steamapps/` for appmanifests and build the
+/// `(appid, size)` index for the registration entry. ACFs missing `SizeOnDisk`
+/// are repaired in place (best-effort) with the sum of their `InstalledDepots`
+/// sizes — see `ensure_acf_size_on_disk`.
+fn collect_native_apps(steamapps: &Path) -> Vec<(u32, u64)> {
+    let mut apps = Vec::new();
+    let Ok(entries) = std::fs::read_dir(steamapps) else {
+        return apps;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(appid) = name
+            .strip_prefix("appmanifest_")
+            .and_then(|s| s.strip_suffix(".acf"))
+            .and_then(|s| s.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let path = entry.path();
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            tracing::warn!("skipping unreadable appmanifest {}", path.display());
+            continue;
+        };
+        let (repaired, size) = crate::steam_client::ensure_acf_size_on_disk(&text);
+        if let Some(fixed) = repaired {
+            if let Err(e) = std::fs::write(&path, fixed) {
+                tracing::warn!(
+                    "could not repair SizeOnDisk in {} (registering it anyway): {e}",
+                    path.display()
+                );
+            }
+        }
+        apps.push((appid, size));
+    }
+    apps.sort_by_key(|&(id, _)| id);
+    apps
+}
+
+/// Write the library registration into every candidate `libraryfolders.vdf`
+/// under `steam_dir`, seeding missing files from the default template. The
+/// caller must have stopped the in-Wine client first — it rewrites these files
+/// on exit, clobbering external edits (the same constraint Aurelia documents
+/// for the native client in `commands/common.rs`).
+fn write_library_registration(
+    steam_dir: &Path,
+    wine_path: &str,
+    apps: &[(u32, u64)],
+) -> Result<Vec<PathBuf>> {
+    let mut written = Vec::new();
+    for path in master_libraryfolders_paths(steam_dir) {
+        let current = std::fs::read_to_string(&path)
+            .unwrap_or_else(|_| MASTER_LIBRARYFOLDERS_TEMPLATE.to_string());
+        let updated =
+            crate::library::relocate::upsert_libraryfolders_library(&current, wine_path, apps);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed creating {}", parent.display()))?;
+        }
+        std::fs::write(&path, updated)
+            .with_context(|| format!("failed writing {}", path.display()))?;
+        written.push(path);
+    }
+    Ok(written)
+}
+
+/// Register Aurelia's native Linux Steam library inside the master-prefix
+/// (in-Wine) Steam client's `libraryfolders.vdf` — the client's *install gate*:
+/// strict-Steamworks titles exit with code 53 unless the client's own library
+/// index knows the game. The library is registered as a wine path (`Z:\…`) with
+/// an `apps` map built from its appmanifests.
+///
+/// Stops any in-Wine Steam first and requires it to stay down for the write
+/// (the client rewrites `libraryfolders.vdf` on exit). It is not restarted —
+/// the next launch or `steam-runtime login` starts it again.
+pub async fn register_native_library_in_master_steam(
+    config: &LauncherConfig,
+) -> Result<LibraryRegistration> {
+    let steam_cfg = crate::core::utils::get_master_steam_config();
+    let steam_exe = steam_cfg.steam_exe.clone().ok_or_else(|| {
+        anyhow!(
+            "the Windows Steam runtime is not installed (no steam.exe under {}). \
+             Run `aurelia steam-runtime install` first.",
+            steam_cfg.wine_prefix.display()
+        )
+    })?;
+    let steam_dir = steam_exe
+        .parent()
+        .ok_or_else(|| anyhow!("steam.exe has no parent directory"))?
+        .to_path_buf();
+
+    let native_root = native_library_root(config)?;
+
+    let steam_was_running = SteamClient::is_steam_running_in_prefix(&steam_cfg.wine_prefix);
+    if steam_was_running {
+        tracing::info!("stopping the in-Wine Steam client before writing libraryfolders.vdf");
+        SteamClient::kill_steam_in_prefix(&steam_cfg.wine_prefix);
+        let mut stopped = false;
+        for i in 0..20 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            if !SteamClient::is_steam_running_in_prefix(&steam_cfg.wine_prefix) {
+                stopped = true;
+                break;
+            }
+            // Half-way escalation: sweep the whole prefix (SIGKILL), as repair does.
+            if i == 10 {
+                #[cfg(unix)]
+                SteamClient::kill_wine_processes_in_prefix(&steam_cfg.wine_prefix, true);
+            }
+        }
+        if !stopped {
+            return Err(anyhow!(
+                "could not stop the in-Wine Steam client in {} — it would clobber the \
+                 registration on exit. Stop it with `aurelia steam-runtime stop` and retry.",
+                steam_cfg.wine_prefix.display()
+            ));
+        }
+        // Grace for the exiting client to finish rewriting its config files, so we
+        // read the final state rather than racing its shutdown writes.
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+
+    let apps = collect_native_apps(&native_root.join("steamapps"));
+    let wine_path = crate::library::relocate::to_wine_path(&native_root);
+    let updated_files = write_library_registration(&steam_dir, &wine_path, &apps)?;
+
+    tracing::info!(
+        "registered native library {} ({} apps) in the in-Wine Steam client",
+        wine_path,
+        apps.len()
+    );
+    Ok(LibraryRegistration {
+        wine_path,
+        apps: apps.len(),
+        updated_files,
+        steam_was_running,
+    })
 }
 
 /// True when `path` looks like a real Windows executable.

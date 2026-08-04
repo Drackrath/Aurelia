@@ -290,6 +290,37 @@ pub(crate) async fn cmd_steam_runtime_stop(json: bool) -> Result<()> {
     Ok(())
 }
 
+/// `steam-runtime register-library`: register the native Linux Steam library in the
+/// in-Wine Steam client's libraryfolders.vdf (install gate for strict-Steamworks
+/// games). Stops the in-Wine client first — it rewrites the file on exit.
+pub(crate) async fn cmd_steam_runtime_register_library(json: bool) -> Result<()> {
+    let config = load_launcher_config().await?;
+    let reg = aurelia::launch::register_native_library_in_master_steam(&config).await?;
+    if json {
+        print_json(&serde_json::json!({
+            "status": "registered",
+            "wine_path": reg.wine_path,
+            "apps": reg.apps,
+            "updated_files": reg.updated_files,
+            "steam_was_running": reg.steam_was_running,
+        }));
+    } else {
+        cli_println!("Registered the native Steam library in the in-Wine Steam client.");
+        cli_println!("Library (wine view) : {}", reg.wine_path);
+        cli_println!("Apps indexed        : {}", reg.apps);
+        for file in &reg.updated_files {
+            cli_println!("Updated             : {}", file.display());
+        }
+        if reg.steam_was_running {
+            cli_println!(
+                "The in-Wine Steam client was stopped to write the files; it restarts on \
+                 the next launch (or `aurelia steam-runtime login`)."
+            );
+        }
+    }
+    Ok(())
+}
+
 /// `steam-runtime status`: report the resolved master prefix and configuration.
 pub(crate) async fn cmd_steam_runtime_status(json: bool) -> Result<()> {
     let config = load_launcher_config().await?;
@@ -297,6 +328,19 @@ pub(crate) async fn cmd_steam_runtime_status(json: bool) -> Result<()> {
     let steam_exe_present = steam_cfg.steam_exe.is_some();
     let runner = config.steam_runtime_runner.to_string_lossy().to_string();
     let runner_configured = !runner.is_empty();
+
+    // Q12 gates: is the client signed in (ownership gate) and is the native
+    // library registered in its libraryfolders.vdf (install gate)?
+    let steam_dir = steam_cfg
+        .steam_exe
+        .as_ref()
+        .and_then(|exe| exe.parent().map(|p| p.to_path_buf()));
+    let logged_in = steam_dir.as_deref().map(aurelia::launch::master_client_logged_in);
+    let native_library = aurelia::launch::native_library_root(&config).ok();
+    let library_registered = match (&steam_dir, &native_library) {
+        (Some(dir), Some(root)) => Some(aurelia::launch::master_library_registered(dir, root)),
+        _ => None,
+    };
 
     if json {
         print_json(&serde_json::json!({
@@ -307,6 +351,9 @@ pub(crate) async fn cmd_steam_runtime_status(json: bool) -> Result<()> {
             "steam_exe_present": steam_exe_present,
             "steam_runtime_runner": runner_configured.then_some(runner.clone()),
             "steam_runtime_runner_configured": runner_configured,
+            "client_logged_in": logged_in,
+            "native_library": native_library,
+            "native_library_registered": library_registered,
         }));
     } else {
         cli_println!("Master Steam root : {}", steam_cfg.root_dir.display());
@@ -322,6 +369,22 @@ pub(crate) async fn cmd_steam_runtime_status(json: bool) -> Result<()> {
         cli_println!(
             "Runtime runner    : {}",
             if runner_configured { runner.as_str() } else { "(unset)" }
+        );
+        cli_println!(
+            "Client signed in  : {}",
+            match logged_in {
+                Some(true) => "yes",
+                Some(false) => "no (anonymous — run `aurelia steam-runtime login`)",
+                None => "n/a (runtime not installed)",
+            }
+        );
+        cli_println!(
+            "Library registered: {}",
+            match library_registered {
+                Some(true) => "yes",
+                Some(false) => "no (run `aurelia steam-runtime register-library`)",
+                None => "n/a",
+            }
         );
     }
     Ok(())
