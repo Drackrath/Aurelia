@@ -49,12 +49,6 @@ pub fn is_ignored_steam_app(app_id: u32, name: &str) -> bool {
 }
 
 #[derive(Debug, Deserialize)]
-struct LibraryFoldersFile {
-    #[serde(default)]
-    libraryfolders: HashMap<String, LibraryFolderRecord>,
-}
-
-#[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum LibraryFolderRecord {
     LegacyPath(String),
@@ -252,12 +246,18 @@ pub async fn all_library_roots() -> Vec<PathBuf> {
     }
     roots.push(default_steam_root());
 
-    // Expand each root via its libraryfolders.vdf.
+    // Expand each root via its libraryfolders.vdf. A malformed file must only
+    // lose that file's extra entries — never abort root discovery (the root
+    // itself and the drive probe below still stand).
     let mut extra = Vec::new();
     for root in &roots {
         let vdf = root.join("steamapps").join("libraryfolders.vdf");
-        if let Ok(found) = parse_library_folders(vdf).await {
-            extra.extend(found);
+        match parse_library_folders(vdf).await {
+            Ok(found) => extra.extend(found),
+            Err(e) => tracing::warn!(
+                "skipping malformed libraryfolders.vdf under {}: {e}",
+                root.display()
+            ),
         }
     }
     roots.extend(extra);
@@ -311,11 +311,15 @@ pub async fn parse_library_folders(path: PathBuf) -> Result<Vec<PathBuf>> {
         .await
         .with_context(|| format!("failed reading {}", path.display()))?;
 
-    let parsed = keyvalues_serde::from_str::<LibraryFoldersFile>(&raw)
+    // keyvalues_serde consumes the document's root key ("libraryfolders") as the
+    // name and deserializes its *value* — so the target type is the entry map
+    // itself, not a struct with a `libraryfolders` field (which would silently
+    // never match and default to empty).
+    let parsed = keyvalues_serde::from_str::<HashMap<String, LibraryFolderRecord>>(&raw)
         .context("failed to parse libraryfolders.vdf with keyvalues-serde")?;
 
     let mut libraries = Vec::new();
-    for (key, value) in parsed.libraryfolders {
+    for (key, value) in parsed {
         if !key.chars().all(|ch| ch.is_ascii_digit()) {
             continue;
         }
