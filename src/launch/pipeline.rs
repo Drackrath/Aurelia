@@ -701,7 +701,9 @@ impl LaunchPipeline {
     fn populate_effective_graphics_stack(&self, ctx: &mut PipelineContext) {
         if let Some(spec) = &ctx.command_spec {
              if let Some(overrides) = spec.env.get("WINEDLLOVERRIDES") {
-                 let has_dxvk = overrides.contains("d3d11=n") || overrides.contains("dxgi=n") || overrides.contains("d3d9=n") || overrides.contains("d3d8=n");
+                 // dxgi=n is not DXVK evidence: the vkd3d-proton pairing forces
+                 // native dxgi too, without DXVK being the D3D8-11 backend.
+                 let has_dxvk = overrides.contains("d3d11=n") || overrides.contains("d3d9=n") || overrides.contains("d3d8=n") || overrides.contains("d3d10core=n");
                  let has_vkd3dp = overrides.contains("d3d12=n");
                  let has_vkd3dw = overrides.contains("libvkd3d-1=n");
 

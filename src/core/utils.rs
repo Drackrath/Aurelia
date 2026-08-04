@@ -545,6 +545,8 @@ pub struct RunnerComponents {
     pub vkd3d_proton: Option<ComponentInfo>,
     pub vkd3d: Option<ComponentInfo>,
     pub nvapi: Option<ComponentInfo>,
+    #[serde(default)]
+    pub dxvk_nvapi: Option<ComponentInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -597,6 +599,7 @@ pub fn detect_runner_components(
         vkd3d_proton: detect_vkd3d_proton(&root, wineprefix),
         vkd3d: detect_vkd3d(&root, wineprefix),
         nvapi: detect_nvapi(&root, wineprefix),
+        dxvk_nvapi: detect_dxvk_nvapi(&root),
     }
 }
 
@@ -775,6 +778,29 @@ fn detect_nvapi(root: &Path, prefix: Option<&Path>) -> Option<ComponentInfo> {
         }
     }
 
+    None
+}
+
+/// DXVK-NVAPI, as distinct from a bare nvapi DLL: runners bundle it either under
+/// an upstream-named `dxvk-nvapi` component dir or (Proton-style) as the
+/// arch-split `nvapi` component. A bare nvapi dropped into a prefix never
+/// matches this runner layout, so prefix/system tiers are deliberately absent.
+fn detect_dxvk_nvapi(root: &Path) -> Option<ComponentInfo> {
+    for family in ["dxvk-nvapi", "nvapi"] {
+        if let Some(info) = detect_bundled_modern(
+            root,
+            &crate::compat::proton::wine_component_dirs(family),
+            |arch| {
+                if arch == "x86_64-windows" {
+                    &["nvapi64.dll"]
+                } else {
+                    &["nvapi.dll"]
+                }
+            },
+        ) {
+            return Some(info);
+        }
+    }
     None
 }
 
@@ -1125,14 +1151,14 @@ pub fn build_dll_overrides(
         return overrides.join(";");
     }
 
-    if dxvk_active {
-        // If the game ships its own d3d DLLs, don't fight them — just
-        // ensure native wins without specifying which native.
-        // Wine searches exe-dir before system32, so "n,b" is fine UNLESS
-        // a foreign dll landed in system32. We skip the override entirely
-        // for DLLs the game already provides locally.
-        let game_has = |dll: &str| -> bool { game_dir.is_some_and(|d| d.join(dll).exists()) };
+    // If the game ships its own d3d DLLs, don't fight them — just
+    // ensure native wins without specifying which native.
+    // Wine searches exe-dir before system32, so "n,b" is fine UNLESS
+    // a foreign dll landed in system32. We skip the override entirely
+    // for DLLs the game already provides locally.
+    let game_has = |dll: &str| -> bool { game_dir.is_some_and(|d| d.join(dll).exists()) };
 
+    if dxvk_active {
         for dll in &[
             "d3d8.dll",
             "d3d9.dll",
@@ -1154,6 +1180,14 @@ pub fn build_dll_overrides(
     if vkd3d_proton_active || vkd3d_active {
         overrides.push("d3d12=n,b".into());
         overrides.push("d3d12core=n,b".into());
+        // vkd3d-proton requires DXVK's dxgi: without an override wined3d's dxgi
+        // wins and crash-loops on llvmpipe swapchains once d3d12 is native.
+        if vkd3d_proton_active
+            && !overrides.iter().any(|o| o.starts_with("dxgi="))
+            && !game_has("dxgi.dll")
+        {
+            overrides.push("dxgi=n,b".into());
+        }
         if vkd3d_active {
             overrides.push("libvkd3d-1=n,b".into());
             overrides.push("libvkd3d-shader-1=n,b".into());
@@ -1161,6 +1195,96 @@ pub fn build_dll_overrides(
     }
 
     overrides.join(";")
+}
+
+/// The per-DLL key of a `WINEDLLOVERRIDES` entry, lowercased and stripped of a
+/// `.dll` suffix so `D3D11.dll=n` and `d3d11=n,b` collide as intended.
+fn override_entry_key(entry: &str) -> String {
+    entry
+        .split('=')
+        .next()
+        .unwrap_or(entry)
+        .trim()
+        .trim_end_matches(".dll")
+        .to_lowercase()
+}
+
+/// Merge a user-supplied `WINEDLLOVERRIDES` value over a computed one, per-DLL:
+/// user entries replace computed entries for the same DLL, computed entries the
+/// user didn't touch survive. This replaces the old wholesale overwrite, which
+/// silently discarded every policy/fixup-derived override.
+pub fn merge_dll_overrides(computed: &str, user: &str) -> String {
+    let mut entries: Vec<(String, String)> = Vec::new();
+    for entry in computed.split(';').chain(user.split(';')) {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let key = override_entry_key(entry);
+        if let Some(existing) = entries.iter_mut().find(|(k, _)| *k == key) {
+            existing.1 = entry.to_string();
+        } else {
+            entries.push((key, entry.to_string()));
+        }
+    }
+    entries
+        .into_iter()
+        .map(|(_, e)| e)
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+/// Enforce the d3d*⇒dxgi pairing on a fully merged `WINEDLLOVERRIDES` value:
+/// if any of d3d8/d3d9/d3d10core/d3d11 is overridden native, dxgi must be
+/// native too (DXVK and vkd3d-proton both ship their own dxgi; wined3d's
+/// crash-loops under them). Runs after ALL sources (computed, fixups, user)
+/// merge, so per-DLL skips and appends can't leave the pair split.
+/// `user_set_dxgi` suppresses the repair when the user explicitly chose a
+/// dxgi mode themselves.
+pub fn normalize_dxgi_pairing(overrides: &str, user_set_dxgi: bool) -> String {
+    if user_set_dxgi {
+        return overrides.to_string();
+    }
+    let entries: Vec<&str> = overrides
+        .split(';')
+        .map(|e| e.trim())
+        .filter(|e| !e.is_empty())
+        .collect();
+    let mode_of = |dll: &str| {
+        entries.iter().find_map(|e| {
+            let (k, v) = e.split_once('=')?;
+            (override_entry_key(k) == dll).then(|| v.trim().to_string())
+        })
+    };
+
+    let Some(trigger_mode) = ["d3d8", "d3d9", "d3d10core", "d3d11"]
+        .iter()
+        .find_map(|d| mode_of(d).filter(|m| m.contains('n')))
+    else {
+        return overrides.to_string();
+    };
+
+    match mode_of("dxgi") {
+        Some(mode) if mode.contains('n') => overrides.to_string(),
+        Some(_) => entries
+            .iter()
+            .map(|e| match e.split_once('=') {
+                Some((k, _)) if override_entry_key(k) == "dxgi" => {
+                    format!("dxgi={trigger_mode}")
+                }
+                _ => e.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(";"),
+        None => {
+            let mut out = entries.join(";");
+            if !out.is_empty() {
+                out.push(';');
+            }
+            out.push_str(&format!("dxgi={trigger_mode}"));
+            out
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1356,6 +1480,7 @@ pub fn detect_custom_components(path: &Path) -> crate::core::utils::RunnerCompon
         vkd3d_proton: detect_vkd3d_proton(path, None),
         vkd3d: detect_vkd3d(path, None),
         nvapi: detect_nvapi(path, None),
+        dxvk_nvapi: detect_dxvk_nvapi(path),
     }
 }
 

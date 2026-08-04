@@ -156,3 +156,115 @@ fn test_arch_specific_resolution_excludes_64bit_for_32bit_game() {
     let chosen64 = d3d11_64.chosen_path.as_ref().unwrap().to_string_lossy().replace('\\', "/");
     assert!(!chosen64.contains("i386"), "64-bit game leaked into i386 dir: {chosen64}");
 }
+
+/// Flat WoW64 runners: with both flat `lib` and `lib64` component dirs present,
+/// resolution is first-hit, so a 64-bit target must see the `lib64` variant
+/// first — matching the legacy hardcoded fallback lists, which are lib64-first.
+#[test]
+fn test_lib64_precedes_lib_for_64bit_flat_resolution() {
+    use std::fs;
+    use tempfile::tempdir;
+    use aurelia::launch::dll_provider_resolver::{DllProvider, DllProviderResolver};
+    use aurelia::core::models::{D3D12ProviderPolicy, ExecutableArchitecture};
+    use aurelia::core::utils::{ComponentInfo, ComponentSource, RunnerComponents};
+
+    let tmp = tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
+
+    let dir_lib = root.join("lib/wine/dxvk");
+    let dir_lib64 = root.join("lib64/wine/dxvk");
+    fs::create_dir_all(&dir_lib).unwrap();
+    fs::create_dir_all(&dir_lib64).unwrap();
+    fs::write(dir_lib.join("d3d11.dll"), "32").unwrap();
+    fs::write(dir_lib64.join("d3d11.dll"), "64").unwrap();
+
+    let components = RunnerComponents {
+        dxvk: Some(ComponentInfo {
+            version: "test".into(),
+            source: ComponentSource::BundledWithRunner,
+            path: None,
+        }),
+        ..Default::default()
+    };
+
+    let resolver = DllProviderResolver::new();
+    let game_dir = root.join("no_such_game_dir");
+
+    let (res64, _) = resolver.resolve(
+        &game_dir,
+        &root,
+        &components,
+        &D3D12ProviderPolicy::Auto,
+        &ExecutableArchitecture::X86_64,
+        None,
+        None,
+        None,
+    );
+    let d3d11 = res64.iter().find(|r| r.name == "d3d11").unwrap();
+    assert_eq!(d3d11.chosen_provider, DllProvider::Runner);
+    let chosen = d3d11.chosen_path.as_ref().unwrap().to_string_lossy().replace('\\', "/");
+    assert!(chosen.contains("lib64"), "64-bit target resolved 32-bit flat dir: {chosen}");
+
+    // 32-bit targets keep dropping lib64 via the arch filter.
+    let (res32, _) = resolver.resolve(
+        &game_dir,
+        &root,
+        &components,
+        &D3D12ProviderPolicy::Auto,
+        &ExecutableArchitecture::X86,
+        None,
+        None,
+        None,
+    );
+    let d3d11_32 = res32.iter().find(|r| r.name == "d3d11").unwrap();
+    let chosen32 = d3d11_32.chosen_path.as_ref().unwrap().to_string_lossy().replace('\\', "/");
+    assert!(!chosen32.contains("lib64"), "32-bit target leaked into lib64 dir: {chosen32}");
+}
+
+/// DXVK-NVAPI is detected from the runner's arch-split component layout (family
+/// dir `nvapi` in Proton-style runners, or upstream-named `dxvk-nvapi`); a bare
+/// nvapi DLL installed into a prefix must NOT count as dxvk-nvapi.
+#[test]
+fn test_dxvk_nvapi_detection_distinct_from_bare_nvapi() {
+    use std::fs;
+    use tempfile::tempdir;
+    use aurelia::core::utils::{detect_runner_components, ComponentSource};
+
+    // Proton-style runner: arch-split `nvapi` family dir carries dxvk-nvapi.
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    let nvapi_arch = root.join("files/lib/wine/nvapi/x86_64-windows");
+    fs::create_dir_all(&nvapi_arch).unwrap();
+    fs::write(nvapi_arch.join("nvapi64.dll"), "fake dll").unwrap();
+
+    let comps = detect_runner_components(root, None);
+    assert!(comps.nvapi.is_some(), "bundled nvapi should be detected");
+    let dxvk_nvapi = comps.dxvk_nvapi.expect("arch-split nvapi dir should count as dxvk-nvapi");
+    assert_eq!(dxvk_nvapi.source, ComponentSource::BundledWithRunner);
+
+    // Upstream-named `dxvk-nvapi` family dir is also recognised.
+    let tmp2 = tempdir().unwrap();
+    let root2 = tmp2.path();
+    let upstream_arch = root2.join("lib64/wine/dxvk-nvapi/x86_64-windows");
+    fs::create_dir_all(&upstream_arch).unwrap();
+    fs::write(upstream_arch.join("nvapi64.dll"), "fake dll").unwrap();
+    let comps2 = detect_runner_components(root2, None);
+    assert!(comps2.dxvk_nvapi.is_some(), "dxvk-nvapi family dir should be detected");
+
+    // Bare nvapi in the prefix: nvapi yes, dxvk-nvapi no.
+    let tmp3 = tempdir().unwrap();
+    let runner_root = tmp3.path().join("empty_runner");
+    fs::create_dir_all(&runner_root).unwrap();
+    let prefix = tmp3.path().join("prefix");
+    let sys32 = prefix.join("drive_c/windows/system32");
+    fs::create_dir_all(&sys32).unwrap();
+    // check_prefix ignores files under 50KB (Wine builtin stubs).
+    fs::write(sys32.join("nvapi64.dll"), vec![0u8; 60_000]).unwrap();
+
+    let comps3 = detect_runner_components(&runner_root, Some(&prefix));
+    assert!(comps3.nvapi.is_some(), "prefix-installed nvapi should be detected");
+    assert!(
+        comps3.dxvk_nvapi.is_none(),
+        "a bare prefix nvapi must not be classified as dxvk-nvapi"
+    );
+}

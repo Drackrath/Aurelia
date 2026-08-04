@@ -143,6 +143,7 @@ impl DllProviderResolver {
         };
         record_component("dxvk", &runner_components.dxvk);
         record_component("nvapi", &runner_components.nvapi);
+        record_component("dxvk-nvapi", &runner_components.dxvk_nvapi);
         record_component("vkd3d-proton", &runner_components.vkd3d_proton);
         record_component("vkd3d", &runner_components.vkd3d);
 
@@ -261,9 +262,25 @@ impl DllProviderResolver {
         }
 
         let chosen = candidates.iter().find(|c| c.exists).cloned();
-        let fallback_reason = chosen.is_none().then(||
+        let mut fallback_reason = chosen.is_none().then(||
             "no candidate files found in GameLocal, Custom, Runner, or System paths".to_string()
         );
+
+        // Explicit vkd3d-proton that resolved through the plain-vkd3d runner dirs
+        // is a policy fallback — record it so diagnostics can surface the demotion.
+        if d3d12_policy == &crate::core::models::D3D12ProviderPolicy::Vkd3dProton
+            && runner_components.vkd3d_proton.is_none()
+            && matches!(dll_name, "d3d12" | "d3d12core" | "libvkd3d-1" | "libvkd3d-shader-1")
+            && chosen.as_ref().is_some_and(|c| c.provider == DllProvider::Runner)
+        {
+            tracing::warn!(
+                "vkd3d-proton requested for {} but not detected in the runner; falling back to plain vkd3d",
+                dll_name
+            );
+            fallback_reason = Some(
+                "vkd3d-proton requested but not detected in runner; fell back to plain vkd3d".to_string(),
+            );
+        }
 
         DllResolution {
             name: dll_name.to_string(),
@@ -408,7 +425,14 @@ impl DllProviderResolver {
                 }
             }
 
-            if (!use_proton || d3d12_policy == &crate::core::models::D3D12ProviderPolicy::Auto) && components.vkd3d.is_some() {
+            // Plain vkd3d serves Auto, explicit Vkd3dWine, and — as a fallback —
+            // an explicit Vkd3dProton whose component isn't detected (the caller
+            // surfaces that case as a fallback reason).
+            let try_plain = match d3d12_policy {
+                crate::core::models::D3D12ProviderPolicy::Vkd3dProton => components.vkd3d_proton.is_none(),
+                _ => true,
+            };
+            if try_plain && components.vkd3d.is_some() {
                 if let Some(p) = Self::find_in_runner_paths(&runner_root, &dll_filename, target_arch,
                     crate::compat::proton::component_dll_subdirs("vkd3d")) {
                     return Some(p);

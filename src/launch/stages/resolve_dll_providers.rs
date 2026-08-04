@@ -104,6 +104,19 @@ impl PipelineStage for ResolveDllProvidersStage {
                     res.fallback_reason = Some("NVAPI is disabled in per-game settings".to_string());
                 }
             }
+        } else if components.dxvk_nvapi.is_none() {
+            // NVAPI activation requires the DXVK-NVAPI translation layer, not
+            // just a bare nvapi DLL. Only runner-provided nvapi is demoted:
+            // game-local DLL priority stays absolute.
+            for res in &mut resolutions {
+                if (res.name.contains("nvapi") || res.name.contains("nvofapi"))
+                    && res.chosen_provider == crate::launch::dll_provider_resolver::DllProvider::Runner
+                {
+                    res.chosen_provider = crate::launch::dll_provider_resolver::DllProvider::None;
+                    res.chosen_path = None;
+                    res.fallback_reason = Some("DXVK-NVAPI not detected in runner; NVAPI activation requires both nvapi and dxvk-nvapi".to_string());
+                }
+            }
         }
 
         ctx.dll_resolutions = resolutions;

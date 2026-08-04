@@ -62,7 +62,12 @@ impl LaunchValidator for LaunchInvariantValidator {
             && let Some(spec) = &ctx.command_spec
         {
             if let Some(overrides) = spec.env.get("WINEDLLOVERRIDES") {
-                let dxvk_dlls = ["d3d8", "d3d9", "d3d10core", "d3d11", "dxgi"];
+                // dxgi is shared with vkd3d-proton, which requires DXVK's dxgi:
+                // a native dxgi override alone is expected under that provider.
+                let mut dxvk_dlls = vec!["d3d8", "d3d9", "d3d10core", "d3d11"];
+                if ctx.graphics_stack.effective_d3d12_provider != "vkd3d-proton" {
+                    dxvk_dlls.push("dxgi");
+                }
                 for dll in native_dll_overrides(overrides, &dxvk_dlls) {
                     warnings.push((
                         "INVARIANT_B_VIOLATION",
