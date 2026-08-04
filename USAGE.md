@@ -2122,6 +2122,7 @@ master prefix directly (`shared`, default) or gets its own copy (`per-game`).
 ```text
 aurelia steam-runtime install [--reinstall] [--json]
 aurelia steam-runtime repair    [--json]
+aurelia steam-runtime restore   [--json]
 aurelia steam-runtime uninstall [--json]
 aurelia steam-runtime login     [--json]   # alias: relogin
 aurelia steam-runtime status    [--json]
@@ -2133,7 +2134,8 @@ aurelia config steam-runtime-policy [auto|on|off]   # view/set the global defaul
 | --- | --- |
 | `install` | Download `SteamSetup.exe` (if needed), install Steam into the master prefix, then start the Steam client. Waits for the installer and fails loudly if `steam.exe` does not appear. Requires `steam_runtime_runner` to be set. |
 | `install --reinstall` | **Delete** the existing master prefix first, then install a fresh copy. Use when Steam reports a corrupted install ("please reinstall"). Unlike `repair`, keeps **no** backup — a true clean slate. |
-| `repair` | Stop Steam, back up the master prefix (keeping a single `.bak`), then reinstall — recovers a corrupted install that passes the file-exists check but crashes on start. Requires `steam_runtime_runner`. |
+| `repair` | Stop Steam, back up the master prefix (keeping a single `.bak`), then reinstall — recovers a corrupted install that passes the file-exists check but crashes on start. **Preserves your data**: `userdata`, `config` (logins) and `steamapps` (games installed inside the in-Wine Steam) are moved aside during the reinstall and restored into the fresh install. Requires `steam_runtime_runner`. |
+| `restore` | **Swap** the master prefix with the `.bak` a previous `repair` left — the escape hatch when a repair made things worse. Running `restore` again swaps back, so nothing is deleted. Errors if no `.bak` exists. |
 | `uninstall` | Stop any Steam running in the prefix, then **remove the whole master prefix** (including any `.bak`). Reinstall later with `steam-runtime install`. |
 | `login` (alias `relogin`) | (Re-)start the in-Wine Steam client **interactively** so you can sign in again — after the runtime's Steam session expired, or to switch accounts — **without** reinstalling. Stops any silent background Steam in the prefix first so the login window opens. Requires an installed runtime. See [Authentication](#runtime-authentication) below. |
 | `status` | Print the resolved master root, Wine prefix, layout kind, whether `steam.exe` is present, and whether a runtime runner is configured. |

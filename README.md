@@ -278,7 +278,8 @@ aurelia config steam-runtime-runner GE-Proton9-20  # select the Wine/Proton runn
 aurelia steam-runtime status          # resolved master prefix, layout, steam.exe presence
 aurelia steam-runtime install         # install Steam into the master Wine prefix (sign in here)
 aurelia steam-runtime login           # re-open the in-Wine Steam to sign in again (expired/switch)
-aurelia steam-runtime repair          # back up the prefix (keep one) and reinstall
+aurelia steam-runtime repair          # reinstall, preserving logins + in-Wine-installed games (keeps one .bak)
+aurelia steam-runtime restore         # swap the prefix with the .bak if a repair made things worse
 aurelia config steam-runtime-policy on   # make `play --steam` always use the in-Wine runtime
                                          # (default `auto`: host Steam if present, else in-Wine)
 

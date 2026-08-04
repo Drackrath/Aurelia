@@ -102,6 +102,7 @@ fn must_run_locally(cli: &Cli) -> bool {
         Command::SteamRuntime {
             command: SteamRuntimeCommand::Install { .. }
                 | SteamRuntimeCommand::Repair
+                | SteamRuntimeCommand::Restore
                 | SteamRuntimeCommand::Uninstall
                 | SteamRuntimeCommand::Login
                 | SteamRuntimeCommand::Stop,
@@ -470,6 +471,7 @@ async fn run(cli: Cli) -> Result<()> {
                 cmd_steam_runtime_install(reinstall, json).await
             }
             SteamRuntimeCommand::Repair => cmd_steam_runtime_repair(json).await,
+            SteamRuntimeCommand::Restore => cmd_steam_runtime_restore(json).await,
             SteamRuntimeCommand::Uninstall => cmd_steam_runtime_uninstall(json).await,
             SteamRuntimeCommand::Login => cmd_steam_runtime_login(json).await,
             SteamRuntimeCommand::Stop => cmd_steam_runtime_stop(json).await,
