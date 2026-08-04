@@ -471,17 +471,38 @@ impl Runner for WineTkgRunner {
             crate::core::models::D3D12ProviderPolicy::Vkd3dWine => (false, true),
         };
         // Manual overrides take precedence
-        let effective_vkd3d_proton = glc.vkd3d_proton_enabled || policy_vkd3dp;
-        let effective_vkd3d = glc.vkd3d_enabled || policy_vkd3dw;
+        let mut effective_vkd3d_proton = glc.vkd3d_proton_enabled || policy_vkd3dp;
+        let mut effective_vkd3d = glc.vkd3d_enabled || policy_vkd3dw;
 
-        // NVAPI Support
-        let nvapi_enabled_cfg = ctx.user_config.as_ref().map(|c| c.graphics_layers.nvapi_enabled).unwrap_or(true);
-        let nvapi_active = _components.nvapi.is_some() && nvapi_enabled_cfg;
-        if nvapi_active {
-            tracing::info!("NVAPI component detected and enabled, will be exposed to game");
-        } else if _components.nvapi.is_some() {
-            tracing::info!("NVAPI component detected but disabled by per-game settings");
+        // A requested vkd3d-proton that isn't detected must not emit d3d12
+        // overrides (they'd point at nothing); fall back to plain vkd3d when
+        // that is detected, mirroring the resolver's fallback.
+        if effective_vkd3d_proton && _components.vkd3d_proton.is_none() {
+            if _components.vkd3d.is_some() {
+                tracing::warn!("vkd3d-proton requested but not detected; falling back to plain vkd3d");
+                effective_vkd3d = true;
+            } else {
+                tracing::warn!("vkd3d-proton requested but neither vkd3d-proton nor vkd3d detected; leaving D3D12 on Wine defaults");
+            }
+            effective_vkd3d_proton = false;
         }
+
+        // NVAPI Support: activation needs both the nvapi DLLs and the DXVK-NVAPI
+        // translation layer — a bare nvapi without dxvk-nvapi cannot serve calls.
+        let nvapi_enabled_cfg = ctx.user_config.as_ref().map(|c| c.graphics_layers.nvapi_enabled).unwrap_or(true);
+        let nvapi_active =
+            nvapi_enabled_cfg && _components.nvapi.is_some() && _components.dxvk_nvapi.is_some();
+        if nvapi_active {
+            tracing::info!("NVAPI and DXVK-NVAPI components detected and enabled, will be exposed to game");
+        } else if _components.nvapi.is_some() && !nvapi_enabled_cfg {
+            tracing::info!("NVAPI component detected but disabled by per-game settings");
+        } else if _components.nvapi.is_some() {
+            tracing::info!("NVAPI component detected but DXVK-NVAPI is missing; NVAPI stays inactive");
+        }
+        env.insert(
+            "DXVK_ENABLE_NVAPI".to_string(),
+            if nvapi_active { "1" } else { "0" }.to_string(),
+        );
 
         // Resolve the Steam-integration mode once for the whole env build. Only the
         // host-bridge mode leaves Steam's client DLLs at Proton's defaults (so
@@ -507,7 +528,7 @@ impl Runner for WineTkgRunner {
         for res in &ctx.dll_resolutions {
             if res.chosen_provider == crate::launch::dll_provider_resolver::DllProvider::GameLocal ||
                (res.chosen_provider == crate::launch::dll_provider_resolver::DllProvider::Custom && !use_symlinks) ||
-               (res.chosen_provider == crate::launch::dll_provider_resolver::DllProvider::Runner && res.name.contains("nvapi")) {
+               (res.chosen_provider == crate::launch::dll_provider_resolver::DllProvider::Runner && res.name.contains("nvapi") && nvapi_active) {
 
                 // Do not emit overrides for DLLs that are handled via internal capabilities
                 if res.chosen_provider == crate::launch::dll_provider_resolver::DllProvider::Internal {
@@ -572,7 +593,7 @@ impl Runner for WineTkgRunner {
                 let is_d3d12_dll = matches!(name.as_str(), "d3d12" | "d3d12core" | "libvkd3d-1" | "libvkd3d-shader-1");
 
                 let is_nvapi_dll = matches!(name.as_str(), "nvapi" | "nvapi64" | "nvofapi64");
-                let selected = (is_dxvk_dll && effective_dxvk) || (is_d3d12_dll && (effective_vkd3d_proton || effective_vkd3d)) || is_nvapi_dll;
+                let selected = (is_dxvk_dll && effective_dxvk) || (is_d3d12_dll && (effective_vkd3d_proton || effective_vkd3d)) || (is_nvapi_dll && nvapi_active);
 
                 if !selected {
                     continue;
@@ -798,7 +819,14 @@ impl Runner for WineTkgRunner {
 
         if let Some(config) = &ctx.user_config {
             for (key, val) in &config.env_variables {
-                env.insert(key.clone(), val.clone());
+                // A user WINEDLLOVERRIDES merges per-DLL over the computed value
+                // (user entries win) instead of discarding policy/fixup output.
+                if key == "WINEDLLOVERRIDES" {
+                    let computed = env.get("WINEDLLOVERRIDES").cloned().unwrap_or_default();
+                    env.insert(key.clone(), crate::core::utils::merge_dll_overrides(&computed, val));
+                } else {
+                    env.insert(key.clone(), val.clone());
+                }
             }
 
             // Add debug toggles
@@ -807,6 +835,24 @@ impl Runner for WineTkgRunner {
             }
             if (effective_vkd3d_proton || effective_vkd3d) && !env.contains_key("VKD3D_DEBUG") {
                 env.insert("VKD3D_DEBUG".to_string(), "warn".to_string());
+            }
+        }
+
+        // Pairing normalization must run after every override source has merged
+        // (computed policy, fixups, user env), so a per-DLL skip or append can't
+        // leave d3d* native while dxgi falls back to wined3d's.
+        let user_set_dxgi = ctx.user_config.as_ref()
+            .and_then(|c| c.env_variables.get("WINEDLLOVERRIDES"))
+            .is_some_and(|v| v.split(';').any(|e| {
+                e.split('=').next().is_some_and(|k| {
+                    k.trim().trim_end_matches(".dll").eq_ignore_ascii_case("dxgi")
+                })
+            }));
+        if let Some(current) = env.get("WINEDLLOVERRIDES") {
+            let normalized = crate::core::utils::normalize_dxgi_pairing(current, user_set_dxgi);
+            if &normalized != current {
+                tracing::info!("Normalized WINEDLLOVERRIDES d3d*=>dxgi pairing: {}", normalized);
+                env.insert("WINEDLLOVERRIDES".to_string(), normalized);
             }
         }
 

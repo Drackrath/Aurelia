@@ -96,16 +96,21 @@ const GE_RELEASES_PER_REPO: usize = 8;
 /// Lib roots a runner may use. The `*/wine` roots host the arch-split component
 /// folders; the bare base dirs (`files/lib`, `files/lib64`) hold the WOW64 unix-bridge
 /// `.so` loaders that a modern WOW64 build needs on `WINEDLLPATH`.
+///
+/// `lib64` precedes `lib` throughout: resolution is first-hit, so on flat WoW64
+/// runners a 64-bit target must see the 64-bit dir first (32-bit targets drop
+/// the `lib64` entries via the arch filter). Matches the legacy hardcoded
+/// fallback lists, which are lib64-first.
 pub(crate) const UNIFIED_LIB_SUBDIRS: &[&str] = &[
-    "lib/wine",
     "lib64/wine",
-    "files/lib/wine",
+    "lib/wine",
     "files/lib64/wine",
-    "dist/lib/wine",
+    "files/lib/wine",
     "dist/lib64/wine",
+    "dist/lib/wine",
     // Bare base dirs — WOW64 unix bridge `.so` libs (ntdll.so, etc.).
-    "files/lib",
     "files/lib64",
+    "files/lib",
 ];
 
 /// Architecture subdirectories a component may split into. The `-windows` dirs hold
@@ -114,7 +119,8 @@ pub(crate) const ARCH_SUBDIRS: &[&str] =
     &["x86_64-windows", "i386-windows", "x86_64-unix", "i386-unix"];
 
 /// Graphics component families discovered inside a runner.
-pub(crate) const COMPONENT_FAMILIES: &[&str] = &["dxvk", "vkd3d", "vkd3d-proton", "nvapi"];
+pub(crate) const COMPONENT_FAMILIES: &[&str] =
+    &["dxvk", "vkd3d", "vkd3d-proton", "nvapi", "dxvk-nvapi"];
 
 /// The `<lib-root>/wine/<family>` component directories across every unified/legacy
 /// lib layout (excludes the bare base dirs, which never host components).
