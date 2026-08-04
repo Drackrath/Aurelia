@@ -6,15 +6,53 @@
 //! one-line data edit in [`FIXUPS`]; no code changes, no runtime download, no extra
 //! dependency.
 //!
-//! A fixup carries two fragments that the launch pipeline merges into the game's
-//! environment at launch time (see the `wine_tkg` runner's `build_env`):
+//! A fixup carries four fragments that the launch pipeline merges into the game's
+//! launch at the right point (see the `wine_tkg` runner's `build_env`/`build_command`
+//! and the `ApplyRegistryFixups` stage):
 //!   * `env` — extra environment variables (e.g. `PROTON_NO_ESYNC=1`).
 //!   * `dll_overrides` — `WINEDLLOVERRIDES` entries as `(dll_name, mode)` pairs,
 //!     where `mode` is Wine's override syntax such as `"native,builtin"` / `"n,b"`
 //!     / `"builtin"`.
+//!   * `launch_args` — extra game command-line arguments (e.g. `-windowed`).
+//!   * `reg_ops` — Windows-registry writes applied to the game's prefix via
+//!     `wine reg.exe add … /f` before the game spawns.
 //!
 //! Merge policy (enforced by the consumer): explicit user / per-game settings ALWAYS
 //! win over these auto-fixups on conflict.
+
+/// A single Windows-registry write applied to the game's prefix before spawn
+/// (`wine reg.exe add <path> /v <key> /t <type> /d <value> /f`). A failing write
+/// logs a `fixup_registry_warning` event and MUST NOT halt the launch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegOp {
+    /// A `REG_DWORD` value write.
+    Dword { path: &'static str, key: &'static str, value: u32 },
+    /// A `REG_SZ` value write.
+    String { path: &'static str, key: &'static str, value: &'static str },
+}
+
+impl RegOp {
+    /// The argument vector passed to the prefix's wine binary:
+    /// `reg.exe add <path> /v <key> /t REG_DWORD|REG_SZ /d <value> /f`.
+    pub fn to_reg_add_args(&self) -> Vec<String> {
+        let (path, key, reg_type, value) = match self {
+            RegOp::Dword { path, key, value } => (*path, *key, "REG_DWORD", value.to_string()),
+            RegOp::String { path, key, value } => (*path, *key, "REG_SZ", (*value).to_string()),
+        };
+        vec![
+            "reg.exe".to_string(),
+            "add".to_string(),
+            path.to_string(),
+            "/v".to_string(),
+            key.to_string(),
+            "/t".to_string(),
+            reg_type.to_string(),
+            "/d".to_string(),
+            value,
+            "/f".to_string(),
+        ]
+    }
+}
 
 /// Fixups resolved for a single game, ready to be merged into the launch env.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -23,12 +61,19 @@ pub struct GameFixups {
     pub env: Vec<(String, String)>,
     /// `WINEDLLOVERRIDES` fragments `(dll_name, mode)`, e.g. `("d3d11", "native,builtin")`.
     pub dll_overrides: Vec<(String, String)>,
+    /// Extra game command-line arguments, appended before the user's launch options.
+    pub launch_args: Vec<String>,
+    /// Registry writes executed against the game's prefix before spawn.
+    pub reg_ops: Vec<RegOp>,
 }
 
 impl GameFixups {
     /// Whether this fixup set carries anything to merge.
     pub fn is_empty(&self) -> bool {
-        self.env.is_empty() && self.dll_overrides.is_empty()
+        self.env.is_empty()
+            && self.dll_overrides.is_empty()
+            && self.launch_args.is_empty()
+            && self.reg_ops.is_empty()
     }
 }
 
@@ -38,6 +83,8 @@ struct FixupEntry {
     app_id: u32,
     env: &'static [(&'static str, &'static str)],
     dll_overrides: &'static [(&'static str, &'static str)],
+    launch_args: &'static [&'static str],
+    reg_ops: &'static [RegOp],
 }
 
 /// The fixup registry.
@@ -52,6 +99,8 @@ const FIXUPS: &[FixupEntry] = &[
         app_id: 211420,
         env: &[("PROTON_NO_ESYNC", "1")],
         dll_overrides: &[],
+        launch_args: &[],
+        reg_ops: &[],
     },
     // Fallout 3: GOTY (App 22370) — Games-for-Windows-Live shim; xlive is forced to
     // builtin so the game can start without the GFWL client.
@@ -59,6 +108,21 @@ const FIXUPS: &[FixupEntry] = &[
         app_id: 22370,
         env: &[],
         dll_overrides: &[("xlive", "builtin")],
+        launch_args: &[],
+        reg_ops: &[],
+    },
+    // Grand Theft Auto V (App 271590) — large-address-aware + staging shared memory
+    // for stability, skip the GPU-changed check, and let the game's bundled dinput8
+    // (ScriptHookV-style loaders) win over the builtin.
+    FixupEntry {
+        app_id: 271590,
+        env: &[
+            ("WINE_LARGE_ADDRESS_AWARE", "1"),
+            ("STAGING_SHARED_MEMORY", "1"),
+        ],
+        dll_overrides: &[("dinput8", "n,b")],
+        launch_args: &["-ignoredifferentvideocard"],
+        reg_ops: &[],
     },
 ];
 
@@ -77,6 +141,8 @@ pub fn game_fixups(app_id: u32) -> GameFixups {
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
+            launch_args: entry.launch_args.iter().map(ToString::to_string).collect(),
+            reg_ops: entry.reg_ops.to_vec(),
         },
         None => GameFixups::default(),
     }

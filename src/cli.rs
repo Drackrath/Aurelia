@@ -498,7 +498,73 @@ pub(crate) enum ConfigCommand {
         /// prefix directly; `per-game` copies Steam into the game's own prefix.
         #[arg(long, value_name = "shared|per-game")]
         steam_prefix_mode: Option<SteamPrefixModeArg>,
+        #[command(flatten)]
+        tuning: GameTuningArgs,
     },
+}
+
+/// The per-game `UserAppConfig` fields (`user_apps.json`) reachable from
+/// `config game <APPID>`: launch options, env vars, graphics layers, Steam helper
+/// toggles, GPU preference and library flags. With no mutation flags at all,
+/// `config game` prints the effective per-game config.
+#[derive(clap::Args, Default)]
+pub(crate) struct GameTuningArgs {
+    /// Set the game's launch options string (e.g. "-novid -console"), replacing
+    /// any previous value.
+    // Launch options almost always start with `-`; without this clap rejects them
+    // as unexpected flags.
+    #[arg(long, value_name = "STRING", allow_hyphen_values = true)]
+    pub(crate) launch_options: Option<String>,
+    /// Clear the per-game launch options.
+    #[arg(long, conflicts_with = "launch_options")]
+    pub(crate) clear_launch_options: bool,
+    /// Set a per-game environment variable (repeatable), e.g. `--env MANGOHUD=1`.
+    #[arg(long = "env", value_name = "KEY=VAL")]
+    pub(crate) env: Vec<String>,
+    /// Remove a per-game environment variable (repeatable).
+    #[arg(long = "unset-env", value_name = "KEY")]
+    pub(crate) unset_env: Vec<String>,
+    /// Force DXVK for DX8-11 (`on`/`off`); `default` drops the per-game override
+    /// back to the built-in default (off — the backend policy decides).
+    #[arg(long, value_name = "on|off|default")]
+    pub(crate) dxvk: Option<ToggleArg>,
+    /// Force VKD3D-Proton for DX12 (`on`/`off`); `default` drops the override.
+    #[arg(long = "vkd3d-proton", value_name = "on|off|default")]
+    pub(crate) vkd3d_proton: Option<ToggleArg>,
+    /// Force Wine's own VKD3D for DX12 (`on`/`off`); `default` drops the override.
+    #[arg(long, value_name = "on|off|default")]
+    pub(crate) vkd3d: Option<ToggleArg>,
+    /// Expose NVAPI to the game (`on`/`off`); `default` drops the override
+    /// back to the built-in default (on).
+    #[arg(long, value_name = "on|off|default")]
+    pub(crate) nvapi: Option<ToggleArg>,
+    /// DX8-11 backend policy: `auto` (conservative Wine default), `wined3d`, or `dxvk`.
+    #[arg(long, value_name = "auto|wined3d|dxvk")]
+    pub(crate) backend: Option<BackendArg>,
+    /// DX12 provider policy: `auto`, `vkd3d-proton`, or `vkd3d-wine`.
+    #[arg(long, value_name = "auto|vkd3d-proton|vkd3d-wine")]
+    pub(crate) d3d12: Option<D3D12Arg>,
+    /// Steam CEF browser / steamwebhelper (`on`/`off`); `default` = suppressed.
+    #[arg(long, value_name = "on|off|default")]
+    pub(crate) browser: Option<ToggleArg>,
+    /// Steam in-game overlay (`on`/`off`); `default` = suppressed.
+    #[arg(long, value_name = "on|off|default")]
+    pub(crate) overlay: Option<ToggleArg>,
+    /// Steam friends-list window (`on`/`off`); `default` = suppressed.
+    #[arg(long = "friends-ui", value_name = "on|off|default")]
+    pub(crate) friends_ui: Option<ToggleArg>,
+    /// Steam chat popups (`on`/`off`); `default` = suppressed.
+    #[arg(long = "chat-ui", value_name = "on|off|default")]
+    pub(crate) chat_ui: Option<ToggleArg>,
+    /// Hide the game from library listings.
+    #[arg(long, value_name = "on|off")]
+    pub(crate) hidden: Option<OnOffArg>,
+    /// Mark the game as a favorite.
+    #[arg(long, value_name = "on|off")]
+    pub(crate) favorite: Option<OnOffArg>,
+    /// Preferred GPU index for this game, or `default` to clear the preference.
+    #[arg(long, value_name = "INDEX|default")]
+    pub(crate) gpu: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -945,6 +1011,45 @@ pub(crate) enum SteamPrefixModeArg {
     Shared,
     /// Copy/symlink Steam into the game's own prefix.
     PerGame,
+}
+
+/// `on|off|default` for the per-game toggles on `config game`; `default` resets the
+/// stored field to its built-in default value.
+#[derive(Clone, Copy, ValueEnum)]
+pub(crate) enum ToggleArg {
+    On,
+    Off,
+    /// Reset to the built-in default.
+    Default,
+}
+
+/// Plain `on|off` for per-game flags without a `default` reset (`--hidden`, `--favorite`).
+#[derive(Clone, Copy, ValueEnum)]
+pub(crate) enum OnOffArg {
+    On,
+    Off,
+}
+
+/// `--backend auto|wined3d|dxvk`: per-game DX8-11 backend policy.
+#[derive(Clone, Copy, ValueEnum)]
+pub(crate) enum BackendArg {
+    /// Conservative default: prefer Wine's normal behavior.
+    Auto,
+    /// Force the builtin WineD3D path.
+    Wined3d,
+    /// Force DXVK natives.
+    Dxvk,
+}
+
+/// `--d3d12 auto|vkd3d-proton|vkd3d-wine`: per-game DX12 provider policy.
+#[derive(Clone, Copy, ValueEnum)]
+pub(crate) enum D3D12Arg {
+    /// Conservative default: no forced D3D12 provider.
+    Auto,
+    /// Force VKD3D-Proton.
+    Vkd3dProton,
+    /// Force Wine's own VKD3D.
+    Vkd3dWine,
 }
 
 #[derive(Clone, Copy, ValueEnum)]

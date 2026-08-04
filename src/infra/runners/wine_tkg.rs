@@ -915,6 +915,23 @@ impl Runner for WineTkgRunner {
         let args = ctx.launch_info.arguments.split_whitespace().map(ToString::to_string);
         spec.args.extend(args);
 
+        // Merge auto-fixup launch args from the per-game registry. Appended BEFORE the
+        // user's launch options (which follow below) so a user-supplied duplicate comes
+        // later and wins; a fixup arg the user already passes is skipped outright.
+        if !ctx.game_fixups.launch_args.is_empty() {
+            let user_opts: std::collections::HashSet<&str> = ctx.user_config.as_ref()
+                .map(|c| c.launch_options.split_whitespace().collect())
+                .unwrap_or_default();
+            for arg in &ctx.game_fixups.launch_args {
+                if user_opts.contains(arg.as_str()) || spec.args.contains(arg) {
+                    tracing::info!("Skipping fixup launch arg {} (already present)", arg);
+                    continue;
+                }
+                tracing::info!("Applying fixup launch arg: {}", arg);
+                spec.args.push(arg.clone());
+            }
+        }
+
         // Split user launch args
         let user_launch_args = ctx.user_config.as_ref()
             .map(|c| c.launch_options.split_whitespace().map(ToString::to_string).collect::<Vec<_>>())
