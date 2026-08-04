@@ -463,6 +463,18 @@ pub async fn launch_game_via_master_steam(
     Ok(())
 }
 
+/// True when the file at `path` opens with the `MZ` DOS header — the minimal
+/// integrity check for any Windows PE (exe or dll). Catches the zero-byte,
+/// truncated, or error-page files that a bare `exists()` happily accepts.
+pub fn has_mz_header(path: &Path) -> bool {
+    use std::io::Read;
+    let mut header = [0u8; 2];
+    std::fs::File::open(path)
+        .and_then(|mut f| f.read_exact(&mut header))
+        .is_ok()
+        && &header == b"MZ"
+}
+
 /// True when `path` looks like a real Windows executable.
 ///
 /// PE binaries open with the `MZ` DOS header. The previous code only checked
@@ -470,12 +482,7 @@ pub async fn launch_game_via_master_steam(
 /// `SteamSetup.exe` and reused forever — every later install would "succeed" at the
 /// download step and then hand wine a file it could not execute.
 pub fn is_valid_setup_exe(path: &Path) -> bool {
-    use std::io::Read;
-    let mut header = [0u8; 2];
-    std::fs::File::open(path)
-        .and_then(|mut f| f.read_exact(&mut header))
-        .is_ok()
-        && &header == b"MZ"
+    has_mz_header(path)
 }
 
 /// Download `SteamSetup.exe` unless a valid one is already cached.

@@ -168,6 +168,87 @@ impl PipelineStage for PreflightStage {
             checks.push(check);
         }
 
+        // 6. Steamworks library integrity — pre-spawn, only for launches that will
+        // actually talk to a Steam client (InWineRuntime / HostBridge). The prefix
+        // probe in `check_prefix_health` runs POST-spawn and only records warnings
+        // after the game has already failed to start.
+        if final_res.is_ok() {
+            if let (Some(launcher_config), Some(prefix)) =
+                (ctx.launcher_config.as_ref(), spec.env.get("WINEPREFIX"))
+            {
+                use crate::infra::runners::wine_tkg::{resolve_steam_mode_parts, SteamMode};
+                let (steam_mode, _) =
+                    resolve_steam_mode_parts(ctx.user_config.as_ref(), launcher_config, ctx.steam_enabled);
+
+                if steam_mode != SteamMode::Standalone {
+                    let mut check = PreflightCheck { name: "Steamworks Libraries".into(), status: true, details: "OK".into() };
+
+                    // Game-side steam_api(64).dll: a corrupt/zero-byte copy is
+                    // restored from a `.bak` sibling when one exists; otherwise
+                    // warn clearly (no depot re-download is attempted here).
+                    let mut game_dirs: Vec<PathBuf> = Vec::new();
+                    if let Some(dir) = ctx.resolved_executable_path.as_ref().and_then(|e| e.parent()) {
+                        game_dirs.push(dir.to_path_buf());
+                    }
+                    if let Some(install) = ctx.app.as_ref().and_then(|a| a.install_path.as_ref()) {
+                        let install = PathBuf::from(install);
+                        if !game_dirs.contains(&install) {
+                            game_dirs.push(install);
+                        }
+                    }
+                    // Emitted after the last `ctx` borrow below (add_warning
+                    // needs `&mut ctx` while `spec`/`launcher_config` are still
+                    // borrowed here).
+                    let steam_api_notes = check_game_steam_api_libs(&game_dirs);
+
+                    let prefix_path = Path::new(prefix);
+                    match steam_mode {
+                        SteamMode::InWineRuntime => {
+                            let steam_dir = in_wine_steam_dir(prefix_path, ctx.user_config.as_ref(), launcher_config);
+                            let missing = missing_steam_runtime_libs(&steam_dir);
+                            if !missing.is_empty() {
+                                check.status = false;
+                                check.details = format!(
+                                    "in-Wine Steam runtime libraries missing or corrupt under {}: {}. \
+                                     Run `aurelia steam-runtime repair`.",
+                                    steam_dir.display(),
+                                    missing.join(", ")
+                                );
+                                final_res = Err(preflight_error(LaunchErrorKind::Environment, &check.details)
+                                    .with_context("steam_dir", steam_dir.to_string_lossy()));
+                            }
+                        }
+                        SteamMode::HostBridge => {
+                            // umu wraps the launch, so `spec.program` is umu-run —
+                            // the Proton tree is what PROTONPATH points at.
+                            let runner_root = spec.env.get("PROTONPATH")
+                                .map(PathBuf::from)
+                                .unwrap_or_else(|| crate::core::utils::derive_runner_root(&spec.program));
+                            if !lsteamclient_present(prefix_path, &runner_root) {
+                                check.status = false;
+                                check.details = format!(
+                                    "lsteamclient.dll was found neither in the prefix ({}) nor in the \
+                                     runner ({}) — the game cannot bridge to the host Steam client. \
+                                     Use a Proton runner that ships lsteamclient, or install the in-Wine \
+                                     Steam runtime (`aurelia steam-runtime install` / `aurelia steam-runtime repair`).",
+                                    prefix_path.display(),
+                                    runner_root.display()
+                                );
+                                final_res = Err(preflight_error(LaunchErrorKind::Environment, &check.details)
+                                    .with_context("wineprefix", prefix)
+                                    .with_context("runner_root", runner_root.to_string_lossy()));
+                            }
+                        }
+                        SteamMode::Standalone => {}
+                    }
+                    for note in steam_api_notes {
+                        ctx.add_warning("STEAM_API_INTEGRITY", note);
+                    }
+                    checks.push(check);
+                }
+            }
+        }
+
         let report = PreflightReport {
             success: final_res.is_ok(),
             checks,
@@ -194,6 +275,105 @@ impl PipelineStage for PreflightStage {
 
         final_res
     }
+}
+
+/// Where the in-Wine Steam runtime's client libraries live for this launch:
+/// the per-game deployment inside the game prefix, or the master Steam install
+/// in shared mode (falling back to the canonical prefix location when steam.exe
+/// hasn't been discovered).
+fn in_wine_steam_dir(
+    game_prefix: &Path,
+    user_config: Option<&crate::core::models::UserAppConfig>,
+    launcher_config: &crate::core::config::LauncherConfig,
+) -> PathBuf {
+    let mode = user_config
+        .map(|c| c.steam_prefix_mode.clone())
+        .unwrap_or(launcher_config.steam_prefix_mode.clone());
+    match mode {
+        crate::core::models::SteamPrefixMode::PerGame => {
+            game_prefix.join("drive_c/Program Files (x86)/Steam")
+        }
+        crate::core::models::SteamPrefixMode::Shared => {
+            let steam_cfg = crate::core::utils::get_master_steam_config();
+            steam_cfg
+                .steam_exe
+                .as_ref()
+                .and_then(|e| e.parent().map(|p| p.to_path_buf()))
+                .unwrap_or_else(|| steam_cfg.wine_prefix.join("drive_c/Program Files (x86)/Steam"))
+        }
+    }
+}
+
+/// Names of the in-Wine Steam runtime client libraries under `steam_dir` that a
+/// Steamworks game loads and that are missing or fail the MZ-header check.
+pub fn missing_steam_runtime_libs(steam_dir: &Path) -> Vec<String> {
+    ["steam.exe", "steamclient.dll", "steamclient64.dll"]
+        .into_iter()
+        .filter(|name| !crate::launch::has_mz_header(&steam_dir.join(name)))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Sweep `dirs` for the game-shipped Steamworks API DLLs (`steam_api.dll` /
+/// `steam_api64.dll`) and verify each one present has a valid MZ header. A
+/// corrupt DLL is restored from a `<name>.bak` sibling when a valid one exists;
+/// otherwise a clear warning is produced — restoring from a depot re-download is
+/// deliberately NOT attempted here. Returns a note per anomaly found/fixed.
+pub fn check_game_steam_api_libs(dirs: &[PathBuf]) -> Vec<String> {
+    let mut notes = Vec::new();
+    for dir in dirs {
+        for name in ["steam_api.dll", "steam_api64.dll"] {
+            let dll = dir.join(name);
+            if !dll.exists() || crate::launch::has_mz_header(&dll) {
+                continue;
+            }
+            let bak = dir.join(format!("{name}.bak"));
+            if crate::launch::has_mz_header(&bak) {
+                match std::fs::copy(&bak, &dll) {
+                    Ok(_) => notes.push(format!(
+                        "restored corrupt {} from backup {}",
+                        dll.display(),
+                        bak.display()
+                    )),
+                    Err(e) => notes.push(format!(
+                        "{} is corrupt (no MZ header) and restoring it from {} failed: {}",
+                        dll.display(),
+                        bak.display(),
+                        e
+                    )),
+                }
+            } else {
+                notes.push(format!(
+                    "{} is corrupt (no MZ header) and no valid .bak sibling exists — Steamworks \
+                     init will fail; verify/reinstall the game files",
+                    dll.display()
+                ));
+            }
+        }
+    }
+    notes
+}
+
+/// Whether the `lsteamclient` host-Steam bridge is available to a launch:
+/// already installed into the prefix (system32/syswow64, MZ-valid), or shipped
+/// by the runner tree (Proton installs it into the prefix on first setup, so a
+/// not-yet-set-up prefix is fine as long as the runner carries it).
+pub fn lsteamclient_present(prefix: &Path, runner_root: &Path) -> bool {
+    for sys in ["drive_c/windows/system32", "drive_c/windows/syswow64"] {
+        if crate::launch::has_mz_header(&prefix.join(sys).join("lsteamclient.dll")) {
+            return true;
+        }
+    }
+    crate::compat::proton::UNIFIED_LIB_SUBDIRS.iter().any(|lib| {
+        let base = runner_root.join(lib);
+        // Modern Proton ships a PE `lsteamclient.dll` under the arch subdirs;
+        // older builds a winelib `lsteamclient.dll.so` directly in the lib dir.
+        crate::compat::proton::ARCH_SUBDIRS
+            .iter()
+            .any(|arch| base.join(arch).join("lsteamclient.dll").exists())
+            || base.join("lsteamclient.dll").exists()
+            || base.join("lsteamclient.dll.so").exists()
+    })
 }
 
 #[cfg(test)]
