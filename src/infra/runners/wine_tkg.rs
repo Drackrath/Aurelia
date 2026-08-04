@@ -90,6 +90,24 @@ impl Runner for WineTkgRunner {
 
             tracing::info!("  - Steam Exe: {}", steam_cfg.steam_exe.as_ref().unwrap().display());
 
+            // Login preflight (ownership gate): an anonymous in-Wine client — no
+            // saved login, no machine-bound ssfn* sentry — cannot answer Steamworks
+            // ownership checks, so strict titles die ~2 s in with exit code 53.
+            // Fail fast with the fix instead of letting the game launch and die.
+            if !crate::launch::master_client_logged_in(&master_steam_dir) {
+                return Err(LaunchError::new(
+                    LaunchErrorKind::Environment,
+                    format!(
+                        "the in-Wine Steam client at {} is not signed in (no \
+                         config/loginusers.vdf and/or ssfn* sentry file), so Steamworks \
+                         games would exit with code 53. Run `aurelia steam-runtime login` \
+                         and sign in, then retry.",
+                        master_steam_dir.display()
+                    ),
+                )
+                .with_context("master_steam_dir", master_steam_dir.to_string_lossy()));
+            }
+
             let (prefix_steam_dir, steam_wineprefix) = match steam_prefix_mode {
                         crate::core::models::SteamPrefixMode::Shared => {
                             (master_steam_dir.clone(), steam_cfg.wine_prefix.clone())
