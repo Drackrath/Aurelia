@@ -23,6 +23,8 @@ impl PipelineStage for ResolveGameFixupsStage {
                 app_id,
                 env_count = fixups.env.len(),
                 dll_count = fixups.dll_overrides.len(),
+                launch_arg_count = fixups.launch_args.len(),
+                reg_op_count = fixups.reg_ops.len(),
                 "Applying per-game fixups from registry"
             );
             if let Some(logger) = &ctx.logger {
@@ -30,9 +32,14 @@ impl PipelineStage for ResolveGameFixupsStage {
                 metadata.insert("app_id".into(), app_id.to_string());
                 metadata.insert("env_count".into(), fixups.env.len().to_string());
                 metadata.insert("dll_override_count".into(), fixups.dll_overrides.len().to_string());
+                metadata.insert("launch_arg_count".into(), fixups.launch_args.len().to_string());
+                metadata.insert("reg_op_count".into(), fixups.reg_ops.len().to_string());
                 let _ = logger.info(
                     "game_fixups_resolved",
-                    format!("Resolved {} env + {} DLL-override fixups", fixups.env.len(), fixups.dll_overrides.len()),
+                    format!(
+                        "Resolved {} env + {} DLL-override + {} launch-arg + {} registry fixups",
+                        fixups.env.len(), fixups.dll_overrides.len(), fixups.launch_args.len(), fixups.reg_ops.len()
+                    ),
                     Some("ResolveGameFixups".into()),
                     metadata,
                 );

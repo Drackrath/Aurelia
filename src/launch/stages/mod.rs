@@ -8,5 +8,6 @@ pub mod build_environment;
 pub mod build_command;
 pub mod preflight;
 pub mod apply_launch_script;
+pub mod apply_registry_fixups;
 pub mod spawn_process;
 pub mod finalize;

@@ -159,6 +159,7 @@ mod tests {
         ctx.game_fixups = crate::launch::fixups::GameFixups {
             env: vec![("PROTON_NO_ESYNC".to_string(), "1".to_string())],
             dll_overrides: vec![("xlive".to_string(), "builtin".to_string())],
+            ..Default::default()
         };
 
         let env = runner.build_env(&ctx).await.unwrap();
@@ -175,7 +176,7 @@ mod tests {
         let mut ctx = mock_context();
         ctx.game_fixups = crate::launch::fixups::GameFixups {
             env: vec![("PROTON_NO_ESYNC".to_string(), "1".to_string())],
-            dll_overrides: vec![],
+            ..Default::default()
         };
         let mut user = UserAppConfig::default();
         user.env_variables.insert("PROTON_NO_ESYNC".to_string(), "0".to_string());
@@ -184,6 +185,57 @@ mod tests {
         let env = runner.build_env(&ctx).await.unwrap();
         // Explicit per-game value must win over the auto-fixup.
         assert_eq!(env.get("PROTON_NO_ESYNC").map(String::as_str), Some("0"));
+    }
+
+    /// A minimal bare-wine runner tree on disk so `build_command` can resolve a binary.
+    fn fake_wine_runner(root: &std::path::Path) -> PathBuf {
+        let runner_dir = root.join("wine-tkg");
+        std::fs::create_dir_all(runner_dir.join("bin")).unwrap();
+        std::fs::write(runner_dir.join("bin/wine"), "").unwrap();
+        runner_dir
+    }
+
+    #[tokio::test]
+    async fn test_fixup_launch_args_threaded_into_build_command() {
+        let tmp = tempfile::tempdir().unwrap();
+        let runner_dir = fake_wine_runner(tmp.path());
+
+        let runner = WineTkgRunner;
+        let mut ctx = mock_context();
+        ctx.proton_path = Some(runner_dir.to_string_lossy().to_string());
+        ctx.game_fixups = crate::launch::fixups::GameFixups {
+            launch_args: vec!["-ignoredifferentvideocard".to_string()],
+            ..Default::default()
+        };
+
+        let spec = runner.build_command(&ctx).await.unwrap();
+        assert!(
+            spec.args.iter().any(|a| a == "-ignoredifferentvideocard"),
+            "args were: {:?}",
+            spec.args
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fixup_launch_arg_not_duplicated_when_user_passes_it() {
+        use crate::core::models::UserAppConfig;
+        let tmp = tempfile::tempdir().unwrap();
+        let runner_dir = fake_wine_runner(tmp.path());
+
+        let runner = WineTkgRunner;
+        let mut ctx = mock_context();
+        ctx.proton_path = Some(runner_dir.to_string_lossy().to_string());
+        ctx.game_fixups = crate::launch::fixups::GameFixups {
+            launch_args: vec!["-ignoredifferentvideocard".to_string()],
+            ..Default::default()
+        };
+        let mut user = UserAppConfig::default();
+        user.launch_options = "-ignoredifferentvideocard".to_string();
+        ctx.user_config = Some(user);
+
+        let spec = runner.build_command(&ctx).await.unwrap();
+        let count = spec.args.iter().filter(|a| *a == "-ignoredifferentvideocard").count();
+        assert_eq!(count, 1, "args were: {:?}", spec.args);
     }
 
     #[tokio::test]

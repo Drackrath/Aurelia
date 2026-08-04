@@ -514,6 +514,7 @@ impl LaunchPipeline {
         pipeline.add_stage(Box::new(crate::launch::stages::build_command::BuildCommandStage));
         pipeline.add_stage(Box::new(crate::launch::stages::preflight::PreflightStage));
         pipeline.add_stage(Box::new(crate::launch::stages::apply_launch_script::ApplyLaunchScriptStage));
+        pipeline.add_stage(Box::new(crate::launch::stages::apply_registry_fixups::ApplyRegistryFixupsStage));
         pipeline.add_stage(Box::new(crate::launch::stages::spawn_process::SpawnProcessStage));
         pipeline.add_stage(Box::new(crate::launch::stages::finalize::FinalizeStage));
 
