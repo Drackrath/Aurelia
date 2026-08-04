@@ -67,6 +67,23 @@ impl Runner for WineTkgRunner {
         tracing::info!("Shared steam compatibility data enabled: {}", ctx.launcher_config.use_shared_compat_data);
         tracing::info!("Steam Runtime Prefix Mode: {:?}", steam_prefix_mode);
 
+        // The only legitimate wineserver owners for the prefixes this launch
+        // touches: the game runner, plus the background-Steam bare wine when the
+        // in-Wine runtime is in play. Anything else holding a prefix is a stale
+        // leftover from a launch under a different wine build, and joining its
+        // session (mismatched libs) fails in odd ways — sweep it before spawning.
+        let mut allowed_runner_roots: Vec<PathBuf> = Vec::new();
+        if let Ok(proton) = resolve_proton_required(ctx) {
+            let runner = crate::core::utils::resolve_runner(proton, &library_root);
+            allowed_runner_roots.push(crate::core::utils::derive_runner_root(&runner));
+        }
+        if use_steam_runtime {
+            if let Ok(cmd) = resolve_background_steam_command(ctx, &library_root) {
+                allowed_runner_roots
+                    .push(crate::core::utils::derive_runner_root(Path::new(cmd.get_program())));
+            }
+        }
+
         if use_steam_runtime {
             let steam_cfg = crate::core::utils::get_master_steam_config();
             tracing::info!("Unified Master Steam resolution (Game Launch):");
@@ -191,6 +208,18 @@ impl Runner for WineTkgRunner {
                     }
                     if slc.big_picture {
                         steam_args.push("-bigpicture".to_string());
+                    }
+
+                    // A steam.exe served by a stale cross-runner wineserver would
+                    // pass the liveness probe below and be mistaken for a healthy
+                    // background Steam. Kill the stale server first — and with it
+                    // any Steam it was hosting — so the probe only sees our own.
+                    let stale_servers = SteamClient::kill_stale_wineservers_in_prefix(
+                        &steam_wineprefix,
+                        &allowed_runner_roots,
+                    );
+                    if stale_servers > 0 {
+                        SteamClient::kill_steam_in_prefix(&steam_wineprefix);
                     }
 
                     let steam_running = SteamClient::is_steam_running_in_prefix(&steam_wineprefix);
@@ -388,7 +417,35 @@ impl Runner for WineTkgRunner {
                             return Err(LaunchError::new(LaunchErrorKind::Process, "Background Steam crashed before the game could start"));
                         }
                     }
+
+                    // Steam re-spawns its helper processes (steamwebhelper.exe,
+                    // gameoverlayui.exe, ...) even when launched with the matching
+                    // disable flags, so the flags alone don't stick. Enforce them
+                    // from a detached thread after a settle delay (~8s: the helpers
+                    // don't exist to be culled before Steam finishes early init) so
+                    // the game spawn is never delayed.
+                    if slc.no_browser || slc.no_friends_ui || slc.no_overlay || slc.no_chat_ui {
+                        let prefix = steam_wineprefix.clone();
+                        let (no_browser, no_friends_ui, no_overlay, no_chat_ui) =
+                            (slc.no_browser, slc.no_friends_ui, slc.no_overlay, slc.no_chat_ui);
+                        std::thread::spawn(move || {
+                            std::thread::sleep(std::time::Duration::from_secs(8));
+                            SteamClient::enforce_disabled_steam_features_in_prefix(
+                                &prefix,
+                                no_browser,
+                                no_friends_ui,
+                                no_overlay,
+                                no_chat_ui,
+                            );
+                        });
+                    }
         }
+
+        // Sweep the game prefix too (it can differ from the Steam prefix) so a
+        // bare-wine game never attaches to a leftover wineserver from another
+        // runner. The background Steam started above survives: its runner root is
+        // in the allowed set.
+        SteamClient::kill_stale_wineservers_in_prefix(&effective_game_prefix, &allowed_runner_roots);
 
         // Write steam_appid.txt to the game working directory
         let (_install_dir, _executable, game_working_dir) = resolve_game_paths(ctx)?;
@@ -991,7 +1048,7 @@ fn effective_game_prefix(ctx: &LaunchContext) -> PathBuf {
 
 /// Which Steam-integration mode a launch runs in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SteamMode {
+pub(crate) enum SteamMode {
     /// Bridge to the **host** Steam client via Proton's `lsteamclient` (full online
     /// Steamworks, Family-Shared licences). Chosen for `--steam` when a host Steam
     /// install is present. DLL overrides stay at Proton's defaults so `lsteamclient`
@@ -1022,19 +1079,28 @@ enum SteamMode {
 ///
 /// Returns the mode and a short source label recorded in launch diagnostics.
 fn resolve_steam_mode(ctx: &LaunchContext) -> (SteamMode, &'static str) {
+    resolve_steam_mode_parts(ctx.user_config.as_ref(), &ctx.launcher_config, ctx.steam_enabled)
+}
+
+/// [`resolve_steam_mode`] over its constituent inputs, for callers (e.g. the
+/// preflight stage) that hold a `PipelineContext` rather than a `LaunchContext`.
+/// Must stay the single source of truth for the mode decision.
+pub(crate) fn resolve_steam_mode_parts(
+    user_config: Option<&crate::core::models::UserAppConfig>,
+    launcher_config: &crate::core::config::LauncherConfig,
+    steam_enabled: bool,
+) -> (SteamMode, &'static str) {
     use crate::core::models::SteamRuntimePolicy;
 
     // Per-game policy wins; `Auto` inherits the global default. The deprecated
     // per-game `use_steam_runtime` boolean still forces the runtime on.
-    let per_game = ctx
-        .user_config
-        .as_ref()
+    let per_game = user_config
         .map(|c| c.steam_runtime_policy)
         .unwrap_or_default();
-    let legacy_forced = ctx.user_config.as_ref().map(|c| c.use_steam_runtime).unwrap_or(false);
+    let legacy_forced = user_config.map(|c| c.use_steam_runtime).unwrap_or(false);
     let effective = match per_game {
         SteamRuntimePolicy::Auto if legacy_forced => SteamRuntimePolicy::Enabled,
-        SteamRuntimePolicy::Auto => ctx.launcher_config.steam_runtime_policy,
+        SteamRuntimePolicy::Auto => launcher_config.steam_runtime_policy,
         explicit => explicit,
     };
 
@@ -1047,7 +1113,7 @@ fn resolve_steam_mode(ctx: &LaunchContext) -> (SteamMode, &'static str) {
         SteamRuntimePolicy::Enabled => {
             if master_installed() {
                 (SteamMode::InWineRuntime, "policy_enabled")
-            } else if ctx.steam_enabled && host_installed() {
+            } else if steam_enabled && host_installed() {
                 // Configured for the runtime but it isn't installed — honour --steam
                 // by bridging to host Steam rather than silently disabling DRM.
                 (SteamMode::HostBridge, "policy_enabled_host_fallback")
@@ -1057,9 +1123,9 @@ fn resolve_steam_mode(ctx: &LaunchContext) -> (SteamMode, &'static str) {
         }
         // In-Wine runtime forbidden: --steam uses host Steam (or standalone).
         SteamRuntimePolicy::Disabled => {
-            if ctx.steam_enabled && host_installed() {
+            if steam_enabled && host_installed() {
                 (SteamMode::HostBridge, "host")
-            } else if ctx.steam_enabled {
+            } else if steam_enabled {
                 (SteamMode::Standalone, "steam_flag_no_host")
             } else {
                 (SteamMode::Standalone, "policy_disabled")
@@ -1067,7 +1133,7 @@ fn resolve_steam_mode(ctx: &LaunchContext) -> (SteamMode, &'static str) {
         }
         // Auto: --steam prefers host, else the in-Wine runtime, else standalone.
         SteamRuntimePolicy::Auto => {
-            if !ctx.steam_enabled {
+            if !steam_enabled {
                 (SteamMode::Standalone, "default")
             } else if host_installed() {
                 (SteamMode::HostBridge, "host")

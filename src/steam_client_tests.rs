@@ -295,3 +295,51 @@ fn parses_ufs_savefile_rules() {
     assert_eq!(specs[1].pattern, "*.sav");
     assert!(!specs[1].recursive); // absent recursive defaults to false
 }
+
+#[test]
+fn escalation_step_decides_done_wait_kill() {
+    use std::time::Duration;
+    let t = KILL_ESCALATION_TIMEOUT;
+    // Everything exited after SIGTERM — done, no SIGKILL.
+    assert_eq!(escalation_step(false, Duration::ZERO, t), EscalationStep::Done);
+    assert_eq!(escalation_step(false, t * 2, t), EscalationStep::Done);
+    // Still alive within the grace window — keep polling.
+    assert_eq!(escalation_step(true, Duration::ZERO, t), EscalationStep::Wait);
+    assert_eq!(
+        escalation_step(true, t - Duration::from_millis(1), t),
+        EscalationStep::Wait
+    );
+    // Still alive past the window — escalate to SIGKILL.
+    assert_eq!(escalation_step(true, t, t), EscalationStep::Kill);
+    assert_eq!(escalation_step(true, t * 2, t), EscalationStep::Kill);
+}
+
+#[test]
+fn zombie_state_parsed_after_last_comm_paren() {
+    assert!(stat_is_zombie("123 (steam.exe) Z 1 123 123 0 -1"));
+    assert!(!stat_is_zombie("123 (steam.exe) S 1 123 123 0 -1"));
+    // comm may contain spaces and parens — state is after the LAST ')'.
+    assert!(stat_is_zombie("123 (we(ird) name) Z 1 123"));
+    assert!(!stat_is_zombie("garbage without parens"));
+}
+
+/// A real TERM-responsive process must exit within the grace window — well
+/// before the escalation timeout — and never survive the helper.
+#[test]
+#[cfg(unix)]
+fn terminate_escalation_reaps_term_responsive_process() {
+    let mut child = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .expect("spawn sleep");
+    let pid = child.id() as i32;
+
+    let start = std::time::Instant::now();
+    terminate_pids_with_escalation(&[pid]);
+    // sleep(1) dies on SIGTERM immediately; the bounded poll must notice and
+    // return long before the full escalation timeout.
+    assert!(start.elapsed() < KILL_ESCALATION_TIMEOUT);
+
+    let status = child.wait().expect("wait on killed child");
+    assert!(!status.success());
+}

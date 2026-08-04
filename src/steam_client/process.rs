@@ -119,7 +119,7 @@ impl SteamClient {
     #[cfg(unix)]
     pub fn kill_processes_for_app(app_id: u32, force: bool) {
         let needle = format!("STEAM_COMPAT_APP_ID={app_id}");
-        let signal = if force { libc::SIGKILL } else { libc::SIGTERM };
+        let mut pids: Vec<i32> = Vec::new();
 
         Self::scan_proc_pids(|pid_path, pid_str| {
             let environ = match std::fs::read(pid_path.join("environ")) {
@@ -136,13 +136,13 @@ impl SteamClient {
             }
 
             if let Ok(pid) = pid_str.parse::<i32>() {
-                unsafe {
-                    libc::kill(pid, signal);
-                }
+                pids.push(pid);
             }
             // Never short-circuit: sweep every matching process.
             None::<()>
         });
+
+        kill_or_escalate(&pids, force);
     }
 
     /// Invoke `f` once per numeric `/proc/<pid>` directory, passing its path and
@@ -175,7 +175,7 @@ impl SteamClient {
     #[cfg(unix)]
     pub fn kill_wine_processes_in_prefix(wineprefix: &Path, force: bool) {
         let prefix_str = wineprefix.to_string_lossy().to_string();
-        let signal = if force { libc::SIGKILL } else { libc::SIGTERM };
+        let mut pids: Vec<i32> = Vec::new();
 
         Self::scan_proc_pids(|pid_path, pid_str| {
             let environ = match std::fs::read(pid_path.join("environ")) {
@@ -187,28 +187,32 @@ impl SteamClient {
             }
 
             if let Ok(pid) = pid_str.parse::<i32>() {
-                unsafe {
-                    libc::kill(pid, signal);
-                }
+                pids.push(pid);
             }
             // Never short-circuit: sweep every matching process.
             None::<()>
         });
+
+        kill_or_escalate(&pids, force);
     }
 
     pub fn kill_steam_in_prefix(wineprefix: &Path) {
         #[cfg(unix)]
         {
             let prefix_str = wineprefix.to_string_lossy().to_string();
+            let mut pids: Vec<i32> = Vec::new();
 
             Self::scan_proc_pids(|pid_path, pid_str| {
                 let cmdline = match std::fs::read(pid_path.join("cmdline")) {
                     Ok(b) => String::from_utf8_lossy(&b).replace('\0', " "),
                     Err(_) => return None,
                 };
-                // Kill steam.exe and steamwebhelper.exe processes in this prefix
-                if !cmdline.to_lowercase().contains("steam.exe")
-                    && !cmdline.to_lowercase().contains("steamwebhelper.exe")
+                // Kill the Steam client, its CEF helper, and the steamservice.exe
+                // Steam respawns to back its client IPC, in this prefix.
+                let cmdline_lower = cmdline.to_lowercase();
+                if !cmdline_lower.contains("steam.exe")
+                    && !cmdline_lower.contains("steamwebhelper.exe")
+                    && !cmdline_lower.contains("steamservice.exe")
                 {
                     return None;
                 }
@@ -222,17 +226,130 @@ impl SteamClient {
                 }
 
                 if let Ok(pid) = pid_str.parse::<i32>() {
-                    unsafe {
-                        libc::kill(pid, libc::SIGTERM);
+                    pids.push(pid);
+                }
+                // Never short-circuit: sweep every matching process.
+                None::<()>
+            });
+
+            // TERM → bounded wait → KILL: a wedged steam.exe used to survive the
+            // bare SIGTERM here and outlive repair/stop.
+            terminate_pids_with_escalation(&pids);
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = wineprefix;
+        }
+    }
+
+    /// Kill wineserver processes that serve `wineprefix` but belong to a runner
+    /// OTHER than the ones rooted at `allowed_runner_roots` (the runner(s) about
+    /// to use the prefix, including the background Steam's — so the wineserver of
+    /// an intentionally-running same-runner Steam is never touched). A wineserver
+    /// left behind by a previous launch under a different wine build keeps the
+    /// prefix's session alive with mismatched libraries, and the new launch then
+    /// joins the stale session instead of starting its own. Returns how many
+    /// stale wineservers were found (always 0 on non-unix).
+    pub fn kill_stale_wineservers_in_prefix(
+        wineprefix: &Path,
+        allowed_runner_roots: &[PathBuf],
+    ) -> usize {
+        #[cfg(unix)]
+        {
+            // With no known-good root every wineserver would classify as stale;
+            // refuse to sweep rather than kill the legitimate one.
+            if allowed_runner_roots.is_empty() {
+                return 0;
+            }
+            let mut stale: Vec<i32> = Vec::new();
+            Self::scan_proc_pids(|pid_path, pid_str| {
+                let exe = std::fs::read_link(pid_path.join("exe")).ok()?;
+                let environ = std::fs::read(pid_path.join("environ")).ok()?;
+                if is_stale_cross_runner_wineserver(&exe, &environ, wineprefix, allowed_runner_roots)
+                {
+                    if let Ok(pid) = pid_str.parse::<i32>() {
+                        tracing::warn!(
+                            pid,
+                            exe = %exe.display(),
+                            prefix = %wineprefix.display(),
+                            "killing stale cross-runner wineserver holding the prefix"
+                        );
+                        stale.push(pid);
                     }
                 }
                 // Never short-circuit: sweep every matching process.
                 None::<()>
             });
+            if !stale.is_empty() {
+                terminate_pids_with_escalation(&stale);
+            }
+            stale.len()
         }
         #[cfg(not(unix))]
         {
-            let _ = wineprefix;
+            let _ = (wineprefix, allowed_runner_roots);
+            0
+        }
+    }
+
+    /// Kill Steam helper processes in `wineprefix` that back features the user
+    /// disabled. Steam re-spawns `steamwebhelper.exe`/`gameoverlayui.exe` even
+    /// when launched with the corresponding disable flags, so the flags alone
+    /// don't stick — this enforces them from outside, kill-on-sight (SIGKILL).
+    /// Executables are deliberately NOT chmod'd to block respawns: upstream's
+    /// chmod-000 approach broke `steam-runtime repair` (maintainer decision
+    /// pending).
+    ///
+    /// Matching is PID-safe: a name match alone is never enough — the process
+    /// must also prove it belongs to `wineprefix` via its own environment.
+    pub fn enforce_disabled_steam_features_in_prefix(
+        wineprefix: &Path,
+        no_browser: bool,
+        no_friends_ui: bool,
+        no_overlay: bool,
+        no_chat_ui: bool,
+    ) {
+        #[cfg(unix)]
+        {
+            if !(no_browser || no_friends_ui || no_overlay || no_chat_ui) {
+                return;
+            }
+            let prefix_str = wineprefix.to_string_lossy().to_string();
+            let mut doomed: Vec<i32> = Vec::new();
+
+            Self::scan_proc_pids(|pid_path, pid_str| {
+                let argv = match std::fs::read(pid_path.join("cmdline")) {
+                    Ok(b) => cmdline_argv(&b),
+                    Err(_) => return None,
+                };
+                if !disabled_helper_kill_match(&argv, no_browser, no_friends_ui, no_overlay, no_chat_ui)
+                {
+                    return None;
+                }
+                let environ = match std::fs::read(pid_path.join("environ")) {
+                    Ok(b) => String::from_utf8_lossy(&b).into_owned(),
+                    Err(_) => return None,
+                };
+                if !environ.contains(&prefix_str) {
+                    return None;
+                }
+                if let Ok(pid) = pid_str.parse::<i32>() {
+                    doomed.push(pid);
+                }
+                // Never short-circuit: sweep every matching process.
+                None::<()>
+            });
+
+            for pid in doomed {
+                tracing::info!(pid, "enforcing disabled Steam feature: killing helper process");
+                unsafe {
+                    libc::kill(pid, libc::SIGKILL);
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (wineprefix, no_browser, no_friends_ui, no_overlay, no_chat_ui);
         }
     }
 
@@ -502,5 +619,218 @@ NoSavePersonalInfo=1
                 bail!("WindowsProton targets must be launched via the Pipeline and Runner abstraction. Ad-hoc bypass is prohibited.");
             }
         }
+    }
+}
+
+/// Split a raw `/proc/<pid>/cmdline` buffer (NUL-separated argv) into strings,
+/// dropping empty entries (the buffer is NUL-terminated).
+#[cfg_attr(not(unix), allow(dead_code))]
+pub(crate) fn cmdline_argv(raw: &[u8]) -> Vec<String> {
+    raw.split(|&b| b == 0)
+        .filter(|e| !e.is_empty())
+        .map(|e| String::from_utf8_lossy(e).into_owned())
+        .collect()
+}
+
+/// True when a scanned process is a wineserver that serves `target_prefix` but
+/// whose executable lives outside every runner root in `allowed_runner_roots` —
+/// i.e. a stale server left behind by a launch under a different wine build.
+///
+/// The WINEPREFIX comparison is an exact env-entry match (never a substring),
+/// with trailing slashes normalized, so `/pfx` never matches `/pfx2`. Pure over
+/// its inputs so the classification is unit-testable with synthetic records.
+#[cfg_attr(not(unix), allow(dead_code))]
+pub(crate) fn is_stale_cross_runner_wineserver(
+    exe_path: &Path,
+    environ: &[u8],
+    target_prefix: &Path,
+    allowed_runner_roots: &[PathBuf],
+) -> bool {
+    // /proc/<pid>/exe of an updated/removed binary keeps the old path with a
+    // " (deleted)" suffix — still a wineserver.
+    let is_wineserver = exe_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.starts_with("wineserver"));
+    if !is_wineserver {
+        return false;
+    }
+
+    let target = target_prefix.to_string_lossy();
+    let target = target.trim_end_matches('/');
+    let prefix_matches = environ.split(|&b| b == 0).any(|entry| {
+        entry
+            .strip_prefix(&b"WINEPREFIX="[..])
+            .is_some_and(|v| String::from_utf8_lossy(v).trim_end_matches('/') == target)
+    });
+    if !prefix_matches {
+        return false;
+    }
+
+    !allowed_runner_roots.iter().any(|root| exe_path.starts_with(root))
+}
+
+/// Whether a process with this argv backs a disabled Steam feature and should be
+/// killed. `steamwebhelper.exe` hosts ALL of Steam's web UI (browser, friends,
+/// chat) with no per-surface process to target, so any of those three flags
+/// condemns it; it is matched by cmdline substring because helper subprocesses
+/// carry the exe at varying argv positions. `gameoverlayui.exe` is matched on
+/// argv[0]'s exact basename only — a substring match could hit a game process
+/// merely passing overlay-related arguments.
+#[cfg_attr(not(unix), allow(dead_code))]
+pub(crate) fn disabled_helper_kill_match(
+    argv: &[String],
+    no_browser: bool,
+    no_friends_ui: bool,
+    no_overlay: bool,
+    no_chat_ui: bool,
+) -> bool {
+    if (no_browser || no_friends_ui || no_chat_ui)
+        && argv.iter().any(|a| a.to_lowercase().contains("steamwebhelper.exe"))
+    {
+        return true;
+    }
+    if no_overlay {
+        if let Some(first) = argv.first() {
+            let base = first.replace('\\', "/");
+            let base = base.rsplit('/').next().unwrap_or("");
+            if base.eq_ignore_ascii_case("gameoverlayui.exe") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn environ(entries: &[&str]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        for e in entries {
+            buf.extend_from_slice(e.as_bytes());
+            buf.push(0);
+        }
+        buf
+    }
+
+    #[test]
+    fn stale_wineserver_requires_wineserver_binary() {
+        let env = environ(&["WINEPREFIX=/home/u/pfx"]);
+        assert!(!is_stale_cross_runner_wineserver(
+            Path::new("/opt/other-wine/bin/wine64"),
+            &env,
+            Path::new("/home/u/pfx"),
+            &[PathBuf::from("/opt/wine-tkg")],
+        ));
+    }
+
+    #[test]
+    fn stale_wineserver_requires_exact_prefix_match() {
+        // Substring / sibling prefixes must never match.
+        let env = environ(&["WINEPREFIX=/home/u/pfx2"]);
+        assert!(!is_stale_cross_runner_wineserver(
+            Path::new("/opt/other-wine/bin/wineserver"),
+            &env,
+            Path::new("/home/u/pfx"),
+            &[PathBuf::from("/opt/wine-tkg")],
+        ));
+        // No WINEPREFIX at all (default ~/.wine) is not a match either.
+        let env = environ(&["HOME=/home/u"]);
+        assert!(!is_stale_cross_runner_wineserver(
+            Path::new("/opt/other-wine/bin/wineserver"),
+            &env,
+            Path::new("/home/u/pfx"),
+            &[PathBuf::from("/opt/wine-tkg")],
+        ));
+    }
+
+    #[test]
+    fn stale_wineserver_tolerates_trailing_slash() {
+        let env = environ(&["WINEPREFIX=/home/u/pfx/"]);
+        assert!(is_stale_cross_runner_wineserver(
+            Path::new("/opt/other-wine/bin/wineserver"),
+            &env,
+            Path::new("/home/u/pfx"),
+            &[PathBuf::from("/opt/wine-tkg")],
+        ));
+    }
+
+    #[test]
+    fn same_runner_wineserver_is_not_stale() {
+        let env = environ(&["WINEPREFIX=/home/u/pfx"]);
+        // Belongs to the game runner root — allowed.
+        assert!(!is_stale_cross_runner_wineserver(
+            Path::new("/opt/wine-tkg/bin/wineserver"),
+            &env,
+            Path::new("/home/u/pfx"),
+            &[PathBuf::from("/opt/wine-tkg")],
+        ));
+        // Belongs to the background-Steam runner root (second allowed root) —
+        // the intentionally-running Steam's wineserver must survive the sweep.
+        assert!(!is_stale_cross_runner_wineserver(
+            Path::new("/opt/proton/files/bin/wineserver"),
+            &env,
+            Path::new("/home/u/pfx"),
+            &[PathBuf::from("/opt/wine-tkg"), PathBuf::from("/opt/proton/files")],
+        ));
+    }
+
+    #[test]
+    fn cross_runner_wineserver_is_stale() {
+        let env = environ(&["WINEPREFIX=/home/u/pfx", "DISPLAY=:0"]);
+        assert!(is_stale_cross_runner_wineserver(
+            Path::new("/opt/other-wine/bin/wineserver"),
+            &env,
+            Path::new("/home/u/pfx"),
+            &[PathBuf::from("/opt/wine-tkg")],
+        ));
+        // A deleted (updated) binary keeps a " (deleted)" suffix — still stale.
+        assert!(is_stale_cross_runner_wineserver(
+            Path::new("/opt/other-wine/bin/wineserver (deleted)"),
+            &env,
+            Path::new("/home/u/pfx"),
+            &[PathBuf::from("/opt/wine-tkg")],
+        ));
+    }
+
+    #[test]
+    fn webhelper_matched_by_cmdline_substring() {
+        let argv = vec![
+            "C:\\Program Files (x86)\\Steam\\bin\\cef\\cef.win7x64\\steamwebhelper.exe".to_string(),
+            "--type=renderer".to_string(),
+        ];
+        assert!(disabled_helper_kill_match(&argv, true, false, false, false));
+        assert!(disabled_helper_kill_match(&argv, false, true, false, false));
+        assert!(disabled_helper_kill_match(&argv, false, false, false, true));
+        // Overlay-only disable does not condemn the webhelper.
+        assert!(!disabled_helper_kill_match(&argv, false, false, true, false));
+        // Nothing disabled — nothing killed.
+        assert!(!disabled_helper_kill_match(&argv, false, false, false, false));
+    }
+
+    #[test]
+    fn overlay_matched_by_exact_argv0_basename_only() {
+        let overlay = vec!["C:\\Steam\\gameoverlayui.exe".to_string(), "-pid".to_string()];
+        assert!(disabled_helper_kill_match(&overlay, false, false, true, false));
+        assert!(!disabled_helper_kill_match(&overlay, true, true, false, true));
+
+        // A game merely mentioning the overlay in its args is NOT a match.
+        let game = vec![
+            "C:\\game\\game.exe".to_string(),
+            "-watchdog=gameoverlayui.exe".to_string(),
+        ];
+        assert!(!disabled_helper_kill_match(&game, false, false, true, false));
+
+        // steam.exe itself is never matched by this enforcement.
+        let steam = vec!["C:\\Steam\\steam.exe".to_string(), "-silent".to_string()];
+        assert!(!disabled_helper_kill_match(&steam, true, true, true, true));
+    }
+
+    #[test]
+    fn cmdline_argv_splits_on_nul() {
+        let raw = b"C:\\Steam\\steam.exe\0-silent\0\0";
+        assert_eq!(cmdline_argv(raw), vec!["C:\\Steam\\steam.exe", "-silent"]);
     }
 }
