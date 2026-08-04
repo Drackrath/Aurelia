@@ -375,8 +375,9 @@ pub use market::{
 /// real game, so we kill the whole tree with `taskkill /T`. On Unix we send
 /// `SIGTERM` then `SIGKILL` to give the game a chance to exit cleanly first.
 /// Terminate the process tree rooted at `pid`. With `force`, kill immediately;
-/// otherwise ask it to exit first (SIGTERM) and only SIGKILL the stragglers after
-/// a short grace period so the game can shut down cleanly.
+/// otherwise ask it to exit first (SIGTERM), poll for up to
+/// [`KILL_ESCALATION_TIMEOUT`], and only SIGKILL what is still alive after that —
+/// so a game that saves and exits quickly is never SIGKILLed mid-shutdown.
 fn kill_process_tree(pid: u32, force: bool) {
     #[cfg(target_os = "windows")]
     {
@@ -395,15 +396,109 @@ fn kill_process_tree(pid: u32, force: bool) {
                 libc::kill(pid, libc::SIGKILL);
             }
         } else {
-            unsafe {
-                libc::kill(pid, libc::SIGTERM);
-            }
-            std::thread::sleep(Duration::from_millis(500));
+            terminate_pids_with_escalation(&[pid]);
+        }
+    }
+}
+
+/// How long the non-force kill paths wait for a SIGTERM'd process to exit on its
+/// own before escalating to SIGKILL.
+#[cfg_attr(not(unix), allow(dead_code))]
+pub(crate) const KILL_ESCALATION_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(unix)]
+const KILL_ESCALATION_POLL: Duration = Duration::from_millis(100);
+
+/// What the TERM → bounded-wait → KILL escalation should do next, given whether
+/// any signalled process is still alive and how long it has waited so far.
+/// Factored out of [`terminate_pids_with_escalation`] so the escalation decision
+/// is testable without spawning (or being able to signal) real processes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(unix), allow(dead_code))]
+pub(crate) enum EscalationStep {
+    /// Everything exited after SIGTERM — no escalation needed.
+    Done,
+    /// Still alive but within the grace window — keep polling.
+    Wait,
+    /// Still alive past the grace window — SIGKILL the leftovers.
+    Kill,
+}
+
+#[cfg_attr(not(unix), allow(dead_code))]
+pub(crate) fn escalation_step(any_alive: bool, elapsed: Duration, timeout: Duration) -> EscalationStep {
+    if !any_alive {
+        EscalationStep::Done
+    } else if elapsed >= timeout {
+        EscalationStep::Kill
+    } else {
+        EscalationStep::Wait
+    }
+}
+
+/// SIGTERM every pid, poll liveness for up to [`KILL_ESCALATION_TIMEOUT`], then
+/// SIGKILL whatever is still running. Returns as soon as everything is gone, so
+/// the full timeout is only ever paid for genuinely wedged processes.
+#[cfg(unix)]
+pub(crate) fn terminate_pids_with_escalation(pids: &[i32]) {
+    for &pid in pids {
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+        }
+    }
+    let start = Instant::now();
+    let mut remaining: Vec<i32> = pids.to_vec();
+    loop {
+        remaining.retain(|&pid| pid_alive(pid));
+        match escalation_step(!remaining.is_empty(), start.elapsed(), KILL_ESCALATION_TIMEOUT) {
+            EscalationStep::Done => return,
+            EscalationStep::Kill => break,
+            EscalationStep::Wait => std::thread::sleep(KILL_ESCALATION_POLL),
+        }
+    }
+    for &pid in &remaining {
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+        }
+    }
+}
+
+/// SIGKILL immediately with `force`, else TERM → bounded wait → KILL.
+#[cfg(unix)]
+pub(crate) fn kill_or_escalate(pids: &[i32], force: bool) {
+    if force {
+        for &pid in pids {
             unsafe {
                 libc::kill(pid, libc::SIGKILL);
             }
         }
+    } else {
+        terminate_pids_with_escalation(pids);
     }
+}
+
+/// Whether `pid` still exists (signal 0 probe). EPERM means it exists but is not
+/// ours — treat as alive rather than escalating past it silently.
+#[cfg(unix)]
+fn pid_alive(pid: i32) -> bool {
+    if unsafe { libc::kill(pid, 0) } != 0 {
+        return std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM);
+    }
+    // A zombie still answers signal probes but is already dead and cannot be
+    // SIGKILLed either — treat it as gone so an unreaped child never makes the
+    // escalation wait out the full timeout.
+    match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => !stat_is_zombie(&stat),
+        Err(_) => false,
+    }
+}
+
+/// Whether a `/proc/<pid>/stat` line reports state `Z` (zombie). The state field
+/// follows the parenthesized comm, which may itself contain spaces/parens, so it
+/// is located after the LAST `)`.
+#[cfg_attr(not(unix), allow(dead_code))]
+pub(crate) fn stat_is_zombie(stat: &str) -> bool {
+    stat.rfind(')')
+        .and_then(|i| stat[i + 1..].trim_start().chars().next())
+        == Some('Z')
 }
 
 pub fn sanitize_install_dir(name: &str) -> String {

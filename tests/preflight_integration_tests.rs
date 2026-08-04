@@ -164,3 +164,88 @@ async fn test_launch_artifacts_generation() {
     let env_content = std::fs::read_to_string(session_dir.join("effective_env.txt")).unwrap();
     assert!(env_content.contains("WINEPREFIX=/tmp/fake_pfx"));
 }
+
+#[test]
+fn test_mz_header_check() {
+    use aurelia::launch::has_mz_header;
+    let tmp = tempfile::tempdir().unwrap();
+
+    let valid = tmp.path().join("valid.dll");
+    std::fs::write(&valid, b"MZ\x90\x00fake-pe-body").unwrap();
+    assert!(has_mz_header(&valid));
+
+    let zero_byte = tmp.path().join("zero.dll");
+    std::fs::write(&zero_byte, b"").unwrap();
+    assert!(!has_mz_header(&zero_byte));
+
+    let html = tmp.path().join("error_page.dll");
+    std::fs::write(&html, b"<html>404</html>").unwrap();
+    assert!(!has_mz_header(&html));
+
+    assert!(!has_mz_header(&tmp.path().join("missing.dll")));
+}
+
+#[test]
+fn test_corrupt_steam_api_restored_from_bak() {
+    use aurelia::launch::stages::preflight::check_game_steam_api_libs;
+    let tmp = tempfile::tempdir().unwrap();
+    let dll = tmp.path().join("steam_api64.dll");
+    let bak = tmp.path().join("steam_api64.dll.bak");
+    std::fs::write(&dll, b"").unwrap(); // zero-byte: fails the MZ check
+    std::fs::write(&bak, b"MZ\x90\x00real-steam-api").unwrap();
+
+    let notes = check_game_steam_api_libs(&[tmp.path().to_path_buf()]);
+
+    assert_eq!(notes.len(), 1);
+    assert!(notes[0].contains("restored"), "unexpected note: {}", notes[0]);
+    // The corrupt DLL was replaced with the backup's contents.
+    assert_eq!(std::fs::read(&dll).unwrap(), b"MZ\x90\x00real-steam-api");
+}
+
+#[test]
+fn test_corrupt_steam_api_without_bak_warns() {
+    use aurelia::launch::stages::preflight::check_game_steam_api_libs;
+    let tmp = tempfile::tempdir().unwrap();
+    let dll = tmp.path().join("steam_api.dll");
+    std::fs::write(&dll, b"corrupt-not-a-pe").unwrap();
+
+    let notes = check_game_steam_api_libs(&[tmp.path().to_path_buf()]);
+
+    assert_eq!(notes.len(), 1);
+    assert!(notes[0].contains("corrupt"), "unexpected note: {}", notes[0]);
+    assert!(notes[0].contains("no valid .bak"), "unexpected note: {}", notes[0]);
+    // No .bak: the corrupt file is left in place (no depot re-download invented).
+    assert_eq!(std::fs::read(&dll).unwrap(), b"corrupt-not-a-pe");
+}
+
+#[test]
+fn test_valid_and_absent_steam_api_produce_no_notes() {
+    use aurelia::launch::stages::preflight::check_game_steam_api_libs;
+    let tmp = tempfile::tempdir().unwrap();
+    // Valid MZ DLL — untouched, no note. steam_api64.dll absent — also no note.
+    let dll = tmp.path().join("steam_api.dll");
+    std::fs::write(&dll, b"MZ\x90\x00good").unwrap();
+
+    let notes = check_game_steam_api_libs(&[tmp.path().to_path_buf()]);
+    assert!(notes.is_empty(), "unexpected notes: {:?}", notes);
+    assert_eq!(std::fs::read(&dll).unwrap(), b"MZ\x90\x00good");
+}
+
+#[test]
+fn test_missing_steam_runtime_libs_reports_corrupt_and_absent() {
+    use aurelia::launch::stages::preflight::missing_steam_runtime_libs;
+    let tmp = tempfile::tempdir().unwrap();
+    let steam_dir = tmp.path().join("Steam");
+    std::fs::create_dir_all(&steam_dir).unwrap();
+    std::fs::write(steam_dir.join("steam.exe"), b"MZ\x90\x00ok").unwrap();
+    std::fs::write(steam_dir.join("steamclient.dll"), b"").unwrap(); // corrupt
+    // steamclient64.dll absent entirely.
+
+    let missing = missing_steam_runtime_libs(&steam_dir);
+    assert_eq!(missing, vec!["steamclient.dll".to_string(), "steamclient64.dll".to_string()]);
+
+    // A fully valid runtime dir reports nothing.
+    std::fs::write(steam_dir.join("steamclient.dll"), b"MZ\x90\x00ok").unwrap();
+    std::fs::write(steam_dir.join("steamclient64.dll"), b"MZ\x90\x00ok").unwrap();
+    assert!(missing_steam_runtime_libs(&steam_dir).is_empty());
+}
