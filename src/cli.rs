@@ -620,6 +620,12 @@ pub(crate) enum SteamRuntimeCommand {
     /// session), without uninstalling. Use to shut down a Steam started by `login`
     /// or one left running after a game launch.
     Stop,
+    /// Register Aurelia's native Linux Steam library in the in-Wine Steam client's
+    /// libraryfolders.vdf (as a `Z:\` wine path with an apps index), so strict
+    /// Steamworks games pass the client's install gate instead of exiting with
+    /// code 53. Stops the in-Wine Steam first (it rewrites the file on exit).
+    /// Runs automatically at the end of `steam-runtime install`.
+    RegisterLibrary,
     /// Show the resolved master prefix, layout, whether steam.exe is present, and
     /// whether a Steam-runtime runner is configured.
     Status,
