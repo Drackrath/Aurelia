@@ -247,7 +247,28 @@ pub(crate) async fn cmd_steam_runtime_repair(json: bool) -> Result<()> {
             "steam_exe": steam_cfg.steam_exe,
         }));
     } else {
-        cli_println!("Master Steam runtime repaired (backed up old prefix, reinstalled).");
+        cli_println!(
+            "Master Steam runtime repaired (reinstalled; logins and in-Wine-installed \
+             games preserved, old prefix kept as .bak)."
+        );
+    }
+    Ok(())
+}
+
+/// `steam-runtime restore`: swap the master prefix with the `.bak` a repair left.
+pub(crate) async fn cmd_steam_runtime_restore(json: bool) -> Result<()> {
+    let swapped = aurelia::launch::restore_master_steam().await?;
+    let steam_cfg = aurelia::core::utils::get_master_steam_config();
+    if json {
+        print_json(&serde_json::json!({
+            "status": if swapped { "swapped" } else { "restored" },
+            "wine_prefix": steam_cfg.wine_prefix,
+        }));
+    } else if swapped {
+        cli_println!("Restored the master prefix from its .bak backup.");
+        cli_println!("The replaced prefix is now the .bak — run `restore` again to swap back.");
+    } else {
+        cli_println!("Moved the .bak backup into place as the master prefix (none existed).");
     }
     Ok(())
 }

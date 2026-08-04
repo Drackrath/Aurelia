@@ -55,6 +55,14 @@ pub async fn install_master_steam(config: &LauncherConfig) -> Result<()> {
     // needs (see ensure_steam_runtime_prefix_libs) — sync them before launching.
     crate::core::utils::ensure_steam_runtime_prefix_libs(&wine, &steam_cfg.wine_prefix);
 
+    // Same guard the game-launch path uses: a second `install` while a client is
+    // already up must not double-spawn Steam (it only pops a "Steam is already
+    // running" dialog in the prefix).
+    if SteamClient::is_steam_running_in_prefix(&steam_cfg.wine_prefix) {
+        tracing::info!("Steam already running in the master prefix — skipping spawn");
+        return Ok(());
+    }
+
     launch_master_steam(&wine, &steam_exe, &steam_cfg, &base_dir)
 }
 
@@ -133,6 +141,13 @@ fn launch_master_steam(
     steam_cfg: &MasterSteamConfig,
     base_dir: &Path,
 ) -> Result<()> {
+    // Refresh steam.cfg on every launch, not just at install: Steam's self-update
+    // rewrites (or drops) the file, losing `BootStrapperForceSelfUpdate=disable` —
+    // the guard that keeps the bootstrapper from wedging the client under Wine.
+    if let Some(steam_dir) = steam_exe.parent() {
+        SteamClient::write_headless_steam_cfg(steam_dir);
+    }
+
     let mut cmd = Command::new(wine);
     cmd.arg(steam_exe);
     // Steam *client* flags tuned for running under Wine. Steam's CEF UI
@@ -227,9 +242,104 @@ fn apply_install_diagnostics(cmd: &mut Command, base_dir: &Path) {
     }
 }
 
-/// Repair the master Windows-Steam prefix: stop anything holding it, snapshot the
-/// current prefix (retaining a single `.bak`), then re-run the installer into a
-/// fresh prefix.
+/// The Steam-dir subdirectories that hold user state a repair must never lose:
+/// `config` (logins / client settings), `userdata` (per-account data) and
+/// `steamapps` (games installed *through* the in-Wine Steam — the only copy of
+/// Family-Shared titles Aurelia cannot download itself).
+const PRESERVED_STEAM_DATA_DIRS: [&str; 3] = ["userdata", "config", "steamapps"];
+
+/// `path` with `suffix` appended to its final component (`…/pfx` → `…/pfx.bak`).
+fn sibling_with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut s = path.as_os_str().to_os_string();
+    s.push(suffix);
+    PathBuf::from(s)
+}
+
+/// The in-prefix Steam directory, if one exists (prefers the one holding steam.exe).
+fn find_master_steam_dir(steam_cfg: &MasterSteamConfig) -> Option<PathBuf> {
+    if let Some(exe) = &steam_cfg.steam_exe {
+        return exe.parent().map(Path::to_path_buf);
+    }
+    // A broken install can lack steam.exe while the data dirs survive — probe the
+    // same candidate locations find_steam_exe_in_prefix uses.
+    [
+        "drive_c/Program Files (x86)/Steam",
+        "drive_c/Program Files/Steam",
+    ]
+    .into_iter()
+    .map(|rel| steam_cfg.wine_prefix.join(rel))
+    .find(|dir| dir.is_dir())
+}
+
+/// Move the user-data dirs ([`PRESERVED_STEAM_DATA_DIRS`]) out of `steam_dir` into
+/// `holding_dir` before a repair touches the Steam install. Returns which dirs were
+/// actually moved (missing ones are skipped).
+///
+/// The holding folder must live OUTSIDE the Steam dir and the data must stay there
+/// until SteamSetup.exe has *exited*: NSIS refuses a non-empty destination
+/// ("destination folder should be empty"), so restoring early aborts the reinstall.
+pub fn preserve_steam_data_dirs(steam_dir: &Path, holding_dir: &Path) -> Result<Vec<&'static str>> {
+    let mut preserved = Vec::new();
+    for name in PRESERVED_STEAM_DATA_DIRS {
+        let src = steam_dir.join(name);
+        if !src.is_dir() {
+            continue;
+        }
+        std::fs::create_dir_all(holding_dir).with_context(|| {
+            format!("failed creating repair holding dir {}", holding_dir.display())
+        })?;
+        let dst = holding_dir.join(name);
+        if dst.exists() {
+            // Stale leftover from an interrupted repair; the live Steam dir is
+            // authoritative when both exist.
+            std::fs::remove_dir_all(&dst)
+                .with_context(|| format!("failed removing stale {}", dst.display()))?;
+        }
+        std::fs::rename(&src, &dst).with_context(|| {
+            format!("failed moving {} to {}", src.display(), dst.display())
+        })?;
+        preserved.push(name);
+    }
+    Ok(preserved)
+}
+
+/// Move previously preserved data dirs from `holding_dir` back into `steam_dir`
+/// (created if needed). A dir the fresh install re-created is replaced — the
+/// preserved copy wins, the fresh one only holds installer defaults. Returns which
+/// dirs were restored; removes the holding dir once emptied.
+pub fn restore_steam_data_dirs(holding_dir: &Path, steam_dir: &Path) -> Result<Vec<&'static str>> {
+    let mut restored = Vec::new();
+    if !holding_dir.is_dir() {
+        return Ok(restored);
+    }
+    std::fs::create_dir_all(steam_dir)
+        .with_context(|| format!("failed creating {}", steam_dir.display()))?;
+    for name in PRESERVED_STEAM_DATA_DIRS {
+        let src = holding_dir.join(name);
+        if !src.is_dir() {
+            continue;
+        }
+        let dst = steam_dir.join(name);
+        if dst.exists() {
+            std::fs::remove_dir_all(&dst).with_context(|| {
+                format!("failed removing freshly installed {}", dst.display())
+            })?;
+        }
+        std::fs::rename(&src, &dst).with_context(|| {
+            format!("failed restoring {} to {}", src.display(), dst.display())
+        })?;
+        restored.push(name);
+    }
+    // Best-effort: only succeeds once the holding dir is empty.
+    let _ = std::fs::remove_dir(holding_dir);
+    Ok(restored)
+}
+
+/// Repair the master Windows-Steam prefix without losing user data: stop anything
+/// holding it, move `userdata`/`config`/`steamapps` into a holding folder, snapshot
+/// the rest of the prefix (retaining a single `.bak` safety net), re-run the
+/// installer into a fresh prefix, then restore the preserved dirs into it — so
+/// logins and games installed inside the in-Wine Steam survive the repair.
 ///
 /// Like [`install_master_steam`], this needs a configured `steam_runtime_runner`
 /// to drive the installer under a bare wine. The runner is validated up front so
@@ -242,7 +352,13 @@ pub async fn repair_master_steam(config: &LauncherConfig) -> Result<()> {
         ));
     }
 
+    let base_dir = config_dir()?;
     let steam_cfg = crate::core::utils::get_master_steam_config();
+
+    // Resolve the runner FIRST — see the doc comment above.
+    let runner_name = config.steam_runtime_runner.to_string_lossy();
+    let library_root = PathBuf::from(&config.steam_library_path);
+    let wine = crate::core::utils::resolve_steam_runtime_wine(&runner_name, &library_root)?;
 
     // 1. Kill any master-Steam / game processes still holding the prefix so the
     //    directory can be moved safely. Reuse the existing prefix-scoped killers
@@ -255,33 +371,184 @@ pub async fn repair_master_steam(config: &LauncherConfig) -> Result<()> {
     SteamClient::kill_steam_in_prefix(&steam_cfg.wine_prefix);
     #[cfg(unix)]
     SteamClient::kill_wine_processes_in_prefix(&steam_cfg.wine_prefix, true);
+    // Give the wineserver a moment to release open file handles before the moves.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-    // 2. Snapshot the current prefix, retaining only ONE backup. Only if present.
-    if steam_cfg.wine_prefix.exists() {
-        let mut bak = steam_cfg.wine_prefix.clone().into_os_string();
-        bak.push(".bak");
-        let bak = PathBuf::from(bak);
-        if bak.exists() {
-            tracing::info!("Repair: removing previous backup {}", bak.display());
-            std::fs::remove_dir_all(&bak)
-                .with_context(|| format!("failed removing previous backup {}", bak.display()))?;
+    // 2. Move the user data out of the Steam dir into a holding folder next to the
+    //    prefix (outside it, so the `.bak` rename below can't take the data along).
+    let steam_dir = find_master_steam_dir(&steam_cfg);
+    let holding = sibling_with_suffix(&steam_cfg.wine_prefix, ".repair-data");
+    let preserved = match &steam_dir {
+        Some(dir) => {
+            let preserved = preserve_steam_data_dirs(dir, &holding)?;
+            if !preserved.is_empty() {
+                tracing::info!(
+                    "Repair: preserved {} into {}",
+                    preserved.join(", "),
+                    holding.display()
+                );
+            }
+            preserved
         }
-        tracing::info!(
-            "Repair: backing up {} -> {}",
-            steam_cfg.wine_prefix.display(),
-            bak.display()
-        );
-        std::fs::rename(&steam_cfg.wine_prefix, &bak)
-            .with_context(|| format!("failed backing up master prefix to {}", bak.display()))?;
-    } else {
-        tracing::info!(
-            "Repair: no existing master prefix at {} — nothing to back up",
-            steam_cfg.wine_prefix.display()
-        );
+        None => Vec::new(),
+    };
+
+    // 3 + 4, jointly fallible so a failure in either step can hand the preserved
+    // data back instead of stranding it in the holding folder.
+    let install_result = async {
+        // 3. Snapshot the rest of the prefix, retaining only ONE backup. This rename
+        //    is also what removes the broken client files from the live tree: with
+        //    the data dirs held aside, everything the rename takes away is
+        //    client/wine state the installer rebuilds — kept recoverable in the
+        //    `.bak` instead of deleted (`steam-runtime restore` swaps it back; the
+        //    next repair rotates it away).
+        if steam_cfg.wine_prefix.exists() {
+            let bak = sibling_with_suffix(&steam_cfg.wine_prefix, ".bak");
+            if bak.exists() {
+                tracing::info!("Repair: removing previous backup {}", bak.display());
+                std::fs::remove_dir_all(&bak).with_context(|| {
+                    format!("failed removing previous backup {}", bak.display())
+                })?;
+            }
+            tracing::info!(
+                "Repair: backing up {} -> {}",
+                steam_cfg.wine_prefix.display(),
+                bak.display()
+            );
+            std::fs::rename(&steam_cfg.wine_prefix, &bak)
+                .with_context(|| format!("failed backing up master prefix to {}", bak.display()))?;
+        } else {
+            tracing::info!(
+                "Repair: no existing master prefix at {} — nothing to back up",
+                steam_cfg.wine_prefix.display()
+            );
+        }
+
+        // 4. Re-run the installer into the now-clean prefix. NOT install_master_steam:
+        //    that would launch Steam before the data is back in place.
+        run_steam_installer(&wine, &steam_cfg, &base_dir).await
+    }
+    .await;
+
+    let steam_exe = match install_result {
+        Ok(exe) => exe,
+        Err(e) => {
+            // Return the preserved data to wherever the old Steam dir now lives —
+            // inside the `.bak` if the snapshot happened (so `steam-runtime restore`
+            // recovers the complete old prefix), else the still-live prefix.
+            if !preserved.is_empty() {
+                if let Some(dir) = &steam_dir {
+                    let bak = sibling_with_suffix(&steam_cfg.wine_prefix, ".bak");
+                    let dest = if bak.exists() {
+                        dir.strip_prefix(&steam_cfg.wine_prefix)
+                            .map(|rel| bak.join(rel))
+                            .unwrap_or_else(|_| dir.clone())
+                    } else {
+                        dir.clone()
+                    };
+                    match restore_steam_data_dirs(&holding, &dest) {
+                        Ok(_) => tracing::warn!(
+                            "Repair failed; preserved data returned to {}",
+                            dest.display()
+                        ),
+                        Err(re) => tracing::error!(
+                            "Repair failed AND restoring preserved data failed ({re}); \
+                             your userdata/config/steamapps remain in {}",
+                            holding.display()
+                        ),
+                    }
+                }
+            }
+            return Err(e);
+        }
+    };
+
+    // 5. Restore the preserved data into the fresh install — only now that the
+    //    installer has exited (see preserve_steam_data_dirs on why not earlier).
+    if let Some(new_steam_dir) = steam_exe.parent() {
+        let restored = restore_steam_data_dirs(&holding, new_steam_dir)?;
+        if !restored.is_empty() {
+            tracing::info!(
+                "Repair: restored {} into {}",
+                restored.join(", "),
+                new_steam_dir.display()
+            );
+        }
     }
 
-    // 3. Re-run the installer into the now-clean prefix.
-    install_master_steam(config).await
+    crate::core::utils::ensure_steam_runtime_prefix_libs(&wine, &steam_cfg.wine_prefix);
+    launch_master_steam(&wine, &steam_exe, &steam_cfg, &base_dir)
+}
+
+/// Restore the master prefix from the `.bak` safety net a previous
+/// [`repair_master_steam`] left, by **swapping** the current prefix with the backup
+/// (running `restore` again swaps back, so nothing is ever deleted). Stops anything
+/// holding the prefix first. Returns `true` if a current prefix existed and was
+/// swapped, `false` if the backup was simply moved into place.
+pub async fn restore_master_steam() -> Result<bool> {
+    let steam_cfg = crate::core::utils::get_master_steam_config();
+
+    let mut target = steam_cfg.wine_prefix.clone();
+    let mut bak = sibling_with_suffix(&target, ".bak");
+    if !bak.exists() {
+        // A root-layout prefix renamed away by a failed repair leaves no drive_c for
+        // layout detection (wine_prefix then defaults to `pfx`) — probe the
+        // root-layout backup location too before giving up.
+        let root_bak = sibling_with_suffix(&steam_cfg.root_dir, ".bak");
+        if root_bak != bak && root_bak.join("drive_c").is_dir() {
+            target = steam_cfg.root_dir.clone();
+            bak = root_bak;
+        }
+    }
+    if !bak.exists() {
+        return Err(anyhow!(
+            "no repair backup to restore: {} does not exist. A `.bak` is created by \
+             `aurelia steam-runtime repair` (and deleted by `steam-runtime uninstall`).",
+            bak.display()
+        ));
+    }
+
+    SteamClient::kill_steam_in_prefix(&target);
+    #[cfg(unix)]
+    SteamClient::kill_wine_processes_in_prefix(&target, true);
+    // Give the wineserver a moment to release open file handles before the swap.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    if !target.exists() {
+        std::fs::rename(&bak, &target).with_context(|| {
+            format!("failed moving {} to {}", bak.display(), target.display())
+        })?;
+        tracing::info!("Restore: moved {} into place at {}", bak.display(), target.display());
+        return Ok(false);
+    }
+
+    // Swap current ↔ .bak via a temp name so an interrupted restore never loses
+    // either copy.
+    let tmp = sibling_with_suffix(&target, ".restore-tmp");
+    if tmp.exists() {
+        std::fs::remove_dir_all(&tmp)
+            .with_context(|| format!("failed removing leftover {}", tmp.display()))?;
+    }
+    std::fs::rename(&target, &tmp)
+        .with_context(|| format!("failed moving {} aside to {}", target.display(), tmp.display()))?;
+    if let Err(e) = std::fs::rename(&bak, &target) {
+        // Undo so the prefix isn't left missing.
+        let _ = std::fs::rename(&tmp, &target);
+        return Err(anyhow::Error::new(e).context(format!(
+            "failed moving backup {} into place at {}",
+            bak.display(),
+            target.display()
+        )));
+    }
+    std::fs::rename(&tmp, &bak).with_context(|| {
+        format!(
+            "restored the backup, but failed moving the old prefix {} to {}",
+            tmp.display(),
+            bak.display()
+        )
+    })?;
+    tracing::info!("Restore: swapped {} <-> {}", target.display(), bak.display());
+    Ok(true)
 }
 
 /// Stop the Windows Steam client running in the master prefix — kill its whole Wine

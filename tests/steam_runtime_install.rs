@@ -9,7 +9,7 @@ use aurelia::core::utils::{
     build_runner_command, find_steam_exe_in_prefix, resolve_runner_opt,
     resolve_steam_runtime_wine, steam_runtime_runner_unset_msg,
 };
-use aurelia::launch::is_valid_setup_exe;
+use aurelia::launch::{is_valid_setup_exe, preserve_steam_data_dirs, restore_steam_data_dirs};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::{tempdir, TempDir};
@@ -267,4 +267,122 @@ fn quiet_resolver_matches_fuzzily() {
     fs::write(dir.join("files/bin/wine64"), "#!/bin/sh\n").unwrap();
 
     assert_eq!(resolve_runner_opt("experimental", &lib), Some(dir));
+}
+
+// --- data-preserving repair: preserve/restore round-trip ---------------------
+//
+// `repair` used to rename the whole prefix to `.bak` and reinstall, losing logins
+// (`config`/`userdata`) AND games installed inside the in-Wine Steam (`steamapps`).
+// The preserve/restore helpers move those dirs into a holding folder OUTSIDE the
+// Steam dir until SteamSetup.exe exits (NSIS refuses a non-empty destination),
+// then bring them back. Pure filesystem — no wine involved.
+
+/// A fixture Steam dir: the three user-data dirs (with content) plus client files
+/// the repair is allowed to lose.
+fn fixture_steam_dir(root: &Path) -> PathBuf {
+    let steam = root.join("drive_c/Program Files (x86)/Steam");
+    fs::create_dir_all(steam.join("userdata/12345678/config")).unwrap();
+    fs::write(steam.join("userdata/12345678/config/localconfig.vdf"), "\"UserLocalConfigStore\"{}").unwrap();
+    fs::create_dir_all(steam.join("config")).unwrap();
+    fs::write(steam.join("config/loginusers.vdf"), "\"users\"{}").unwrap();
+    fs::create_dir_all(steam.join("steamapps/common/Some Game")).unwrap();
+    fs::write(steam.join("steamapps/appmanifest_620.acf"), "\"AppState\"{}").unwrap();
+    fs::write(steam.join("steamapps/common/Some Game/game.exe"), b"MZ").unwrap();
+    // Broken client files that a repair replaces.
+    fs::create_dir_all(steam.join("bin")).unwrap();
+    fs::write(steam.join("steam.exe"), b"MZ").unwrap();
+    fs::write(steam.join("bin/steamwebhelper.exe"), b"MZ").unwrap();
+    steam
+}
+
+#[test]
+fn preserve_and_restore_round_trip_keeps_user_data() {
+    let tmp = tempdir().unwrap();
+    let steam = fixture_steam_dir(tmp.path());
+    let holding = tmp.path().join("pfx.repair-data");
+
+    let preserved = preserve_steam_data_dirs(&steam, &holding).unwrap();
+    assert_eq!(preserved, ["userdata", "config", "steamapps"]);
+
+    // The data is out of the Steam dir (NSIS needs the destination clean of it)…
+    assert!(!steam.join("userdata").exists());
+    assert!(!steam.join("config").exists());
+    assert!(!steam.join("steamapps").exists());
+    // …sitting intact in the holding folder…
+    assert!(holding.join("userdata/12345678/config/localconfig.vdf").is_file());
+    assert!(holding.join("steamapps/common/Some Game/game.exe").is_file());
+    // …and the client files were not touched by preservation.
+    assert!(steam.join("steam.exe").is_file());
+    assert!(steam.join("bin/steamwebhelper.exe").is_file());
+
+    let restored = restore_steam_data_dirs(&holding, &steam).unwrap();
+    assert_eq!(restored, ["userdata", "config", "steamapps"]);
+
+    // Full round-trip: contents are back where they started.
+    assert_eq!(
+        fs::read_to_string(steam.join("config/loginusers.vdf")).unwrap(),
+        "\"users\"{}"
+    );
+    assert!(steam.join("userdata/12345678/config/localconfig.vdf").is_file());
+    assert!(steam.join("steamapps/appmanifest_620.acf").is_file());
+    assert!(steam.join("steamapps/common/Some Game/game.exe").is_file());
+    // The emptied holding folder is cleaned up.
+    assert!(!holding.exists());
+}
+
+#[test]
+fn restore_replaces_dirs_the_fresh_install_recreated() {
+    let tmp = tempdir().unwrap();
+    let steam = fixture_steam_dir(tmp.path());
+    let holding = tmp.path().join("pfx.repair-data");
+    preserve_steam_data_dirs(&steam, &holding).unwrap();
+
+    // Simulate the fresh install re-creating `config` with installer defaults.
+    fs::create_dir_all(steam.join("config")).unwrap();
+    fs::write(steam.join("config/config.vdf"), "\"InstallConfigStore\"{}").unwrap();
+
+    restore_steam_data_dirs(&holding, &steam).unwrap();
+
+    // The preserved copy (with the logins) wins over the installer default.
+    assert!(steam.join("config/loginusers.vdf").is_file());
+    assert!(!steam.join("config/config.vdf").exists());
+}
+
+#[test]
+fn preserve_skips_missing_dirs() {
+    let tmp = tempdir().unwrap();
+    let steam = tmp.path().join("Steam");
+    fs::create_dir_all(steam.join("userdata/1")).unwrap();
+    fs::write(steam.join("userdata/1/x.vdf"), "x").unwrap();
+    let holding = tmp.path().join("holding");
+
+    let preserved = preserve_steam_data_dirs(&steam, &holding).unwrap();
+    assert_eq!(preserved, ["userdata"]);
+    assert!(holding.join("userdata/1/x.vdf").is_file());
+
+    let restored = restore_steam_data_dirs(&holding, &steam).unwrap();
+    assert_eq!(restored, ["userdata"]);
+    assert!(steam.join("userdata/1/x.vdf").is_file());
+}
+
+#[test]
+fn preserve_with_no_data_dirs_creates_no_holding_folder() {
+    let tmp = tempdir().unwrap();
+    let steam = tmp.path().join("Steam");
+    fs::create_dir_all(steam.join("bin")).unwrap();
+    let holding = tmp.path().join("holding");
+
+    let preserved = preserve_steam_data_dirs(&steam, &holding).unwrap();
+    assert!(preserved.is_empty());
+    assert!(!holding.exists());
+}
+
+#[test]
+fn restore_from_missing_holding_dir_is_a_noop() {
+    let tmp = tempdir().unwrap();
+    let steam = tmp.path().join("Steam");
+    fs::create_dir_all(&steam).unwrap();
+
+    let restored = restore_steam_data_dirs(&tmp.path().join("nope"), &steam).unwrap();
+    assert!(restored.is_empty());
 }

@@ -531,9 +531,15 @@ pub(crate) enum SteamRuntimeCommand {
         #[arg(long)]
         reinstall: bool,
     },
-    /// Stop Steam, back up the master prefix (keeping one `.bak`), then reinstall.
+    /// Stop Steam, back up the master prefix (keeping one `.bak`), then reinstall —
+    /// preserving your logins and any games installed inside the in-Wine Steam
+    /// (`userdata`/`config`/`steamapps` are carried over into the fresh install).
     /// Requires `steam_runtime_runner` to be configured.
     Repair,
+    /// Swap the master prefix with the `.bak` left by `repair` — use when a repair
+    /// made things worse. Running `restore` again swaps back, so nothing is lost.
+    /// Errors if no `.bak` backup exists.
+    Restore,
     /// Remove the master Windows Steam prefix entirely (uninstall the runtime).
     /// Stops any Steam running in it first, then deletes the whole master prefix
     /// (including any `.bak`). Reinstall later with `steam-runtime install`.

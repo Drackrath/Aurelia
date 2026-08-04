@@ -149,8 +149,11 @@ tail -n 20 "$SL/connection_log.txt"                   # is it reaching Steam?
 
 - **`GPU process exited unexpectedly` repeatedly** — the prefix isn't getting DXVK, or
   Vulkan doesn't work. Confirm `vulkaninfo`, and that your runner bundles `dxvk`/`vkd3d`.
-- **Client corrupt / "please reinstall"** — start clean:
+- **Client corrupt / "please reinstall"** — repair keeps your logins and any games
+  installed inside the in-Wine Steam; `--reinstall` is the true clean slate:
   ```bash
+  aurelia steam-runtime repair                  # reinstall, preserving userdata/config/steamapps
+  aurelia steam-runtime restore                 # swap back to the pre-repair prefix if needed
   aurelia steam-runtime install --reinstall     # wipes the prefix, installs fresh
   ```
 - **Steam won't render at all despite working Vulkan** — that machine's Wine can't run
