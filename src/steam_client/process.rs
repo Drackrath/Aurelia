@@ -309,18 +309,24 @@ impl SteamClient {
     }
 
     /// Writes a steam.cfg into the Steam directory that minimises UI on startup.
+    ///
+    /// Rewritten whenever the on-disk content differs from what we want, not just
+    /// when the file is absent: Steam's bootstrapper rewrites (or drops) `steam.cfg`
+    /// during a self-update, which used to silently lose
+    /// `BootStrapperForceSelfUpdate=disable` — the very guard this file exists for.
     pub fn write_headless_steam_cfg(steam_dir: &Path) {
         let cfg_path = steam_dir.join("steam.cfg");
-        // Only write if not already present to avoid overwriting user config
-        if cfg_path.exists() {
-            return;
-        }
         let content = "\
 BootStrapperForceSelfUpdate=disable
 SteamDefaultDialog=Friends
 NoSavePersonalInfo=1
 ";
-        let _ = std::fs::write(&cfg_path, content);
+        if std::fs::read_to_string(&cfg_path).map(|existing| existing == content).unwrap_or(false) {
+            return;
+        }
+        if let Err(e) = std::fs::write(&cfg_path, content) {
+            tracing::warn!("failed writing {}: {e}", cfg_path.display());
+        }
     }
 
     /// Launch a Windows game's executable directly, with no Proton/Wine layer.
