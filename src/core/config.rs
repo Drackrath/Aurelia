@@ -515,11 +515,15 @@ pub async fn save_info_cache(
 /// options, env vars, the Steam-runtime policy) on one typo is exactly the footgun this
 /// avoids. See the same contract on [`load_launcher_config`].
 pub async fn load_user_configs() -> Result<UserConfigStore> {
-    let path = config_dir()?.join("user_apps.json");
+    load_user_configs_from(&config_dir()?.join("user_apps.json")).await
+}
+
+/// Path-parameterized core of [`load_user_configs`] (also the test seam).
+pub async fn load_user_configs_from(path: &Path) -> Result<UserConfigStore> {
     if !path.exists() {
         return Ok(UserConfigStore::new());
     }
-    read_json(&path).await.with_context(|| {
+    read_json(path).await.with_context(|| {
         format!(
             "invalid per-game config — fix the JSON in {}, or delete it to start fresh",
             path.display()
@@ -528,8 +532,12 @@ pub async fn load_user_configs() -> Result<UserConfigStore> {
 }
 
 pub async fn save_user_configs(configs: &UserConfigStore) -> Result<()> {
-    let path = config_dir()?.join("user_apps.json");
-    write_json_pretty(&path, configs).await
+    save_user_configs_to(&config_dir()?.join("user_apps.json"), configs).await
+}
+
+/// Path-parameterized core of [`save_user_configs`] (also the test seam).
+pub async fn save_user_configs_to(path: &Path, configs: &UserConfigStore) -> Result<()> {
+    write_json_pretty(path, configs).await
 }
 
 #[cfg(test)]

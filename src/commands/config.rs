@@ -340,6 +340,7 @@ pub(crate) async fn cmd_config_game(
     no_launch_script: bool,
     steam_runtime: Option<SteamRuntimeArg>,
     steam_prefix_mode: Option<SteamPrefixModeArg>,
+    tuning: GameTuningArgs,
     json: bool,
 ) -> Result<()> {
     use aurelia::core::config::GameRunner;
@@ -364,6 +365,9 @@ pub(crate) async fn cmd_config_game(
                 SteamPrefixModeArg::Shared => SteamPrefixMode::Shared,
                 SteamPrefixModeArg::PerGame => SteamPrefixMode::PerGame,
             };
+            user_changed = true;
+        }
+        if apply_game_tuning(ua, &tuning)? {
             user_changed = true;
         }
     }
@@ -444,8 +448,34 @@ pub(crate) async fn cmd_config_game(
             "launch_script": entry.launch_script,
             "steam_runtime_policy": ua.steam_runtime_policy,
             "steam_prefix_mode": ua.steam_prefix_mode,
+            "launch_options": ua.launch_options,
+            "env_variables": ua.env_variables,
+            "graphics_layers": ua.graphics_layers,
+            "steam_launch_config": ua.steam_launch_config,
+            "gpu_preference": ua.gpu_preference,
+            "hidden": ua.hidden,
+            "favorite": ua.favorite,
         }));
     } else {
+        use aurelia::core::models::{D3D12ProviderPolicy, GraphicsBackendPolicy};
+        let on_off = |b: bool| if b { "on" } else { "off" };
+        let backend_label = match ua.graphics_layers.graphics_backend_policy {
+            GraphicsBackendPolicy::Auto => "auto",
+            GraphicsBackendPolicy::WineD3D => "wined3d",
+            GraphicsBackendPolicy::DXVK => "dxvk",
+        };
+        let d3d12_label = match ua.graphics_layers.d3d12_policy {
+            D3D12ProviderPolicy::Auto => "auto",
+            D3D12ProviderPolicy::Vkd3dProton => "vkd3d-proton",
+            D3D12ProviderPolicy::Vkd3dWine => "vkd3d-wine",
+        };
+        let mut env_vars: Vec<String> = ua
+            .env_variables
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect();
+        env_vars.sort();
+
         cli_println!("App {app_id}:");
         cli_println!(
             "  Proton       : {}",
@@ -462,6 +492,151 @@ pub(crate) async fn cmd_config_game(
         );
         cli_println!("  Steam runtime: {steam_runtime_label}");
         cli_println!("  Prefix mode  : {prefix_mode_label}");
+        cli_println!(
+            "  Launch opts  : {}",
+            if ua.launch_options.is_empty() { "(none)" } else { ua.launch_options.as_str() }
+        );
+        cli_println!(
+            "  Env vars     : {}",
+            if env_vars.is_empty() { "(none)".to_string() } else { env_vars.join(", ") }
+        );
+        cli_println!("  Backend      : {backend_label}");
+        cli_println!("  D3D12        : {d3d12_label}");
+        cli_println!("  DXVK force   : {}", on_off(ua.graphics_layers.dxvk_enabled));
+        cli_println!("  VKD3D-Proton : {}", on_off(ua.graphics_layers.vkd3d_proton_enabled));
+        cli_println!("  VKD3D (wine) : {}", on_off(ua.graphics_layers.vkd3d_enabled));
+        cli_println!("  NVAPI        : {}", on_off(ua.graphics_layers.nvapi_enabled));
+        // Stored negative-polarity (`no_*`); presented positively.
+        cli_println!("  Browser      : {}", on_off(!ua.steam_launch_config.no_browser));
+        cli_println!("  Overlay      : {}", on_off(!ua.steam_launch_config.no_overlay));
+        cli_println!("  Friends UI   : {}", on_off(!ua.steam_launch_config.no_friends_ui));
+        cli_println!("  Chat UI      : {}", on_off(!ua.steam_launch_config.no_chat_ui));
+        cli_println!(
+            "  GPU          : {}",
+            ua.gpu_preference.as_deref().unwrap_or("(default)")
+        );
+        cli_println!("  Hidden       : {}", on_off(ua.hidden));
+        cli_println!("  Favorite     : {}", on_off(ua.favorite));
     }
     Ok(())
 }
+
+/// Apply the `config game` tuning flags onto a per-game `UserAppConfig`
+/// (`user_apps.json`). Returns whether anything changed (i.e. whether the store
+/// needs saving). The `on|off|default` toggles map `default` to the stored field's
+/// built-in default; the Steam helper toggles read positively on the CLI but map
+/// onto the negative-polarity `no_*` fields.
+pub(crate) fn apply_game_tuning(
+    ua: &mut aurelia::core::models::UserAppConfig,
+    t: &GameTuningArgs,
+) -> Result<bool> {
+    use aurelia::core::models::{
+        D3D12ProviderPolicy, GraphicsBackendPolicy, GraphicsLayerConfig, SteamLaunchConfig,
+    };
+
+    let mut changed = false;
+
+    if t.clear_launch_options {
+        ua.launch_options.clear();
+        changed = true;
+    } else if let Some(lo) = &t.launch_options {
+        ua.launch_options = lo.clone();
+        changed = true;
+    }
+
+    for pair in &t.env {
+        let (key, val) = pair
+            .split_once('=')
+            .filter(|(k, _)| !k.is_empty())
+            .with_context(|| format!("--env expects KEY=VAL, got `{pair}`"))?;
+        ua.env_variables.insert(key.to_string(), val.to_string());
+        changed = true;
+    }
+    for key in &t.unset_env {
+        if ua.env_variables.remove(key).is_some() {
+            changed = true;
+        }
+    }
+
+    // `default` resets a toggle to the stored field's built-in default value.
+    fn toggle(field: &mut bool, arg: Option<ToggleArg>, default_on: bool, changed: &mut bool) {
+        if let Some(arg) = arg {
+            *field = match arg {
+                ToggleArg::On => true,
+                ToggleArg::Off => false,
+                ToggleArg::Default => default_on,
+            };
+            *changed = true;
+        }
+    }
+
+    let gl_default = GraphicsLayerConfig::default();
+    toggle(&mut ua.graphics_layers.dxvk_enabled, t.dxvk, gl_default.dxvk_enabled, &mut changed);
+    toggle(
+        &mut ua.graphics_layers.vkd3d_proton_enabled,
+        t.vkd3d_proton,
+        gl_default.vkd3d_proton_enabled,
+        &mut changed,
+    );
+    toggle(&mut ua.graphics_layers.vkd3d_enabled, t.vkd3d, gl_default.vkd3d_enabled, &mut changed);
+    toggle(&mut ua.graphics_layers.nvapi_enabled, t.nvapi, gl_default.nvapi_enabled, &mut changed);
+
+    if let Some(b) = t.backend {
+        ua.graphics_layers.graphics_backend_policy = match b {
+            BackendArg::Auto => GraphicsBackendPolicy::Auto,
+            BackendArg::Wined3d => GraphicsBackendPolicy::WineD3D,
+            BackendArg::Dxvk => GraphicsBackendPolicy::DXVK,
+        };
+        changed = true;
+    }
+    if let Some(d) = t.d3d12 {
+        ua.graphics_layers.d3d12_policy = match d {
+            D3D12Arg::Auto => D3D12ProviderPolicy::Auto,
+            D3D12Arg::Vkd3dProton => D3D12ProviderPolicy::Vkd3dProton,
+            D3D12Arg::Vkd3dWine => D3D12ProviderPolicy::Vkd3dWine,
+        };
+        changed = true;
+    }
+
+    // Steam helper toggles: CLI reads positively ("browser on"), storage is the
+    // negative-polarity `no_*` — so `on` clears the suppression flag.
+    let sl_default = SteamLaunchConfig::default();
+    fn helper(field: &mut bool, arg: Option<ToggleArg>, default_no: bool, changed: &mut bool) {
+        if let Some(arg) = arg {
+            *field = match arg {
+                ToggleArg::On => false,
+                ToggleArg::Off => true,
+                ToggleArg::Default => default_no,
+            };
+            *changed = true;
+        }
+    }
+    helper(&mut ua.steam_launch_config.no_browser, t.browser, sl_default.no_browser, &mut changed);
+    helper(&mut ua.steam_launch_config.no_overlay, t.overlay, sl_default.no_overlay, &mut changed);
+    helper(
+        &mut ua.steam_launch_config.no_friends_ui,
+        t.friends_ui,
+        sl_default.no_friends_ui,
+        &mut changed,
+    );
+    helper(&mut ua.steam_launch_config.no_chat_ui, t.chat_ui, sl_default.no_chat_ui, &mut changed);
+
+    if let Some(h) = t.hidden {
+        ua.hidden = matches!(h, OnOffArg::On);
+        changed = true;
+    }
+    if let Some(f) = t.favorite {
+        ua.favorite = matches!(f, OnOffArg::On);
+        changed = true;
+    }
+    if let Some(gpu) = &t.gpu {
+        ua.gpu_preference = (gpu != "default").then(|| gpu.clone());
+        changed = true;
+    }
+
+    Ok(changed)
+}
+
+#[cfg(test)]
+#[path = "config_game_tests.rs"]
+mod game_tests;

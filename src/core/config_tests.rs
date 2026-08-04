@@ -63,6 +63,79 @@ fn launcher_config_without_proxy_defaults_to_direct() {
     assert!(cfg.proxy.url.is_none());
 }
 
+#[tokio::test]
+async fn user_configs_set_and_clear_round_trip_through_save_load() {
+    use crate::core::models::UserAppConfig;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("user_apps.json");
+
+    // A missing store loads empty.
+    let empty = load_user_configs_from(&path).await.unwrap();
+    assert!(empty.is_empty());
+
+    // Set the CLI-reachable per-game fields and round-trip them.
+    let mut ua = UserAppConfig::default();
+    ua.launch_options = "-novid -ignoredifferentvideocard".to_string();
+    ua.env_variables.insert("MANGOHUD".to_string(), "1".to_string());
+    ua.graphics_layers.dxvk_enabled = true;
+    ua.graphics_layers.graphics_backend_policy = crate::core::models::GraphicsBackendPolicy::DXVK;
+    ua.graphics_layers.d3d12_policy = crate::core::models::D3D12ProviderPolicy::Vkd3dProton;
+    ua.graphics_layers.nvapi_enabled = false;
+    ua.steam_launch_config.no_overlay = false;
+    ua.gpu_preference = Some("1".to_string());
+    ua.hidden = true;
+    ua.favorite = true;
+
+    let mut store = UserConfigStore::new();
+    store.insert(271590, ua);
+    save_user_configs_to(&path, &store).await.unwrap();
+
+    let back = load_user_configs_from(&path).await.unwrap();
+    let ua = back.get(&271590).unwrap();
+    assert_eq!(ua.launch_options, "-novid -ignoredifferentvideocard");
+    assert_eq!(ua.env_variables.get("MANGOHUD").map(String::as_str), Some("1"));
+    assert!(ua.graphics_layers.dxvk_enabled);
+    assert_eq!(
+        ua.graphics_layers.graphics_backend_policy,
+        crate::core::models::GraphicsBackendPolicy::DXVK
+    );
+    assert_eq!(
+        ua.graphics_layers.d3d12_policy,
+        crate::core::models::D3D12ProviderPolicy::Vkd3dProton
+    );
+    assert!(!ua.graphics_layers.nvapi_enabled);
+    assert!(!ua.steam_launch_config.no_overlay);
+    assert_eq!(ua.gpu_preference.as_deref(), Some("1"));
+    assert!(ua.hidden);
+    assert!(ua.favorite);
+
+    // Clear the fields back to defaults and round-trip again.
+    let mut store = back;
+    {
+        let ua = store.get_mut(&271590).unwrap();
+        ua.launch_options.clear();
+        ua.env_variables.remove("MANGOHUD");
+        ua.graphics_layers = Default::default();
+        ua.steam_launch_config = Default::default();
+        ua.gpu_preference = None;
+        ua.hidden = false;
+        ua.favorite = false;
+    }
+    save_user_configs_to(&path, &store).await.unwrap();
+
+    let back = load_user_configs_from(&path).await.unwrap();
+    let ua = back.get(&271590).unwrap();
+    assert!(ua.launch_options.is_empty());
+    assert!(ua.env_variables.is_empty());
+    assert!(!ua.graphics_layers.dxvk_enabled);
+    assert!(ua.graphics_layers.nvapi_enabled);
+    assert!(ua.steam_launch_config.no_overlay);
+    assert!(ua.gpu_preference.is_none());
+    assert!(!ua.hidden);
+    assert!(!ua.favorite);
+}
+
 #[test]
 fn proxy_config_omits_empty_and_round_trips() {
     // An empty proxy must not emit either field (skip_serializing_if).
