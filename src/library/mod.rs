@@ -8,7 +8,6 @@ use crate::core::config::{detect_steam_path, load_launcher_config};
 use crate::core::models::{GameLibrary, GameModel, LibraryGame, LocalGame, OwnedGame};
 use crate::core::utils::extract_quoted_values;
 use anyhow::{Context, Result};
-use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::fs;
@@ -48,25 +47,6 @@ pub fn is_ignored_steam_app(app_id: u32, name: &str) -> bool {
         .any(|prefix| name.starts_with(prefix))
 }
 
-#[derive(Debug, Deserialize)]
-struct LibraryFoldersFile {
-    #[serde(default)]
-    libraryfolders: HashMap<String, LibraryFolderRecord>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum LibraryFolderRecord {
-    LegacyPath(String),
-    Detailed {
-        path: Option<String>,
-        #[serde(flatten)]
-        _other: HashMap<String, serde_json::Value>,
-    },
-    Ignore(#[allow(dead_code)] HashMap<String, serde_json::Value>),
-}
-
-
 #[derive(Debug, Clone)]
 pub struct InstalledAppInfo {
     pub install_path: PathBuf,
@@ -102,11 +82,17 @@ pub async fn scan_installed_app_info() -> Result<HashMap<u32, InstalledAppInfo>>
         (p.join("steamapps").exists() || p.join("Steam").join("steamapps").exists()).then_some(p)
     });
 
-    let root = config_path
-        .or_else(detect_steam_path)
-        .unwrap_or_else(default_steam_root);
-    tracing::debug!("scanning library root: {:?}", root);
-    let mut installed = scan_library_info(&root).await?;
+    // Scan *every* standard Steam data root, not just the first that exists: a
+    // machine can carry a leftover native `~/.steam` next to the Flatpak install
+    // that actually holds the games, and only one of them lists the libraries.
+    let mut roots: Vec<PathBuf> = config_path.into_iter().collect();
+    roots.extend(steam_root_candidates());
+    roots.sort();
+    roots.dedup();
+
+    let libraries = expand_library_roots(&roots).await;
+    tracing::debug!("scanning {} librar(y/ies): {:?}", libraries.len(), libraries);
+    let mut installed = scan_libraries(&libraries).await;
 
     if config.is_some_and(|cfg| cfg.windows_steam_discovery_enabled) {
         let master_steam = crate::core::utils::get_master_steam_config();
@@ -146,25 +132,48 @@ pub async fn scan_installed_app_paths_pathbuf() -> Result<HashMap<u32, PathBuf>>
 }
 
 pub async fn scan_library_info(root_path: &Path) -> Result<HashMap<u32, InstalledAppInfo>> {
-    let mut installed = HashMap::new();
-    let mut libraries = vec![root_path.to_path_buf()];
+    let libraries = expand_library_roots(std::slice::from_ref(&root_path.to_path_buf())).await;
+    Ok(scan_libraries(&libraries).await)
+}
 
-    let library_folders_path = root_path.join("steamapps").join("libraryfolders.vdf");
-    let extra_libraries = parse_library_folders(library_folders_path)
-        .await
-        .unwrap_or_else(|e| {
-            tracing::warn!("could not parse libraryfolders.vdf: {}", e);
-            Vec::new()
-        });
-    libraries.extend(extra_libraries);
+/// Expand Steam data roots into the full set of library folders to scan: each
+/// root itself, every library its `libraryfolders.vdf` files register, and a
+/// probe of the connected drives for libraries Steam never registered.
+async fn expand_library_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut libraries: Vec<PathBuf> = roots.to_vec();
 
-    // Steam doesn't always register every library in libraryfolders.vdf (and the file
-    // may live on a different root than the one we're scanning). Probe all connected
-    // drives for Steam library folders so games on e.g. F:\SteamLibrary are found.
+    for root in roots {
+        for vdf in libraryfolders_vdf_paths(root) {
+            match parse_library_folders(vdf.clone()).await {
+                Ok(found) => libraries.extend(found),
+                Err(e) => tracing::warn!("could not parse {}: {e}", vdf.display()),
+            }
+        }
+    }
+
+    // Steam doesn't always register every library in libraryfolders.vdf (and the
+    // file may live on a root we never read). Probe the connected drives so games
+    // on a secondary disk are found regardless.
     libraries.extend(discover_drive_libraries());
 
     libraries.sort();
     libraries.dedup();
+    libraries
+}
+
+/// The places a Steam data root keeps its `libraryfolders.vdf`. Steam maintains
+/// a copy under both `steamapps/` and `config/`, and either can be the fresher
+/// one, so both are read.
+fn libraryfolders_vdf_paths(root: &Path) -> Vec<PathBuf> {
+    vec![
+        root.join("steamapps").join("libraryfolders.vdf"),
+        root.join("config").join("libraryfolders.vdf"),
+    ]
+}
+
+/// Read the appmanifests of a known set of library folders.
+async fn scan_libraries(libraries: &[PathBuf]) -> HashMap<u32, InstalledAppInfo> {
+    let mut installed = HashMap::new();
 
     for library_root in libraries {
         let steamapps = library_root.join("steamapps");
@@ -172,11 +181,18 @@ pub async fn scan_library_info(root_path: &Path) -> Result<HashMap<u32, Installe
             continue;
         }
 
-        let mut dir = fs::read_dir(&steamapps)
-            .await
-            .with_context(|| format!("failed to read {}", steamapps.display()))?;
+        // A library we can't read (permissions, a drive unplugged mid-scan) must
+        // not abort discovery of the others — that would hide every game behind
+        // one bad mount.
+        let mut dir = match fs::read_dir(&steamapps).await {
+            Ok(dir) => dir,
+            Err(e) => {
+                tracing::warn!("skipping library {}: {e}", steamapps.display());
+                continue;
+            }
+        };
 
-        while let Some(entry) = dir.next_entry().await? {
+        while let Ok(Some(entry)) = dir.next_entry().await {
             let path = entry.path();
             if !is_app_manifest(&path) {
                 continue;
@@ -192,42 +208,42 @@ pub async fn scan_library_info(root_path: &Path) -> Result<HashMap<u32, Installe
         }
     }
 
-    Ok(installed)
+    installed
 }
+
+/// How far below a volume root a library folder may sit before we stop looking.
+/// Depth 2 covers a library at the volume root, one directory down, and one more
+/// (`<volume>/Games/<library>`) — deeper nesting is rare enough that the cost of
+/// walking for it outweighs the benefit.
+const MAX_PROBE_DEPTH: usize = 2;
+
+/// Cap on directory entries examined per level, so a volume with an enormous
+/// top-level directory count can't turn discovery into a full filesystem walk.
+const MAX_PROBE_ENTRIES: usize = 512;
+
+/// Directory names never worth descending into: the OS trees on a root
+/// filesystem, and the bookkeeping directories Windows leaves on removable
+/// volumes. Names Steam itself uses are deliberately absent — a library is
+/// recognised by its structure, not its name.
+const PROBE_SKIP_DIRS: &[&str] = &[
+    "bin", "boot", "dev", "etc", "lib", "lib32", "lib64", "libx32", "proc", "root", "run", "sbin",
+    "srv", "sys", "tmp", "usr", "var", "lost+found", "$RECYCLE.BIN", "System Volume Information",
+    "Recovery", "Windows", "WinSxS", "AppData", "node_modules",
+];
 
 /// Probe every connected drive for Steam library folders.
 ///
-/// Steam libraries are frequently placed at locations that may be missing from
-/// `libraryfolders.vdf` (or on a drive whose `.vdf` we never read), e.g.
-/// `F:\SteamLibrary`. We scan each drive root for well-known library folder
-/// names and keep those that contain a `steamapps` directory.
+/// Libraries are frequently missing from `libraryfolders.vdf` (or listed only in
+/// a `.vdf` on a root we never read), so each mounted volume is searched
+/// directly. A library is identified **structurally** — a directory containing
+/// `steamapps/` — rather than by name, because the folder name is the user's
+/// free choice (`SteamLibrary`, `Games`, `Spiele`, …) and guessing names only
+/// ever finds the layouts that happen to be guessed.
 pub fn discover_drive_libraries() -> Vec<PathBuf> {
     let mut found = Vec::new();
 
-    #[cfg(target_os = "windows")]
-    {
-        // Common Steam library folder names, relative to a drive root.
-        const CANDIDATES: &[&str] = &[
-            "SteamLibrary",
-            "Steam",
-            "SteamGames",
-            "Games\\SteamLibrary",
-            "Program Files (x86)\\Steam",
-            "Program Files\\Steam",
-        ];
-
-        for letter in b'A'..=b'Z' {
-            let drive = PathBuf::from(format!("{}:\\", letter as char));
-            if !drive.exists() {
-                continue;
-            }
-            for candidate in CANDIDATES {
-                let library = drive.join(candidate);
-                if library.join("steamapps").is_dir() {
-                    found.push(library);
-                }
-            }
-        }
+    for volume in volume_roots() {
+        probe_for_libraries(&volume, MAX_PROBE_DEPTH, &mut found);
     }
 
     found.sort();
@@ -235,9 +251,151 @@ pub fn discover_drive_libraries() -> Vec<PathBuf> {
     found
 }
 
+/// Recursively look for directories holding a `steamapps/` subdirectory, down to
+/// `depth` levels below `dir`.
+fn probe_for_libraries(dir: &Path, depth: usize, found: &mut Vec<PathBuf>) {
+    if dir.join("steamapps").is_dir() {
+        found.push(dir.to_path_buf());
+        // Steam never nests one library inside another, so stop descending here.
+        return;
+    }
+    if depth == 0 {
+        return;
+    }
+
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        // Unreadable (permissions, unplugged mid-probe) — nothing to report.
+        return;
+    };
+
+    for entry in entries.flatten().take(MAX_PROBE_ENTRIES) {
+        // `is_dir()` on the entry's own file type, so symlinks are not followed:
+        // a link pointing back up the tree would otherwise loop.
+        if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            continue;
+        }
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        // Hidden directories hold caches and dotfile trees, not game libraries.
+        // The Steam data roots that *are* hidden are covered by
+        // [`steam_root_candidates`], not by this probe.
+        if name.starts_with('.') || PROBE_SKIP_DIRS.iter().any(|skip| name.eq_ignore_ascii_case(skip))
+        {
+            continue;
+        }
+        probe_for_libraries(&entry.path(), depth - 1, found);
+    }
+}
+
+/// Roots of the volumes that could hold a Steam library.
+fn volume_roots() -> Vec<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        let mut roots = Vec::new();
+        for letter in b'A'..=b'Z' {
+            let drive = PathBuf::from(format!("{}:\\", letter as char));
+            if drive.exists() {
+                roots.push(drive);
+            }
+        }
+        roots
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        mounted_volume_roots()
+    }
+}
+
+/// Roots of mounted, real (non-pseudo) filesystems that could hold a Steam
+/// library: every disk-backed mount point from `/proc/self/mounts`, plus the
+/// conventional removable-media parents for hosts without `/proc` (macOS).
+#[cfg(not(target_os = "windows"))]
+fn mounted_volume_roots() -> Vec<PathBuf> {
+    // Filesystems that can hold a game install. Everything else a Linux box
+    // mounts (proc, sysfs, cgroup, tmpfs, overlay, …) cannot, and walking them
+    // just costs syscalls.
+    const DISK_FSTYPES: &[&str] = &[
+        "ext2", "ext3", "ext4", "btrfs", "xfs", "f2fs", "jfs", "reiserfs", "zfs", "bcachefs",
+        "ntfs", "ntfs3", "fuseblk", "exfat", "vfat", "msdos", "udf", "apfs", "hfs", "hfsplus",
+        "nfs", "nfs4", "cifs", "smb3",
+    ];
+
+    let mut roots: Vec<PathBuf> = Vec::new();
+
+    if let Ok(mounts) = std::fs::read_to_string("/proc/self/mounts") {
+        for line in mounts.lines() {
+            let mut fields = line.split_whitespace();
+            let (Some(_source), Some(target), Some(fstype)) =
+                (fields.next(), fields.next(), fields.next())
+            else {
+                continue;
+            };
+            if !DISK_FSTYPES.contains(&fstype) {
+                continue;
+            }
+            roots.push(PathBuf::from(unescape_mount_target(target)));
+        }
+    }
+
+    // Removable volumes are conventionally mounted one or two levels under
+    // these (`/media/<label>`, `/run/media/<user>/<label>`, `/Volumes/<label>`).
+    // Redundant with /proc on Linux; the only source on macOS.
+    for parent in ["/Volumes", "/run/media", "/media", "/mnt"] {
+        let Ok(entries) = std::fs::read_dir(parent) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            if let Ok(nested) = std::fs::read_dir(&path) {
+                roots.extend(nested.flatten().map(|e| e.path()).filter(|p| p.is_dir()));
+            }
+            roots.push(path);
+        }
+    }
+
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
+/// Decode the octal escapes (`\040` for space, `\134` for backslash, …) that
+/// `/proc/self/mounts` uses in mount-point paths.
+#[cfg(not(target_os = "windows"))]
+fn unescape_mount_target(target: &str) -> String {
+    if !target.contains('\\') {
+        return target.to_string();
+    }
+    let bytes = target.as_bytes();
+    // Decoded byte-wise, not char-wise: an escape yields one raw byte, which may
+    // be part of a multi-byte UTF-8 sequence in the mount point's name.
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let octal = (bytes[i] == b'\\' && i + 3 < bytes.len())
+            .then(|| std::str::from_utf8(&bytes[i + 1..i + 4]).ok())
+            .flatten()
+            .and_then(|digits| u8::from_str_radix(digits, 8).ok());
+        match octal {
+            Some(byte) => {
+                out.push(byte);
+                i += 4;
+            }
+            None => {
+                out.push(bytes[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// Collect every Steam library root we can discover: the configured library,
-/// the auto-detected install, the platform default, anything referenced by a
-/// `libraryfolders.vdf`, and a probe of all connected drives.
+/// every standard Steam data root, anything their `libraryfolders.vdf` files
+/// reference, and a probe of all connected drives.
 pub async fn all_library_roots() -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = Vec::new();
 
@@ -247,51 +405,65 @@ pub async fn all_library_roots() -> Vec<PathBuf> {
             roots.push(p);
         }
     }
-    if let Some(detected) = detect_steam_path() {
-        roots.push(detected);
-    }
-    roots.push(default_steam_root());
+    roots.extend(steam_root_candidates());
 
-    // Expand each root via its libraryfolders.vdf.
-    let mut extra = Vec::new();
-    for root in &roots {
-        let vdf = root.join("steamapps").join("libraryfolders.vdf");
-        if let Ok(found) = parse_library_folders(vdf).await {
-            extra.extend(found);
-        }
-    }
-    roots.extend(extra);
-    roots.extend(discover_drive_libraries());
-
-    roots.sort();
-    roots.dedup();
-    roots
+    expand_library_roots(&roots).await
 }
 
-fn default_steam_root() -> PathBuf {
+/// Every standard location a Steam data root can live in on this platform.
+///
+/// All of them are returned, not just the first that exists: the packaging
+/// formats install side by side, and a machine can easily carry a stale native
+/// `~/.steam` next to the Flatpak or Snap install that holds the real library.
+pub fn steam_root_candidates() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+
     #[cfg(target_os = "windows")]
     {
-        if let Ok(program_files_x86) = std::env::var("PROGRAMFILES(X86)") {
-            return PathBuf::from(program_files_x86).join("Steam");
+        for var in ["PROGRAMFILES(X86)", "PROGRAMFILES"] {
+            if let Ok(program_files) = std::env::var(var) {
+                roots.push(PathBuf::from(program_files).join("Steam"));
+            }
         }
-        if let Ok(program_files) = std::env::var("PROGRAMFILES") {
-            return PathBuf::from(program_files).join("Steam");
-        }
-        return PathBuf::from(r"C:\Program Files (x86)\Steam");
+        roots.push(PathBuf::from(r"C:\Program Files (x86)\Steam"));
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        if let Some(detected) = detect_steam_path() {
-            return detected;
+        if let Ok(home) = crate::core::config::home_dir() {
+            // Native installs. `.steam/steam` and `.steam/root` are symlinks
+            // Steam maintains into the real data directory.
+            for relative in [
+                ".steam/steam",
+                ".steam/root",
+                ".local/share/Steam",
+                // Debian/Ubuntu's steam package uses its own data directory.
+                ".steam/debian-installation",
+                // Flatpak (com.valvesoftware.Steam) and Snap sandbox their $HOME.
+                ".var/app/com.valvesoftware.Steam/.local/share/Steam",
+                ".var/app/com.valvesoftware.Steam/.steam/steam",
+                "snap/steam/common/.local/share/Steam",
+                "snap/steam/common/.steam/steam",
+                // macOS.
+                "Library/Application Support/Steam",
+            ] {
+                roots.push(home.join(relative));
+            }
         }
-        directories::BaseDirs::new()
-            .map(|d| d.home_dir().to_path_buf())
-            .unwrap_or_else(|| {
-                PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "~".to_string()))
-            })
-            .join(".steam/steam")
+        // Honour an XDG data directory that isn't the default `~/.local/share`.
+        if let Some(xdg) = std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
+            roots.push(PathBuf::from(xdg).join("Steam"));
+        }
     }
+
+    // Whatever the platform-specific detection finds, in case it knows a location
+    // this list does not.
+    roots.extend(detect_steam_path());
+
+    roots.retain(|root| root.exists());
+    roots.sort();
+    roots.dedup();
+    roots
 }
 
 fn is_app_manifest(path: &Path) -> bool {
@@ -311,27 +483,112 @@ pub async fn parse_library_folders(path: PathBuf) -> Result<Vec<PathBuf>> {
         .await
         .with_context(|| format!("failed reading {}", path.display()))?;
 
-    let parsed = keyvalues_serde::from_str::<LibraryFoldersFile>(&raw)
-        .context("failed to parse libraryfolders.vdf with keyvalues-serde")?;
+    let libraries = library_folder_paths(&raw);
+    tracing::debug!(
+        "libraryfolders.vdf {} lists {} librar{}",
+        path.display(),
+        libraries.len(),
+        if libraries.len() == 1 { "y" } else { "ies" }
+    );
+    Ok(libraries)
+}
 
-    let mut libraries = Vec::new();
-    for (key, value) in parsed.libraryfolders {
-        if !key.chars().all(|ch| ch.is_ascii_digit()) {
+/// Extract the library roots listed in a `libraryfolders.vdf` body.
+///
+/// Hand-rolled rather than deserialized: the file has two historical shapes —
+/// modern (`"0" { "path" "…" "apps" { … } }`) and legacy pre-2021 (`"1"
+/// "D:\\SteamLibrary"`) — and a `#[serde(untagged)]` enum spanning both matched
+/// *neither* on real files, silently yielding zero libraries. That left every
+/// scan seeing only the root it started from, so games on secondary drives were
+/// never found.
+pub fn library_folder_paths(raw: &str) -> Vec<PathBuf> {
+    fn is_index(key: &str) -> bool {
+        !key.is_empty() && key.chars().all(|ch| ch.is_ascii_digit())
+    }
+
+    let mut libraries: Vec<PathBuf> = Vec::new();
+    // Key that opened each block we are currently nested inside. Depth 1 is the
+    // `"libraryfolders"` block's body, depth 2 a numbered library's keys.
+    let mut block_keys: Vec<String> = Vec::new();
+    let mut pending_key: Option<String> = None;
+
+    let mut push = |value: &str| {
+        let unescaped = unescape_vdf(value);
+        if !unescaped.is_empty() {
+            libraries.push(PathBuf::from(unescaped));
+        }
+    };
+
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("//") {
+            continue;
+        }
+        if trimmed == "{" {
+            block_keys.push(pending_key.take().unwrap_or_default());
+            continue;
+        }
+        if trimmed == "}" {
+            block_keys.pop();
+            pending_key = None;
             continue;
         }
 
-        match value {
-            LibraryFolderRecord::LegacyPath(p) if !p.is_empty() => libraries.push(PathBuf::from(p)),
-            LibraryFolderRecord::Detailed { path: Some(p), .. } if !p.is_empty() => {
-                libraries.push(PathBuf::from(p))
+        let parts = extract_quoted_values(trimmed);
+        match parts.as_slice() {
+            // A lone key names the block that the next `{` opens.
+            [key] => pending_key = Some(key.clone()),
+            [key, value, ..] => {
+                let depth = block_keys.len();
+                if depth == 1 && is_index(key) {
+                    // Legacy flat form: the index maps straight to a path.
+                    push(value);
+                } else if depth == 2
+                    && key.eq_ignore_ascii_case("path")
+                    && block_keys.last().is_some_and(|k| is_index(k))
+                {
+                    // Modern form. Requiring an indexed parent keeps us out of
+                    // the sibling `apps` block (appid -> byte size).
+                    push(value);
+                }
             }
-            _ => {}
+            [] => {}
         }
     }
 
     libraries.sort();
     libraries.dedup();
-    Ok(libraries)
+    libraries
+}
+
+/// Undo VDF string escaping (`\\`, `\"`, `\t`, `\n`). Steam writes Windows
+/// library paths as `D:\\SteamLibrary`; left as-is the doubled separators break
+/// path comparisons against the same library discovered another way.
+fn unescape_vdf(value: &str) -> String {
+    if !value.contains('\\') {
+        return value.to_string();
+    }
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('\\') => out.push('\\'),
+            Some('"') => out.push('"'),
+            Some('t') => out.push('\t'),
+            Some('n') => out.push('\n'),
+            // Not a recognised escape — keep both characters verbatim.
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
 }
 
 async fn parse_app_manifest_info(path: &Path) -> Result<Option<(u32, InstalledAppInfo)>> {
