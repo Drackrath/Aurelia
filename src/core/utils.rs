@@ -1561,15 +1561,58 @@ pub fn steam_wineprefix_for_game(
         .unwrap_or(config.use_shared_compat_data);
 
     if use_per_game_compat_data {
-        std::path::PathBuf::from(&config.steam_library_path)
-            .join("steamapps")
-            .join("compatdata")
-            .join(app_id.to_string())
-            .join("pfx")
+        proton_compat_prefix(config, app_id)
     } else {
         resolve_master_wineprefix()
     }
 }
+
+/// The prefix Proton itself uses for a game: `$STEAM_COMPAT_DATA_PATH/pfx`, where
+/// `STEAM_COMPAT_DATA_PATH` is always `<library>/steamapps/compatdata/<appid>`.
+pub fn proton_compat_prefix(
+    config: &crate::core::config::LauncherConfig,
+    app_id: u32,
+) -> std::path::PathBuf {
+    std::path::PathBuf::from(&config.steam_library_path)
+        .join("steamapps")
+        .join("compatdata")
+        .join(app_id.to_string())
+        .join("pfx")
+}
+
+/// The wine prefix a game's Windows files — saves included — actually live in.
+///
+/// This is *not* always [`steam_wineprefix_for_game`]. That returns the `WINEPREFIX`
+/// the launcher sets, but a Proton launch ignores it: `proton run` derives its prefix
+/// from `STEAM_COMPAT_DATA_PATH`, which is always `<library>/steamapps/compatdata/
+/// <appid>` regardless of prefix mode (the same asymmetry documented on
+/// [`resolve_steam_runtime_wine`]). In the default `Shared` mode the two therefore
+/// disagree: the launcher points `WINEPREFIX` at the master prefix while the game
+/// runs — and writes its saves — in compatdata.
+///
+/// Anything that needs to *find a game's files on disk* (Steam Cloud sync above all)
+/// must ask this, not the `WINEPREFIX`. Getting it wrong is silent: saves are written
+/// to a prefix the game never reads, and it starts with no progress.
+///
+/// Proton having set up `pfx/drive_c` there is the evidence that it is the live
+/// prefix — the bare compatdata directory alone isn't, since `prepare_prefix`
+/// pre-creates that for every launch, Proton or not. Without it, fall back to the
+/// configured `WINEPREFIX`, which is what a bare-wine launch honours.
+pub fn game_save_prefix(
+    config: &crate::core::config::LauncherConfig,
+    app_id: u32,
+    user_configs: &crate::core::models::UserConfigStore,
+) -> std::path::PathBuf {
+    let proton_prefix = proton_compat_prefix(config, app_id);
+    if proton_prefix.join("drive_c").is_dir() {
+        return proton_prefix;
+    }
+    steam_wineprefix_for_game(config, app_id, user_configs)
+}
+
+#[cfg(test)]
+#[path = "utils_save_prefix_tests.rs"]
+mod save_prefix_tests;
 
 #[cfg(test)]
 #[path = "utils_resolve_runner_tests.rs"]

@@ -109,22 +109,63 @@ impl SteamClient {
                     .context("steam connection not initialized")?,
             );
             let remote_root = default_cloud_root(client.steam_id(), app.app_id)?.join("remote");
+            // `%Win*%` cloud roots point inside the game's Proton prefix; without it
+            // every Auto-Cloud save of a Windows game would be silently skipped.
+            let cloud_user_configs = crate::core::config::load_user_configs().await?;
             let resolver = CloudPathResolver::new(
                 remote_root,
                 app.install_path.as_ref().map(PathBuf::from),
-            );
+            )
+            .with_wine_prefix(Some(crate::core::utils::game_save_prefix(
+                &launcher_config,
+                app.app_id,
+                &cloud_user_configs,
+            )));
             tracing::info!(appid = app.app_id, "Syncing Cloud...");
             // Conflict-safe: a divergent save is left untouched (never clobbered),
             // so the user can resolve it via `cloud sync` / the Heroic chooser. The
             // game launches with whatever is currently on disk.
             match client.sync_down(app.app_id, &resolver).await {
-                Ok(outcome) if outcome.has_conflicts() => tracing::warn!(
+                Ok(outcome) => {
+                    if outcome.has_conflicts() {
+                        tracing::warn!(
+                            appid = app.app_id,
+                            "{} Cloud save(s) diverged from local — left untouched; resolve with `aurelia cloud sync`",
+                            outcome.conflicts.len()
+                        );
+                    }
+                    // Never let this pass unremarked: the game is about to start
+                    // with saves missing that the user believes were synced.
+                    if outcome.has_skips() {
+                        tracing::warn!(
+                            appid = app.app_id,
+                            "{} Cloud save(s) could not be placed on disk (unmapped root token(s): {}) — the game may start without them; see `aurelia cloud sync {}`",
+                            outcome.skipped.len(),
+                            outcome
+                                .skipped_tokens()
+                                .iter()
+                                .map(|t| format!("%{t}%"))
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            app.app_id
+                        );
+                    }
+                    // The worst case for the player: enough files arrived that the
+                    // game starts, but not the ones holding their progress.
+                    if outcome.has_failures() {
+                        tracing::error!(
+                            appid = app.app_id,
+                            "{} Cloud save(s) FAILED to download — the save set on disk is incomplete and the game may show no progress. Run `aurelia cloud sync {} --down` before playing. First error: {}",
+                            outcome.failed.len(),
+                            app.app_id,
+                            outcome.failed.first().map_or("", |f| f.error.as_str())
+                        );
+                    }
+                }
+                Err(e) => tracing::error!(
                     appid = app.app_id,
-                    "{} Cloud save(s) diverged from local — left untouched; resolve with `aurelia cloud sync`",
-                    outcome.conflicts.len()
+                    "Cloud sync-down failed, launching anyway — saves may be missing or incomplete: {e:#}"
                 ),
-                Ok(_) => {}
-                Err(e) => tracing::warn!(appid = app.app_id, "Cloud sync-down failed (continuing): {e:#}"),
             }
             // UFS rules let sync_up discover brand-new local saves; best-effort.
             let specs = self.fetch_ufs_save_specs(app.app_id).await.unwrap_or_default();

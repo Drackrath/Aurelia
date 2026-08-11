@@ -60,17 +60,82 @@ pub struct SyncConflict {
     pub cloud_timestamp: u64,
 }
 
+/// A cloud file that could not be mapped to any local path, so it was neither
+/// downloaded nor compared. Almost always an Auto-Cloud root token this platform
+/// has no mapping for (a `%Win*%` root with no Proton prefix, or a token Steam
+/// added that this build predates). Reported rather than dropped silently: from the
+/// outside a skipped file is indistinguishable from an empty cloud, which reads as
+/// "sync worked, my saves are gone".
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SyncSkip {
+    pub filename: String,
+    /// The root token that failed to resolve, when the name carried one.
+    pub root_token: Option<String>,
+    pub reason: String,
+}
+
+/// A file whose transfer was attempted and failed (a timed-out RPC, an HTTP error,
+/// an unwritable path). Recorded so one bad file doesn't abort the run: aborting
+/// leaves a *partially* restored save set, which is worse than either extreme — the
+/// game finds some files and starts as though the save were intact.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SyncFailure {
+    pub filename: String,
+    /// Which way the transfer was going: `"down"` or `"up"`.
+    pub direction: String,
+    pub error: String,
+}
+
 /// Result of a [`CloudClient::sync`] run: what moved and what couldn't be resolved.
 #[derive(Debug, Default, Clone, serde::Serialize)]
 pub struct SyncOutcome {
     pub downloaded: Vec<String>,
     pub uploaded: Vec<String>,
     pub conflicts: Vec<SyncConflict>,
+    pub skipped: Vec<SyncSkip>,
+    pub failed: Vec<SyncFailure>,
 }
 
 impl SyncOutcome {
     pub fn has_conflicts(&self) -> bool {
         !self.conflicts.is_empty()
+    }
+
+    pub fn has_skips(&self) -> bool {
+        !self.skipped.is_empty()
+    }
+
+    pub fn has_failures(&self) -> bool {
+        !self.failed.is_empty()
+    }
+
+    /// True when some file did not end up in the state the sync intended — the
+    /// transfer counts alone can't be read as success.
+    pub fn is_incomplete(&self) -> bool {
+        self.has_failures() || self.has_skips()
+    }
+
+    fn record_failure(&mut self, filename: &str, direction: &str, error: &anyhow::Error) {
+        tracing::warn!("cloud sync {direction} failed for '{filename}': {error:#}");
+        self.failed.push(SyncFailure {
+            filename: filename.to_string(),
+            direction: direction.to_string(),
+            error: format!("{error:#}"),
+        });
+    }
+
+    /// The distinct unresolvable root tokens behind [`Self::skipped`], for a summary
+    /// that names the actual problem instead of listing every affected file.
+    pub fn skipped_tokens(&self) -> Vec<String> {
+        let mut tokens: Vec<String> = self
+            .skipped
+            .iter()
+            .filter_map(|s| s.root_token.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        tokens.sort();
+        tokens
     }
 }
 
@@ -173,9 +238,15 @@ pub struct UfsSaveSpec {
 /// phantom folder under `userdata/.../<appid>/` and Steam always reports a
 /// cloud/local mismatch. Classic ISteamRemoteStorage filenames carry no token and
 /// live under `remote_root` (`userdata/<accountid>/<appid>/remote`).
+///
+/// A Windows game played through Proton writes its saves inside the wine prefix, so
+/// its `%Win*%` roots resolve under `wine_prefix/drive_c/users/steamuser` rather than
+/// to anything in the Linux home. Without a prefix those tokens can't be placed at
+/// all and the file is skipped.
 pub struct CloudPathResolver {
     remote_root: PathBuf,
     install_dir: Option<PathBuf>,
+    wine_prefix: Option<PathBuf>,
 }
 
 impl CloudPathResolver {
@@ -183,7 +254,16 @@ impl CloudPathResolver {
         Self {
             remote_root,
             install_dir,
+            wine_prefix: None,
         }
+    }
+
+    /// Point `%Win*%` root tokens at a Proton/wine prefix (the `pfx` directory that
+    /// contains `drive_c`). Without this they resolve to nothing on Linux.
+    #[must_use]
+    pub fn with_wine_prefix(mut self, wine_prefix: Option<PathBuf>) -> Self {
+        self.wine_prefix = wine_prefix;
+        self
     }
 
     /// Map a cloud filename to its real local path, resolving any `%RootToken%`
@@ -191,10 +271,9 @@ impl CloudPathResolver {
     pub fn resolve(&self, filename: &str) -> Result<PathBuf> {
         match split_root_token(filename) {
             Some((token, rest)) => {
-                let base = resolve_root_token(token, self.install_dir.as_deref())
-                    .with_context(|| {
-                        format!("unsupported Steam Cloud root token '%{token}%' on this platform")
-                    })?;
+                let base = self.resolve_root(token).with_context(|| {
+                    format!("unsupported Steam Cloud root token '%{token}%' on this platform")
+                })?;
                 Ok(join_relative(&base, rest))
             }
             None => Ok(join_relative(&self.remote_root, filename)),
@@ -203,9 +282,13 @@ impl CloudPathResolver {
 
     /// Resolve a bare root token (e.g. `WinAppDataLocalLow`) to its OS directory, or
     /// `None` if it isn't applicable on this platform (e.g. a `%Linux*%` root on
-    /// Windows). Used by UFS save discovery.
+    /// Windows, or a `%Win*%` root with no wine prefix). Used by UFS save discovery.
     pub fn resolve_root(&self, root_token: &str) -> Option<PathBuf> {
-        resolve_root_token(root_token, self.install_dir.as_deref())
+        resolve_root_token(
+            root_token,
+            self.install_dir.as_deref(),
+            self.wine_prefix.as_deref(),
+        )
     }
 }
 
@@ -297,7 +380,11 @@ fn join_relative(base: &Path, rel: &str) -> PathBuf {
 /// `%GameInstall%` needs the game's install directory; the rest derive from the
 /// user's home / known folders.
 #[cfg(windows)]
-fn resolve_root_token(token: &str, install_dir: Option<&Path>) -> Option<PathBuf> {
+fn resolve_root_token(
+    token: &str,
+    install_dir: Option<&Path>,
+    _wine_prefix: Option<&Path>,
+) -> Option<PathBuf> {
     let user = || std::env::var_os("USERPROFILE").map(PathBuf::from);
     match token {
         "GameInstall" => install_dir.map(Path::to_path_buf),
@@ -314,11 +401,19 @@ fn resolve_root_token(token: &str, install_dir: Option<&Path>) -> Option<PathBuf
     }
 }
 
-/// Linux mapping. `%Win*%` tokens belong to a Proton prefix that this layer doesn't
-/// track, so they resolve to `None` (the file is skipped with a warning).
+/// Linux mapping. `%Win*%` tokens belong to a game running under Proton, so they
+/// resolve inside that game's wine prefix (`drive_c/users/steamuser/...`) — the path
+/// the Windows build actually writes to. With no prefix known they resolve to `None`
+/// and the file is skipped with a warning.
 #[cfg(not(windows))]
-fn resolve_root_token(token: &str, install_dir: Option<&Path>) -> Option<PathBuf> {
+fn resolve_root_token(
+    token: &str,
+    install_dir: Option<&Path>,
+    wine_prefix: Option<&Path>,
+) -> Option<PathBuf> {
     let home = || std::env::var_os("HOME").map(PathBuf::from);
+    // Proton runs the game as the fixed `steamuser` account inside the prefix.
+    let win_user = || wine_prefix.map(|p| p.join("drive_c/users/steamuser"));
     match token {
         "GameInstall" => install_dir.map(Path::to_path_buf),
         "LinuxHome" => home(),
@@ -328,6 +423,11 @@ fn resolve_root_token(token: &str, install_dir: Option<&Path>) -> Option<PathBuf
         "LinuxXdgConfigHome" => std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
             .or_else(|| home().map(|h| h.join(".config"))),
+        "WinMyDocuments" | "WinDocuments" => win_user().map(|u| u.join("Documents")),
+        "WinAppDataLocal" => win_user().map(|u| u.join("AppData/Local")),
+        "WinAppDataLocalLow" => win_user().map(|u| u.join("AppData/LocalLow")),
+        "WinAppDataRoaming" => win_user().map(|u| u.join("AppData/Roaming")),
+        "WinSavedGames" => win_user().map(|u| u.join("Saved Games")),
         _ => None,
     }
 }
@@ -572,7 +672,15 @@ impl CloudClient {
                 None => match resolver.resolve(&name) {
                     Ok(p) => p,
                     Err(e) => {
+                        // Record it: a caller that only counts transfers would
+                        // otherwise report a clean "0 down" for a cloud full of
+                        // saves it simply couldn't place.
                         tracing::warn!("skipping cloud file '{name}': {e:#}");
+                        outcome.skipped.push(SyncSkip {
+                            filename: name.clone(),
+                            root_token: split_root_token(&name).map(|(t, _)| t.to_string()),
+                            reason: format!("{e:#}"),
+                        });
                         continue;
                     }
                 },
@@ -592,20 +700,28 @@ impl CloudClient {
                         continue; // a pending down-change we're not applying now
                     }
                     let Some(c) = cloud else { continue };
-                    self.download_to(appid, &name, &local_path, c.timestamp).await?;
-                    baseline
-                        .files
-                        .insert(name.clone(), cloud_baseline(c, &local_path));
-                    outcome.downloaded.push(name.clone());
+                    match self.download_to(appid, &name, &local_path, c).await {
+                        Ok(()) => {
+                            baseline
+                                .files
+                                .insert(name.clone(), cloud_baseline(c, &local_path));
+                            outcome.downloaded.push(name.clone());
+                        }
+                        Err(e) => outcome.record_failure(&name, "down", &e),
+                    }
                 }
                 PlannedAction::Upload => {
                     if direction == SyncDirection::Down {
                         continue;
                     }
                     let Some(l) = &local else { continue };
-                    self.upload_from(appid, &name, &local_path, l.timestamp).await?;
-                    baseline.files.insert(name.clone(), l.as_baseline());
-                    outcome.uploaded.push(name.clone());
+                    match self.upload_from(appid, &name, &local_path, l.timestamp).await {
+                        Ok(()) => {
+                            baseline.files.insert(name.clone(), l.as_baseline());
+                            outcome.uploaded.push(name.clone());
+                        }
+                        Err(e) => outcome.record_failure(&name, "up", &e),
+                    }
                 }
                 PlannedAction::Conflict => {
                     let (Some(l), Some(c)) = (&local, cloud) else { continue };
@@ -623,16 +739,24 @@ impl CloudClient {
                             });
                         }
                         ConflictPolicy::TakeCloud => {
-                            self.download_to(appid, &name, &local_path, c.timestamp).await?;
-                            baseline
-                                .files
-                                .insert(name.clone(), cloud_baseline(c, &local_path));
-                            outcome.downloaded.push(name.clone());
+                            match self.download_to(appid, &name, &local_path, c).await {
+                                Ok(()) => {
+                                    baseline
+                                        .files
+                                        .insert(name.clone(), cloud_baseline(c, &local_path));
+                                    outcome.downloaded.push(name.clone());
+                                }
+                                Err(e) => outcome.record_failure(&name, "down", &e),
+                            }
                         }
                         ConflictPolicy::TakeLocal => {
-                            self.upload_from(appid, &name, &local_path, l.timestamp).await?;
-                            baseline.files.insert(name.clone(), l.as_baseline());
-                            outcome.uploaded.push(name.clone());
+                            match self.upload_from(appid, &name, &local_path, l.timestamp).await {
+                                Ok(()) => {
+                                    baseline.files.insert(name.clone(), l.as_baseline());
+                                    outcome.uploaded.push(name.clone());
+                                }
+                                Err(e) => outcome.record_failure(&name, "up", &e),
+                            }
                         }
                     }
                 }
@@ -650,7 +774,7 @@ impl CloudClient {
         appid: u32,
         filename: &str,
         local_path: &Path,
-        cloud_timestamp: u64,
+        cloud: &CloudFileEntry,
     ) -> Result<()> {
         if let Some(parent) = local_path.parent() {
             tokio::fs::create_dir_all(parent)
@@ -658,13 +782,13 @@ impl CloudClient {
                 .with_context(|| format!("failed to create parent directory {}", parent.display()))?;
         }
         let body = self
-            .download_file(appid, filename)
+            .download_file(appid, filename, cloud.sha_hash.as_deref())
             .await
             .with_context(|| format!("failed downloading cloud file '{filename}' for app {appid}"))?;
         tokio::fs::write(local_path, &body)
             .await
             .with_context(|| format!("failed writing {}", local_path.display()))?;
-        set_file_mtime_secs(local_path, cloud_timestamp);
+        set_file_mtime_secs(local_path, cloud.timestamp);
         Ok(())
     }
 
@@ -683,7 +807,12 @@ impl CloudClient {
             .with_context(|| format!("failed uploading cloud file '{filename}' for app {appid}"))
     }
 
-    async fn download_file(&self, appid: u32, filename: &str) -> Result<Vec<u8>> {
+    async fn download_file(
+        &self,
+        appid: u32,
+        filename: &str,
+        expected_sha: Option<&str>,
+    ) -> Result<Vec<u8>> {
         let request = CCloud_ClientFileDownload_Request {
             appid: Some(appid),
             filename: Some(filename.to_string()),
@@ -709,7 +838,10 @@ impl CloudClient {
             )
         }))?;
 
-        let response = self
+        let raw_file_size = response.raw_file_size();
+        let stored_size = response.file_size();
+
+        let http_response = self
             .http
             .get(url)
             .headers(headers)
@@ -719,11 +851,22 @@ impl CloudClient {
             .error_for_status()
             .context("cloud HTTP GET returned failure status")?;
 
-        Ok(response
+        let body = http_response
             .bytes()
             .await
             .context("failed reading cloud download body")?
-            .to_vec())
+            .to_vec();
+
+        // Steam stores cloud files compressed: the transfer is then a ZIP container
+        // holding the single real file. Writing the body straight to disk yields a
+        // zip where the game expects its save.
+        Ok(maybe_decompress(
+            body,
+            stored_size,
+            raw_file_size,
+            expected_sha,
+            filename,
+        ))
     }
 
     async fn upload_file(
@@ -818,6 +961,79 @@ impl CloudClient {
 
         Ok(())
     }
+}
+
+/// A ZIP local-file-header magic — how a compressed Steam Cloud transfer starts.
+const ZIP_MAGIC: &[u8; 4] = b"PK\x03\x04";
+
+/// Pull the single archived entry out of a ZIP container, or `None` if the bytes
+/// aren't a readable one-entry archive.
+fn unzip_single_entry(body: &[u8], expected_len: Option<u32>) -> Option<Vec<u8>> {
+    if !body.starts_with(ZIP_MAGIC) {
+        return None;
+    }
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(body)).ok()?;
+    if archive.is_empty() {
+        return None;
+    }
+    let mut entry = archive.by_index(0).ok()?;
+    let mut out = Vec::with_capacity(expected_len.unwrap_or(0) as usize);
+    std::io::Read::read_to_end(&mut entry, &mut out).ok()?;
+    Some(out)
+}
+
+/// Unwrap a cloud download body that Steam stored compressed.
+///
+/// Steam ships such a file as a ZIP archive holding the single real save. The
+/// decision is made against `expected_sha` — the hash Steam reports for the file's
+/// *original* content — rather than the response's size fields, which Steam does not
+/// reliably populate on this path: if the raw body already hashes to `expected_sha`
+/// it is the file, and if the unzipped bytes do, the transfer was compressed. That
+/// also means a save that genuinely *is* a zip can never be unwrapped by mistake.
+///
+/// With no hash to check against, fall back to the size fields (`raw_file_size`
+/// differing from the stored `file_size` implies compression). If nothing matches,
+/// the original bytes are returned and the mismatch logged — a suspect save beats no
+/// save, and the sync stays alive for the remaining files.
+fn maybe_decompress(
+    body: Vec<u8>,
+    stored_size: u32,
+    raw_file_size: u32,
+    expected_sha: Option<&str>,
+    filename: &str,
+) -> Vec<u8> {
+    let raw_len = (raw_file_size > 0).then_some(raw_file_size);
+
+    if let Some(sha) = expected_sha.map(str::trim).filter(|s| !s.is_empty()) {
+        if hash_eq(&hex_lower(&Sha1::digest(&body)), sha) {
+            return body; // stored uncompressed — already the real file
+        }
+        match unzip_single_entry(&body, raw_len) {
+            Some(inner) if hash_eq(&hex_lower(&Sha1::digest(&inner)), sha) => return inner,
+            _ => {
+                tracing::warn!(
+                    "cloud file '{filename}' did not match its expected hash {sha} either as \
+                     received or decompressed; writing it as received"
+                );
+                return body;
+            }
+        }
+    }
+
+    // No hash available: compression is implied by the two size fields disagreeing.
+    if raw_file_size > 0 && raw_file_size != stored_size {
+        if let Some(inner) = unzip_single_entry(&body, raw_len) {
+            if inner.len() as u32 != raw_file_size {
+                tracing::warn!(
+                    "cloud file '{filename}' decompressed to {} bytes, expected {raw_file_size}",
+                    inner.len()
+                );
+            }
+            return inner;
+        }
+        tracing::warn!("cloud file '{filename}' looked compressed but is not a readable zip");
+    }
+    body
 }
 
 /// Build the request URL for a Steam Cloud HTTP transfer from the scheme flag and

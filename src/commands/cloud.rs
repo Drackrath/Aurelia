@@ -29,8 +29,20 @@ pub(crate) async fn cmd_cloud_sync(
             .join("remote"),
     };
     let (_, install_path) = client.is_game_available(app_id).await;
-    let resolver =
-        aurelia::library::cloud_sync::CloudPathResolver::new(remote_root.clone(), install_path.map(PathBuf::from));
+    // A Windows game under Proton writes its saves inside the wine prefix, so the
+    // `%Win*%` roots in its cloud filenames only resolve with the prefix in hand.
+    let launcher_config = aurelia::core::config::LauncherConfig::load().await?;
+    let user_configs = aurelia::core::config::load_user_configs().await?;
+    // Must be the prefix the game *runs* in, not the WINEPREFIX the launcher sets:
+    // under Proton those differ, and syncing to the wrong one silently leaves the
+    // game with no saves.
+    let wine_prefix =
+        aurelia::core::utils::game_save_prefix(&launcher_config, app_id, &user_configs);
+    let resolver = aurelia::library::cloud_sync::CloudPathResolver::new(
+        remote_root.clone(),
+        install_path.map(PathBuf::from),
+    )
+    .with_wine_prefix(Some(wine_prefix.clone()));
 
     // No flag = full sync (down then up); `--down`/`--up` restrict the direction.
     let direction = if up {
@@ -57,8 +69,12 @@ pub(crate) async fn cmd_cloud_sync(
         .await
         .with_context(|| format!("cloud sync failed for app {app_id}"))?;
 
-    let status = if outcome.has_conflicts() {
+    let status = if outcome.has_failures() {
+        "failed"
+    } else if outcome.has_conflicts() {
         "conflicts"
+    } else if outcome.has_skips() {
+        "incomplete"
     } else {
         "ok"
     };
@@ -88,6 +104,10 @@ pub(crate) async fn cmd_cloud_sync(
             "downloaded": outcome.downloaded,
             "uploaded": outcome.uploaded,
             "conflicts": conflicts,
+            "skipped": outcome.skipped,
+            "skipped_root_tokens": outcome.skipped_tokens(),
+            "failed": outcome.failed,
+            "wine_prefix": wine_prefix.to_string_lossy(),
         }));
         return Ok(());
     }
@@ -113,8 +133,76 @@ pub(crate) async fn cmd_cloud_sync(
             outcome.uploaded.len()
         );
     }
+
+    // Name the destination. Aurelia can have several prefixes per game and syncing
+    // into the wrong one looks exactly like success — the files are written, the
+    // counts are right, and the game still starts with no saves.
+    cli_println!("Save prefix: {}", wine_prefix.display());
+
+    // A partial restore is the dangerous case: the game finds *some* files and
+    // starts as though the save were intact, so this must never read as success.
+    if outcome.has_failures() {
+        cli_println!(
+            "\nERROR: {} Cloud file(s) failed to transfer — this save set is INCOMPLETE:",
+            outcome.failed.len()
+        );
+        for f in outcome.failed.iter().take(SKIP_SAMPLE) {
+            cli_println!("  [{}] {}: {}", f.direction, f.filename, f.error);
+        }
+        if outcome.failed.len() > SKIP_SAMPLE {
+            cli_println!("  ... and {} more", outcome.failed.len() - SKIP_SAMPLE);
+        }
+        cli_println!(
+            "\nRe-run `aurelia cloud sync {app_id} --down` to retry just the missing files.\nDo not play until it completes — the game may overwrite a half-restored save."
+        );
+    }
+
+    // A skipped file was never compared, so the counts above say nothing about it.
+    // Report it loudly — the failure mode this replaces was a confident "0 down"
+    // against a cloud full of saves.
+    if outcome.has_skips() {
+        let tokens = outcome.skipped_tokens();
+        cli_println!(
+            "\nWARNING: {} Cloud file(s) were skipped — Aurelia could not work out where they belong on disk.",
+            outcome.skipped.len()
+        );
+        if tokens.is_empty() {
+            for s in outcome.skipped.iter().take(SKIP_SAMPLE) {
+                cli_println!("  {}: {}", s.filename, s.reason);
+            }
+        } else {
+            cli_println!(
+                "Unmapped save root token(s): {}",
+                tokens
+                    .iter()
+                    .map(|t| format!("%{t}%"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            for s in outcome.skipped.iter().take(SKIP_SAMPLE) {
+                cli_println!("  {}", s.filename);
+            }
+        }
+        if outcome.skipped.len() > SKIP_SAMPLE {
+            cli_println!("  ... and {} more", outcome.skipped.len() - SKIP_SAMPLE);
+        }
+        if tokens.iter().any(|t| t.starts_with("Win")) {
+            cli_println!(
+                "\n%Win*% roots live inside the game's Proton prefix. Check that the game is\ninstalled and that its compatdata prefix exists (`aurelia info {app_id}`)."
+            );
+        } else {
+            cli_println!(
+                "\nThis token has no mapping in this build — please report it so it can be added."
+            );
+        }
+        cli_println!("These saves are still safe in the Cloud; nothing was overwritten.");
+    }
     Ok(())
 }
+
+/// How many skipped filenames to print before collapsing into a count — enough to
+/// recognise which saves are affected without burying the explanation.
+const SKIP_SAMPLE: usize = 5;
 
 pub(crate) async fn cmd_cloud_list(app_id: u32, json: bool) -> Result<()> {
     let client = authed_client().await?;
