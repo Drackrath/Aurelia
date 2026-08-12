@@ -313,9 +313,15 @@ impl SteamClient {
             let remote_manifests = if verify_mode {
                 local_manifests.clone()
             } else {
-                SteamClient::remote_manifest_ids_static(&connection, appid, &active_branch)
-                    .await
-                    .unwrap_or_default()
+                let mut remote =
+                    SteamClient::remote_manifest_ids_static(&connection, appid, &active_branch)
+                        .await
+                        .unwrap_or_default();
+                // An update refreshes only installed depots
+                if !local_manifests.is_empty() {
+                    remote.retain(|depot_id, _| local_manifests.contains_key(depot_id));
+                }
+                remote
             };
 
             let selections: Vec<ManifestSelection> = remote_manifests
