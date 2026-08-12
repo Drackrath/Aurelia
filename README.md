@@ -110,7 +110,7 @@ sync, and Proton/Wine launching all work today.
       executable selection (native vs Proton), running-game tracking, and graceful/forced
       stop (`running` / `stop --force`)
 - [x] **Self-contained Windows Steam runtime** — install/repair a master Wine Steam prefix
-      (`steam-runtime install` / `repair` / `status`) to satisfy Steamworks/DRM handshakes
+      (`steam-runtime install` / `repair` / `stop` / `uninstall` / `status`) to satisfy Steamworks/DRM handshakes
       without a host Steam client; `play --steam` falls back to it automatically when no host
       Steam is installed (`config steam-runtime-policy auto|on|off`)
 - [x] **Optional launch plugins (Linux, opt-in, never bundled)** — **luxtorpeda** native
@@ -203,6 +203,9 @@ aurelia move 1245620 D:\SteamLibrary # move an install to another library (updat
 aurelia relink 1245620 D:\SteamLibrary  # re-point Steam at already-moved files (no copy)
 aurelia import 1245620 D:\SteamLibrary  # register existing on-disk files with Steam
 aurelia available 1245620            # is it installed and present on disk?
+aurelia duplicates                   # games installed in several libraries at once
+                                     # (a duplicate makes a game re-report updates forever;
+                                     #  prints the copies to delete, removes nothing itself)
 
 # Downgrade & version pinning
 aurelia manifests 1245620            # each depot's current manifest id per branch
@@ -277,8 +280,12 @@ aurelia proton uninstall GE-Proton9-19  # delete an installed GE build
 aurelia config steam-runtime-runner GE-Proton9-20  # select the Wine/Proton runner (required first)
 aurelia steam-runtime status          # resolved master prefix, layout, steam.exe presence
 aurelia steam-runtime install         # install Steam into the master Wine prefix (sign in here)
+aurelia steam-runtime install --reinstall  # delete the prefix first, then install fresh
+                                           # (for a corrupted install; no .bak is kept)
 aurelia steam-runtime login           # re-open the in-Wine Steam to sign in again (expired/switch)
 aurelia steam-runtime repair          # back up the prefix (keep one) and reinstall
+aurelia steam-runtime stop            # shut down the in-Wine Steam, keeping the prefix
+aurelia steam-runtime uninstall       # remove the master prefix entirely (incl. any .bak)
 aurelia config steam-runtime-policy on   # make `play --steam` always use the in-Wine runtime
                                          # (default `auto`: host Steam if present, else in-Wine)
 
@@ -378,7 +385,6 @@ standalone install.
 | Document | Contents |
 |---|---|
 | [USAGE.md](USAGE.md) | Full reference for every command and flag |
-| [docs/community-market-plan.md](docs/community-market-plan.md) | Design & roadmap for Steam Community Market support |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
 
 ---
@@ -407,6 +413,18 @@ protocol work let Aurelia speak Steam's real network protocols — and on a vend
 - [steam-cdn](https://crates.io/crates/steam-cdn) — content-delivery / depot download engine (vendored & modified)
 - [SteamKit2](https://github.com/SteamRE/SteamKit) — Steam .NET research code
 - [SteamHelper-rs](https://github.com/saskenuba/SteamHelper-rs) — SteamKit Rust port
+
+---
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=Drackrath%2FAurelia&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Drackrath/Aurelia&type=date&theme=dark&legend=top-left&sealed_token=zXdjs_drcHTMkMNbox0hJui2MeqHrik6ffskwkRLfX2hsH8W9nwd9pZ-yEhuBwUuC1WC1pfLVnL7hPyZ5DLdGtDMCxSJh7Kddu-w0eZI-5wM64y56opayjFg_zN1x0rFeHGE6RJh4rG56LXWpv6beBZ42a7cIM0IlxfTeegy72K2xgtbewqQAccsI8b2" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Drackrath/Aurelia&type=date&legend=top-left&sealed_token=zXdjs_drcHTMkMNbox0hJui2MeqHrik6ffskwkRLfX2hsH8W9nwd9pZ-yEhuBwUuC1WC1pfLVnL7hPyZ5DLdGtDMCxSJh7Kddu-w0eZI-5wM64y56opayjFg_zN1x0rFeHGE6RJh4rG56LXWpv6beBZ42a7cIM0IlxfTeegy72K2xgtbewqQAccsI8b2" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Drackrath/Aurelia&type=date&legend=top-left&sealed_token=zXdjs_drcHTMkMNbox0hJui2MeqHrik6ffskwkRLfX2hsH8W9nwd9pZ-yEhuBwUuC1WC1pfLVnL7hPyZ5DLdGtDMCxSJh7Kddu-w0eZI-5wM64y56opayjFg_zN1x0rFeHGE6RJh4rG56LXWpv6beBZ42a7cIM0IlxfTeegy72K2xgtbewqQAccsI8b2" />
+ </picture>
+</a>
 
 ---
 
