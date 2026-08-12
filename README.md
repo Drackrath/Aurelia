@@ -1,8 +1,8 @@
-<img src="assets/aurelia_logo_v3.png" alt="Aurelia logo" title="Aurelia" align="left" height="80" />
+<img src="assets/aurelia_logo_v3.png" alt="Aurelia — command-line Steam client and launcher written in Rust" title="Aurelia" align="left" height="80" />
 
-# Aurelia
+# Aurelia — a command-line Steam client for Linux and Windows
 
-**A fast, lightweight, command-line Steam launcher and library manager written in Rust.**
+**A fast, lightweight, headless Steam launcher and library manager written in Rust — install, update and play your Steam games entirely from the terminal.**
 
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL%203.0-blue.svg)](LICENSE)
 [![Built with Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
@@ -21,12 +21,6 @@
 >
 > Use Aurelia entirely **at your own risk**. The authors accept no liability for damage to your Steam installation, lost data, or banned/suspended accounts.
 
-<!-- -->
-
-> [!NOTE]
-> Manual review checklist for the latest code-review changes: [FILES_REVIEWED.md](FILES_REVIEWED.md).
-
-
 Aurelia is a pure command-line Steam launcher and library manager — no CEF, no WebViews,
 no GUI. It talks to Steam's real network protocols through
 [`steam-vent`](https://codeberg.org/steam-vent/steam-vent), so you can log in, manage your
@@ -34,8 +28,14 @@ library, install and update games, sync Steam Cloud saves, manage Steam Workshop
 see your friends and chat with them, and launch titles (natively or through Proton/Wine)
 entirely from a terminal or a script.
 
+Because it never needs a desktop session, it runs where the official Steam client can't:
+over SSH, on a headless Linux server, in a container, on a low-memory box, or as one step
+inside a shell script. Every command speaks `--json`, so it is equally at home as a backend
+for another launcher.
+
 It is the modern successor to **OpenSteamClient**, rebuilt in Rust for a smaller footprint,
-memory safety, and a scriptable, headless-friendly workflow.
+memory safety, and a scriptable, headless-friendly workflow — and a full-fledged alternative
+to **SteamCMD** that can also *launch* the games it installs.
 
 ```bash
 aurelia login
@@ -46,6 +46,20 @@ aurelia play 1245620
 
 ---
 
+## Contents
+
+- [Why Aurelia?](#why-aurelia) · [How it compares](#how-it-compares)
+- [Project status](#project-status)
+- [Install](#install)
+- [Build from source](#build-from-source)
+- [Usage](#usage)
+- [Configuration](#configuration)
+- [Documentation](#documentation)
+- [FAQ](#faq)
+- [Contributing](#contributing) · [Acknowledgments](#acknowledgments) · [License](#license)
+
+---
+
 ## Why Aurelia?
 
 - **No web technology.** No Electron, CEF, or embedded browser — idle memory stays under
@@ -53,7 +67,8 @@ aurelia play 1245620
 - **Fast and scriptable.** A pure Rust CLI: instant startup, easy to automate, and every
   command speaks `--json` for machine-readable output.
 - **Linux first.** 64-bit clean, with first-class Proton/Wine management — and it runs on
-  Windows too.
+  Windows too. No X11/Wayland session required for library and download work, so it works
+  over SSH and on headless servers.
 - **Deep Steam integration.** PICS metadata, the content CDN, Steam Cloud, app ownership
   tickets, depot browsing, DLC management, and Steam Workshop — built on open, documented
   protocols.
@@ -127,15 +142,52 @@ sync, and Proton/Wine launching all work today.
       direct messaging (send, history, and an interactive live session); presence is
       configurable (defaults to invisible)
 - [x] **Inventory & market (read-only)** — view your inventory, look up item prices, search
-      the Community Market, and see your wallet and listings (buying & selling are planned —
-      see [docs/community-market-plan.md](docs/community-market-plan.md))
+      the Community Market, and see your wallet and listings (buying & selling are planned)
 - [x] **Collections / categorization** — create/rename/delete library collections, add/remove
       games, a `list` COLLECTIONS column and `--collection` filter, and on-demand pull/push/sync
       with Steam's cloud collections
 
 ---
 
-## Getting started
+## Install
+
+### Arch Linux (AUR)
+
+```bash
+yay -S aurelia          # or: paru -S aurelia
+```
+
+### Nix / NixOS (flake)
+
+```bash
+nix run github:Drackrath/Aurelia          # run it once
+nix profile install github:Drackrath/Aurelia   # install it
+```
+
+### Debian / Ubuntu (.deb)
+
+Grab the `.deb` for your architecture from the
+[latest release](https://github.com/Drackrath/Aurelia/releases/latest):
+
+```bash
+sudo apt install ./aurelia_*_amd64.deb
+```
+
+### Prebuilt binaries (Linux, Windows, macOS)
+
+Every release ships static-ish binaries for `linux_x86_64`, `linux_arm64`,
+`windows_x86_64`, `windows_arm64`, `macOS_x86_64` and `macOS_arm64` —
+see the [releases page](https://github.com/Drackrath/Aurelia/releases/latest).
+
+```bash
+curl -LO https://github.com/Drackrath/Aurelia/releases/latest/download/aurelia_linux_x86_64
+chmod +x aurelia_linux_x86_64 && sudo mv aurelia_linux_x86_64 /usr/local/bin/aurelia
+aurelia --help
+```
+
+---
+
+## Build from source
 
 ### Prerequisites
 
@@ -385,7 +437,77 @@ standalone install.
 | Document | Contents |
 |---|---|
 | [USAGE.md](USAGE.md) | Full reference for every command and flag |
+| [WINDOWS_STEAM_RUNTIME.md](WINDOWS_STEAM_RUNTIME.md) | The self-contained Wine Steam prefix (`steam-runtime`) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
+| [SECURITY.md](SECURITY.md) | Reporting a vulnerability |
+| [FILES_REVIEWED.md](FILES_REVIEWED.md) | Manual review checklist for the latest code-review changes |
+
+---
+
+## FAQ
+
+### Is there a Steam client that works without a GUI?
+
+Yes — that is exactly what Aurelia is. It is a pure CLI Steam client: no Electron, no CEF, no
+embedded browser, no desktop session required. You can log in, install games, update them,
+sync Cloud saves and launch titles from a terminal or a shell script.
+
+### Can I install and play Steam games over SSH or on a headless server?
+
+Yes. Library management, downloads, updates, verification, Cloud sync and Workshop all work
+headlessly over SSH. Launching a game still needs somewhere for it to render (a display,
+a virtual X server, or a remote-play setup), but everything up to the launch does not.
+
+### How is Aurelia different from SteamCMD?
+
+[SteamCMD](https://developer.valvesoftware.com/wiki/SteamCMD) is Valve's official CLI tool,
+but it is content-only: it downloads and updates app and Workshop files and little else.
+Aurelia is a full launcher and library manager — it lists and searches your library, launches
+games natively or through Proton/Wine, syncs Steam Cloud saves, manages DLC and Workshop
+subscriptions, reads achievements, and does friends & chat. SteamCMD is proprietary and ships
+as a prebuilt binary; Aurelia is open source under GPL-3.0.
+
+### Is Aurelia an OpenSteamClient alternative?
+
+It is its spiritual successor. OpenSteamClient is a C++/Qt desktop GUI; Aurelia rebuilds the
+same idea in Rust as a scriptable CLI, without the 32-bit legacy Steam binaries, at a fraction
+of the memory footprint.
+
+### Does it run Windows games on Linux?
+
+Yes, through Proton and Wine. Aurelia discovers installed runtimes, downloads new ones
+(official Valve Proton, GE-Proton, and Proton-CachyOS with AVX2/`x86_64_v3` selection), pins a
+Proton version per game, and can route launches through
+[umu-launcher](https://github.com/Open-Wine-Components/umu-launcher) or native engines via
+[luxtorpeda](https://github.com/luxtorpeda-dev/luxtorpeda).
+
+### Do I need the official Steam client installed?
+
+No. Aurelia talks to Steam's real network protocols directly. For titles that insist on a
+Steamworks/DRM handshake, it can either bridge to a host Steam client if you have one, or
+install a self-contained Windows Steam runtime inside its own Wine prefix
+(`aurelia steam-runtime install`).
+
+### How much RAM does it use?
+
+Under ~50 MB idle, against roughly 400–800 MB for the official Steam desktop app.
+
+### Which platforms are supported?
+
+Linux is the primary target (x86_64 and arm64), Windows is supported, and macOS binaries are
+built for each release. See [Install](#install).
+
+### Can I use it to script my Steam library?
+
+Yes. Every command accepts `--json` for machine-readable output, including errors — so
+Aurelia works as a backend for other launchers and for automation. `AURELIA_CONFIG_DIR`
+relocates its state so an embedding driver can keep it isolated.
+
+### Is it safe to use? Can I get VAC banned?
+
+Aurelia is unofficial and unaffiliated with Valve, it modifies Steam's files directly, and
+third-party tools that interact with Steam carry a risk of VAC action against your account.
+Read the disclaimer at the top of this README before using it. Use at your own risk.
 
 ---
 
@@ -425,6 +547,26 @@ protocol work let Aurelia speak Steam's real network protocols — and on a vend
    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Drackrath/Aurelia&type=date&legend=top-left&sealed_token=zXdjs_drcHTMkMNbox0hJui2MeqHrik6ffskwkRLfX2hsH8W9nwd9pZ-yEhuBwUuC1WC1pfLVnL7hPyZ5DLdGtDMCxSJh7Kddu-w0eZI-5wM64y56opayjFg_zN1x0rFeHGE6RJh4rG56LXWpv6beBZ42a7cIM0IlxfTeegy72K2xgtbewqQAccsI8b2" />
  </picture>
 </a>
+
+---
+
+## Related projects
+
+- [SteamCMD](https://developer.valvesoftware.com/wiki/SteamCMD) — Valve's official,
+  content-only command-line tool
+- [OpenSteamClient](https://github.com/OpenSteamClient/OpenSteamClient) — open-source C++/Qt
+  Steam client; Aurelia is its Rust CLI successor
+- [SteamFlow](https://github.com/weter11/SteamFlow) — the project Aurelia is derived from
+- [steam-vent](https://codeberg.org/steam-vent/steam-vent) — the Steam network protocol
+  implementation Aurelia is built on
+- [Heroic Games Launcher](https://github.com/Heroic-Games-Launcher/HeroicGamesLauncher) —
+  GUI launcher that can drive Aurelia for its Steam integration
+- [umu-launcher](https://github.com/Open-Wine-Components/umu-launcher) ·
+  [luxtorpeda](https://github.com/luxtorpeda-dev/luxtorpeda) — optional launch plugins
+
+*Topics: steam client cli · headless steam · steam launcher linux · steamcmd alternative ·
+open source steam client · terminal steam · install steam games from command line ·
+proton launcher cli · steam library manager · rust steam client.*
 
 ---
 
