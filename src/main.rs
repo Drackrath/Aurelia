@@ -108,9 +108,16 @@ fn must_run_locally(cli: &Cli) -> bool {
         }
     );
 
+    // `duplicates` only reads appmanifests off disk — no Steam session, nothing the
+    // daemon holds. Forwarding it would gain nothing and cost accuracy: a long-lived
+    // daemon answers from the code it was started with, so a freshly fixed scan would
+    // still report the old result until the daemon happened to be restarted.
+    let local_disk_scan = matches!(cli.command, Command::Duplicates);
+
     interactive_login
         || web_token_login
         || steam_runtime_gui
+        || local_disk_scan
         || matches!(
             cli.command,
             Command::Kill | Command::Daemon { command: Some(_), .. }
@@ -337,6 +344,7 @@ async fn run(cli: Cli) -> Result<()> {
         } => cmd_import(app_id, library, platform, restart_steam, json).await,
         Command::Available { app_id } => cmd_available(app_id, json).await,
         Command::Verify { app_id } => cmd_verify(app_id, json).await,
+        Command::Duplicates => cmd_duplicates(json).await,
         Command::Update { app_id, force } => match app_id {
             Some(id) => cmd_update(id, force, json).await,
             None => cmd_check_updates(json).await,

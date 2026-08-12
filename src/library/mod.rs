@@ -59,6 +59,14 @@ pub struct InstalledAppInfo {
     /// master prefix), not Aurelia's Linux library. Set by [`scan_installed_app_info`]
     /// when merging the Windows-Steam discovery pass.
     pub from_windows_steam: bool,
+    /// The appmanifest this info came from. Kept so a duplicate install can be
+    /// reported by the file that declares it.
+    pub manifest_path: PathBuf,
+    /// `LastUpdated` from the appmanifest — when Steam last wrote content for this
+    /// copy. The primary signal for which of several copies is the live one.
+    pub last_updated: u64,
+    /// `buildid` from the appmanifest. Secondary tie-break behind `last_updated`.
+    pub build_id: u64,
 }
 
 pub async fn find_local_games() -> Result<Vec<LocalGame>> {
@@ -77,20 +85,11 @@ pub async fn find_local_games() -> Result<Vec<LocalGame>> {
 
 pub async fn scan_installed_app_info() -> Result<HashMap<u32, InstalledAppInfo>> {
     let config = load_launcher_config().await.ok();
-    let config_path = config.as_ref().and_then(|cfg| {
-        let p = PathBuf::from(&cfg.steam_library_path);
-        (p.join("steamapps").exists() || p.join("Steam").join("steamapps").exists()).then_some(p)
-    });
 
     // Scan *every* standard Steam data root, not just the first that exists: a
     // machine can carry a leftover native `~/.steam` next to the Flatpak install
     // that actually holds the games, and only one of them lists the libraries.
-    let mut roots: Vec<PathBuf> = config_path.into_iter().collect();
-    roots.extend(steam_root_candidates());
-    roots.sort();
-    roots.dedup();
-
-    let libraries = expand_library_roots(&roots).await;
+    let libraries = expand_library_roots(&steam_data_roots().await).await;
     tracing::debug!("scanning {} librar(y/ies): {:?}", libraries.len(), libraries);
     let mut installed = scan_libraries(&libraries).await;
 
@@ -113,6 +112,68 @@ pub async fn scan_installed_app_info() -> Result<HashMap<u32, InstalledAppInfo>>
     }
 
     Ok(installed)
+}
+
+/// One app installed in more than one library: the copy Aurelia uses, and the
+/// redundant ones that can be deleted.
+#[derive(Debug, Clone)]
+pub struct DuplicateInstall {
+    pub app_id: u32,
+    pub name: Option<String>,
+    pub live: InstalledAppInfo,
+    /// Every other copy, newest first. Deleting these is what reconciles the app.
+    pub stale: Vec<InstalledAppInfo>,
+}
+
+/// Find apps installed in several libraries at once.
+///
+/// A duplicate is not merely wasted disk: until it is removed the app has two
+/// manifests disagreeing about what is installed, which is what makes an update
+/// re-apply on every check.
+pub async fn find_duplicate_installs() -> Result<Vec<DuplicateInstall>> {
+    let libraries = expand_library_roots(&steam_data_roots().await).await;
+    let mut duplicates: Vec<DuplicateInstall> = scan_libraries_all(&libraries)
+        .await
+        .into_iter()
+        .filter(|(_, copies)| copies.len() > 1)
+        .filter_map(|(app_id, mut copies)| {
+            // Newest first, so the live copy is the head and the rest are stale.
+            copies.sort_by_key(|c| std::cmp::Reverse((c.last_updated, c.build_id)));
+            let live = copies.first()?.clone();
+            let name = live.name.clone();
+            Some(DuplicateInstall {
+                app_id,
+                name,
+                live,
+                stale: copies.into_iter().skip(1).collect(),
+            })
+        })
+        .collect();
+    duplicates.sort_by(|a, b| {
+        a.name
+            .as_deref()
+            .unwrap_or("")
+            .cmp(b.name.as_deref().unwrap_or(""))
+            .then(a.app_id.cmp(&b.app_id))
+    });
+    Ok(duplicates)
+}
+
+/// The Steam data roots to scan: the configured library plus every standard
+/// location. Shared by app discovery and duplicate reporting so both see the
+/// same set of libraries.
+async fn steam_data_roots() -> Vec<PathBuf> {
+    let config = load_launcher_config().await.ok();
+    let config_path = config.as_ref().and_then(|cfg| {
+        let p = PathBuf::from(&cfg.steam_library_path);
+        (p.join("steamapps").exists() || p.join("Steam").join("steamapps").exists()).then_some(p)
+    });
+
+    let mut roots: Vec<PathBuf> = config_path.into_iter().collect();
+    roots.extend(steam_root_candidates());
+    roots.sort();
+    roots.dedup();
+    roots
 }
 
 pub async fn scan_installed_app_paths() -> Result<HashMap<u32, String>> {
@@ -156,6 +217,15 @@ async fn expand_library_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
     // on a secondary disk are found regardless.
     libraries.extend(discover_drive_libraries());
 
+    // Resolve symlinks before deduping. A standard Steam install has `~/.steam/root`
+    // and `~/.steam/steam` both pointing at `~/.local/share/Steam`, so a purely
+    // textual dedupe leaves the same library listed three times: it gets scanned
+    // three times, and every game in it looks installed in three libraries.
+    libraries = libraries
+        .into_iter()
+        .map(|p| std::fs::canonicalize(&p).unwrap_or(p))
+        .collect();
+
     libraries.sort();
     libraries.dedup();
     libraries
@@ -171,9 +241,41 @@ fn libraryfolders_vdf_paths(root: &Path) -> Vec<PathBuf> {
     ]
 }
 
-/// Read the appmanifests of a known set of library folders.
+/// Read the appmanifests of a known set of library folders, keeping only the
+/// live copy of each app.
+///
+/// The same game can be installed in several libraries at once — a leftover on an
+/// external drive beside a fresh install on the internal one. Taking whichever
+/// manifest happened to be read last makes the winner depend on the order the
+/// libraries sorted in, which silently pins the app to a stale copy: updates then
+/// download into the *configured* library while the check keeps reading the old
+/// manifest, so the game reports an available update forever.
 async fn scan_libraries(libraries: &[PathBuf]) -> HashMap<u32, InstalledAppInfo> {
-    let mut installed = HashMap::new();
+    scan_libraries_all(libraries)
+        .await
+        .into_iter()
+        .filter_map(|(app_id, copies)| pick_live_copy(copies).map(|info| (app_id, info)))
+        .collect()
+}
+
+/// Of several installs of one app, the one to treat as live: most recently
+/// updated, then highest build id. Both come straight from the appmanifest, so a
+/// copy Steam or Aurelia has just written wins over one untouched for months.
+/// Equal on both, the first (libraries are scanned in sorted order) is kept, so
+/// the result stays deterministic.
+fn pick_live_copy(copies: Vec<InstalledAppInfo>) -> Option<InstalledAppInfo> {
+    copies
+        .into_iter()
+        .reduce(|best, next| {
+            let better = (next.last_updated, next.build_id) > (best.last_updated, best.build_id);
+            if better { next } else { best }
+        })
+}
+
+/// Every install of every app across `libraries`, including duplicates. Backs both
+/// [`scan_libraries`] and duplicate reporting.
+pub async fn scan_libraries_all(libraries: &[PathBuf]) -> HashMap<u32, Vec<InstalledAppInfo>> {
+    let mut installed: HashMap<u32, Vec<InstalledAppInfo>> = HashMap::new();
 
     for library_root in libraries {
         let steamapps = library_root.join("steamapps");
@@ -200,7 +302,7 @@ async fn scan_libraries(libraries: &[PathBuf]) -> HashMap<u32, InstalledAppInfo>
 
             match parse_app_manifest_info(&path).await {
                 Ok(Some((app_id, info))) => {
-                    installed.insert(app_id, info);
+                    installed.entry(app_id).or_default().push(info);
                 }
                 Ok(None) => {}
                 Err(e) => tracing::warn!("skipping bad manifest {:?}: {}", path, e),
@@ -602,6 +704,8 @@ async fn parse_app_manifest_info(path: &Path) -> Result<Option<(u32, InstalledAp
     let mut last_owner = None;
     let mut active_branch = "public".to_string();
     let mut state_flags: Option<u32> = None;
+    let mut last_updated: u64 = 0;
+    let mut build_id: u64 = 0;
 
     let mut in_user_config = false;
 
@@ -633,6 +737,8 @@ async fn parse_app_manifest_info(path: &Path) -> Result<Option<(u32, InstalledAp
                     // "0" means no owner recorded; treat as unknown.
                     "lastowner" => last_owner = value.parse::<u64>().ok().filter(|&id| id != 0),
                     "stateflags" => state_flags = value.parse::<u32>().ok(),
+                    "lastupdated" => last_updated = value.parse::<u64>().unwrap_or(0),
+                    "buildid" => build_id = value.parse::<u64>().unwrap_or(0),
                     _ => {}
                 }
             } else if key == "betakey" && !value.trim().is_empty() {
@@ -665,6 +771,9 @@ async fn parse_app_manifest_info(path: &Path) -> Result<Option<(u32, InstalledAp
             name,
             last_owner,
             from_windows_steam: false,
+            manifest_path: path.to_path_buf(),
+            last_updated,
+            build_id,
         },
     )))
 }

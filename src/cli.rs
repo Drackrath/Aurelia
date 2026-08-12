@@ -194,6 +194,12 @@ pub(crate) enum Command {
     },
     /// Verify the integrity of an installed game.
     Verify { app_id: u32 },
+    /// List games installed in more than one Steam library.
+    ///
+    /// A duplicate leaves two appmanifests disagreeing about what is installed,
+    /// which makes the game report an available update on every check. Prints the
+    /// redundant copies and the commands to remove them; deletes nothing itself.
+    Duplicates,
     /// Report whether a game is installed and its files are present on disk.
     Available { app_id: u32 },
     /// Show account details for the logged-in user.

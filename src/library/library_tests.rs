@@ -173,3 +173,72 @@ fn probe_does_not_descend_into_a_found_library() {
 
     std::fs::remove_dir_all(&temp).unwrap();
 }
+
+fn copy_at(path: &str, last_updated: u64, build_id: u64) -> InstalledAppInfo {
+    InstalledAppInfo {
+        install_path: PathBuf::from(path),
+        active_branch: "public".to_string(),
+        name: Some("Game".to_string()),
+        last_owner: None,
+        from_windows_steam: false,
+        manifest_path: PathBuf::from(path).join("appmanifest.acf"),
+        last_updated,
+        build_id,
+    }
+}
+
+#[test]
+fn live_copy_is_the_most_recently_updated() {
+    // The bug this replaces: whichever library sorted last won, so a stale copy
+    // on an external drive shadowed a fresh install and the game reported an
+    // available update forever.
+    let stale = copy_at("/run/media/vol/SteamLibrary/common/G", 1_781_182_506, 23_651_528);
+    let fresh = copy_at("/home/u/.local/share/Steam/common/G", 1_786_492_022, 24_486_608);
+
+    // Stable whichever order they are scanned in.
+    for copies in [
+        vec![stale.clone(), fresh.clone()],
+        vec![fresh.clone(), stale.clone()],
+    ] {
+        let live = pick_live_copy(copies).unwrap();
+        assert_eq!(live.install_path, fresh.install_path);
+    }
+}
+
+#[test]
+fn build_id_breaks_a_last_updated_tie() {
+    let older = copy_at("/a", 1_786_492_022, 23_000_000);
+    let newer = copy_at("/b", 1_786_492_022, 24_486_608);
+    assert_eq!(pick_live_copy(vec![older, newer]).unwrap().install_path, PathBuf::from("/b"));
+}
+
+#[test]
+fn a_single_copy_is_returned_unchanged() {
+    let only = copy_at("/only", 0, 0);
+    assert_eq!(pick_live_copy(vec![only]).unwrap().install_path, PathBuf::from("/only"));
+    assert!(pick_live_copy(vec![]).is_none());
+}
+
+#[tokio::test]
+async fn symlinked_steam_roots_collapse_to_one_library() {
+    // A standard install has ~/.steam/root and ~/.steam/steam both symlinked to
+    // ~/.local/share/Steam. Deduping by path string alone leaves the same library
+    // listed three times, so every game in it looks installed three times over.
+    let tmp = tempfile::tempdir().unwrap();
+    let real = tmp.path().join("local/share/Steam");
+    std::fs::create_dir_all(real.join("steamapps")).unwrap();
+    let link_root = tmp.path().join("root");
+    let link_steam = tmp.path().join("steam");
+    std::os::unix::fs::symlink(&real, &link_root).unwrap();
+    std::os::unix::fs::symlink(&real, &link_steam).unwrap();
+
+    let libraries =
+        expand_library_roots(&[link_root, link_steam, real.clone()]).await;
+
+    let canonical_real = std::fs::canonicalize(&real).unwrap();
+    assert_eq!(
+        libraries.iter().filter(|p| **p == canonical_real).count(),
+        1,
+        "the same library must appear once, got {libraries:?}"
+    );
+}
