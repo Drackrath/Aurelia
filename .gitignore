@@ -5,3 +5,5 @@ agents/
 tests/s
 marketing/
 .vscode/
+result
+result-*
