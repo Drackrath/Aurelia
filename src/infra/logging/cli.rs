@@ -32,6 +32,8 @@ pub fn init_cli_logging(verbosity: u8) {
         // Only colourise when stderr is an interactive terminal.
         .with_ansi(std::io::stderr().is_terminal())
         .with_target(verbosity >= 2)
+        // Its `eprintln!` panics on a closed stderr.
+        .log_internal_errors(false)
         .init();
 }
 

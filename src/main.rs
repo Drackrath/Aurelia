@@ -167,13 +167,16 @@ async fn async_main() {
     // needed) so it runs against the single shared Steam session. If no daemon is
     // available, fall through and run locally. `AURELIA_NO_DAEMON` opts out.
     if !local_only && std::env::var_os("AURELIA_NO_DAEMON").is_none() {
+        use daemon::client::Forwarded;
         match daemon::client::try_forward().await {
             // Exit the process directly rather than returning: the stdin-forwarding
             // task reads `tokio::io::stdin()` on a blocking thread that never
             // finishes for an interactive (no-EOF) stdin, which would otherwise stall
             // the runtime's shutdown and hang exit.
-            Ok(Some(code)) => std::process::exit(code),
-            Ok(None) => {}
+            Ok(Forwarded::Done(code)) => std::process::exit(code),
+            // Parent gone; nothing would read a re-run.
+            Ok(Forwarded::OutputClosed) => std::process::exit(0),
+            Ok(Forwarded::Unavailable) => {}
             Err(e) => tracing::warn!("daemon forwarding failed ({e:#}); running locally"),
         }
     }

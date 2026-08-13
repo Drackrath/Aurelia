@@ -16,14 +16,23 @@ use super::{proto, Header};
 const SPAWN_WAIT: std::time::Duration = std::time::Duration::from_millis(100);
 const SPAWN_ATTEMPTS: u32 = 50; // ~5s total
 
-/// Try to run this command via the daemon. `Ok(Some(code))` — handled by the daemon
-/// (relayed); `Ok(None)` — no daemon and none could be started, run locally.
-pub async fn try_forward() -> Result<Option<i32>> {
+/// Outcome of forwarding to the daemon.
+pub enum Forwarded {
+    /// Daemon ran it; its exit code.
+    Done(i32),
+    /// Our stdio died mid-relay; parent gone.
+    OutputClosed,
+    /// No daemon reachable; run locally.
+    Unavailable,
+}
+
+/// Run this command via the daemon.
+pub async fn try_forward() -> Result<Forwarded> {
     let Some(stream) = connect_or_spawn().await else {
-        return Ok(None);
+        return Ok(Forwarded::Unavailable);
     };
     let argv: Vec<String> = std::env::args().collect();
-    forward(stream, argv).await.map(Some)
+    forward(stream, argv).await
 }
 
 /// Connect to the daemon; if none is listening, spawn one and wait for it.
@@ -169,8 +178,16 @@ async fn write_and_flush<W: AsyncWrite + Unpin>(w: &mut W, data: &[u8]) -> std::
     w.flush().await
 }
 
+/// Did our local output stream close?
+fn is_output_closed(e: &std::io::Error) -> bool {
+    matches!(
+        e.kind(),
+        std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::UnexpectedEof
+    )
+}
+
 /// Send the header + our stdin, relay the daemon's stdout/stderr, return its exit code.
-async fn forward<S>(stream: S, argv: Vec<String>) -> Result<i32>
+async fn forward<S>(stream: S, argv: Vec<String>) -> Result<Forwarded>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -218,19 +235,27 @@ where
     let mut stderr = tokio::io::stderr();
     let mut code = 0;
     loop {
-        match proto::read_frame(&mut reader).await? {
-            Some((proto::C_STDOUT, data)) => write_and_flush(&mut stdout, &data).await?,
-            Some((proto::C_STDERR, data)) => write_and_flush(&mut stderr, &data).await?,
+        // Broken pipe means the parent left.
+        let relayed = match proto::read_frame(&mut reader).await? {
+            Some((proto::C_STDOUT, data)) => write_and_flush(&mut stdout, &data).await,
+            Some((proto::C_STDERR, data)) => write_and_flush(&mut stderr, &data).await,
             Some((proto::C_EXIT, data)) => {
                 code = i32::from_be_bytes(data.get(..4).and_then(|b| b.try_into().ok()).unwrap_or([0; 4]));
                 break;
             }
-            Some(_) => {}
+            Some(_) => Ok(()),
             None => break,
+        };
+        if let Err(e) = relayed {
+            stdin_task.abort();
+            if is_output_closed(&e) {
+                return Ok(Forwarded::OutputClosed);
+            }
+            return Err(e).context("failed relaying daemon output");
         }
     }
     stdin_task.abort();
-    Ok(code)
+    Ok(Forwarded::Done(code))
 }
 
 #[cfg(test)]
