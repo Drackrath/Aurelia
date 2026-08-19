@@ -4,6 +4,7 @@ use crate::daemon;
 
 use std::collections::HashMap;
 use std::io::Write;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use anyhow::{bail, Context, Result};
 use aurelia::core::config::load_launcher_config;
@@ -138,6 +139,10 @@ pub(crate) fn merge_family_shared(games: &mut Vec<LibraryGame>, shared: Vec<Shar
             if !existing.is_owned {
                 existing.is_family_shared = true;
             }
+            // An installed copy takes its name from the local appmanifest
+            if existing.name.starts_with("App ") && !app.name.starts_with("App ") {
+                existing.name = app.name;
+            }
             continue;
         }
         games.push(LibraryGame {
@@ -219,21 +224,35 @@ pub(crate) fn active_installs() -> &'static Mutex<HashMap<u32, Arc<RwLock<Downlo
 
 /// RAII handle: registers an install's shared state on construction and removes
 /// it on drop, so the registry entry is cleared on success, error, or `?`/abort.
+///
+/// Dropping the guard also raises the operation's abort flag.
 pub(crate) struct InstallGuard {
     app_id: u32,
+    state: Arc<RwLock<DownloadState>>,
 }
 
 impl InstallGuard {
-    pub(crate) fn register(app_id: u32, state: Arc<RwLock<DownloadState>>) -> Self {
-        if let Ok(mut map) = active_installs().lock() {
-            map.insert(app_id, state);
+    /// Register `app_id`'s operation
+    pub(crate) fn register(app_id: u32, state: Arc<RwLock<DownloadState>>) -> Result<Self> {
+        let mut map = active_installs()
+            .lock()
+            .map_err(|_| anyhow::anyhow!("install registry lock poisoned"))?;
+        if map.contains_key(&app_id) {
+            bail!(
+                "an install/update/verify for app {app_id} is already running, wait for it \
+                 or stop it with `aurelia install stop {app_id}`"
+            );
         }
-        Self { app_id }
+        map.insert(app_id, Arc::clone(&state));
+        Ok(Self { app_id, state })
     }
 }
 
 impl Drop for InstallGuard {
     fn drop(&mut self) {
+        if let Ok(state) = self.state.read() {
+            state.abort_signal.store(true, Ordering::SeqCst);
+        }
         if let Ok(mut map) = active_installs().lock() {
             map.remove(&self.app_id);
         }

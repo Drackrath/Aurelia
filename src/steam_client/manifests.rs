@@ -79,26 +79,7 @@ impl SteamClient {
     }
 
     pub(crate) fn probe_install_dir_by_appid(&self, steamapps: &Path, appid: u32) -> Option<PathBuf> {
-        let common = steamapps.join("common");
-        if !common.exists() {
-            return None;
-        }
-
-        let appid_str = appid.to_string();
-
-        let entries = std::fs::read_dir(common).ok()?;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            // Check for steam_appid.txt
-            if path.is_dir() {
-                if let Ok(content) = std::fs::read_to_string(path.join("steam_appid.txt")) {
-                    if content.trim() == appid_str {
-                        return Some(path);
-                    }
-                }
-            }
-        }
-        None
+        crate::library::probe_install_dir_by_appid(steamapps, appid)
     }
 
     /// Request the PICS appinfo product-info for a single app and return its raw
@@ -247,66 +228,62 @@ impl SteamClient {
         let connection = self.connection.as_ref()?;
 
         let buffer = Self::pics_app_buffer(connection, appid).await.ok()?;
-        let raw_vdf = String::from_utf8(buffer).ok()?;
-        let parsed = parse_appinfo(&raw_vdf).ok()?;
+        let vdf = find_vdf_in_pics(&buffer).ok()?;
+        let section = pics_app_section(vdf.value());
 
-        let common = appinfo_common(&parsed);
-
-        let is_dlc = common
-            .and_then(|c| c.app_type.as_deref())
+        let is_dlc = section
+            .get_str(&["common", "type"])
             .map(|t| t.eq_ignore_ascii_case("dlc"))
             .unwrap_or(false);
         if !is_dlc {
             return None;
         }
 
-        let extended = parsed
-            .appinfo
-            .as_ref()
-            .and_then(|a| a.extended.as_ref())
-            .or(parsed.extended.as_ref());
-
-        extended
-            .and_then(|e| e.dependantonapp.as_deref())
+        section
+            .get_str(&["extended", "dependantonapp"])
             .and_then(|s| s.trim().parse::<u32>().ok())
             .or_else(|| {
-                common
-                    .and_then(|c| c.parent.as_deref())
+                section
+                    .get_str(&["common", "parent"])
                     .and_then(|s| s.trim().parse::<u32>().ok())
             })
             .filter(|&base| base != 0 && base != appid)
     }
 
+    /// Resolve the display name and Steam install directory for `appid` from PICS
     pub async fn resolve_install_game_info(&self, appid: u32) -> (String, Option<String>) {
         let mut display_name = format!("App {appid}");
         let mut installdir = None;
 
-        // Try to get info from PICS first as it's authoritative
+        // PICS is authoritative for both the name and the install directory.
         if let Some(conn) = self.connection.as_ref() {
-            let names = match Self::pics_app_buffer(conn, appid).await {
-                Ok(buffer) => String::from_utf8(buffer)
-                    .ok()
-                    .and_then(|raw_vdf| parse_appinfo(&raw_vdf).ok())
-                    .and_then(|parsed| {
-                        let common = appinfo_common(&parsed)?;
-                        Some((common.name.clone(), common.installdir.clone()))
-                    }),
-                Err(_) => None,
-            };
-            if let Some((name, dir)) = names {
-                if let Some(name) = name {
-                    display_name = name;
-                }
-                if dir.is_some() {
-                    installdir = dir;
-                }
+            match Self::pics_app_buffer(conn, appid).await {
+                Ok(buffer) => match find_vdf_in_pics(&buffer) {
+                    Ok(vdf) => {
+                        let section = pics_app_section(vdf.value());
+                        if let Some(name) = section
+                            .get_str(&["common", "name"])
+                            .map(str::trim)
+                            .filter(|n| !n.is_empty())
+                        {
+                            display_name = name.to_string();
+                        }
+                        installdir = section
+                            .get_str(&["config", "installdir"])
+                            .map(str::trim)
+                            .filter(|d| !d.is_empty())
+                            .map(str::to_string);
+                    }
+                    Err(e) => tracing::warn!("could not parse PICS appinfo for app {appid}: {e:#}"),
+                },
+                Err(e) => tracing::warn!("could not fetch PICS appinfo for app {appid}: {e:#}"),
             }
         }
 
-        if installdir.is_none() || display_name.starts_with("App ") {
+        if display_name.starts_with("App ") {
             if let Ok(games) = load_library_cache().await {
                 if let Some(game) = games.iter().find(|g| g.app_id == appid) {
-                    if display_name.starts_with("App ") && !game.name.is_empty() && !game.name.starts_with("App ") {
+                    if !game.name.is_empty() && !game.name.starts_with("App ") {
                         display_name = game.name.clone();
                     }
                 }
@@ -348,6 +325,15 @@ impl SteamClient {
                 .with_context(|| format!("failed creating {}", parent.display()))?;
         }
 
+        // Preserve existing manifest
+        let (last_owner, beta_key) = match std::fs::read_to_string(path) {
+            Ok(existing) => (
+                parse_last_owner_from_acf(&existing).unwrap_or(0),
+                Some(parse_active_branch_from_acf(&existing)).filter(|b| b != "public"),
+            ),
+            Err(_) => (0, None),
+        };
+
         // Strip characters that are structurally significant in VDF text so a name
         // cannot break out of its quoted value or inject extra keys/blocks.
         let game_name = game_name.replace(['"', '\n', '\r', '{', '}', '\\'], "");
@@ -375,7 +361,7 @@ impl SteamClient {
              \t\"SizeOnDisk\"\t\t\"{size_on_disk}\"\n\
              \t\"StagingSize\"\t\t\"0\"\n\
              \t\"buildid\"\t\t\"{buildid}\"\n\
-             \t\"LastOwner\"\t\t\"0\"\n\
+             \t\"LastOwner\"\t\t\"{last_owner}\"\n\
              \t\"UpdateResult\"\t\t\"0\"\n\
              \t\"BytesToDownload\"\t\t\"{size_on_disk}\"\n\
              \t\"BytesDownloaded\"\t\t\"{bytes_have}\"\n\
@@ -394,6 +380,13 @@ impl SteamClient {
                 ));
             }
             content.push_str("\t}\n");
+        }
+
+        if let Some(branch) = beta_key {
+            let branch = branch.replace(['"', '\n', '\r', '{', '}', '\\'], "");
+            content.push_str(&format!(
+                "\t\"UserConfig\"\n\t{{\n\t\t\"betakey\"\t\t\"{branch}\"\n\t}}\n"
+            ));
         }
 
         content.push_str("}\n");
@@ -538,12 +531,3 @@ impl SteamClient {
 
 }
 
-/// Resolve an app's PICS `common` section, accounting for both appinfo layouts:
-/// either nested under an `appinfo` wrapper node or present at the root.
-fn appinfo_common(parsed: &crate::core::models::AppInfoRoot) -> Option<&crate::core::models::CommonNode> {
-    parsed
-        .appinfo
-        .as_ref()
-        .and_then(|a| a.common.as_ref())
-        .or(parsed.common.as_ref())
-}

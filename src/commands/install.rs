@@ -85,7 +85,7 @@ pub(crate) async fn cmd_install(
     // / `install list` (served on other daemon connections) can reach it. The
     // guard removes the entry when this function returns (success, error, abort).
     let state = Arc::new(RwLock::new(DownloadState::default()));
-    let _install_guard = InstallGuard::register(app_id, Arc::clone(&state));
+    let _install_guard = InstallGuard::register(app_id, Arc::clone(&state))?;
     let rx = client
         .install_game(app_id, platform, cached_vdf, None, library, None, None, state)
         .await
@@ -409,6 +409,8 @@ pub(crate) async fn cmd_available(app_id: u32, json: bool) -> Result<()> {
 pub(crate) async fn cmd_verify(app_id: u32, json: bool) -> Result<()> {
     let client = authed_client().await?;
     let state = Arc::new(RwLock::new(DownloadState::default()));
+    // Registered so `install stop`
+    let _install_guard = InstallGuard::register(app_id, Arc::clone(&state))?;
     let rx = client
         .verify_game(app_id, state)
         .await
@@ -427,6 +429,7 @@ pub(crate) async fn cmd_update(app_id: u32, force: bool, json: bool) -> Result<(
 
     let client = authed_client().await?;
     let state = Arc::new(RwLock::new(DownloadState::default()));
+    let _install_guard = InstallGuard::register(app_id, Arc::clone(&state))?;
     let rx = client
         .update_game(app_id, state)
         .await
@@ -678,7 +681,7 @@ pub(crate) async fn cmd_downgrade(args: DowngradeArgs, json: bool) -> Result<()>
     }
 
     let state = Arc::new(RwLock::new(DownloadState::default()));
-    let _install_guard = InstallGuard::register(args.app_id, Arc::clone(&state));
+    let _install_guard = InstallGuard::register(args.app_id, Arc::clone(&state))?;
     let rx = client
         .install_game(
             args.app_id,

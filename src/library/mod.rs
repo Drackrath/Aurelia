@@ -693,6 +693,26 @@ fn unescape_vdf(value: &str) -> String {
     out
 }
 
+/// Find the install folder for `appid` under `<steamapps>/common` by its
+/// `steam_appid.txt` marker. Used when a manifest's `installdir` is stale.
+pub fn probe_install_dir_by_appid(steamapps: &Path, appid: u32) -> Option<PathBuf> {
+    let common = steamapps.join("common");
+    let appid_str = appid.to_string();
+    let entries = std::fs::read_dir(common).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        if let Ok(content) = std::fs::read_to_string(path.join("steam_appid.txt")) {
+            if content.trim() == appid_str {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
 async fn parse_app_manifest_info(path: &Path) -> Result<Option<(u32, InstalledAppInfo)>> {
     let raw = fs::read_to_string(path)
         .await
@@ -759,10 +779,18 @@ async fn parse_app_manifest_info(path: &Path) -> Result<Option<(u32, InstalledAp
     if !state_flags.is_some_and(|flags| flags & 4 != 0) {
         return Ok(None);
     }
-    let install_path = path
-        .parent()
-        .map(|p| p.join("common").join(dir))
-        .unwrap_or_default();
+    let steamapps = path.parent().map(Path::to_path_buf).unwrap_or_default();
+    let mut install_path = steamapps.join("common").join(&dir);
+    // A manifest whose `installdir` no longer matches the folder on disk 
+    if !install_path.is_dir() {
+        if let Some(found) = probe_install_dir_by_appid(&steamapps, id) {
+            tracing::debug!(
+                "app {id}: installdir {dir:?} missing, using {} instead",
+                found.display()
+            );
+            install_path = found;
+        }
+    }
     Ok(Some((
         id,
         InstalledAppInfo {

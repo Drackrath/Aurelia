@@ -295,3 +295,53 @@ fn parses_ufs_savefile_rules() {
     assert_eq!(specs[1].pattern, "*.sav");
     assert!(!specs[1].recursive); // absent recursive defaults to false
 }
+
+#[test]
+fn acf_name_and_last_owner_parse() {
+    let raw = "\"AppState\"\n{\n\t\"appid\"\t\t\"960090\"\n\t\"name\"\t\t\"Bloons TD 6\"\n\t\"LastOwner\"\t\t\"76561198000000001\"\n}\n";
+    assert_eq!(parse_name_from_acf(raw).as_deref(), Some("Bloons TD 6"));
+    assert_eq!(parse_last_owner_from_acf(raw), Some(76561198000000001));
+    assert_eq!(parse_last_owner_from_acf("\"LastOwner\"\t\"0\""), None);
+    assert_eq!(parse_name_from_acf("\"name\"\t\"\""), None);
+}
+
+#[test]
+fn write_appmanifest_preserves_owner_and_branch() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("appmanifest_960090.acf");
+    let existing = "\"AppState\"\n{\n\t\"appid\"\t\t\"960090\"\n\t\"name\"\t\t\"Bloons TD 6\"\n\
+        \t\"installdir\"\t\t\"BloonsTD6\"\n\t\"LastOwner\"\t\t\"76561198000000001\"\n\
+        \t\"UserConfig\"\n\t{\n\t\t\"betakey\"\t\t\"no-discord\"\n\t}\n}\n";
+    std::fs::write(&path, existing).unwrap();
+
+    SteamClient::write_appmanifest(
+        &path,
+        960090,
+        "Bloons TD 6",
+        "BloonsTD6",
+        vec![(960091, 3975959124549939908, 2805466046)],
+        Some("24771151"),
+        true,
+        false,
+    )
+    .unwrap();
+
+    let raw = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(parse_last_owner_from_acf(&raw), Some(76561198000000001));
+    assert_eq!(parse_active_branch_from_acf(&raw), "no-discord");
+    assert_eq!(parse_installdir_from_acf(&raw).as_deref(), Some("BloonsTD6"));
+    assert_eq!(parse_name_from_acf(&raw).as_deref(), Some("Bloons TD 6"));
+    assert!(manifest_is_fully_installed(&raw));
+    assert_eq!(parse_installed_depots_from_acf(&raw).get(&960091), Some(&3975959124549939908));
+}
+
+#[test]
+fn write_appmanifest_fresh_has_no_owner_or_branch() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("appmanifest_1.acf");
+    SteamClient::write_appmanifest(&path, 1, "Game", "Game", vec![], None, false, false).unwrap();
+    let raw = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(parse_last_owner_from_acf(&raw), None);
+    assert_eq!(parse_active_branch_from_acf(&raw), "public");
+    assert!(!raw.contains("UserConfig"));
+}

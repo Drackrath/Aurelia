@@ -1357,6 +1357,29 @@ fn parse_installdir_from_acf(raw: &str) -> Option<String> {
     None
 }
 
+/// Read the `name` value from an appmanifest, if present and non-empty.
+pub(crate) fn parse_name_from_acf(raw: &str) -> Option<String> {
+    for line in raw.lines() {
+        let quoted = extract_quoted_values(line.trim());
+        if quoted.len() >= 2 && quoted[0].eq_ignore_ascii_case("name") {
+            let name = quoted[1].trim();
+            return (!name.is_empty()).then(|| name.to_string());
+        }
+    }
+    None
+}
+
+/// Read `LastOwner` (SteamID64) from an appmanifest; `None` when absent or `0`.
+pub(crate) fn parse_last_owner_from_acf(raw: &str) -> Option<u64> {
+    for line in raw.lines() {
+        let quoted = extract_quoted_values(line.trim());
+        if quoted.len() >= 2 && quoted[0].eq_ignore_ascii_case("lastowner") {
+            return quoted[1].parse::<u64>().ok().filter(|&id| id != 0);
+        }
+    }
+    None
+}
+
 /// Read the `StateFlags` value from an appmanifest, if present.
 fn parse_state_flags_from_acf(raw: &str) -> Option<u32> {
     for line in raw.lines() {

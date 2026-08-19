@@ -280,7 +280,15 @@ impl SteamClient {
 
         let client_clone = self.clone();
         let shared_state_clone = shared_state.clone();
-        let game_name = self.resolve_install_game_name(appid).await;
+        // The name Steam already recorded for this copy.
+        let recorded_name = std::fs::read_to_string(&manifest_path)
+            .ok()
+            .and_then(|raw| parse_name_from_acf(&raw))
+            .filter(|n| !n.starts_with("App "));
+        let game_name = match recorded_name.clone() {
+            Some(name) => name,
+            None => self.resolve_install_game_name(appid).await,
+        };
         tokio::task::spawn(async move {
             if let Ok(mut state) = shared_state_clone.write() {
                 state.is_downloading = true;
@@ -584,8 +592,16 @@ impl SteamClient {
                     state.status_text = "Operation complete".to_string();
                 }
 
-                let (game_name, pics_installdir) = client_clone.resolve_install_game_info(appid).await;
-                let installdir = pics_installdir.unwrap_or_else(|| sanitize_install_dir(&game_name));
+                // The content was written into `install_root`
+                let game_name = match recorded_name {
+                    Some(name) => name,
+                    None => client_clone.resolve_install_game_name(appid).await,
+                };
+                let installdir = install_root
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or_else(|| sanitize_install_dir(&game_name));
                 // Record the current build so Steam sees the install as up to date.
                 let build_id =
                     SteamClient::remote_buildid_static(&connection, appid, &active_branch).await;

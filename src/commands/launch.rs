@@ -108,8 +108,12 @@ pub(crate) async fn cmd_play(
                 cli_println!("{kind} for {} — installing ...", game.name);
             }
             let state = Arc::new(RwLock::new(DownloadState::default()));
-            let update_result = match client.update_game(app_id, state).await {
-                Ok(rx) => drive_progress(rx, json).await,
+            // Registered like `aurelia update`: stoppable via `install stop`
+            let update_result = match InstallGuard::register(app_id, Arc::clone(&state)) {
+                Ok(_guard) => match client.update_game(app_id, state).await {
+                    Ok(rx) => drive_progress(rx, json).await,
+                    Err(e) => Err(e),
+                },
                 Err(e) => Err(e),
             };
             if let Err(e) = update_result {

@@ -197,8 +197,26 @@ impl SteamClient {
         // UI) when given, else the configured default. DLCs ignore this and
         // follow their base game's library (handled below).
         let library_root = library_override.unwrap_or_else(|| cfg.steam_library_path.clone());
-        let (game_name, pics_installdir) = self.resolve_install_game_info(appid).await;
-        let installdir = pics_installdir.unwrap_or_else(|| sanitize_install_dir(&game_name));
+        let (mut game_name, pics_installdir) = self.resolve_install_game_info(appid).await;
+        let mut installdir = pics_installdir.unwrap_or_else(|| sanitize_install_dir(&game_name));
+
+        // Re-installing / resuming into a library that already registers this app
+        let existing_manifest = Path::new(&library_root)
+            .join("steamapps")
+            .join(format!("appmanifest_{appid}.acf"));
+        if let Ok(raw) = std::fs::read_to_string(&existing_manifest) {
+            if let Some(dir) = parse_installdir_from_acf(&raw) {
+                let existing_dir = Path::new(&library_root).join("steamapps").join("common").join(&dir);
+                if existing_dir.is_dir() && !dir.trim().is_empty() {
+                    installdir = dir;
+                }
+            }
+            if game_name.starts_with("App ") {
+                if let Some(name) = parse_name_from_acf(&raw).filter(|n| !n.starts_with("App ")) {
+                    game_name = name;
+                }
+            }
+        }
 
         // If this app is a DLC, its content must land in the base game's install
         // directory and be registered in the base game's appmanifest (so the game

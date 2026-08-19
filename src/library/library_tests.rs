@@ -242,3 +242,42 @@ async fn symlinked_steam_roots_collapse_to_one_library() {
         "the same library must appear once, got {libraries:?}"
     );
 }
+
+#[tokio::test]
+async fn stale_installdir_falls_back_to_steam_appid_marker() {
+    let dir = tempfile::tempdir().unwrap();
+    let steamapps = dir.path().join("steamapps");
+    let real = steamapps.join("common").join("BloonsTD6");
+    std::fs::create_dir_all(&real).unwrap();
+    std::fs::write(real.join("steam_appid.txt"), "960090\n").unwrap();
+    let manifest = steamapps.join("appmanifest_960090.acf");
+    std::fs::write(
+        &manifest,
+        "\"AppState\"\n{\n\t\"appid\"\t\t\"960090\"\n\t\"name\"\t\t\"App 960090\"\n\
+         \t\"StateFlags\"\t\t\"4\"\n\t\"installdir\"\t\t\"App 960090\"\n}\n",
+    )
+    .unwrap();
+
+    let (id, info) = parse_app_manifest_info(&manifest).await.unwrap().unwrap();
+    assert_eq!(id, 960090);
+    assert_eq!(info.install_path, real);
+    assert_eq!(probe_install_dir_by_appid(&steamapps, 960090), Some(real));
+    assert_eq!(probe_install_dir_by_appid(&steamapps, 620), None);
+}
+
+#[tokio::test]
+async fn matching_installdir_is_used_without_probe() {
+    let dir = tempfile::tempdir().unwrap();
+    let steamapps = dir.path().join("steamapps");
+    let real = steamapps.join("common").join("BloonsTD6");
+    std::fs::create_dir_all(&real).unwrap();
+    let manifest = steamapps.join("appmanifest_960090.acf");
+    std::fs::write(
+        &manifest,
+        "\"AppState\"\n{\n\t\"appid\"\t\t\"960090\"\n\t\"StateFlags\"\t\t\"4\"\n\
+         \t\"installdir\"\t\t\"BloonsTD6\"\n}\n",
+    )
+    .unwrap();
+    let (_, info) = parse_app_manifest_info(&manifest).await.unwrap().unwrap();
+    assert_eq!(info.install_path, real);
+}
