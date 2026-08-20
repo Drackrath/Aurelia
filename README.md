@@ -485,7 +485,7 @@ relocates its state so an embedding driver can keep it isolated.
 ### Is it safe to use? Can I get VAC banned?
 
 Aurelia is unofficial and unaffiliated with Valve, it modifies Steam's files directly, and
-third-party tools that interact with Steam carry a risk of VAC action against your account.
+third-party tools that interact with Steam carry a risk of action against your account.
 Read the disclaimer at the top of this README before using it. Use at your own risk.
 
 ---
