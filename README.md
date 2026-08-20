@@ -6,7 +6,7 @@
 
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL%203.0-blue.svg)](LICENSE)
 [![Built with Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
-[![Status: Alpha](https://img.shields.io/badge/status-active%20alpha-yellow.svg)](#project-status)
+[![Status: Beta](https://img.shields.io/badge/status-experimental%20beta-yellow.svg)](#project-status)
 [![AUR](https://img.shields.io/badge/AUR-aurelia-1793d1.svg)](https://aur.archlinux.org/packages/aurelia)
 
 <br clear="left" />
@@ -103,7 +103,7 @@ proprietary and ships only as a prebuilt binary. Aurelia is open source (GPL-3.0
 
 ## Project status
 
-Aurelia is in **active alpha**. The core is highly functional: authentication,
+Aurelia is in **experimental beta**. The core is highly functional: authentication,
 library management, installs and updates, integrity verification, DLC handling, Steam Cloud
 sync, and Proton or Wine launching all work today.
 
