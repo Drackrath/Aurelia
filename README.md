@@ -17,7 +17,6 @@
 >
 > - **It modifies Steam's files directly.** Doing so may corrupt or damage your Steam installation, potentially forcing a full reinstallation. Back up your data first.
 > - **No warranty for games launched outside the official Steam launcher.** Titles started through Aurelia bypass the normal Steam client and may not behave as expected.
-> - **Risk of VAC bans.** Use of third-party tools that interact with Steam may cause VAC (Valve Anti-Cheat) to flag any user account associated with Aurelia. **Accounts used with Aurelia may be banned.**
 >
 > Use Aurelia entirely **at your own risk**. The authors accept no liability for damage to your Steam installation, lost data, or banned or suspended accounts.
 
