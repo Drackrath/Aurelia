@@ -11,6 +11,21 @@ use aurelia::core::config::load_launcher_config;
 use aurelia::core::models::{DepotPlatform, DownloadState, LibraryGame};
 use aurelia::steam_client::SteamClient;
 
+/// Prefer the host platform's native build.
+fn auto_select_platform(platforms: &[DepotPlatform]) -> DepotPlatform {
+    let host = if cfg!(target_os = "windows") {
+        DepotPlatform::Windows
+    } else {
+        DepotPlatform::Linux
+    };
+    platforms
+        .iter()
+        .copied()
+        .find(|p| *p == host)
+        .or_else(|| platforms.first().copied())
+        .unwrap_or(DepotPlatform::Windows)
+}
+
 pub(crate) async fn cmd_install(
     app_id: u32,
     platform: Option<PlatformArg>,
@@ -47,10 +62,7 @@ pub(crate) async fn cmd_install(
                 .get_available_platforms(app_id)
                 .await
                 .context("failed to detect available platforms")?;
-            let chosen = platforms
-                .first()
-                .copied()
-                .unwrap_or(DepotPlatform::Windows);
+            let chosen = auto_select_platform(&platforms);
             if !json {
                 cli_println!("Auto-selected platform: {chosen:?}");
             }
@@ -139,7 +151,7 @@ pub(crate) async fn cmd_install_dry_run(
                 .get_available_platforms(app_id)
                 .await
                 .context("failed to detect available platforms")?;
-            platforms.first().copied().unwrap_or(DepotPlatform::Windows)
+            auto_select_platform(&platforms)
         }
     };
 
