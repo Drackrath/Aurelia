@@ -22,6 +22,7 @@ pub(crate) fn select_launch_entry(
     launch_options: &[LaunchInfo],
     app: &LibraryGame,
     prefer_windows_target: bool,
+    prefer_native_target: bool,
 ) -> Option<LaunchInfo> {
     let exe_exists = |o: &LaunchInfo| -> bool {
         match app.install_path.as_deref() {
@@ -38,6 +39,16 @@ pub(crate) fn select_launch_entry(
         "windows" => Some(LaunchTarget::WindowsProton),
         _ => None,
     });
+
+    // Explicit per-game preference beats the manifest.
+    if prefer_native_target {
+        if let Some(entry) = launch_options
+            .iter()
+            .find(|o| o.target == LaunchTarget::NativeLinux && exe_exists(o))
+        {
+            return Some(entry.clone());
+        }
+    }
 
     if prefer_windows_target {
         launch_options
@@ -74,6 +85,7 @@ impl SteamClient {
         launch_script_override: Option<PathBuf>,
         disable_launch_script: bool,
         steam_enabled: bool,
+        prefer_native_target: bool,
     ) -> Result<LaunchInfo> {
         // A Family-Shared game (licensed to another account) can only be authorised
         // by a running Steam client, so it always needs Steam integration regardless
@@ -91,8 +103,9 @@ impl SteamClient {
         let launch_options = self.get_product_info(app.app_id).await?;
 
         let prefer_windows_target = force_windows || proton_path.is_some();
-        let launch_info = select_launch_entry(&launch_options, app, prefer_windows_target)
-            .ok_or_else(|| anyhow!("no launch options"))?;
+        let launch_info =
+            select_launch_entry(&launch_options, app, prefer_windows_target, prefer_native_target)
+                .ok_or_else(|| anyhow!("no launch options"))?;
 
         let launcher_config = load_launcher_config().await?;
 

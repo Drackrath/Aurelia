@@ -383,15 +383,20 @@ fn select_launch_entry_prefers_installed_platform() {
     };
 
     // Installed platform wins over declared order and stale files.
-    let picked = launch::select_launch_entry(&options, &app, false).unwrap();
+    let picked = launch::select_launch_entry(&options, &app, false, false).unwrap();
     assert_eq!(picked.id, "1");
 
     // Explicit Proton/Windows request still picks the Windows entry.
-    let picked = launch::select_launch_entry(&options, &app, true).unwrap();
+    let picked = launch::select_launch_entry(&options, &app, true, false).unwrap();
     assert_eq!(picked.id, "0");
+
+    // Explicit native preference beats the windows manifest.
+    app.platform = Some("windows".to_string());
+    let picked = launch::select_launch_entry(&options, &app, false, true).unwrap();
+    assert_eq!(picked.id, "1");
 
     // Unknown installed platform: first existing executable.
     app.platform = None;
-    let picked = launch::select_launch_entry(&options, &app, false).unwrap();
+    let picked = launch::select_launch_entry(&options, &app, false, false).unwrap();
     assert_eq!(picked.id, "0");
 }

@@ -135,8 +135,9 @@ pub(crate) async fn cmd_play(
     let launcher_config = load_launcher_config().await?;
     let game_cfg = launcher_config.game_configs.get(&app_id);
     let forced_proton = game_cfg.and_then(|c| c.forced_proton_version.clone());
-    let prefers_windows =
-        game_cfg.and_then(|c| c.platform_preference.as_deref()) == Some("windows");
+    let platform_preference = game_cfg.and_then(|c| c.platform_preference.as_deref());
+    let prefers_windows = platform_preference == Some("windows");
+    let prefers_linux = platform_preference == Some("linux") && !force_windows;
 
     // Resolution order: explicit `--proton` flag → the game's stored version →
     // (when the game targets Windows) the global default. None means run natively.
@@ -151,7 +152,7 @@ pub(crate) async fn cmd_play(
         cli_println!("Launching {} ...", game.name);
     }
     client
-        .play_game(&game, proton_path.as_deref(), user_config, force_windows, native_engine, umu, script, no_script, steam)
+        .play_game(&game, proton_path.as_deref(), user_config, force_windows, native_engine, umu, script, no_script, steam, prefers_linux)
         .await
         .with_context(|| format!("failed to launch {}", game.name))?;
     if json {
