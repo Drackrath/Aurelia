@@ -98,16 +98,72 @@ pub fn is_alive(pid: u32) -> bool {
     }
 }
 
+/// Every live process belonging to `app_id`, identified by
+/// `STEAM_COMPAT_APP_ID=<id>` (Proton) or `SteamAppId=<id>` (native launches)
+/// in its environment. The recorded PID alone is not authoritative: Proton
+/// re-parents the game away from the spawned runner, and script launchers
+/// (`hl.sh`-style) exit while the game keeps running.
+pub fn processes_for_app(app_id: u32) -> Vec<u32> {
+    #[cfg(unix)]
+    {
+        let compat = format!("STEAM_COMPAT_APP_ID={app_id}");
+        let native = format!("SteamAppId={app_id}");
+        let mut pids = Vec::new();
+        let Ok(proc_dir) = std::fs::read_dir("/proc") else {
+            return pids;
+        };
+        for entry in proc_dir.flatten() {
+            let path = entry.path();
+            let Some(pid) = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.parse::<u32>().ok())
+            else {
+                continue;
+            };
+            let Ok(environ) = std::fs::read(path.join("environ")) else {
+                continue;
+            };
+            // NUL-separated KEY=VALUE entries; exact match so 70 never matches 700.
+            if environ
+                .split(|&b| b == 0)
+                .any(|e| e == compat.as_bytes() || e == native.as_bytes())
+            {
+                pids.push(pid);
+            }
+        }
+        pids
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = app_id;
+        Vec::new()
+    }
+}
+
 /// The games Aurelia is running whose process is still alive. Records whose
 /// process has already exited are pruned as a side effect, so stale launches
 /// (e.g. an interrupted `aurelia play`) don't linger in the listing.
+///
+/// A dead *recorded* PID does not mean the game is gone — the record holds the
+/// directly spawned process, which wrappers and script launchers outlive — so a
+/// record is only pruned once no process carries the app id either. When the
+/// game survives its wrapper, the record's PID is refreshed to a live process
+/// so `stop` still has a target.
 pub fn list_active() -> Vec<RunningGame> {
     let mut alive = Vec::new();
-    for game in list() {
+    for mut game in list() {
         if is_alive(game.pid) {
             alive.push(game);
-        } else {
-            clear(game.app_id);
+            continue;
+        }
+        match processes_for_app(game.app_id).first() {
+            Some(&pid) => {
+                game.pid = pid;
+                let _ = record_launch(&game);
+                alive.push(game);
+            }
+            None => clear(game.app_id),
         }
     }
     alive

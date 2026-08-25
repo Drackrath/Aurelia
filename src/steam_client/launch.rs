@@ -218,6 +218,15 @@ impl SteamClient {
         }
 
         let wait_result = child.wait().context("failed waiting for game process exit");
+        // Wrappers exit while the game lives on; wait for the app's processes.
+        loop {
+            let survivors = crate::compat::running::processes_for_app(app.app_id);
+            let Some(&pid) = survivors.first() else { break };
+            let mut record = record.clone();
+            record.pid = pid;
+            let _ = crate::compat::running::record_launch(&record);
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
         crate::compat::running::clear(app.app_id);
         wait_result?;
 
