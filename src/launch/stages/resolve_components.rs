@@ -30,11 +30,37 @@ impl Runner for NativeRunner {
         if let Some(config) = &ctx.user_config {
             args.extend(config.launch_options.split_whitespace().map(str::to_string));
         }
+        let program = PathBuf::from(install_path).join(&exe_rel);
+        let mut env = self.build_env(ctx).await?;
+
+        // 32-bit natives need scout runtime libraries.
+        #[cfg(target_os = "linux")]
+        if needs_scout_libs(&program, std::path::Path::new(install_path)) {
+            if let Some(libs) = scout_library_path() {
+                let existing = env
+                    .get("LD_LIBRARY_PATH")
+                    .cloned()
+                    .or_else(|| std::env::var("LD_LIBRARY_PATH").ok())
+                    .filter(|v| !v.is_empty());
+                let value = match existing {
+                    Some(rest) => format!("{libs}:{rest}"),
+                    None => libs,
+                };
+                env.insert("LD_LIBRARY_PATH".to_string(), value);
+                tracing::info!("32-bit native game: using Steam scout runtime libraries");
+            } else {
+                tracing::warn!(
+                    "32-bit native game but no Steam scout runtime found; \
+                     libraries like libopenal.so.1 may be missing"
+                );
+            }
+        }
+
         Ok(CommandSpec {
-            program: PathBuf::from(install_path).join(&exe_rel),
+            program,
             args,
             cwd: Some(PathBuf::from(install_path)),
-            env: self.build_env(ctx).await?,
+            env,
         })
     }
     fn launch(&self, spec: &CommandSpec) -> std::result::Result<std::process::Child, LaunchError> {
@@ -52,6 +78,65 @@ impl Runner for NativeRunner {
         }
         cmd.spawn().map_err(|e| LaunchError::new(LaunchErrorKind::Process, "Native launch failed").with_source(anyhow::anyhow!(e)))
     }
+}
+
+/// First `n` bytes of the file.
+#[cfg(target_os = "linux")]
+fn file_head(path: &std::path::Path, n: usize) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut buf = vec![0u8; n];
+    std::fs::File::open(path).ok()?.read_exact(&mut buf).ok()?;
+    Some(buf)
+}
+
+/// Is the file a 32-bit ELF?
+#[cfg(target_os = "linux")]
+fn is_elf32(path: &std::path::Path) -> bool {
+    file_head(path, 5).is_some_and(|h| h[..4] == *b"\x7fELF" && h[4] == 1)
+}
+
+/// Does this launch need scout runtime libraries?
+///
+/// True for a 32-bit ELF program, or a shell-script program (like GoldSrc's
+/// `hl.sh`) whose install directory carries a 32-bit ELF at the top level.
+#[cfg(target_os = "linux")]
+fn needs_scout_libs(program: &std::path::Path, install_dir: &std::path::Path) -> bool {
+    if is_elf32(program) {
+        return true;
+    }
+    if !file_head(program, 2).is_some_and(|h| h == *b"#!") {
+        return false;
+    }
+    std::fs::read_dir(install_dir)
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .take(200)
+        .any(|e| is_elf32(&e.path()))
+}
+
+/// The scout runtime's library search path, when installed.
+#[cfg(target_os = "linux")]
+fn scout_library_path() -> Option<String> {
+    let runtime = crate::library::steam_root_candidates()
+        .into_iter()
+        .map(|root| root.join("ubuntu12_32/steam-runtime"))
+        .find(|p| p.is_dir())?;
+    let joined = [
+        "lib/i386-linux-gnu",
+        "usr/lib/i386-linux-gnu",
+        "lib/x86_64-linux-gnu",
+        "usr/lib/x86_64-linux-gnu",
+    ]
+    .iter()
+    .map(|d| runtime.join(d))
+    .filter(|p| p.is_dir())
+    .map(|p| p.to_string_lossy().into_owned())
+    .collect::<Vec<_>>()
+    .join(":");
+    (!joined.is_empty()).then_some(joined)
 }
 
 /// Open the session log named by `key`.
