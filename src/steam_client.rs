@@ -25,7 +25,9 @@ use steam_vent::auth::{
     UserProvidedAuthConfirmationHandler,
 };
 use steam_vent::connection::Connection;
-use steam_vent_proto::steammessages_clientserver::CMsgClientGetAppOwnershipTicket;
+use steam_vent_proto::steammessages_clientserver::{
+    CMsgClientGetAppOwnershipTicket, CMsgClientRequestEncryptedAppTicket,
+};
 use steam_vent_proto::steammessages_clientserver_2::{
     CMsgClientGetDepotDecryptionKey, CMsgClientGetDepotDecryptionKeyResponse,
 };

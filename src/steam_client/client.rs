@@ -114,6 +114,38 @@ impl SteamClient {
         Ok(ticket)
     }
 
+    /// fetch a signed **encrypted app ticket** for `appid` over the CM connection.
+    pub async fn request_encrypted_app_ticket(&self, appid: u32) -> Result<Vec<u8>> {
+        let connection = self
+            .connection
+            .as_ref()
+            .context("steam connection not initialized")?;
+
+        let mut request = CMsgClientRequestEncryptedAppTicket::new();
+        request.set_app_id(appid);
+
+        let response: steam_vent_proto::steammessages_clientserver::CMsgClientRequestEncryptedAppTicketResponse =
+            connection
+                .job(request)
+                .await
+                .context("failed requesting encrypted app ticket")?;
+
+        // eresult 1 == OK; anything else means no ticket was issued.
+        let eresult = response.eresult();
+        if eresult != 1 {
+            bail!("Steam refused an encrypted app ticket for app {appid} (eresult {eresult})");
+        }
+        let ticket = response
+            .encrypted_app_ticket
+            .as_ref()
+            .map(|t| t.encrypted_ticket().to_vec())
+            .unwrap_or_default();
+        if ticket.is_empty() {
+            bail!("Steam returned an empty encrypted app ticket for app {appid}");
+        }
+        Ok(ticket)
+    }
+
     pub async fn get_account_data(&self) -> AccountData {
         let Some(connection) = self.connection.as_ref() else {
             return AccountData::default();
