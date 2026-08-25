@@ -505,6 +505,11 @@ pub fn is_steam_running() -> bool {
     false
 }
 
+#[cfg(not(target_os = "linux"))]
+pub fn is_steam_running() -> bool {
+    false
+}
+
 /// Start the host's Steam client minimised to the tray (`steam -silent`) if it
 /// isn't already running, so Steamworks/Family-Sharing has a client to talk to.
 /// Fully detached (its own session, no stdio) so it outlives this launch and never
@@ -537,6 +542,75 @@ pub fn ensure_steam_running() {
         Ok(_) => tracing::info!("Launched Steam client (-silent)"),
         Err(e) => tracing::warn!("could not start Steam client: {e:#}"),
     }
+}
+
+/// Latest logged-on state in connection-log text.
+#[cfg(target_os = "linux")]
+fn connection_log_logged_on(text: &str) -> Option<bool> {
+    let mut state = None;
+    for line in text.lines() {
+        if line.contains("[Logged On") {
+            state = Some(true);
+        } else if line.contains("[Logged Off") {
+            state = Some(false);
+        }
+    }
+    state
+}
+
+/// Read the final `max_bytes` of a file.
+#[cfg(target_os = "linux")]
+fn read_tail(path: &Path, max_bytes: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    f.seek(SeekFrom::Start(len.saturating_sub(max_bytes))).ok()?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).ok()?;
+    Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// Host Steam finished logging on.
+#[cfg(target_os = "linux")]
+pub fn steam_is_logged_on() -> bool {
+    let Some(root) = crate::core::config::detect_steam_path() else {
+        return false;
+    };
+    let log = root.join("logs/connection_log.txt");
+    let Some(text) = read_tail(&log, 64 * 1024) else {
+        return false;
+    };
+    connection_log_logged_on(&text).unwrap_or(false)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn steam_is_logged_on() -> bool {
+    true
+}
+
+/// Wait until host Steam is logged on.
+#[cfg(target_os = "linux")]
+pub async fn wait_for_steam_logged_on(timeout: std::time::Duration) -> bool {
+    let start = std::time::Instant::now();
+    let mut announced = false;
+    loop {
+        if steam_is_logged_on() {
+            return true;
+        }
+        if start.elapsed() >= timeout {
+            return false;
+        }
+        if !announced {
+            tracing::info!("waiting for host Steam to reach logged-on before launch");
+            announced = true;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub async fn wait_for_steam_logged_on(_timeout: std::time::Duration) -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1621,3 +1695,7 @@ mod resolve_runner_tests;
 #[cfg(test)]
 #[path = "utils_runner_classification_tests.rs"]
 mod runner_classification_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "utils_steam_logon_tests.rs"]
+mod steam_logon_tests;

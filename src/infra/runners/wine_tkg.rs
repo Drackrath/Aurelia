@@ -56,10 +56,18 @@ impl Runner for WineTkgRunner {
         // mode the WINEPREFIX above lives elsewhere, so compatdata is never created
         // and Proton aborts immediately. Create it here so the path build_env hands
         // Proton as STEAM_COMPAT_DATA_PATH is guaranteed to exist.
-        let compat_data_path = library_root
-            .join("steamapps")
-            .join("compatdata")
-            .join(ctx.app.app_id.to_string());
+        let master_wine_prefix = if steam_mode == SteamMode::InWineRuntime {
+            crate::core::utils::get_master_steam_config().wine_prefix
+        } else {
+            PathBuf::new()
+        };
+        let compat_data_path = game_compat_data_path(
+            &library_root,
+            &ctx.app.app_id.to_string(),
+            steam_mode,
+            steam_prefix_mode.clone(),
+            &master_wine_prefix,
+        );
         std::fs::create_dir_all(&compat_data_path)
             .map_err(|e| LaunchError::new(LaunchErrorKind::Permission, format!("failed creating {}", compat_data_path.display())).with_source(anyhow!(e)))?;
 
@@ -405,10 +413,24 @@ impl Runner for WineTkgRunner {
         let app_id_str = ctx.app.app_id.to_string();
 
         let library_root = PathBuf::from(&ctx.launcher_config.steam_library_path);
-        let compat_data_path = library_root
-            .join("steamapps")
-            .join("compatdata")
-            .join(&app_id_str);
+
+        let (steam_mode, _steam_mode_source) = resolve_steam_mode(ctx);
+        let steam_prefix_mode = ctx.user_config.as_ref()
+            .map(|c| c.steam_prefix_mode.clone())
+            .unwrap_or_else(|| ctx.launcher_config.steam_prefix_mode.clone());
+        // Only Shared+InWine consults the master prefix.
+        let master_wine_prefix = if steam_mode == SteamMode::InWineRuntime {
+            crate::core::utils::get_master_steam_config().wine_prefix
+        } else {
+            PathBuf::new()
+        };
+        let compat_data_path = game_compat_data_path(
+            &library_root,
+            &app_id_str,
+            steam_mode,
+            steam_prefix_mode,
+            &master_wine_prefix,
+        );
 
         let effective_game_prefix = effective_game_prefix(ctx);
 
@@ -488,7 +510,6 @@ impl Runner for WineTkgRunner {
         // `lsteamclient` bridges to the host client). The in-Wine runtime and
         // standalone modes both want the native/neutralised set (`steamclient=n`, …)
         // so the game loads the in-Wine `steamclient.dll` (or none at all).
-        let (steam_mode, _steam_mode_source) = resolve_steam_mode(ctx);
         let host_bridge = steam_mode == SteamMode::HostBridge;
 
         let use_symlinks = glc.use_symlinks_in_prefix;
@@ -989,6 +1010,29 @@ fn effective_game_prefix(ctx: &LaunchContext) -> PathBuf {
     )
 }
 
+/// Resolve STEAM_COMPAT_DATA_PATH for the game.
+fn game_compat_data_path(
+    library_root: &Path,
+    app_id_str: &str,
+    steam_mode: SteamMode,
+    steam_prefix_mode: crate::core::models::SteamPrefixMode,
+    master_wine_prefix: &Path,
+) -> PathBuf {
+    use crate::core::models::SteamPrefixMode;
+    if steam_mode == SteamMode::InWineRuntime && steam_prefix_mode == SteamPrefixMode::Shared {
+        if let Some(parent) = master_wine_prefix.parent() {
+            // Shareable only for proton pfx layout.
+            if parent.join("pfx") == master_wine_prefix {
+                return parent.to_path_buf();
+            }
+        }
+    }
+    library_root
+        .join("steamapps")
+        .join("compatdata")
+        .join(app_id_str)
+}
+
 /// Which Steam-integration mode a launch runs in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SteamMode {
@@ -1068,7 +1112,13 @@ fn resolve_steam_mode(ctx: &LaunchContext) -> (SteamMode, &'static str) {
         // Auto: --steam prefers host, else the in-Wine runtime, else standalone.
         SteamRuntimePolicy::Auto => {
             if !ctx.steam_enabled {
-                (SteamMode::Standalone, "default")
+                // Opportunistically bridge a running host Steam.
+                if host_installed() && crate::core::utils::is_steam_running() {
+                    tracing::info!("host Steam detected; bridging Steamworks");
+                    (SteamMode::HostBridge, "host_running_opportunistic")
+                } else {
+                    (SteamMode::Standalone, "default")
+                }
             } else if host_installed() {
                 (SteamMode::HostBridge, "host")
             } else if master_installed() {
@@ -1213,5 +1263,69 @@ fn resolve_game_paths(ctx: &LaunchContext) -> std::result::Result<(PathBuf, Path
         .unwrap_or_else(|| install_dir.clone());
 
     Ok((install_dir, executable, game_working_dir))
+}
+
+#[cfg(test)]
+mod compat_path_tests {
+    use super::*;
+    use crate::core::models::SteamPrefixMode;
+
+    #[test]
+    fn shared_inwine_resolves_to_master_pfx() {
+        let master = PathBuf::from("/home/u/.config/Aurelia/master_steam_prefix/pfx");
+        let got = game_compat_data_path(
+            Path::new("/games"),
+            "123",
+            SteamMode::InWineRuntime,
+            SteamPrefixMode::Shared,
+            &master,
+        );
+        // Proton appends /pfx to compat path.
+        assert_eq!(got.join("pfx"), master);
+        assert_eq!(
+            got,
+            PathBuf::from("/home/u/.config/Aurelia/master_steam_prefix")
+        );
+    }
+
+    #[test]
+    fn per_game_inwine_uses_appid_compatdata() {
+        let master = PathBuf::from("/home/u/.config/Aurelia/master_steam_prefix/pfx");
+        let got = game_compat_data_path(
+            Path::new("/games"),
+            "123",
+            SteamMode::InWineRuntime,
+            SteamPrefixMode::PerGame,
+            &master,
+        );
+        assert_eq!(got, PathBuf::from("/games/steamapps/compatdata/123"));
+    }
+
+    #[test]
+    fn standalone_uses_appid_compatdata() {
+        let master = PathBuf::from("/m/pfx");
+        let got = game_compat_data_path(
+            Path::new("/games"),
+            "123",
+            SteamMode::Standalone,
+            SteamPrefixMode::Shared,
+            &master,
+        );
+        assert_eq!(got, PathBuf::from("/games/steamapps/compatdata/123"));
+    }
+
+    #[test]
+    fn root_layout_master_falls_back_to_appid() {
+        // Non-pfx master layout can't share.
+        let master = PathBuf::from("/home/u/.config/Aurelia/master_steam_prefix");
+        let got = game_compat_data_path(
+            Path::new("/games"),
+            "123",
+            SteamMode::InWineRuntime,
+            SteamPrefixMode::Shared,
+            &master,
+        );
+        assert_eq!(got, PathBuf::from("/games/steamapps/compatdata/123"));
+    }
 }
 

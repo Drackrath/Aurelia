@@ -25,7 +25,9 @@ use steam_vent::auth::{
     UserProvidedAuthConfirmationHandler,
 };
 use steam_vent::connection::Connection;
-use steam_vent_proto::steammessages_clientserver::CMsgClientGetAppOwnershipTicket;
+use steam_vent_proto::steammessages_clientserver::{
+    CMsgClientGetAppOwnershipTicket, CMsgClientRequestEncryptedAppTicket,
+};
 use steam_vent_proto::steammessages_clientserver_2::{
     CMsgClientGetDepotDecryptionKey, CMsgClientGetDepotDecryptionKeyResponse,
 };
@@ -56,7 +58,7 @@ use steam_vent_proto::steammessages_storebrowse_steamclient::{
     CStoreBrowse_GetItems_Request, CStoreBrowse_GetItems_Response, EStoreAppType,
     StoreBrowseContext, StoreBrowseItemDataRequest, StoreItem, StoreItemID,
 };
-use protobuf::MessageField;
+use protobuf::{Message, MessageField};
 use steam_vent::{ConnectionError, ConnectionTrait, ServerList};
 use tokio::io::{duplex, sink, AsyncWriteExt};
 use tokio::sync::mpsc::Receiver;
@@ -324,6 +326,15 @@ pub struct AccountData {
     pub email_validated: bool,
     pub vac_bans: u32,        // Num VAC bans
     pub vac_banned_apps: Vec<u32>,
+}
+
+/// Encrypted app ticket request outcome.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EncryptedTicketOutcome {
+    /// Serialized `EncryptedAppTicket` protobuf message.
+    Issued(Vec<u8>),
+    /// Steam declined; carries the eresult.
+    Refused(i32),
 }
 
 /// A game available to the account through Steam Family Sharing.

@@ -346,6 +346,7 @@ async fn run(cli: Cli) -> Result<()> {
             restart_steam,
         } => cmd_import(app_id, library, platform, restart_steam, json).await,
         Command::Available { app_id } => cmd_available(app_id, json).await,
+        Command::Drm { app_id } => cmd_drm(app_id, json).await,
         Command::Verify { app_id } => cmd_verify(app_id, json).await,
         Command::Duplicates => cmd_duplicates(json).await,
         Command::Update { app_id, force } => match app_id {

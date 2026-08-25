@@ -21,6 +21,7 @@ of a specific command. `--version` prints the build version.
   - [`account`](#account)
   - [`info`](#info)
   - [`dlc`](#dlc)
+  - [`drm`](#drm)
   - [`achievements`](#achievements)
   - [`image`](#image)
 - [Collections](#collections)
@@ -544,6 +545,41 @@ install/enable state to be meaningful; otherwise every DLC reads as `not-install
 aurelia dlc 690830
 aurelia dlc 690830 --json
 ```
+
+### `drm`
+
+Verify a game's DRM tickets headlessly over the Steam CM connection — no Steam client
+involved. Requires login.
+
+```text
+aurelia drm <APP_ID> [--json]
+```
+
+| Option | Description |
+| --- | --- |
+| `--json` | Emit JSON instead of formatted text. |
+
+Requests two things from Steam:
+
+- **App ownership ticket** — issued only when the account holds a license for the app;
+  the signed proof of ownership Steam DRM checks against.
+- **Encrypted app ticket** — the serialized `EncryptedAppTicket` envelope, issued only
+  for games whose developer configured an encrypted-ticket key in Steamworks. A refusal
+  with eresult 2 almost always means the app simply doesn't use encrypted tickets; Steam
+  also rate-limits the request to roughly one per app per minute (eresult 25).
+
+The ownership check also runs automatically as a **warn-only preflight** before a
+standalone `aurelia play` of an owned, non-Family-Shared game (skipped offline): the
+launch always proceeds, but if Steam issues no ownership ticket you're warned that a
+DRM-protected title may not start without `--steam`.
+
+```bash
+aurelia drm 2062430
+aurelia drm 2062430 --json
+```
+
+The `--json` output is `{ "app_id", "name", "owned", "ownership_ticket_bytes",
+"ownership_error", "encrypted_ticket": { "status", "bytes", "eresult", "error" } }`.
 
 ### `achievements`
 

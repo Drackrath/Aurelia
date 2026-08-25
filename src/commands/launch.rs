@@ -129,6 +129,35 @@ pub(crate) async fn cmd_play(
         }
     }
 
+    // Warn-only headless DRM ownership preflight.
+    if !steam && game.is_owned && !game.is_family_shared && !client.is_offline() {
+        let probe = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            client.get_app_ticket(app_id),
+        )
+        .await;
+        match probe {
+            Ok(Ok(_)) => {
+                tracing::info!(appid = app_id, "DRM preflight: ownership ticket issued");
+            }
+            Ok(Err(e)) => {
+                let warning = format!(
+                    "Steam issued no ownership ticket for {} ({e:#}). If the game uses \
+                     Steam DRM it may not start standalone — try `aurelia play {app_id} --steam`.",
+                    game.name
+                );
+                if json {
+                    tracing::warn!(appid = app_id, "{warning}");
+                } else {
+                    cli_println!("⚠ {warning}");
+                }
+            }
+            Err(_) => {
+                tracing::warn!(appid = app_id, "DRM preflight timed out; launching anyway");
+            }
+        }
+    }
+
     // Proton/Wine is Linux-only; on Windows we always run the game natively.
     let force_windows = windows || cfg!(target_os = "windows");
 

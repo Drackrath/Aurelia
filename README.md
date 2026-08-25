@@ -216,6 +216,7 @@ aurelia info 690830                  # game details (description, release, revie
 aurelia info 690830 --extended       # + requirements, Metacritic, tags, genres, categories
 aurelia info 690830 --lang german    # localize store text (falls back to config, then English)
 aurelia dlc 690830                   # list a game's DLC with ownership and install status
+aurelia drm 690830                   # verify DRM/ownership tickets headlessly (no Steam client)
 aurelia achievements 620             # your achievements for a game (unlock state + rarity)
 aurelia achievements 620 --lang german  # localize achievement names and descriptions
 aurelia image 1245620                # fetch cover art to the cache (prints the path)

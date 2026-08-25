@@ -202,6 +202,8 @@ pub(crate) enum Command {
     Duplicates,
     /// Report whether a game is installed and its files are present on disk.
     Available { app_id: u32 },
+    /// Verify a game's DRM tickets headlessly.
+    Drm { app_id: u32 },
     /// Show account details for the logged-in user.
     Account,
     /// List a game's DLC.
