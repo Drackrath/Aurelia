@@ -168,23 +168,15 @@ impl ManifestFile {
 
                     let permit = semaphore_owned.acquire_owned().await?;
 
-                    // Task 1: Partial Resume / Smart Skip
-                    if !verify_mode && file_exists_before {
-                        if current_len_before >= (chunk_data.offset + chunk_data.original_size as u64) {
-                            if let Some(ref cb) = on_progress {
-                                cb(chunk_data.original_size as u64);
-                            }
-                            drop(permit);
-                            return Ok((chunk_data.offset, None));
-                        }
-                    }
+                    // Resume-skip only on hash match.
+                    let _ = (verify_mode, current_len_before);
 
                     let metadata = tokio::fs::metadata(&target_path).await;
                     let file_exists = metadata.is_ok();
                     let current_len = metadata.map(|m| m.len()).unwrap_or(0);
 
                     // Task 1: Deep Check
-                    if verify_mode && file_exists {
+                    if file_exists_before && file_exists {
                         let mut file = tokio::fs::File::open(&target_path)
                             .await
                             .map_err(|e| Error::Unexpected(e.to_string()))?;
@@ -200,7 +192,7 @@ impl ManifestFile {
                                 let hash = hasher.finalize().to_vec();
 
                                 if hash == chunk_data.sha {
-                                    tracing::info!("Verified chunk {}", chunk_data.id());
+                                    tracing::debug!("Verified chunk {}", chunk_data.id());
                                     if let Some(ref cb) = on_progress {
                                         cb(chunk_data.original_size as u64);
                                     }
