@@ -174,6 +174,61 @@ async fn test_preflight_native_game_self_heals_exec_bit() {
 }
 
 #[tokio::test]
+async fn test_preflight_native_ignores_path_like_argument() {
+    use crate::core::models::LibraryGame;
+    use crate::steam_client::{LaunchInfo, LaunchTarget};
+
+    let tmp = tempdir().unwrap();
+    let exe = tmp.path().join("game.bin");
+    fs::write(&exe, "dummy").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&exe).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&exe, perms).unwrap();
+    }
+
+    let mut ctx = PipelineContext::new(123);
+    ctx.app = Some(LibraryGame {
+        app_id: 123,
+        name: "Test Game".to_string(),
+        playtime_forever_minutes: None,
+        is_installed: true,
+        install_path: Some(tmp.path().to_string_lossy().to_string()),
+        local_manifest_ids: Default::default(),
+        update_available: false,
+        update_queued: false,
+        active_branch: "public".to_string(),
+        is_owned: true,
+        is_family_shared: false,
+        online_required: None,
+        platform: None,
+        from_windows_steam: false,
+    });
+    ctx.launch_info = Some(LaunchInfo {
+        app_id: 123,
+        id: "0".to_string(),
+        description: "Test".to_string(),
+        executable: "game.bin".to_string(),
+        arguments: "data/missing.ini".to_string(),
+        workingdir: None,
+        target: LaunchTarget::NativeLinux,
+    });
+    let mut spec = CommandSpec::default();
+    spec.program = exe.clone();
+    spec.args = vec!["data/missing.ini".to_string()];
+    ctx.command_spec = Some(spec);
+
+    let stage = PreflightStage;
+    let res = stage.execute(&mut ctx).await;
+
+    assert!(res.is_ok(), "native args must not be treated as exe: {:?}", res.err());
+    assert_eq!(ctx.resolved_executable_path, Some(exe));
+    assert!(ctx.executable_exists);
+}
+
+#[tokio::test]
 #[cfg(unix)]
 async fn test_preflight_not_executable() {
     use std::os::unix::fs::PermissionsExt;

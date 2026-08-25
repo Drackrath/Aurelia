@@ -26,14 +26,18 @@ fn preflight_error(kind: LaunchErrorKind, details: &str) -> LaunchError {
     LaunchError::new(kind, format!("[Preflight] {}", details))
 }
 
+/// Native Linux launch target?
+fn is_native_target(ctx: &PipelineContext) -> bool {
+    matches!(
+        ctx.launch_info.as_ref().map(|i| i.target),
+        Some(crate::steam_client::LaunchTarget::NativeLinux)
+    )
+}
+
 /// Game-owned binary safe to auto-chmod?
 #[cfg(unix)]
 fn native_game_binary(ctx: &PipelineContext, program: &Path) -> bool {
-    let is_native = matches!(
-        ctx.launch_info.as_ref().map(|i| i.target),
-        Some(crate::steam_client::LaunchTarget::NativeLinux)
-    );
-    if !is_native {
+    if !is_native_target(ctx) {
         return false;
     }
     ctx.app
@@ -75,7 +79,15 @@ impl PipelineStage for PreflightStage {
 
         // 2. Verify target game executable
         if final_res.is_ok() {
-            if let Some(game_exe) = spec.args.first() {
+            if is_native_target(ctx) {
+                // Check 1 already validated the program.
+                if let Some(app) = &ctx.app {
+                    ctx.resolved_install_dir = app.install_path.as_ref().map(PathBuf::from);
+                }
+                ctx.resolved_executable_path = Some(spec.program.clone());
+                ctx.executable_exists = true;
+                checks.push(PreflightCheck { name: "Game Executable Existence".into(), status: true, details: "OK".into() });
+            } else if let Some(game_exe) = spec.args.first() {
                 let mut check = PreflightCheck { name: "Game Executable Existence".into(), status: true, details: "OK".into() };
                 let game_exe_path = Path::new(game_exe);
 
