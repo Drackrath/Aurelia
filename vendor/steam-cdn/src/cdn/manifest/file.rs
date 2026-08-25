@@ -14,6 +14,9 @@ use crate::{cdn::inner::InnerClient, Error};
 /// Steam EDepotFileFlag::Executable bit.
 pub const FLAG_EXECUTABLE: u32 = 32;
 
+/// Steam EDepotFileFlag::Directory bit.
+pub const FLAG_DIRECTORY: u32 = 64;
+
 #[derive(Debug)]
 pub struct ChunkData {
     pub(super) sha: Vec<u8>,
@@ -249,7 +252,7 @@ impl ManifestFile {
     }
 
     #[cfg(unix)]
-    async fn apply_unix_mode(&self, target_path: &std::path::Path) -> Result<(), Error> {
+    pub(crate) async fn apply_unix_mode(&self, target_path: &std::path::Path) -> Result<(), Error> {
         use std::os::unix::fs::PermissionsExt;
 
         if self.flags & FLAG_EXECUTABLE == 0 {

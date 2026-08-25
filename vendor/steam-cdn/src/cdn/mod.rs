@@ -157,8 +157,29 @@ impl CDNClient {
                 }
             }
             let full_path = target_dir.as_ref().join(file.full_path());
+
+            if file.flags() & manifest::file::FLAG_DIRECTORY != 0 {
+                std::fs::create_dir_all(&full_path).map_err(|e| Error::Unexpected(e.to_string()))?;
+                continue;
+            }
             if let Some(parent) = full_path.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| Error::Unexpected(e.to_string()))?;
+            }
+
+            let linktarget = file.linktarget();
+            if !linktarget.is_empty() {
+                #[cfg(unix)]
+                {
+                    let target = linktarget.replace('\\', "/");
+                    let points_there = std::fs::read_link(&full_path)
+                        .is_ok_and(|existing| existing == std::path::Path::new(&target));
+                    if !points_there {
+                        let _ = std::fs::remove_file(&full_path);
+                        std::os::unix::fs::symlink(&target, &full_path)
+                            .map_err(|e| Error::Unexpected(e.to_string()))?;
+                    }
+                }
+                continue;
             }
 
             if file.size() > 0 {
@@ -171,6 +192,12 @@ impl CDNClient {
                     on_progress.clone(),
                 )
                 .await?;
+            } else {
+                if !full_path.is_file() {
+                    std::fs::File::create(&full_path).map_err(|e| Error::Unexpected(e.to_string()))?;
+                }
+                #[cfg(unix)]
+                file.apply_unix_mode(&full_path).await?;
             }
         }
         Ok(())
