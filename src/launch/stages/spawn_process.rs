@@ -7,6 +7,14 @@ pub struct SpawnProcessStage;
 impl PipelineStage for SpawnProcessStage {
     fn name(&self) -> &str { "SpawnProcess" }
     async fn execute(&self, ctx: &mut PipelineContext) -> std::result::Result<(), LaunchError> {
+        // Native captures game output into session logs.
+        if ctx.runner.as_ref().is_some_and(|r| r.name() == "Native") {
+            if let (Some(session), Some(spec)) = (&ctx.session, ctx.command_spec.as_mut()) {
+                spec.env.insert("AURELIA_STDOUT_LOG".to_string(), session.stdout_path().to_string_lossy().into_owned());
+                spec.env.insert("AURELIA_STDERR_LOG".to_string(), session.stderr_path().to_string_lossy().into_owned());
+            }
+        }
+
         if let Some(runner) = &ctx.runner {
             if let Some(spec) = &ctx.command_spec {
                 if let Some(logger) = &ctx.logger {

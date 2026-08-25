@@ -42,8 +42,25 @@ impl Runner for NativeRunner {
         cmd.args(&spec.args);
         if let Some(cwd) = &spec.cwd { cmd.current_dir(cwd); }
         cmd.envs(&spec.env);
+        match session_log_file(spec, "AURELIA_STDOUT_LOG") {
+            Some(file) => { cmd.stdout(file); }
+            None => { cmd.stdout(std::process::Stdio::inherit()); }
+        }
+        match session_log_file(spec, "AURELIA_STDERR_LOG") {
+            Some(file) => { cmd.stderr(file); }
+            None => { cmd.stderr(std::process::Stdio::inherit()); }
+        }
         cmd.spawn().map_err(|e| LaunchError::new(LaunchErrorKind::Process, "Native launch failed").with_source(anyhow::anyhow!(e)))
     }
+}
+
+/// Open the session log named by `key`.
+fn session_log_file(spec: &CommandSpec, key: &str) -> Option<std::fs::File> {
+    let path = std::path::PathBuf::from(spec.env.get(key)?);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    std::fs::File::create(&path).ok()
 }
 
 /// Whether this launch should be routed through the luxtorpeda plugin: either a one-off
