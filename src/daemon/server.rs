@@ -34,8 +34,16 @@ impl Drop for InflightGuard {
 }
 
 /// `(mtime, len)` of the running executable, used to detect an on-disk upgrade.
+///
+/// After a rebuild replaces the binary, Linux reports `current_exe()` with a
+/// ` (deleted)` suffix; stripping it makes the stat hit the *new* binary at the
+/// original path, which is exactly the change this watcher exists to detect.
 fn exe_signature() -> Option<(SystemTime, u64)> {
     let exe = std::env::current_exe().ok()?;
+    let exe = match exe.to_str().and_then(|s| s.strip_suffix(" (deleted)")) {
+        Some(stripped) => std::path::PathBuf::from(stripped),
+        None => exe,
+    };
     let meta = std::fs::metadata(&exe).ok()?;
     Some((meta.modified().ok()?, meta.len()))
 }
