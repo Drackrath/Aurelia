@@ -98,6 +98,16 @@ impl SteamClient {
         #[cfg(target_os = "linux")]
         if steam_enabled {
             crate::core::utils::ensure_steam_running();
+            // Avoid racing a cold client.
+            let timeout = std::time::Duration::from_secs(30);
+            if crate::core::utils::wait_for_steam_logged_on(timeout).await {
+                tracing::info!("host Steam logged on; proceeding with launch");
+            } else {
+                tracing::warn!(
+                    "host Steam not logged on within {}s; launching anyway (Steamworks auth may fail)",
+                    timeout.as_secs()
+                );
+            }
         }
 
         let launch_options = self.get_product_info(app.app_id).await?;
