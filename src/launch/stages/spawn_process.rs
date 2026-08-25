@@ -36,6 +36,13 @@ impl PipelineStage for SpawnProcessStage {
                         None => e,
                     }
                 })?;
+                // Record immediately; play_game refines it later.
+                let _ = crate::compat::running::record_launch(&crate::compat::running::RunningGame {
+                    app_id: ctx.app_id,
+                    name: ctx.app.as_ref().map(|a| a.name.clone()).unwrap_or_default(),
+                    pid: child.id(),
+                    wineprefix: None,
+                });
                 ctx.child = Some(child);
             }
         } else {
