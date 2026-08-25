@@ -26,9 +26,13 @@ impl Runner for NativeRunner {
             .ok_or_else(|| LaunchError::new(LaunchErrorKind::GameData, "Install path missing"))?;
 
         let exe_rel = ctx.launch_info.executable.replace('\\', "/");
+        let mut args: Vec<String> = ctx.launch_info.arguments.split_whitespace().map(str::to_string).collect();
+        if let Some(config) = &ctx.user_config {
+            args.extend(config.launch_options.split_whitespace().map(str::to_string));
+        }
         Ok(CommandSpec {
             program: PathBuf::from(install_path).join(&exe_rel),
-            args: ctx.launch_info.arguments.split_whitespace().map(str::to_string).collect(),
+            args,
             cwd: Some(PathBuf::from(install_path)),
             env: self.build_env(ctx).await?,
         })
@@ -125,5 +129,59 @@ impl PipelineStage for ResolveComponentsStage {
             });
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::models::{LibraryGame, UserAppConfig};
+    use crate::steam_client::{LaunchInfo, LaunchTarget};
+
+    #[tokio::test]
+    async fn native_runner_appends_user_launch_options() {
+        let mut user_config = UserAppConfig::default();
+        user_config.launch_options = "-fullscreen --skip-intro".to_string();
+
+        let ctx = LaunchContext {
+            app: LibraryGame {
+                app_id: 123,
+                name: "Test".to_string(),
+                install_path: Some("/tmp/game".to_string()),
+                is_installed: true,
+                playtime_forever_minutes: None,
+                active_branch: "public".to_string(),
+                update_available: false,
+                update_queued: false,
+                local_manifest_ids: HashMap::new(),
+                is_owned: true,
+                is_family_shared: false,
+                online_required: None,
+                platform: None,
+                from_windows_steam: false,
+            },
+            launch_info: LaunchInfo {
+                app_id: 123,
+                id: "0".into(),
+                description: "Test".into(),
+                executable: "game.bin".into(),
+                arguments: "-v".into(),
+                workingdir: None,
+                target: LaunchTarget::NativeLinux,
+            },
+            launcher_config: crate::core::config::LauncherConfig::default(),
+            user_config: Some(user_config),
+            proton_path: None,
+            steam_enabled: false,
+            use_umu: false,
+            umu_run: None,
+            target_architecture: Default::default(),
+            dll_resolutions: Vec::new(),
+            game_fixups: Default::default(),
+            verification_ptr: std::ptr::null_mut(),
+        };
+
+        let spec = NativeRunner.build_command(&ctx).await.unwrap();
+        assert_eq!(spec.args, vec!["-v", "-fullscreen", "--skip-intro"]);
     }
 }
