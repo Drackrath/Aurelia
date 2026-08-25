@@ -345,3 +345,53 @@ fn write_appmanifest_fresh_has_no_owner_or_branch() {
     assert_eq!(parse_active_branch_from_acf(&raw), "public");
     assert!(!raw.contains("UserConfig"));
 }
+
+#[test]
+fn select_launch_entry_prefers_installed_platform() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("hl.exe"), "x").unwrap();
+    std::fs::write(tmp.path().join("hl.sh"), "x").unwrap();
+
+    let entry = |id: &str, exe: &str, target: LaunchTarget| LaunchInfo {
+        app_id: 70,
+        id: id.to_string(),
+        description: String::new(),
+        executable: exe.to_string(),
+        arguments: String::new(),
+        workingdir: None,
+        target,
+    };
+    let options = vec![
+        entry("0", "hl.exe", LaunchTarget::WindowsProton),
+        entry("1", "hl.sh", LaunchTarget::NativeLinux),
+    ];
+    let mut app = LibraryGame {
+        app_id: 70,
+        name: "Half-Life".to_string(),
+        install_path: Some(tmp.path().to_string_lossy().to_string()),
+        is_installed: true,
+        playtime_forever_minutes: None,
+        active_branch: "public".to_string(),
+        update_available: false,
+        update_queued: false,
+        local_manifest_ids: HashMap::new(),
+        is_owned: true,
+        is_family_shared: false,
+        online_required: None,
+        platform: Some("linux".to_string()),
+        from_windows_steam: false,
+    };
+
+    // Installed platform wins over declared order and stale files.
+    let picked = launch::select_launch_entry(&options, &app, false).unwrap();
+    assert_eq!(picked.id, "1");
+
+    // Explicit Proton/Windows request still picks the Windows entry.
+    let picked = launch::select_launch_entry(&options, &app, true).unwrap();
+    assert_eq!(picked.id, "0");
+
+    // Unknown installed platform: first existing executable.
+    app.platform = None;
+    let picked = launch::select_launch_entry(&options, &app, false).unwrap();
+    assert_eq!(picked.id, "0");
+}

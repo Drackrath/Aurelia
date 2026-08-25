@@ -4,6 +4,64 @@
 //! and free helpers live in the parent module (in scope via `use super::*`).
 use super::*;
 
+/// Pick the launch entry to run.
+///
+/// Only one platform's depot is installed, so a launch entry is only usable if its
+/// executable is actually on disk. A game commonly advertises Windows, macOS and
+/// Linux entries; picking one by order alone can select a build that was never
+/// installed. After a platform switch, files from the previous platform may also
+/// still be on disk, so "executable exists" alone is not enough either — prefer
+/// the entry matching the *installed* platform, then any entry whose executable
+/// exists, then the declared order.
+///
+/// With `prefer_windows_target` (a native Windows launch or an explicit/configured
+/// Proton runner), the Windows entry wins whenever its executable is installed —
+/// but a Proton request can't override which depot is actually on disk, so a
+/// native-Linux-only install still runs its native build.
+pub(crate) fn select_launch_entry(
+    launch_options: &[LaunchInfo],
+    app: &LibraryGame,
+    prefer_windows_target: bool,
+) -> Option<LaunchInfo> {
+    let exe_exists = |o: &LaunchInfo| -> bool {
+        match app.install_path.as_deref() {
+            Some(dir) if !o.executable.is_empty() => {
+                std::path::Path::new(dir)
+                    .join(o.executable.replace('\\', "/"))
+                    .exists()
+            }
+            _ => false,
+        }
+    };
+    let installed_target = app.platform.as_deref().and_then(|p| match p {
+        "linux" => Some(LaunchTarget::NativeLinux),
+        "windows" => Some(LaunchTarget::WindowsProton),
+        _ => None,
+    });
+
+    if prefer_windows_target {
+        launch_options
+            .iter()
+            .find(|o| o.target == LaunchTarget::WindowsProton && exe_exists(o))
+            .or_else(|| {
+                launch_options
+                    .iter()
+                    .find(|o| installed_target.is_some_and(|t| o.target == t) && exe_exists(o))
+            })
+            .or_else(|| launch_options.iter().find(|o| exe_exists(o)))
+            .or_else(|| launch_options.iter().find(|o| o.target == LaunchTarget::WindowsProton))
+            .or_else(|| launch_options.first())
+            .cloned()
+    } else {
+        launch_options
+            .iter()
+            .find(|o| installed_target.is_some_and(|t| o.target == t) && exe_exists(o))
+            .or_else(|| launch_options.iter().find(|o| exe_exists(o)))
+            .or_else(|| launch_options.first())
+            .cloned()
+    }
+}
+
 impl SteamClient {
     pub async fn play_game(
         &mut self,
@@ -32,51 +90,9 @@ impl SteamClient {
 
         let launch_options = self.get_product_info(app.app_id).await?;
 
-        // Only one platform's depot is installed, so a launch entry is only usable
-        // if its executable is actually on disk. A game commonly advertises Windows,
-        // macOS and Linux entries; picking one by order alone can select a build that
-        // was never installed (e.g. choosing the Windows `.exe` for a game where only
-        // the native Linux depot is present), which then fails with
-        // "game_executable_not_found". Prefer entries whose executable exists.
-        let exe_exists = |o: &LaunchInfo| -> bool {
-            match app.install_path.as_deref() {
-                Some(dir) if !o.executable.is_empty() => {
-                    std::path::Path::new(dir)
-                        .join(o.executable.replace('\\', "/"))
-                        .exists()
-                }
-                _ => false,
-            }
-        };
-
-        // Prefer the Windows executable entry whenever we intend to run through a
-        // Proton/Wine layer — either a native Windows launch (`force_windows`) or
-        // an explicit/configured Proton runner (`proton_path`). `--proton` would
-        // otherwise be ignored when a game's first entry is a macOS/Linux build.
-        // Within each preference, an entry whose executable is installed wins over
-        // one that isn't. With no runner and no force, pick the installed entry
-        // (the platform whose depot is present), falling back to the first.
         let prefer_windows_target = force_windows || proton_path.is_some();
-        let launch_info = if prefer_windows_target {
-            launch_options
-                .iter()
-                .find(|o| o.target == LaunchTarget::WindowsProton && exe_exists(o))
-                // No installed Windows build: a Proton request can't override which
-                // depot is actually on disk. A native-Linux-only game (e.g. one a
-                // driver like Heroic launches with a default `--proton`) must still
-                // run its installed native build rather than a non-existent `.exe`.
-                .or_else(|| launch_options.iter().find(|o| exe_exists(o)))
-                .or_else(|| launch_options.iter().find(|o| o.target == LaunchTarget::WindowsProton))
-                .or_else(|| launch_options.first())
-                .cloned()
-        } else {
-            launch_options
-                .iter()
-                .find(|o| exe_exists(o))
-                .or_else(|| launch_options.first())
-                .cloned()
-        }
-        .ok_or_else(|| anyhow!("no launch options"))?;
+        let launch_info = select_launch_entry(&launch_options, app, prefer_windows_target)
+            .ok_or_else(|| anyhow!("no launch options"))?;
 
         let launcher_config = load_launcher_config().await?;
 
