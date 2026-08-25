@@ -11,17 +11,16 @@ use aurelia::core::config::load_launcher_config;
 use aurelia::core::models::{DepotPlatform, DownloadState, LibraryGame};
 use aurelia::steam_client::SteamClient;
 
-/// Prefer the host platform's native build.
+/// Prefer the Windows depot; Proton runs it on Linux.
+///
+/// Native Linux builds are often older or fussier than the Windows build under
+/// Proton/DXVK, so Windows is the default everywhere; `--platform linux` opts
+/// into the native build explicitly.
 fn auto_select_platform(platforms: &[DepotPlatform]) -> DepotPlatform {
-    let host = if cfg!(target_os = "windows") {
-        DepotPlatform::Windows
-    } else {
-        DepotPlatform::Linux
-    };
     platforms
         .iter()
         .copied()
-        .find(|p| *p == host)
+        .find(|p| *p == DepotPlatform::Windows)
         .or_else(|| platforms.first().copied())
         .unwrap_or(DepotPlatform::Windows)
 }
