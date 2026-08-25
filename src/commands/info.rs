@@ -500,6 +500,70 @@ pub(crate) async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
     Ok(())
 }
 
+pub(crate) async fn cmd_drm(app_id: u32, json: bool) -> Result<()> {
+    use aurelia::steam_client::EncryptedTicketOutcome;
+
+    let client = authed_client().await?;
+    let name = client
+        .fetch_store_apps(&[app_id], "english")
+        .await
+        .ok()
+        .and_then(|apps| apps.into_iter().find(|a| a.app_id == app_id))
+        .map(|a| a.name)
+        .filter(|n| !n.is_empty());
+
+    let ownership = client.get_app_ticket(app_id).await;
+    let encrypted = client.request_encrypted_app_ticket(app_id).await;
+
+    if json {
+        let (enc_status, enc_bytes, enc_eresult) = match &encrypted {
+            Ok(EncryptedTicketOutcome::Issued(t)) => ("issued", Some(t.len()), None),
+            Ok(EncryptedTicketOutcome::Refused(r)) => ("refused", None, Some(*r)),
+            Err(_) => ("error", None, None),
+        };
+        print_json(&serde_json::json!({
+            "app_id": app_id,
+            "name": name,
+            "owned": ownership.is_ok(),
+            "ownership_ticket_bytes": ownership.as_ref().ok().map(|t| t.len()),
+            "ownership_error": ownership.as_ref().err().map(|e| format!("{e:#}")),
+            "encrypted_ticket": {
+                "status": enc_status,
+                "bytes": enc_bytes,
+                "eresult": enc_eresult,
+                "error": encrypted.as_ref().err().map(|e| format!("{e:#}")),
+            },
+        }));
+        return Ok(());
+    }
+
+    let title = name.unwrap_or_else(|| format!("app {app_id}"));
+    cli_println!("DRM verification for {title} ({app_id})");
+    match &ownership {
+        Ok(t) => cli_println!(
+            "  ownership ticket:     issued ({} bytes) — account holds a license",
+            t.len()
+        ),
+        Err(e) => cli_println!("  ownership ticket:     not issued — {e:#}"),
+    }
+    match &encrypted {
+        Ok(EncryptedTicketOutcome::Issued(t)) => {
+            cli_println!("  encrypted app ticket: issued ({} bytes)", t.len());
+        }
+        Ok(EncryptedTicketOutcome::Refused(2)) => cli_println!(
+            "  encrypted app ticket: refused (eresult 2) — the app likely has no encrypted-ticket key configured"
+        ),
+        Ok(EncryptedTicketOutcome::Refused(25)) => cli_println!(
+            "  encrypted app ticket: refused (eresult 25) — rate limited, retry in a minute"
+        ),
+        Ok(EncryptedTicketOutcome::Refused(r)) => {
+            cli_println!("  encrypted app ticket: refused (eresult {r})");
+        }
+        Err(e) => cli_println!("  encrypted app ticket: error — {e:#}"),
+    }
+    Ok(())
+}
+
 pub(crate) async fn cmd_achievements(app_id: u32, lang: Option<String>, json: bool) -> Result<()> {
     let client = authed_client().await?;
     let lang = resolve_steam_language(lang).await;

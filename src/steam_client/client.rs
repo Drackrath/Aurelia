@@ -114,8 +114,8 @@ impl SteamClient {
         Ok(ticket)
     }
 
-    /// fetch a signed **encrypted app ticket** for `appid` over the CM connection.
-    pub async fn request_encrypted_app_ticket(&self, appid: u32) -> Result<Vec<u8>> {
+    /// Request an encrypted app ticket.
+    pub async fn request_encrypted_app_ticket(&self, appid: u32) -> Result<EncryptedTicketOutcome> {
         let connection = self
             .connection
             .as_ref()
@@ -129,21 +129,7 @@ impl SteamClient {
                 .job(request)
                 .await
                 .context("failed requesting encrypted app ticket")?;
-
-        // eresult 1 == OK; anything else means no ticket was issued.
-        let eresult = response.eresult();
-        if eresult != 1 {
-            bail!("Steam refused an encrypted app ticket for app {appid} (eresult {eresult})");
-        }
-        let ticket = response
-            .encrypted_app_ticket
-            .as_ref()
-            .map(|t| t.encrypted_ticket().to_vec())
-            .unwrap_or_default();
-        if ticket.is_empty() {
-            bail!("Steam returned an empty encrypted app ticket for app {appid}");
-        }
-        Ok(ticket)
+        extract_encrypted_ticket(&response, appid)
     }
 
     pub async fn get_account_data(&self) -> AccountData {
@@ -611,4 +597,26 @@ impl SteamClient {
         })
     }
 
+}
+
+/// Whole serialized envelope; consumers need it.
+pub(crate) fn extract_encrypted_ticket(
+    response: &steam_vent_proto::steammessages_clientserver::CMsgClientRequestEncryptedAppTicketResponse,
+    appid: u32,
+) -> Result<EncryptedTicketOutcome> {
+    let eresult = response.eresult();
+    if eresult != 1 {
+        return Ok(EncryptedTicketOutcome::Refused(eresult));
+    }
+    let envelope = response
+        .encrypted_app_ticket
+        .as_ref()
+        .context("encrypted ticket response carried no ticket")?;
+    if envelope.encrypted_ticket().is_empty() {
+        bail!("Steam returned an empty encrypted app ticket for app {appid}");
+    }
+    let bytes = envelope
+        .write_to_bytes()
+        .context("failed serializing encrypted app ticket")?;
+    Ok(EncryptedTicketOutcome::Issued(bytes))
 }
