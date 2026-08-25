@@ -11,6 +11,9 @@ use tokio::{
 
 use crate::{cdn::inner::InnerClient, Error};
 
+/// Steam EDepotFileFlag::Executable bit.
+pub const FLAG_EXECUTABLE: u32 = 32;
+
 #[derive(Debug)]
 pub struct ChunkData {
     pub(super) sha: Vec<u8>,
@@ -238,6 +241,31 @@ impl ManifestFile {
             }
         }
         out.flush().await.map_err(|e| Error::Unexpected(e.to_string()))?;
+
+        #[cfg(unix)]
+        self.apply_unix_mode(target_path).await?;
+
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    async fn apply_unix_mode(&self, target_path: &std::path::Path) -> Result<(), Error> {
+        use std::os::unix::fs::PermissionsExt;
+
+        if self.flags & FLAG_EXECUTABLE == 0 {
+            return Ok(());
+        }
+        let metadata = tokio::fs::metadata(target_path)
+            .await
+            .map_err(|e| Error::Unexpected(e.to_string()))?;
+        let mut permissions = metadata.permissions();
+        if permissions.mode() & 0o111 != 0 {
+            return Ok(());
+        }
+        permissions.set_mode(permissions.mode() | 0o755);
+        tokio::fs::set_permissions(target_path, permissions)
+            .await
+            .map_err(|e| Error::Unexpected(e.to_string()))?;
         Ok(())
     }
 }

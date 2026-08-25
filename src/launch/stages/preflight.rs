@@ -26,6 +26,22 @@ fn preflight_error(kind: LaunchErrorKind, details: &str) -> LaunchError {
     LaunchError::new(kind, format!("[Preflight] {}", details))
 }
 
+/// Game-owned binary safe to auto-chmod?
+#[cfg(unix)]
+fn native_game_binary(ctx: &PipelineContext, program: &Path) -> bool {
+    let is_native = matches!(
+        ctx.launch_info.as_ref().map(|i| i.target),
+        Some(crate::steam_client::LaunchTarget::NativeLinux)
+    );
+    if !is_native {
+        return false;
+    }
+    ctx.app
+        .as_ref()
+        .and_then(|app| app.install_path.as_ref())
+        .is_some_and(|install_path| program.starts_with(install_path))
+}
+
 #[async_trait]
 impl PipelineStage for PreflightStage {
     fn name(&self) -> &str { "Preflight" }
@@ -159,10 +175,31 @@ impl PipelineStage for PreflightStage {
             let mut check = PreflightCheck { name: "Runner Executability".into(), status: true, details: "OK".into() };
             if let Ok(metadata) = std::fs::metadata(runner_file) {
                 if metadata.is_file() && metadata.permissions().mode() & 0o111 == 0 {
-                    check.status = false;
-                    check.details = format!("Runner binary is not executable: {}", runner_file.display());
-                    final_res = Err(preflight_error(LaunchErrorKind::Permission, &check.details)
-                        .with_context("runner_path", runner_path.clone()));
+                    // Native launches self-heal missing exec bit.
+                    if native_game_binary(ctx, runner_file) {
+                        let mut permissions = metadata.permissions();
+                        permissions.set_mode(permissions.mode() | 0o755);
+                        match std::fs::set_permissions(runner_file, permissions) {
+                            Ok(()) => {
+                                check.details = format!("Added executable permission: {}", runner_file.display());
+                            }
+                            Err(e) => {
+                                check.status = false;
+                                check.details = format!(
+                                    "Game binary is not executable and chmod failed ({}): {}",
+                                    e,
+                                    runner_file.display()
+                                );
+                                final_res = Err(preflight_error(LaunchErrorKind::Permission, &check.details)
+                                    .with_context("runner_path", runner_path.clone()));
+                            }
+                        }
+                    } else {
+                        check.status = false;
+                        check.details = format!("Runner binary is not executable: {}", runner_file.display());
+                        final_res = Err(preflight_error(LaunchErrorKind::Permission, &check.details)
+                            .with_context("runner_path", runner_path.clone()));
+                    }
                 }
             }
             checks.push(check);
