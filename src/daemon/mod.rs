@@ -52,6 +52,24 @@ struct DaemonInfo {
     version: String,
     /// The daemon's process id.
     pid: u32,
+    /// The daemon binary's identity (mtime + size). The crate version alone misses
+    /// a rebuild at the same version, leaving a daemon serving stale code. Absent
+    /// on markers from older builds, which clients treat as a mismatch.
+    #[serde(default)]
+    build_id: Option<String>,
+}
+
+/// This binary's identity: executable mtime and size.
+pub(crate) fn current_build_id() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let meta = std::fs::metadata(exe).ok()?;
+    let mtime = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    Some(format!("{mtime}-{}", meta.len()))
 }
 
 /// Record this daemon's identity marker. Best-effort — a missing marker just makes
@@ -60,6 +78,7 @@ fn write_daemon_info() {
     let info = DaemonInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
         pid: std::process::id(),
+        build_id: current_build_id(),
     };
     let path = transport::version_marker_path();
     match serde_json::to_vec(&info) {

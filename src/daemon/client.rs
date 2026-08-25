@@ -90,9 +90,21 @@ async fn connect_or_spawn() -> Option<impl AsyncRead + AsyncWrite + Unpin + Send
 ///
 /// True when its version differs from `current`, or the marker is absent/unparseable
 /// (`info == None`) — a daemon predating this marker can't be trusted to parse newer
-/// commands either, so treat "unknown" as a mismatch.
+/// commands either, so treat "unknown" as a mismatch. The same applies to the
+/// binary identity: a rebuild at an unchanged crate version must also restart the
+/// daemon, or it keeps serving stale code.
 fn daemon_needs_restart(info: Option<&super::DaemonInfo>, current: &str) -> bool {
-    info.map_or(true, |i| i.version != current)
+    let Some(info) = info else { return true };
+    if info.version != current {
+        return true;
+    }
+    match (&info.build_id, super::current_build_id()) {
+        (Some(daemon), Some(client)) => *daemon != client,
+        // Old marker without identity: conservative restart.
+        (None, _) => true,
+        // Own identity unreadable: don't restart-loop on it.
+        (_, None) => false,
+    }
 }
 
 /// Stop a stale-version daemon so the next connect spawns a fresh one. `pid` is the
