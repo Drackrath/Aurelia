@@ -341,6 +341,66 @@ pub(crate) async fn cmd_config_steam_runtime_policy(
     Ok(())
 }
 
+/// `config steam-emulator`: view or set the global native Steam emulator default + path.
+pub(crate) async fn cmd_config_steam_emulator(
+    policy: Option<SteamRuntimeArg>,
+    path: Option<String>,
+    clear_path: bool,
+    json: bool,
+) -> Result<()> {
+    use aurelia::core::models::SteamEmulatorPolicy;
+
+    let mut config = load_launcher_config().await?;
+    let mut changed = false;
+    if let Some(arg) = policy {
+        config.steam_emulator = match arg {
+            SteamRuntimeArg::Auto => SteamEmulatorPolicy::Auto,
+            SteamRuntimeArg::On => SteamEmulatorPolicy::Enabled,
+            SteamRuntimeArg::Off => SteamEmulatorPolicy::Disabled,
+        };
+        changed = true;
+    }
+    if clear_path {
+        config.steam_emulator_path = None;
+        changed = true;
+    } else if let Some(p) = path {
+        config.steam_emulator_path = Some(p);
+        changed = true;
+    }
+    if changed {
+        save_launcher_config(&config)
+            .await
+            .context("failed saving steam-emulator config")?;
+    }
+
+    let label = match config.steam_emulator {
+        SteamEmulatorPolicy::Auto => "auto (off unless a game opts in)",
+        SteamEmulatorPolicy::Enabled => "on (native Linux games launch steamless)",
+        SteamEmulatorPolicy::Disabled => "off",
+    };
+    let lib = aurelia::core::utils::steam_emulator_lib_path(&config);
+    let present = lib.is_file();
+    if json {
+        print_json(&serde_json::json!({
+            "steam_emulator": config.steam_emulator,
+            "steam_emulator_path": config.steam_emulator_path,
+            "resolved_lib": lib.to_string_lossy(),
+            "lib_present": present,
+        }));
+    } else {
+        cli_println!("Steam emulator (global default): {label}");
+        cli_println!(
+            "Emulator library: {} ({})",
+            lib.display(),
+            if present { "found" } else { "MISSING — drop a Goldberg libsteam_api.so here" }
+        );
+        if changed {
+            cli_println!("Saved. Applies to native Linux games whose own policy is `auto`.");
+        }
+    }
+    Ok(())
+}
+
 /// `config protons`: list the Proton/Wine runtimes actually installed on disk.
 /// Shares discovery with `proton list --installed` (no hardcoded placeholders).
 pub(crate) async fn cmd_config_protons(json: bool) -> Result<()> {
@@ -454,10 +514,11 @@ pub(crate) async fn cmd_config_game(
     no_launch_script: bool,
     steam_runtime: Option<SteamRuntimeArg>,
     steam_prefix_mode: Option<SteamPrefixModeArg>,
+    steam_emulator: Option<SteamRuntimeArg>,
     json: bool,
 ) -> Result<()> {
     use aurelia::core::config::GameRunner;
-    use aurelia::core::models::{SteamPrefixMode, SteamRuntimePolicy};
+    use aurelia::core::models::{SteamEmulatorPolicy, SteamPrefixMode, SteamRuntimePolicy};
 
     // The Steam-runtime knobs live in a separate per-game store (user_apps.json) from the
     // GameConfig fields above (config.json). Update whichever store each flag targets.
@@ -479,6 +540,14 @@ pub(crate) async fn cmd_config_game(
             ua.steam_prefix_mode = match pm {
                 SteamPrefixModeArg::Shared => SteamPrefixMode::Shared,
                 SteamPrefixModeArg::PerGame => SteamPrefixMode::PerGame,
+            };
+            user_changed = true;
+        }
+        if let Some(se) = steam_emulator {
+            ua.steam_emulator_policy = match se {
+                SteamRuntimeArg::Auto => SteamEmulatorPolicy::Auto,
+                SteamRuntimeArg::On => SteamEmulatorPolicy::Enabled,
+                SteamRuntimeArg::Off => SteamEmulatorPolicy::Disabled,
             };
             user_changed = true;
         }
@@ -583,6 +652,11 @@ pub(crate) async fn cmd_config_game(
         SteamPrefixMode::Shared => "shared",
         SteamPrefixMode::PerGame => "per-game",
     };
+    let steam_emulator_label = match ua.steam_emulator_policy {
+        SteamEmulatorPolicy::Auto => "auto (inherits global `config steam-emulator`)",
+        SteamEmulatorPolicy::Enabled => "on (steamless via Goldberg)",
+        SteamEmulatorPolicy::Disabled => "off",
+    };
     if json {
         print_json(&serde_json::json!({
             "app_id": app_id,
@@ -592,6 +666,7 @@ pub(crate) async fn cmd_config_game(
             "launch_script": entry.launch_script,
             "steam_runtime_policy": ua.steam_runtime_policy,
             "steam_prefix_mode": ua.steam_prefix_mode,
+            "steam_emulator_policy": ua.steam_emulator_policy,
         }));
     } else {
         cli_println!("App {app_id}:");
@@ -612,6 +687,7 @@ pub(crate) async fn cmd_config_game(
         );
         cli_println!("  Steam runtime: {steam_runtime_label}");
         cli_println!("  Prefix mode  : {prefix_mode_label}");
+        cli_println!("  Steam emulator: {steam_emulator_label}");
     }
     Ok(())
 }

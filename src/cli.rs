@@ -459,6 +459,25 @@ pub(crate) enum ConfigCommand {
         /// `auto`, `on`, or `off`. Omit to print the current setting.
         policy: Option<SteamRuntimeArg>,
     },
+    /// View or set the global default native Steam emulator (Goldberg).
+    ///
+    /// Applied when a game's own policy (`config game <id> --steam-emulator …`) is
+    /// `auto`. `on` makes native Linux games launch steamless: Aurelia preloads a
+    /// Goldberg `libsteam_api.so` so the game's `SteamAPI_Init()` succeeds with no
+    /// Steam client running (and no `--steam`). `off`/`auto` (default) leave it off.
+    /// Supply the emulator library with `--path <libsteam_api.so>`, or drop it at
+    /// `<config_dir>/steam_emu/libsteam_api.so`. Omit everything to print the setting.
+    SteamEmulator {
+        /// `auto`, `on`, or `off`. Omit to print the current setting.
+        policy: Option<SteamRuntimeArg>,
+        /// Path to the Goldberg `libsteam_api.so` (matching the game's architecture,
+        /// usually 64-bit). Omit to keep the current path.
+        #[arg(long, value_name = "PATH")]
+        path: Option<String>,
+        /// Clear the configured emulator path (use the default location).
+        #[arg(long, conflicts_with = "path")]
+        clear_path: bool,
+    },
     /// View or set the network proxy used for all HTTP(S) communication.
     ///
     /// Applies to the Steam web endpoints, depot downloads, and Proton/plugin
@@ -529,6 +548,11 @@ pub(crate) enum ConfigCommand {
         /// prefix directly; `per-game` copies Steam into the game's own prefix.
         #[arg(long, value_name = "shared|per-game")]
         steam_prefix_mode: Option<SteamPrefixModeArg>,
+        /// Native Steam emulator (Goldberg) for this game: `on` launches it steamless
+        /// (no Steam client, no `--steam`); `auto` inherits `config steam-emulator`;
+        /// `off` never emulates. Needs the emulator library — see `config steam-emulator`.
+        #[arg(long, value_name = "auto|on|off")]
+        steam_emulator: Option<SteamRuntimeArg>,
     },
     /// Reset the per-game settings of ALL games to defaults (both stores).
     ClearGames {

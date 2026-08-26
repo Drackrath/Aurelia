@@ -158,6 +158,12 @@ pub struct LauncherConfig {
     /// `Disabled` never does. Set with `aurelia config steam-runtime-policy`.
     #[serde(default)]
     pub steam_runtime_policy: crate::core::models::SteamRuntimePolicy,
+    /// Global native Steam emulator default.
+    #[serde(default)]
+    pub steam_emulator: crate::core::models::SteamEmulatorPolicy,
+    /// Override path to Goldberg libsteam_api.so.
+    #[serde(default)]
+    pub steam_emulator_path: Option<String>,
     /// Opt-in gate for experimental features. Off by default. Currently gates the
     /// browser/OpenID identity check (`login --openid`) and web-token auth
     /// (`login --web-token`), which prove identity / enable web-surface commands
@@ -212,6 +218,8 @@ impl Default for LauncherConfig {
             language: None,
             proxy: ProxyConfig::default(),
             steam_runtime_policy: crate::core::models::SteamRuntimePolicy::default(),
+            steam_emulator: crate::core::models::SteamEmulatorPolicy::default(),
+            steam_emulator_path: None,
             experimental: false,
             encrypt_session: false,
         }

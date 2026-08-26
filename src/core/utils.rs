@@ -613,6 +613,52 @@ pub async fn wait_for_steam_logged_on(_timeout: std::time::Duration) -> bool {
     true
 }
 
+/// Whether the Steam emulator is requested for this game.
+pub fn steam_emulator_requested(
+    user_config: Option<&crate::core::models::UserAppConfig>,
+    launcher_config: &crate::core::config::LauncherConfig,
+) -> bool {
+    use crate::core::models::SteamEmulatorPolicy;
+    let per_game = user_config.map(|c| c.steam_emulator_policy).unwrap_or_default();
+    match per_game {
+        SteamEmulatorPolicy::Enabled => true,
+        SteamEmulatorPolicy::Disabled => false,
+        // Auto inherits the global default.
+        SteamEmulatorPolicy::Auto => {
+            matches!(launcher_config.steam_emulator, SteamEmulatorPolicy::Enabled)
+        }
+    }
+}
+
+/// The emulator library path (configured or default).
+pub fn steam_emulator_lib_path(
+    launcher_config: &crate::core::config::LauncherConfig,
+) -> PathBuf {
+    if let Some(p) = launcher_config
+        .steam_emulator_path
+        .as_ref()
+        .filter(|s| !s.is_empty())
+    {
+        return PathBuf::from(p);
+    }
+    crate::core::config::config_dir()
+        .unwrap_or_default()
+        .join("steam_emu")
+        .join("libsteam_api.so")
+}
+
+/// Resolve the emulator library when active.
+pub fn resolve_steam_emulator(
+    user_config: Option<&crate::core::models::UserAppConfig>,
+    launcher_config: &crate::core::config::LauncherConfig,
+) -> Option<PathBuf> {
+    if !steam_emulator_requested(user_config, launcher_config) {
+        return None;
+    }
+    let path = steam_emulator_lib_path(launcher_config);
+    path.is_file().then_some(path)
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RunnerComponents {
     pub dxvk: Option<ComponentInfo>,
@@ -1699,3 +1745,7 @@ mod runner_classification_tests;
 #[cfg(all(test, target_os = "linux"))]
 #[path = "utils_steam_logon_tests.rs"]
 mod steam_logon_tests;
+
+#[cfg(test)]
+#[path = "utils_steam_emulator_tests.rs"]
+mod steam_emulator_tests;

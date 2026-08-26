@@ -412,6 +412,9 @@ async fn run(cli: Cli) -> Result<()> {
             ConfigCommand::SteamRuntimeRunner { runner } => {
                 cmd_config_steam_runtime_runner(runner, json).await
             }
+            ConfigCommand::SteamEmulator { policy, path, clear_path } => {
+                cmd_config_steam_emulator(policy, path, clear_path, json).await
+            }
             ConfigCommand::Proxy { url, no_proxy, clear } => {
                 cmd_config_proxy(url, no_proxy, clear, json).await
             }
@@ -430,7 +433,8 @@ async fn run(cli: Cli) -> Result<()> {
                 no_launch_script,
                 steam_runtime,
                 steam_prefix_mode,
-            } => cmd_config_game(app_id, proton, clear_proton, platform, no_platform, clear, native_engine, no_native_engine, umu, no_umu, launch_script, no_launch_script, steam_runtime, steam_prefix_mode, json).await,
+                steam_emulator,
+            } => cmd_config_game(app_id, proton, clear_proton, platform, no_platform, clear, native_engine, no_native_engine, umu, no_umu, launch_script, no_launch_script, steam_runtime, steam_prefix_mode, steam_emulator, json).await,
             ConfigCommand::ClearGames { yes } => cmd_config_clear_games(yes, json).await,
         },
         Command::Cloud { command } => match command {

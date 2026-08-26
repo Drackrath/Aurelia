@@ -19,6 +19,15 @@ pub enum SteamRuntimePolicy {
     Disabled,
 }
 
+/// Native Steam emulator policy.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum SteamEmulatorPolicy {
+    #[default]
+    Auto,
+    Enabled,
+    Disabled,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SteamLaunchConfig {
     #[serde(default = "default_true")]
@@ -116,6 +125,8 @@ pub struct UserAppConfig {
     pub use_steam_runtime: bool,                // DEPRECATED: use steam_runtime_policy instead
     #[serde(default)]
     pub steam_runtime_policy: SteamRuntimePolicy,
+    #[serde(default)]
+    pub steam_emulator_policy: SteamEmulatorPolicy,
     #[serde(default)]
     pub steam_prefix_mode: SteamPrefixMode,
     #[serde(default)]

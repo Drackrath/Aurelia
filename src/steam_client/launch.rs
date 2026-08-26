@@ -73,6 +73,21 @@ pub(crate) fn select_launch_entry(
     }
 }
 
+/// Start host Steam; wait for logon.
+#[cfg(target_os = "linux")]
+async fn ensure_host_steam_ready() {
+    crate::core::utils::ensure_steam_running();
+    let timeout = std::time::Duration::from_secs(30);
+    if crate::core::utils::wait_for_steam_logged_on(timeout).await {
+        tracing::info!("Host Steam logged on. Proceeding with launch");
+    } else {
+        tracing::warn!(
+            "Host Steam not logged on within {}s. Launching anyway (Steamworks may fail)",
+            timeout.as_secs()
+        );
+    }
+}
+
 impl SteamClient {
     pub async fn play_game(
         &mut self,
@@ -98,17 +113,7 @@ impl SteamClient {
         // initialise. Best-effort and Linux-only.
         #[cfg(target_os = "linux")]
         if steam_enabled {
-            crate::core::utils::ensure_steam_running();
-            // Avoid racing a cold client.
-            let timeout = std::time::Duration::from_secs(30);
-            if crate::core::utils::wait_for_steam_logged_on(timeout).await {
-                tracing::info!("host Steam logged on; proceeding with launch");
-            } else {
-                tracing::warn!(
-                    "host Steam not logged on within {}s; launching anyway (Steamworks auth may fail)",
-                    timeout.as_secs()
-                );
-            }
+            ensure_host_steam_ready().await;
         }
 
         let launch_options = self.get_product_info(app.app_id).await?;
@@ -140,6 +145,23 @@ impl SteamClient {
                     Some(proton_path.unwrap_or(&launcher_config.proton_version))
                 }
             });
+        }
+
+        // Native needs Steam unless emulated.
+        #[cfg(target_os = "linux")]
+        if !steam_enabled && launch_info.target == LaunchTarget::NativeLinux {
+            let requested =
+                crate::core::utils::steam_emulator_requested(user_config, &launcher_config);
+            let active =
+                crate::core::utils::resolve_steam_emulator(user_config, &launcher_config).is_some();
+            if requested && !active {
+                tracing::warn!(
+                    "Steam emulator enabled but libsteam_api.so not found; starting host Steam instead"
+                );
+            }
+            if !active {
+                ensure_host_steam_ready().await;
+            }
         }
 
         // Proton/Wine only exists on Linux. On Windows, a Windows game runs natively, so
