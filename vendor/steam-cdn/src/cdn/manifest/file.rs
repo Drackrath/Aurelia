@@ -270,7 +270,18 @@ impl ManifestFile {
         use std::os::unix::fs::PermissionsExt;
 
         if self.flags & FLAG_EXECUTABLE == 0 {
-            return Ok(());
+            // Flagless depots: detect ELF/shebang content.
+            let mut head = [0u8; 4];
+            let looks_executable = match tokio::fs::File::open(target_path).await {
+                Ok(mut f) => match f.read(&mut head).await {
+                    Ok(n) => (n >= 4 && head == *b"\x7fELF") || (n >= 2 && head[..2] == *b"#!"),
+                    Err(_) => false,
+                },
+                Err(_) => false,
+            };
+            if !looks_executable {
+                return Ok(());
+            }
         }
         let metadata = tokio::fs::metadata(target_path)
             .await
