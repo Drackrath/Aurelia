@@ -165,6 +165,11 @@ pub struct LauncherConfig {
     /// Enable with `aurelia config experimental true` or `AURELIA_EXPERIMENTAL=1`.
     #[serde(default)]
     pub experimental: bool,
+    /// Keep `session.json` encrypted with the session password. Set with
+    /// `aurelia config session-password`; the password itself is never stored —
+    /// it comes from `AURELIA_SESSION_PASSWORD` or an interactive prompt.
+    #[serde(default)]
+    pub encrypt_session: bool,
 }
 
 impl LauncherConfig {
@@ -208,6 +213,7 @@ impl Default for LauncherConfig {
             proxy: ProxyConfig::default(),
             steam_runtime_policy: crate::core::models::SteamRuntimePolicy::default(),
             experimental: false,
+            encrypt_session: false,
         }
     }
 }
@@ -299,12 +305,46 @@ pub async fn load_session() -> Result<SessionState> {
     if !session_path.exists() {
         return Ok(SessionState::default());
     }
-    read_json(&session_path).await
+    let raw = fs::read_to_string(&session_path)
+        .await
+        .with_context(|| format!("failed reading {}", session_path.display()))?;
+    // Encrypted sessions decrypt on the fly.
+    if let Some(envelope) = crate::core::session_crypto::EncryptedSession::from_json(&raw) {
+        let password = crate::core::session_crypto::session_password()?;
+        let plain = crate::core::session_crypto::decrypt(&envelope, &password)?;
+        return serde_json::from_slice(&plain)
+            .with_context(|| format!("failed parsing decrypted {}", session_path.display()));
+    }
+    serde_json::from_str(&raw).with_context(|| format!("failed parsing {}", session_path.display()))
+}
+
+/// Whether saves must encrypt the session.
+///
+/// True when the user opted in (`config session-password`) or the file on disk
+/// is already an encrypted envelope — an existing encrypted session is never
+/// silently rewritten as plaintext.
+async fn session_encryption_active(session_path: &Path) -> bool {
+    if let Ok(config) = load_launcher_config().await {
+        if config.encrypt_session {
+            return true;
+        }
+    }
+    match fs::read_to_string(session_path).await {
+        Ok(raw) => crate::core::session_crypto::EncryptedSession::from_json(&raw).is_some(),
+        Err(_) => false,
+    }
 }
 
 pub async fn save_session(session: &SessionState) -> Result<()> {
     let session_path = config_dir()?.join("session.json");
-    write_json_pretty(&session_path, session).await?;
+    if session_encryption_active(&session_path).await {
+        let password = crate::core::session_crypto::session_password()?;
+        let plain = serde_json::to_vec(session)?;
+        let envelope = crate::core::session_crypto::encrypt(&plain, &password)?;
+        write_json_pretty(&session_path, &envelope).await?;
+    } else {
+        write_json_pretty(&session_path, session).await?;
+    }
 
     // The session holds a long-lived Steam refresh token; keep it owner-only so it
     // is not world-readable on shared Unix hosts.

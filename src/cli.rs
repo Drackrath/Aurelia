@@ -421,6 +421,21 @@ pub(crate) enum ConfigCommand {
         /// `true` or `false`. Omit to print the current setting.
         enabled: Option<bool>,
     },
+    /// Set or remove the password that encrypts `session.json`.
+    ///
+    /// The session file holds a long-lived Steam refresh token. With a password
+    /// set, it is stored encrypted (ChaCha20-Poly1305, key derived with Argon2id)
+    /// and decrypted on the fly when a command needs the session. The password is
+    /// never written to disk: it is taken from `AURELIA_SESSION_PASSWORD` or an
+    /// interactive prompt (once per run). Non-interactive contexts like the session
+    /// daemon need the environment variable. With no flags, prompts for a new
+    /// password and re-encrypts the current session.
+    SessionPassword {
+        /// Decrypt `session.json` back to plaintext and disable encryption
+        /// (asks for the current password first).
+        #[arg(long)]
+        clear: bool,
+    },
     /// View or set the Wine/Proton runner that hosts the Windows Steam runtime.
     ///
     /// Used by `steam-runtime install`/`repair` to drive `SteamSetup.exe` and the
