@@ -499,6 +499,25 @@ async fn installed_platform_set(app_id: u32) -> Option<(bool, bool)> {
 
 /// `config game`: view or set a game's per-game launch settings.
 #[allow(clippy::too_many_arguments)]
+/// Best-effort online-required lookup via PICS.
+async fn online_required_for(app_id: u32) -> Option<bool> {
+    let client = restored_client().await.ok()?;
+    if !client.is_authenticated() || client.is_offline() {
+        return None;
+    }
+    client.fetch_online_required(app_id).await.ok()
+}
+
+/// Whether the installed depot is native Linux.
+async fn is_native_linux_install(app_id: u32) -> Option<bool> {
+    let installed = aurelia::library::scan_installed_app_info().await.ok()?;
+    let info = installed.get(&app_id)?;
+    let platform = crate::commands::library::detect_installed_platform(
+        &info.install_path.to_string_lossy(),
+    )?;
+    Some(platform == "linux")
+}
+
 pub(crate) async fn cmd_config_game(
     app_id: u32,
     proton: Option<String>,
@@ -519,6 +538,33 @@ pub(crate) async fn cmd_config_game(
 ) -> Result<()> {
     use aurelia::core::config::GameRunner;
     use aurelia::core::models::{SteamEmulatorPolicy, SteamPrefixMode, SteamRuntimePolicy};
+
+    // Emulator knob is native-Linux-only.
+    let native_linux = is_native_linux_install(app_id).await;
+    if steam_emulator.is_some() && native_linux != Some(true) {
+        anyhow::bail!(
+            "`--steam-emulator` only applies to installed native Linux games; app {app_id} {}",
+            match native_linux {
+                Some(false) => "has a Windows depot installed",
+                _ => "is not installed (or its platform is unknown)",
+            }
+        );
+    }
+    // Emulator knob is offline-capable-games-only.
+    if matches!(steam_emulator, Some(SteamRuntimeArg::On)) {
+        match online_required_for(app_id).await {
+            Some(true) => anyhow::bail!(
+                "the Steam emulator can only be enabled for games that don't require an \
+                 online connection; app {app_id} is online-required"
+            ),
+            Some(false) => {}
+            None => cli_println!(
+                "Note: could not verify whether app {app_id} requires an online connection \
+                 (not logged in or offline); the launch preflight will re-check and refuse \
+                 to emulate an online-required game."
+            ),
+        }
+    }
 
     // The Steam-runtime knobs live in a separate per-game store (user_apps.json) from the
     // GameConfig fields above (config.json). Update whichever store each flag targets.
@@ -658,7 +704,7 @@ pub(crate) async fn cmd_config_game(
         SteamEmulatorPolicy::Disabled => "off",
     };
     if json {
-        print_json(&serde_json::json!({
+        let mut out = serde_json::json!({
             "app_id": app_id,
             "forced_proton_version": entry.forced_proton_version,
             "platform_preference": entry.platform_preference,
@@ -666,8 +712,11 @@ pub(crate) async fn cmd_config_game(
             "launch_script": entry.launch_script,
             "steam_runtime_policy": ua.steam_runtime_policy,
             "steam_prefix_mode": ua.steam_prefix_mode,
-            "steam_emulator_policy": ua.steam_emulator_policy,
-        }));
+        });
+        if native_linux == Some(true) {
+            out["steam_emulator_policy"] = serde_json::json!(ua.steam_emulator_policy);
+        }
+        print_json(&out);
     } else {
         cli_println!("App {app_id}:");
         let proton_default = format!("(global default: {})", cfg.proton_version);
@@ -687,7 +736,9 @@ pub(crate) async fn cmd_config_game(
         );
         cli_println!("  Steam runtime: {steam_runtime_label}");
         cli_println!("  Prefix mode  : {prefix_mode_label}");
-        cli_println!("  Steam emulator: {steam_emulator_label}");
+        if native_linux == Some(true) {
+            cli_println!("  Steam emulator: {steam_emulator_label}");
+        }
     }
     Ok(())
 }

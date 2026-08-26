@@ -465,6 +465,7 @@ pub(crate) enum ConfigCommand {
     /// `auto`. `on` makes native Linux games launch steamless: Aurelia preloads a
     /// Goldberg `libsteam_api.so` so the game's `SteamAPI_Init()` succeeds with no
     /// Steam client running (and no `--steam`). `off`/`auto` (default) leave it off.
+    /// Games that require an online connection are never emulated, regardless of policy.
     /// Supply the emulator library with `--path <libsteam_api.so>`, or drop it at
     /// `<config_dir>/steam_emu/libsteam_api.so`. Omit everything to print the setting.
     SteamEmulator {
@@ -551,6 +552,8 @@ pub(crate) enum ConfigCommand {
         /// Native Steam emulator (Goldberg) for this game: `on` launches it steamless
         /// (no Steam client, no `--steam`); `auto` inherits `config steam-emulator`;
         /// `off` never emulates. Needs the emulator library — see `config steam-emulator`.
+        /// Only accepted for games with a native Linux depot installed, and `on` only
+        /// for games that don't require an online connection.
         #[arg(long, value_name = "auto|on|off")]
         steam_emulator: Option<SteamRuntimeArg>,
     },

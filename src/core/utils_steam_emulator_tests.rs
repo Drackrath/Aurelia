@@ -18,26 +18,39 @@ fn ua(policy: SteamEmulatorPolicy) -> UserAppConfig {
 #[test]
 fn default_is_off() {
     let c = LauncherConfig::default();
-    assert!(!steam_emulator_requested(None, &c));
-    assert!(resolve_steam_emulator(None, &c).is_none());
+    assert!(!steam_emulator_requested(None, &c, None));
+    assert!(resolve_steam_emulator(None, &c, None).is_none());
 }
 
 #[test]
 fn global_enabled_requests() {
     let c = cfg(SteamEmulatorPolicy::Enabled, None);
-    assert!(steam_emulator_requested(None, &c));
+    assert!(steam_emulator_requested(None, &c, None));
 }
 
 #[test]
 fn per_game_enabled_overrides_global_disabled() {
     let c = cfg(SteamEmulatorPolicy::Disabled, None);
-    assert!(steam_emulator_requested(Some(&ua(SteamEmulatorPolicy::Enabled)), &c));
+    assert!(steam_emulator_requested(Some(&ua(SteamEmulatorPolicy::Enabled)), &c, None));
 }
 
 #[test]
 fn per_game_disabled_overrides_global_enabled() {
     let c = cfg(SteamEmulatorPolicy::Enabled, None);
-    assert!(!steam_emulator_requested(Some(&ua(SteamEmulatorPolicy::Disabled)), &c));
+    assert!(!steam_emulator_requested(Some(&ua(SteamEmulatorPolicy::Disabled)), &c, None));
+}
+
+#[test]
+fn online_required_blocks_emulation() {
+    let c = cfg(SteamEmulatorPolicy::Enabled, None);
+    let enabled = ua(SteamEmulatorPolicy::Enabled);
+    // Online-required beats every enablement path.
+    assert!(!steam_emulator_requested(None, &c, Some(true)));
+    assert!(!steam_emulator_requested(Some(&enabled), &c, Some(true)));
+    assert!(resolve_steam_emulator(Some(&enabled), &c, Some(true)).is_none());
+    // Offline-capable and unknown stay allowed.
+    assert!(steam_emulator_requested(None, &c, Some(false)));
+    assert!(steam_emulator_requested(None, &c, None));
 }
 
 #[test]
@@ -49,9 +62,9 @@ fn resolve_requires_lib_present() {
         Some(lib.to_string_lossy().into_owned()),
     );
     // Enabled but library missing: requested, not resolved.
-    assert!(steam_emulator_requested(None, &c));
-    assert!(resolve_steam_emulator(None, &c).is_none());
+    assert!(steam_emulator_requested(None, &c, None));
+    assert!(resolve_steam_emulator(None, &c, None).is_none());
     // Library present: resolved.
     std::fs::write(&lib, b"x").unwrap();
-    assert_eq!(resolve_steam_emulator(None, &c), Some(lib));
+    assert_eq!(resolve_steam_emulator(None, &c, None), Some(lib));
 }

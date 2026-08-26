@@ -1,0 +1,11 @@
+[package]
+name = "aurelia-steam-emu"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust Steamworks emulator (Goldberg-equivalent) for steamless native Linux launches"
+license = "LGPL-3.0"
+
+# Produces libsteam_api.so: the game's bundled steam_api is overridden via LD_PRELOAD.
+[lib]
+name = "steam_api"
+crate-type = ["cdylib"]

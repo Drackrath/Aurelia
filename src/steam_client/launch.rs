@@ -149,11 +149,38 @@ impl SteamClient {
 
         // Native needs Steam unless emulated.
         #[cfg(target_os = "linux")]
+        let mut app_resolved: Option<LibraryGame> = None;
+        #[cfg(target_os = "linux")]
         if !steam_enabled && launch_info.target == LaunchTarget::NativeLinux {
-            let requested =
-                crate::core::utils::steam_emulator_requested(user_config, &launcher_config);
-            let active =
-                crate::core::utils::resolve_steam_emulator(user_config, &launcher_config).is_some();
+            let mut online_required = app.online_required;
+            let configured =
+                crate::core::utils::steam_emulator_requested(user_config, &launcher_config, None);
+            // Emulation needs the onlineness known first.
+            if configured && online_required.is_none() {
+                match self.fetch_online_required(app.app_id).await {
+                    Ok(v) => online_required = Some(v),
+                    Err(e) => tracing::warn!(
+                        "could not determine online-required status for {}: {e:#}",
+                        app.app_id
+                    ),
+                }
+            }
+            if configured && online_required == Some(true) {
+                tracing::warn!(
+                    "Steam emulator disabled: game requires an online connection; starting host Steam instead"
+                );
+            }
+            let requested = crate::core::utils::steam_emulator_requested(
+                user_config,
+                &launcher_config,
+                online_required,
+            );
+            let active = crate::core::utils::resolve_steam_emulator(
+                user_config,
+                &launcher_config,
+                online_required,
+            )
+            .is_some();
             if requested && !active {
                 tracing::warn!(
                     "Steam emulator enabled but libsteam_api.so not found; starting host Steam instead"
@@ -162,7 +189,10 @@ impl SteamClient {
             if !active {
                 ensure_host_steam_ready().await;
             }
+            app_resolved = Some(LibraryGame { online_required, ..app.clone() });
         }
+        #[cfg(target_os = "linux")]
+        let app = app_resolved.as_ref().unwrap_or(app);
 
         // Proton/Wine only exists on Linux. On Windows, a Windows game runs natively, so
         // run its executable directly instead of routing through the Proton pipeline.

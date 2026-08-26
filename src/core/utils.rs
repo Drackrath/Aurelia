@@ -617,8 +617,13 @@ pub async fn wait_for_steam_logged_on(_timeout: std::time::Duration) -> bool {
 pub fn steam_emulator_requested(
     user_config: Option<&crate::core::models::UserAppConfig>,
     launcher_config: &crate::core::config::LauncherConfig,
+    online_required: Option<bool>,
 ) -> bool {
     use crate::core::models::SteamEmulatorPolicy;
+    // Online-required games never emulate.
+    if online_required == Some(true) {
+        return false;
+    }
     let per_game = user_config.map(|c| c.steam_emulator_policy).unwrap_or_default();
     match per_game {
         SteamEmulatorPolicy::Enabled => true,
@@ -628,6 +633,13 @@ pub fn steam_emulator_requested(
             matches!(launcher_config.steam_emulator, SteamEmulatorPolicy::Enabled)
         }
     }
+}
+
+/// The bundled emulator built beside the binary.
+pub fn builtin_emulator_lib() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let sibling = exe.parent()?.join("libsteam_api.so");
+    sibling.is_file().then_some(sibling)
 }
 
 /// The emulator library path (configured or default).
@@ -641,6 +653,9 @@ pub fn steam_emulator_lib_path(
     {
         return PathBuf::from(p);
     }
+    if let Some(builtin) = builtin_emulator_lib() {
+        return builtin;
+    }
     crate::core::config::config_dir()
         .unwrap_or_default()
         .join("steam_emu")
@@ -651,8 +666,9 @@ pub fn steam_emulator_lib_path(
 pub fn resolve_steam_emulator(
     user_config: Option<&crate::core::models::UserAppConfig>,
     launcher_config: &crate::core::config::LauncherConfig,
+    online_required: Option<bool>,
 ) -> Option<PathBuf> {
-    if !steam_emulator_requested(user_config, launcher_config) {
+    if !steam_emulator_requested(user_config, launcher_config, online_required) {
         return None;
     }
     let path = steam_emulator_lib_path(launcher_config);

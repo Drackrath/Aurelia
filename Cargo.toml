@@ -5,6 +5,9 @@ edition = "2024"
 description = "Aurelia CLI Steam launcher"
 license = "GPL 3.0"
 
+[workspace]
+members = ["crates/steam-emu"]
+
 [dependencies]
 anyhow = "1"
 async-trait = "0.1"
