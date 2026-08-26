@@ -1,7 +1,7 @@
 [package]
 name = "aurelia-steam-emu"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "Native Rust Steamworks emulator (Goldberg-equivalent) for steamless native Linux launches"
 license = "LGPL-3.0"
 

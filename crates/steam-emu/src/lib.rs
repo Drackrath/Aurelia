@@ -120,63 +120,65 @@ fn interface_for(version: &str) -> *mut c_void {
 
 // flat exports
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SteamAPI_Init() -> bool {
     true
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SteamAPI_Shutdown() {}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SteamAPI_RunCallbacks() {}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SteamAPI_GetHSteamUser() -> i32 {
     1
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SteamAPI_GetHSteamPipe() -> i32 {
     1
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SteamAPI_RegisterCallback(_cb: *mut c_void, _icb: i32) {}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SteamAPI_UnregisterCallback(_cb: *mut c_void) {}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SteamAPI_RegisterCallResult(_cb: *mut c_void, _call: u64) {}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SteamAPI_UnregisterCallResult(_cb: *mut c_void, _call: u64) {}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SteamAPI_IsSteamRunning() -> bool {
     true
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SteamAPI_RestartAppIfNecessary(_appid: u32) -> bool {
     false
 }
 
 /// Populate accessor; return interface storage.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SteamInternal_ContextInit(ctx: *mut *mut c_void) -> *mut c_void {
     // ctx[0]=init fn, ctx[1]=counter, ctx[2]=interface storage.
-    let counter = ctx.add(1);
-    if (*counter).is_null() {
-        let init: extern "C" fn(*mut *mut c_void) = std::mem::transmute(*ctx);
-        init(ctx.add(2));
-        *counter = 1usize as *mut c_void;
+    unsafe {
+        let counter = ctx.add(1);
+        if (*counter).is_null() {
+            let init: extern "C" fn(*mut *mut c_void) = std::mem::transmute(*ctx);
+            init(ctx.add(2));
+            *counter = 1usize as *mut c_void;
+        }
+        ctx.add(2) as *mut c_void
     }
-    ctx.add(2) as *mut c_void
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SteamInternal_FindOrCreateUserInterface(
     _user: i32,
     version: *const c_char,
@@ -184,11 +186,11 @@ pub unsafe extern "C" fn SteamInternal_FindOrCreateUserInterface(
     if version.is_null() {
         return interface_for("");
     }
-    let v = CStr::from_ptr(version).to_string_lossy().into_owned();
+    let v = unsafe { CStr::from_ptr(version) }.to_string_lossy().into_owned();
     interface_for(&v)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SteamInternal_CreateInterface(version: *const c_char) -> *mut c_void {
-    SteamInternal_FindOrCreateUserInterface(1, version)
+    unsafe { SteamInternal_FindOrCreateUserInterface(1, version) }
 }
