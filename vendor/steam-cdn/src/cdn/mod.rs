@@ -167,10 +167,28 @@ impl CDNClient {
             }
 
             let linktarget = file.linktarget();
-            if !linktarget.is_empty() {
+            let is_symlink = file.flags() & manifest::file::FLAG_SYMLINK != 0;
+            if !linktarget.is_empty() || is_symlink {
                 #[cfg(unix)]
                 {
-                    let target = linktarget.replace('\\', "/");
+                    // Symlink entries without a linktarget field carry the
+                    // target path as their chunk content instead.
+                    let raw_target = if !linktarget.is_empty() {
+                        linktarget
+                    } else {
+                        let bytes = file.download_to_memory(key_arr).await?;
+                        String::from_utf8(bytes)
+                            .map_err(|e| Error::Unexpected(e.to_string()))?
+                    };
+                    let target = raw_target
+                        .trim_matches(|c: char| c.is_whitespace() || c == '\0')
+                        .replace('\\', "/");
+                    if target.is_empty() {
+                        return Err(Error::Unexpected(format!(
+                            "symlink entry {} has no target",
+                            file.full_path()
+                        )));
+                    }
                     let points_there = std::fs::read_link(&full_path)
                         .is_ok_and(|existing| existing == std::path::Path::new(&target));
                     if !points_there {

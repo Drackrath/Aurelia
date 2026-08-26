@@ -17,6 +17,9 @@ pub const FLAG_EXECUTABLE: u32 = 32;
 /// Steam EDepotFileFlag::Directory bit.
 pub const FLAG_DIRECTORY: u32 = 64;
 
+/// Steam EDepotFileFlag::Symlink bit.
+pub const FLAG_SYMLINK: u32 = 512;
+
 #[derive(Debug)]
 pub struct ChunkData {
     pub(super) sha: Vec<u8>,
@@ -115,6 +118,25 @@ impl ManifestFile {
 
     pub fn linktarget(&self) -> String {
         self.linktarget.clone()
+    }
+
+    /// Fetch this file's full content into memory. Symlink entries store
+    /// their link target as chunk data, so they need content without a
+    /// destination file on disk.
+    pub async fn download_to_memory(&self, depot_key: [u8; 32]) -> Result<Vec<u8>, Error> {
+        let mut buffer = vec![0u8; self.size as usize];
+        for chunk in self.chunks().iter().sorted_by(|a, b| a.offset.cmp(&b.offset)) {
+            let data = self
+                .inner
+                .get_chunk(self.app_id, self.depot_id, depot_key, chunk.id())
+                .await?;
+            let offset = chunk.offset as usize;
+            let end = offset.saturating_add(data.len()).min(buffer.len());
+            if offset < end {
+                buffer[offset..end].copy_from_slice(&data[..end - offset]);
+            }
+        }
+        Ok(buffer)
     }
 
     pub async fn download(
