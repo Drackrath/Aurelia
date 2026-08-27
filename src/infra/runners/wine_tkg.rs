@@ -63,7 +63,7 @@ impl Runner for WineTkgRunner {
         };
         let compat_data_path = game_compat_data_path(
             &library_root,
-            &ctx.app.app_id.to_string(),
+            ctx.app.app_id,
             steam_mode,
             steam_prefix_mode.clone(),
             &master_wine_prefix,
@@ -379,7 +379,7 @@ impl Runner for WineTkgRunner {
         }
 
         // Write steam_appid.txt to the game working directory
-        let (_install_dir, _executable, game_working_dir) = resolve_game_paths(ctx)?;
+        let (_install_dir, _executable, game_working_dir) = ctx.game_paths()?;
 
         let app_id_str = ctx.app.app_id.to_string();
         let app_id_path = game_working_dir.join("steam_appid.txt");
@@ -406,7 +406,7 @@ impl Runner for WineTkgRunner {
         };
         let compat_data_path = game_compat_data_path(
             &library_root,
-            &app_id_str,
+            ctx.app.app_id,
             steam_mode,
             steam_prefix_mode,
             &master_wine_prefix,
@@ -437,7 +437,7 @@ impl Runner for WineTkgRunner {
             .map(|c| c.steam_launch_config.no_overlay)
             .unwrap_or(true);
 
-        let (_install_dir, _executable, game_working_dir) = resolve_game_paths(ctx)?;
+        let (_install_dir, _executable, game_working_dir) = ctx.game_paths()?;
 
         // Resolve proton version for component detection and DLL path building
         let proton = forced_proton(ctx)
@@ -901,7 +901,7 @@ impl Runner for WineTkgRunner {
             spec.args = base_cmd.get_args().map(|s| s.to_string_lossy().to_string()).collect();
         }
 
-        let (_install_dir, executable, game_working_dir) = resolve_game_paths(ctx)?;
+        let (_install_dir, executable, game_working_dir) = ctx.game_paths()?;
 
         spec.cwd = Some(game_working_dir);
         spec.args.push(executable.to_string_lossy().to_string());
@@ -987,7 +987,7 @@ fn effective_game_prefix(ctx: &LaunchContext) -> PathBuf {
 /// Resolve STEAM_COMPAT_DATA_PATH for the game.
 fn game_compat_data_path(
     library_root: &Path,
-    app_id_str: &str,
+    app_id: u32,
     steam_mode: SteamMode,
     steam_prefix_mode: crate::core::models::SteamPrefixMode,
     master_wine_prefix: &Path,
@@ -1001,10 +1001,7 @@ fn game_compat_data_path(
             }
         }
     }
-    library_root
-        .join("steamapps")
-        .join("compatdata")
-        .join(app_id_str)
+    crate::core::utils::compat_data_dir(library_root, app_id)
 }
 
 /// Which Steam-integration mode a launch runs in.
@@ -1211,34 +1208,6 @@ fn resolve_background_steam_command(
     }
 }
 
-/// Resolve `(install_dir, executable, game_working_dir)` for the game.
-///
-/// Errors if the game is not installed. The executable is resolved relative to
-/// the install dir unless it is absolute; the working dir honours an explicit
-/// `workingdir`, then the executable's parent, then the install dir.
-fn resolve_game_paths(ctx: &LaunchContext) -> std::result::Result<(PathBuf, PathBuf, PathBuf), LaunchError> {
-    let install_dir = PathBuf::from(
-        ctx.app.install_path
-            .clone()
-            .ok_or_else(|| LaunchError::new(LaunchErrorKind::GameData, format!("game {} is not installed", ctx.app.app_id)))?,
-    );
-
-    let exe_rel = ctx.launch_info.executable.replace('\\', "/");
-    let executable = if Path::new(&exe_rel).is_absolute() {
-        PathBuf::from(&exe_rel)
-    } else {
-        install_dir.join(&exe_rel)
-    };
-    let game_working_dir: PathBuf = ctx.launch_info.workingdir
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .map(|wd| install_dir.join(wd.replace('\\', "/")))
-        .or_else(|| executable.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| install_dir.clone());
-
-    Ok((install_dir, executable, game_working_dir))
-}
-
 #[cfg(test)]
 mod compat_path_tests {
     use super::*;
@@ -1249,7 +1218,7 @@ mod compat_path_tests {
         let master = PathBuf::from("/home/u/.config/Aurelia/master_steam_prefix/pfx");
         let got = game_compat_data_path(
             Path::new("/games"),
-            "123",
+            123,
             SteamMode::InWineRuntime,
             SteamPrefixMode::Shared,
             &master,
@@ -1267,7 +1236,7 @@ mod compat_path_tests {
         let master = PathBuf::from("/home/u/.config/Aurelia/master_steam_prefix/pfx");
         let got = game_compat_data_path(
             Path::new("/games"),
-            "123",
+            123,
             SteamMode::InWineRuntime,
             SteamPrefixMode::PerGame,
             &master,
@@ -1280,7 +1249,7 @@ mod compat_path_tests {
         let master = PathBuf::from("/m/pfx");
         let got = game_compat_data_path(
             Path::new("/games"),
-            "123",
+            123,
             SteamMode::Standalone,
             SteamPrefixMode::Shared,
             &master,
@@ -1294,7 +1263,7 @@ mod compat_path_tests {
         let master = PathBuf::from("/home/u/.config/Aurelia/master_steam_prefix");
         let got = game_compat_data_path(
             Path::new("/games"),
-            "123",
+            123,
             SteamMode::InWineRuntime,
             SteamPrefixMode::Shared,
             &master,

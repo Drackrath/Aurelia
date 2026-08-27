@@ -40,6 +40,40 @@ impl LaunchContext {
         }
         unsafe { f(&mut *self.verification_ptr) }
     }
+
+    /// Resolve `(install_dir, executable, working_dir)` for the game.
+    ///
+    /// Errors if the game is not installed. The executable is resolved relative
+    /// to the install dir unless it is absolute; the working dir honours an
+    /// explicit `workingdir`, then the executable's parent, then the install dir.
+    pub fn game_paths(
+        &self,
+    ) -> std::result::Result<(PathBuf, PathBuf, PathBuf), crate::launch::pipeline::LaunchError> {
+        use crate::launch::pipeline::{LaunchError, LaunchErrorKind};
+        let install_dir = PathBuf::from(self.app.install_path.clone().ok_or_else(|| {
+            LaunchError::new(
+                LaunchErrorKind::GameData,
+                format!("game {} is not installed", self.app.app_id),
+            )
+        })?);
+
+        let exe_rel = self.launch_info.executable.replace('\\', "/");
+        let executable = if std::path::Path::new(&exe_rel).is_absolute() {
+            PathBuf::from(&exe_rel)
+        } else {
+            install_dir.join(&exe_rel)
+        };
+        let working_dir = self
+            .launch_info
+            .workingdir
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .map(|wd| install_dir.join(wd.replace('\\', "/")))
+            .or_else(|| executable.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| install_dir.clone());
+
+        Ok((install_dir, executable, working_dir))
+    }
 }
 
 #[derive(Debug, Clone, Default)]
