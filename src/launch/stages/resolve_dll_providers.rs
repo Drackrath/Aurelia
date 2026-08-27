@@ -83,16 +83,17 @@ impl PipelineStage for ResolveDllProvidersStage {
             ctx.log_info("arch_detected", "Target executable architecture determined".into(), Some("ResolveDllProviders".into()), metadata);
         }
 
-        let (mut resolutions, scan_report) = resolver.resolve(
-            &game_exe_dir,
-            &resolved_runner,
-            &components,
-            &d3d12_policy,
-            &ctx.target_architecture,
-            custom_dxvk,
-            custom_vkd3d,
-            custom_vkd3d_proton,
-        );
+        let (mut resolutions, scan_report) =
+            resolver.resolve(&crate::launch::dll_provider_resolver::DllResolveRequest {
+                game_exe_dir: &game_exe_dir,
+                runner_path: &resolved_runner,
+                runner_components: &components,
+                d3d12_policy: &d3d12_policy,
+                target_arch: &ctx.target_architecture,
+                custom_dxvk_path: custom_dxvk,
+                custom_vkd3d_path: custom_vkd3d,
+                custom_vkd3d_proton_path: custom_vkd3d_proton,
+            });
 
         if !nvapi_enabled {
             for res in &mut resolutions {

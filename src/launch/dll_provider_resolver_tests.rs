@@ -14,7 +14,7 @@ fn test_dll_priority_game_local() {
     let components = crate::core::utils::RunnerComponents::default();
     let d3d12_policy = crate::core::models::D3D12ProviderPolicy::Auto;
     let arch = crate::core::models::ExecutableArchitecture::X86_64;
-    let (resolutions, _) = resolver.resolve(&game_dir, runner_path, &components, &d3d12_policy, &arch, None, None, None);
+    let (resolutions, _) = resolver.resolve(&DllResolveRequest { game_exe_dir: &game_dir, runner_path: runner_path, runner_components: &components, d3d12_policy: &d3d12_policy, target_arch: &arch, custom_dxvk_path: None, custom_vkd3d_path: None, custom_vkd3d_proton_path: None });
 
     let d3d9_res = resolutions.iter().find(|r| r.name == "d3d9").unwrap();
     assert_eq!(d3d9_res.chosen_provider, DllProvider::GameLocal);
@@ -33,7 +33,7 @@ fn test_dll_priority_system_fallback() {
     let components = crate::core::utils::RunnerComponents::default();
     let d3d12_policy = crate::core::models::D3D12ProviderPolicy::Auto;
     let arch = crate::core::models::ExecutableArchitecture::X86_64;
-    let (resolutions, _) = resolver.resolve(&game_dir, runner_path, &components, &d3d12_policy, &arch, None, None, None);
+    let (resolutions, _) = resolver.resolve(&DllResolveRequest { game_exe_dir: &game_dir, runner_path: runner_path, runner_components: &components, d3d12_policy: &d3d12_policy, target_arch: &arch, custom_dxvk_path: None, custom_vkd3d_path: None, custom_vkd3d_proton_path: None });
 
     for res in resolutions {
         if res.chosen_provider == DllProvider::System {
@@ -75,17 +75,17 @@ fn test_d3d12_provider_selection() {
     let arch = crate::core::models::ExecutableArchitecture::X86_64;
 
     // Case 1: Auto (Prefer Proton)
-    let (res, _) = resolver.resolve(game_dir, &runner_root, &components, &crate::core::models::D3D12ProviderPolicy::Auto, &arch, None, None, None);
+    let (res, _) = resolver.resolve(&DllResolveRequest { game_exe_dir: game_dir, runner_path: &runner_root, runner_components: &components, d3d12_policy: &crate::core::models::D3D12ProviderPolicy::Auto, target_arch: &arch, custom_dxvk_path: None, custom_vkd3d_path: None, custom_vkd3d_proton_path: None });
     let d3d12 = res.iter().find(|r| r.name == "d3d12").unwrap();
     assert_eq!(d3d12.chosen_path.as_ref().unwrap(), &proton_dll);
 
     // Case 2: Explicit Wine
-    let (res, _) = resolver.resolve(game_dir, &runner_root, &components, &crate::core::models::D3D12ProviderPolicy::Vkd3dWine, &arch, None, None, None);
+    let (res, _) = resolver.resolve(&DllResolveRequest { game_exe_dir: game_dir, runner_path: &runner_root, runner_components: &components, d3d12_policy: &crate::core::models::D3D12ProviderPolicy::Vkd3dWine, target_arch: &arch, custom_dxvk_path: None, custom_vkd3d_path: None, custom_vkd3d_proton_path: None });
     let d3d12 = res.iter().find(|r| r.name == "d3d12").unwrap();
     assert_eq!(d3d12.chosen_path.as_ref().unwrap(), &wine_dll);
 
     // Case 3: Explicit Proton
-    let (res, _) = resolver.resolve(game_dir, &runner_root, &components, &crate::core::models::D3D12ProviderPolicy::Vkd3dProton, &arch, None, None, None);
+    let (res, _) = resolver.resolve(&DllResolveRequest { game_exe_dir: game_dir, runner_path: &runner_root, runner_components: &components, d3d12_policy: &crate::core::models::D3D12ProviderPolicy::Vkd3dProton, target_arch: &arch, custom_dxvk_path: None, custom_vkd3d_path: None, custom_vkd3d_proton_path: None });
     let d3d12 = res.iter().find(|r| r.name == "d3d12").unwrap();
     assert_eq!(d3d12.chosen_path.as_ref().unwrap(), &proton_dll);
 }
@@ -101,7 +101,7 @@ fn test_fallback_reason_populated() {
     let resolver = DllProviderResolver::new();
     let tmp = tempdir().unwrap();
     let arch = crate::core::models::ExecutableArchitecture::X86_64;
-    let (res, _) = resolver.resolve(tmp.path(), tmp.path(), &crate::core::utils::RunnerComponents::default(), &crate::core::models::D3D12ProviderPolicy::Auto, &arch, None, None, None);
+    let (res, _) = resolver.resolve(&DllResolveRequest { game_exe_dir: tmp.path(), runner_path: tmp.path(), runner_components: &crate::core::utils::RunnerComponents::default(), d3d12_policy: &crate::core::models::D3D12ProviderPolicy::Auto, target_arch: &arch, custom_dxvk_path: None, custom_vkd3d_path: None, custom_vkd3d_proton_path: None });
     let d3d11 = res.iter().find(|r| r.name == "d3d11").unwrap();
     assert_eq!(d3d11.chosen_provider, DllProvider::None);
     assert!(d3d11.fallback_reason.is_some());
