@@ -11,7 +11,7 @@
 //! and removable, independent of Steam's `compatibilitytools.d`. The download/discovery
 //! lifecycle is shared with the other plugins (see [`crate::compat::plugin`]).
 
-use crate::compat::plugin::{self, PluginSpec};
+use crate::compat::plugin::{self, InstalledPlugin, PluginSpec};
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
@@ -25,17 +25,6 @@ static SPEC: PluginSpec = PluginSpec {
     root_marker: |p| p.join("toolmanifest.vdf").exists(),
     archive_marker_missing: "luxtorpeda archive did not contain a toolmanifest.vdf",
 };
-
-/// A luxtorpeda install discovered on disk.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct InstalledLux {
-    /// The release tag that was installed (from the stamped version file).
-    pub version: String,
-    /// The tool root (the directory containing `toolmanifest.vdf`).
-    pub root: PathBuf,
-    /// The executable Aurelia invokes (`<root>/luxtorpeda` unless the manifest says otherwise).
-    pub entry: PathBuf,
-}
 
 /// The directory Aurelia extracts the luxtorpeda payload into.
 pub fn plugin_dir() -> Result<PathBuf> {
@@ -74,17 +63,17 @@ fn parse_commandline(manifest: &str) -> Option<String> {
 
 /// Return the install in use, if any. A configured `custom` path (an externally-managed
 /// luxtorpeda) takes precedence over Aurelia's managed plugin directory.
-pub fn installed(custom: Option<&Path>) -> Option<InstalledLux> {
+pub fn installed(custom: Option<&Path>) -> Option<InstalledPlugin> {
     if let Some(custom) = custom {
         let root = find_tool_root(custom)?;
-        return Some(InstalledLux {
+        return Some(InstalledPlugin {
             version: "custom".to_string(),
             entry: entry_point(&root),
             root,
         });
     }
     let (version, root) = plugin::managed_install(&SPEC)?;
-    Some(InstalledLux {
+    Some(InstalledPlugin {
         version,
         entry: entry_point(&root),
         root,
