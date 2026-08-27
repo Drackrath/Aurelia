@@ -129,7 +129,9 @@ impl PipelineContext {
         stage: Option<String>,
         metadata: HashMap<String, String>,
     ) {
-        self.log_event(level, event_type, message, stage, metadata);
+        if let Some(logger) = &self.logger {
+            let _ = logger.log(level, event_type, message, stage, metadata);
+        }
     }
 
     /// Info-level [`PipelineContext::log_event`].
