@@ -6,15 +6,9 @@ use crate::commands::common::*;
 
 use anyhow::{bail, Context, Result};
 
-/// Best-effort detection of the platform whose depot is installed for a game, by
-/// looking for a Windows executable in its install directory: a Windows depot
-/// always ships a `.exe`, a native Linux/macOS build never does. Breadth-first so
-/// a Windows game's top-level `.exe` is found immediately; the walk is bounded so
-/// a large native install can't stall `list`. Returns `None` when the directory
-/// can't be read or the budget is exhausted before a verdict (the caller then
-/// leaves the platform unknown rather than guessing).
 /// Which platform payloads exist in an install dir: (linux, windows).
 /// A dual-depot install (both platforms in one dir) reports both.
+/// Partial verdict at budget exhaustion.
 pub(crate) fn detect_installed_platform_set(install_path: &str) -> Option<(bool, bool)> {
     let root = std::path::Path::new(install_path);
     if !root.is_dir() {
@@ -65,7 +59,13 @@ pub(crate) fn detect_installed_platform_set(install_path: &str) -> Option<(bool,
     Some((linux, windows))
 }
 
-/// Single verdict; exhausted budget stays unknown.
+/// Best-effort detection of the platform whose depot is installed for a game, by
+/// looking for a Windows executable in its install directory: a Windows depot
+/// always ships a `.exe`, a native Linux/macOS build never does. Breadth-first so
+/// a Windows game's top-level `.exe` is found immediately; the walk is bounded so
+/// a large native install can't stall `list`. Returns `None` when the directory
+/// can't be read or the budget is exhausted before a verdict (the caller then
+/// leaves the platform unknown rather than guessing).
 pub(crate) fn detect_installed_platform(install_path: &str) -> Option<String> {
     let root = std::path::Path::new(install_path);
     if !root.is_dir() {

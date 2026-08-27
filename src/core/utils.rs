@@ -1469,32 +1469,21 @@ fn find_sibling_dll(
     current_arch: &crate::core::models::ExecutableArchitecture,
     target_arch: &crate::core::models::ExecutableArchitecture,
 ) -> Option<PathBuf> {
-    let (current_tag, target_tag) = match (current_arch, target_arch) {
-        (crate::core::models::ExecutableArchitecture::X86_64, crate::core::models::ExecutableArchitecture::X86) => ("x86_64", "i386"),
-        (crate::core::models::ExecutableArchitecture::X86, crate::core::models::ExecutableArchitecture::X86_64) => ("i386", "x86_64"),
+    use crate::core::models::ExecutableArchitecture as Arch;
+    let flip = match (current_arch, target_arch) {
+        (Arch::X86_64, Arch::X86) => false,
+        (Arch::X86, Arch::X86_64) => true,
         _ => return None,
     };
 
     let path_str = path.to_string_lossy();
-    if path_str.contains(current_tag) {
-        let other_str = path_str.replace(current_tag, target_tag);
-        let other_path = PathBuf::from(other_str);
-        if other_path.exists() {
-            return Some(other_path);
-        }
-    }
-
-    // Also check for x64/x32 variant
-    let (current_tag2, target_tag2) = match (current_arch, target_arch) {
-        (crate::core::models::ExecutableArchitecture::X86_64, crate::core::models::ExecutableArchitecture::X86) => ("x64", "x32"),
-        (crate::core::models::ExecutableArchitecture::X86, crate::core::models::ExecutableArchitecture::X86_64) => ("x32", "x64"),
-        _ => return None,
-    };
-    if path_str.contains(current_tag2) {
-        let other_str = path_str.replace(current_tag2, target_tag2);
-        let other_path = PathBuf::from(other_str);
-        if other_path.exists() {
-            return Some(other_path);
+    for (tag64, tag32) in [("x86_64", "i386"), ("x64", "x32")] {
+        let (current_tag, target_tag) = if flip { (tag32, tag64) } else { (tag64, tag32) };
+        if path_str.contains(current_tag) {
+            let other_path = PathBuf::from(path_str.replace(current_tag, target_tag));
+            if other_path.exists() {
+                return Some(other_path);
+            }
         }
     }
 

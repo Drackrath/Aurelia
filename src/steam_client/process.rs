@@ -182,6 +182,22 @@ impl SteamClient {
         Some(String::from_utf8_lossy(&bytes).replace('\0', " "))
     }
 
+    /// Signal every process matching `pred`.
+    #[cfg(unix)]
+    fn sweep_proc_pids(signal: i32, mut pred: impl FnMut(&Path) -> bool) {
+        Self::scan_proc_pids(|pid_path, pid_str| {
+            if pred(pid_path) {
+                if let Ok(pid) = pid_str.parse::<i32>() {
+                    unsafe {
+                        libc::kill(pid, signal);
+                    }
+                }
+            }
+            // Never short-circuit: sweep every matching process.
+            None::<()>
+        });
+    }
+
     /// Terminate every wine process running inside `wineprefix` (identified by the
     /// prefix path appearing in the process environment). Used to stop a
     /// Proton/Wine game whose processes outlive the runner we spawned. Only call
@@ -191,18 +207,8 @@ impl SteamClient {
         let prefix_str = wineprefix.to_string_lossy().to_string();
         let signal = if force { libc::SIGKILL } else { libc::SIGTERM };
 
-        Self::scan_proc_pids(|pid_path, pid_str| {
-            if !Self::proc_environ(pid_path)?.contains(&prefix_str) {
-                return None;
-            }
-
-            if let Ok(pid) = pid_str.parse::<i32>() {
-                unsafe {
-                    libc::kill(pid, signal);
-                }
-            }
-            // Never short-circuit: sweep every matching process.
-            None::<()>
+        Self::sweep_proc_pids(signal, |pid_path| {
+            Self::proc_environ(pid_path).is_some_and(|env| env.contains(&prefix_str))
         });
     }
 
@@ -211,26 +217,14 @@ impl SteamClient {
         {
             let prefix_str = wineprefix.to_string_lossy().to_string();
 
-            Self::scan_proc_pids(|pid_path, pid_str| {
-                let cmdline = Self::proc_cmdline(pid_path)?;
-                // Kill steam.exe and steamwebhelper.exe processes in this prefix
-                if !cmdline.to_lowercase().contains("steam.exe")
-                    && !cmdline.to_lowercase().contains("steamwebhelper.exe")
-                {
-                    return None;
-                }
-
-                if !Self::proc_environ(pid_path)?.contains(&prefix_str) {
-                    return None;
-                }
-
-                if let Ok(pid) = pid_str.parse::<i32>() {
-                    unsafe {
-                        libc::kill(pid, libc::SIGTERM);
-                    }
-                }
-                // Never short-circuit: sweep every matching process.
-                None::<()>
+            // Kill steam.exe and steamwebhelper.exe processes in this prefix.
+            Self::sweep_proc_pids(libc::SIGTERM, |pid_path| {
+                let Some(cmdline) = Self::proc_cmdline(pid_path) else {
+                    return false;
+                };
+                let cmdline = cmdline.to_lowercase();
+                (cmdline.contains("steam.exe") || cmdline.contains("steamwebhelper.exe"))
+                    && Self::proc_environ(pid_path).is_some_and(|env| env.contains(&prefix_str))
             });
         }
         #[cfg(not(unix))]

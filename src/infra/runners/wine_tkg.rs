@@ -527,12 +527,6 @@ impl Runner for WineTkgRunner {
                (res.chosen_provider == crate::launch::dll_provider_resolver::DllProvider::Custom && !use_symlinks) ||
                (res.chosen_provider == crate::launch::dll_provider_resolver::DllProvider::Runner && res.name.contains("nvapi")) {
 
-                // Do not emit overrides for DLLs that are handled via internal capabilities
-                if res.chosen_provider == crate::launch::dll_provider_resolver::DllProvider::Internal {
-                     tracing::info!("Resolved DLL {} is handled internally (alias), skipping explicit override", res.name);
-                     continue;
-                }
-
                 // Ensure native wins for game-local or non-symlinked custom DLLs
                 if !dll_overrides.contains(&format!("{}=n", res.name)) {
                      tracing::info!("Adding native override for resolved DLL: {} (provider: {:?})", res.name, res.chosen_provider);
