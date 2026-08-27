@@ -1536,6 +1536,18 @@ pub fn cleanup_dll_symlinks(prefix: &Path) -> Result<()> {
     Ok(())
 }
 
+/// [`steam_wineprefix_for_game`] for one optional per-app config.
+pub fn wineprefix_for_game(
+    config: &crate::core::config::LauncherConfig,
+    app_id: u32,
+    user_config: Option<&crate::core::models::UserAppConfig>,
+) -> std::path::PathBuf {
+    let store: crate::core::models::UserConfigStore = user_config
+        .map(|c| std::collections::HashMap::from([(app_id, c.clone())]))
+        .unwrap_or_default();
+    steam_wineprefix_for_game(config, app_id, &store)
+}
+
 pub fn steam_wineprefix_for_game(
     config: &crate::core::config::LauncherConfig,
     app_id: u32,

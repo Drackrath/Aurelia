@@ -48,11 +48,11 @@ impl PipelineStage for ResolveDllProvidersStage {
 
         // Resolve WINEPREFIX for component detection
         let wineprefix = if let (Some(config), Some(app)) = (&ctx.launcher_config, &ctx.app) {
-            let mut store = std::collections::HashMap::new();
-            if let Some(user_config) = &ctx.user_config {
-                store.insert(app.app_id, user_config.clone());
-            }
-            Some(crate::core::utils::steam_wineprefix_for_game(config, app.app_id, &store))
+            Some(crate::core::utils::wineprefix_for_game(
+                config,
+                app.app_id,
+                ctx.user_config.as_ref(),
+            ))
         } else {
             None
         };

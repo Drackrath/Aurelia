@@ -952,16 +952,10 @@ impl Runner for WineTkgRunner {
 /// Wraps this game's per-app config (if any) in a single-entry `UserConfigStore`
 /// and resolves the prefix the same way the launcher does globally.
 fn effective_game_prefix(ctx: &LaunchContext) -> PathBuf {
-    let user_config_store: crate::core::models::UserConfigStore = ctx.user_config.as_ref().map(|c| {
-        let mut store = HashMap::new();
-        store.insert(ctx.app.app_id, c.clone());
-        store
-    }).unwrap_or_default().into();
-
-    crate::core::utils::steam_wineprefix_for_game(
+    crate::core::utils::wineprefix_for_game(
         &ctx.launcher_config,
         ctx.app.app_id,
-        &user_config_store,
+        ctx.user_config.as_ref(),
     )
 }
 

@@ -20,13 +20,10 @@ impl PipelineStage for PreparePrefixStage {
 
         // Post-runner prefix preparation: handle symlinks
         let app_id = runner_ctx.app.app_id;
-        let user_configs = ctx.user_config.iter()
-            .map(|c| (app_id, c.clone()))
-            .collect();
-        let prefix_path = crate::core::utils::steam_wineprefix_for_game(
+        let prefix_path = crate::core::utils::wineprefix_for_game(
             &runner_ctx.launcher_config,
             app_id,
-            &user_configs,
+            ctx.user_config.as_ref(),
         );
 
         if !use_symlinks {
