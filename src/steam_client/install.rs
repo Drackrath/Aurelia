@@ -244,17 +244,7 @@ impl SteamClient {
                 // To keep filtering, we re-parse or re-use the find_vdf logic.
                 // We'll re-parse here to stay strictly compliant with Task 2's request to call parse_pics_product_info.
                 if let Ok(vdf) = find_vdf_in_pics(appinfo_vdf_bytes) {
-                    let root_obj = vdf.as_obj().unwrap();
-                    let depots_val = if vdf.key() == "appinfo" || vdf.key() == appid.to_string() {
-                        root_obj.get("depots")
-                    } else {
-                        root_obj.get("depots").or_else(|| {
-                            root_obj
-                                .get("appinfo")
-                                .and_then(|v| v.as_obj())
-                                .and_then(|o| o.get("depots"))
-                        })
-                    };
+                    let depots_val = pics_depots_value(&vdf);
 
                     // depots -> branches -> public -> buildid
                     build_id = depots_val
