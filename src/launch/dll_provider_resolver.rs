@@ -180,9 +180,7 @@ impl DllProviderResolver {
             runner_components,
             d3d12_policy,
             target_arch,
-            custom_dxvk_path,
-            custom_vkd3d_path,
-            custom_vkd3d_proton_path,
+            ..
         } = *req;
         let mut candidates = Vec::new();
         let dll_filename = format!("{}.dll", dll_name);

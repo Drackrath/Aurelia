@@ -34,13 +34,12 @@ pub(crate) fn reclassify_after_grace(child: &mut std::process::Child) -> Readine
     }
 }
 
-/// Per-launch Steam integration facts, derived once.
+/// Steam integration facts, derived per phase.
 struct SteamLayout {
     library_root: PathBuf,
     steam_mode: SteamMode,
     steam_mode_source: &'static str,
     steam_prefix_mode: crate::core::models::SteamPrefixMode,
-    master_wine_prefix: PathBuf,
     compat_data_path: PathBuf,
     game_prefix: PathBuf,
 }
@@ -74,7 +73,6 @@ impl SteamLayout {
             steam_mode,
             steam_mode_source,
             steam_prefix_mode,
-            master_wine_prefix,
             compat_data_path,
             game_prefix,
         }
@@ -85,19 +83,19 @@ impl SteamLayout {
 impl Runner for WineTkgRunner {
     fn name(&self) -> &str { "Wine-TKG" }
     async fn prepare_prefix(&self, ctx: &LaunchContext) -> std::result::Result<(), LaunchError> {
-        let layout = SteamLayout::derive(ctx);
-        let library_root = layout.library_root.clone();
-        let steam_mode = layout.steam_mode;
-        let runtime_source = layout.steam_mode_source;
+        let SteamLayout {
+            library_root,
+            steam_mode,
+            steam_mode_source: runtime_source,
+            steam_prefix_mode,
+            compat_data_path,
+            game_prefix: effective_game_prefix,
+        } = SteamLayout::derive(ctx);
         let use_steam_runtime = steam_mode == SteamMode::InWineRuntime;
-        let steam_prefix_mode = layout.steam_prefix_mode.clone();
-
-        let effective_game_prefix = layout.game_prefix.clone();
         std::fs::create_dir_all(&effective_game_prefix)
             .map_err(|e| LaunchError::new(LaunchErrorKind::Permission, format!("failed creating {}", effective_game_prefix.display())).with_source(anyhow!(e)))?;
 
         // Proton's `pfx.lock` needs existing compatdata.
-        let compat_data_path = layout.compat_data_path.clone();
         std::fs::create_dir_all(&compat_data_path)
             .map_err(|e| LaunchError::new(LaunchErrorKind::Permission, format!("failed creating {}", compat_data_path.display())).with_source(anyhow!(e)))?;
 
@@ -423,10 +421,13 @@ impl Runner for WineTkgRunner {
         let app_id_str = ctx.app.app_id.to_string();
 
         let layout = SteamLayout::derive(ctx);
-        let library_root = layout.library_root.clone();
-        let steam_mode = layout.steam_mode;
-        let compat_data_path = layout.compat_data_path.clone();
-        let effective_game_prefix = layout.game_prefix.clone();
+        let SteamLayout {
+            ref library_root,
+            steam_mode,
+            ref compat_data_path,
+            game_prefix: ref effective_game_prefix,
+            ..
+        } = layout;
 
         env.insert("SteamAppId".to_string(), app_id_str.clone());
         env.insert("SteamGameId".to_string(), app_id_str.clone());

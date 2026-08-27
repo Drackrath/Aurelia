@@ -1670,6 +1670,7 @@ pub(crate) fn parse_name_from_acf(raw: &str) -> Option<String> {
 }
 
 /// Read `LastOwner` (SteamID64) from an appmanifest; `None` when absent or `0`.
+#[cfg(test)]
 pub(crate) fn parse_last_owner_from_acf(raw: &str) -> Option<u64> {
     crate::core::acf::parse_app_manifest(raw).last_owner
 }
