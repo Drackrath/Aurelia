@@ -14,9 +14,7 @@ pub(crate) async fn cmd_config_show(_json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Shared view-or-set skeleton: load the launcher config and, when `value` is
-/// given, apply `mutate` and save. Returns the (possibly updated) config and
-/// whether it was written.
+/// Load config; optionally mutate, save.
 async fn view_or_set<T>(
     value: Option<T>,
     mutate: impl FnOnce(&mut aurelia::core::config::LauncherConfig, T),

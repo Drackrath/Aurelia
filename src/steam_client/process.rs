@@ -168,15 +168,14 @@ impl SteamClient {
         None
     }
 
-    /// A process's environment as one lossily-decoded string, or `None` if
-    /// unreadable (typically: not ours).
+    /// Lossily-decoded environ, if readable.
     #[cfg(unix)]
     fn proc_environ(pid_path: &Path) -> Option<String> {
         let bytes = std::fs::read(pid_path.join("environ")).ok()?;
         Some(String::from_utf8_lossy(&bytes).into_owned())
     }
 
-    /// A process's cmdline, NUL separators replaced by spaces.
+    /// Cmdline with NULs as spaces.
     #[cfg(unix)]
     fn proc_cmdline(pid_path: &Path) -> Option<String> {
         let bytes = std::fs::read(pid_path.join("cmdline")).ok()?;

@@ -745,8 +745,7 @@ impl CloudClient {
 
     /// Download one cloud file to `local_path` and stamp its mtime to the cloud's,
     /// so the next sync sees the two as in step rather than locally modified.
-    /// Apply a planned download: fetch the cloud copy, then record the new
-    /// baseline fingerprint and outcome bookkeeping.
+    /// Download and record baseline/outcome.
     async fn apply_download(
         &self,
         appid: u32,
@@ -767,8 +766,7 @@ impl CloudClient {
         }
     }
 
-    /// Apply a planned upload: push the local copy, then record the new
-    /// baseline fingerprint and outcome bookkeeping.
+    /// Upload and record baseline/outcome.
     async fn apply_upload(
         &self,
         appid: u32,

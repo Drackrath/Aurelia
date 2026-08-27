@@ -1,8 +1,6 @@
 //! `plugins` command handlers (luxtorpeda, umu-launcher).
 //!
-//! Both plugins expose the identical command surface (enable/disable, install,
-//! status, path, uninstall); one generic handler set is driven by a
-//! [`PluginCmd`] descriptor per plugin so wording and behavior can't drift.
+//! One generic handler per [`PluginCmd`].
 
 use crate::commands::common::*;
 
@@ -19,23 +17,23 @@ type InstallFn =
 
 /// Command-side description of an optional plugin.
 struct PluginCmd {
-    /// CLI command name (`aurelia <slug> ...`), also the config-path noun.
+    /// CLI command name.
     slug: &'static str,
     /// Name leading a sentence ("Luxtorpeda", "umu-launcher").
     name: &'static str,
     /// Project name mid-sentence ("luxtorpeda", "umu-launcher").
     project: &'static str,
-    /// `config game` flag that pins a game to this plugin.
+    /// Pinning `config game` flag.
     pin_flag: &'static str,
-    /// Subject of the auto-download hint in `enable` output.
+    /// Auto-download hint subject.
     download_subject: &'static str,
     /// Header line for `status`.
     status_header: &'static str,
-    /// Extra `status` note shown on Linux, if any.
+    /// Optional Linux `status` note.
     linux_note: Option<&'static str>,
     /// JSON key for the enabled flag.
     enabled_key: &'static str,
-    /// Reason text for a rejected `path` argument.
+    /// Rejected-path reason text.
     bad_path_reason: &'static str,
     enabled: fn(&LauncherConfig) -> bool,
     set_enabled: fn(&mut LauncherConfig, bool),
@@ -120,7 +118,7 @@ async fn plugin_toggle(p: &PluginCmd, enable: bool, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// `<plugin> install|update`: download the latest release into Aurelia's data dir.
+/// `<plugin> install|update`: download latest release.
 async fn plugin_install(p: &PluginCmd, json: bool) -> Result<()> {
     let cfg = load_launcher_config().await?;
     if let Some(path) = (p.path_of)(&cfg) {
@@ -155,7 +153,7 @@ async fn plugin_install(p: &PluginCmd, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// `<plugin> status`: report enabled state and installed version.
+/// `<plugin> status`: report plugin state.
 async fn plugin_status(p: &PluginCmd, json: bool) -> Result<()> {
     let cfg = load_launcher_config().await?;
     let custom_path = (p.path_of)(&cfg);
@@ -195,7 +193,7 @@ async fn plugin_status(p: &PluginCmd, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// `<plugin> path`: set, show, or clear the external install path.
+/// `<plugin> path`: set/show/clear custom path.
 async fn plugin_path(p: &PluginCmd, path: Option<String>, clear: bool, json: bool) -> Result<()> {
     let mut cfg = load_launcher_config().await?;
 
@@ -203,9 +201,7 @@ async fn plugin_path(p: &PluginCmd, path: Option<String>, clear: bool, json: boo
         (p.set_path)(&mut cfg, None);
         cfg.save().await.context("failed saving launcher config")?;
     } else if let Some(new_path) = path {
-        // Reject anything that isn't actually an install of this plugin, so a typo
-        // can't silently disable the managed download and then fail only at launch
-        // time.
+        // Reject paths without a plugin install.
         if (p.installed)(Some(Path::new(&new_path))).is_none() {
             anyhow::bail!("'{new_path}' is not a {} install ({})", p.slug, p.bad_path_reason);
         }

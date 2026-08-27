@@ -312,8 +312,7 @@ pub(crate) async fn cmd_move(
     Ok(())
 }
 
-/// Shared body of `relink`/`import`: run a library-mutating operation with
-/// Steam stopped, then report the resolved install path uniformly.
+/// Steam-guarded relink/import shared body.
 async fn steam_guarded_relocate<F, Fut>(
     app_id: u32,
     library: PathBuf,
@@ -411,8 +410,7 @@ pub(crate) async fn cmd_available(app_id: u32, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Depot→manifest map as a JSON object with stringified depot ids (JSON has no
-/// integer keys), ordered so output is stable across runs.
+/// Stable JSON map, stringified keys.
 fn manifests_json(map: &std::collections::HashMap<u32, u64>) -> std::collections::BTreeMap<String, u64> {
     map.iter().map(|(d, m)| (d.to_string(), *m)).collect()
 }

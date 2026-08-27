@@ -1030,8 +1030,7 @@ impl From<PlatformArg> for DepotPlatform {
     }
 }
 
-/// `config game` flags, grouped so the handler takes one struct instead of 14
-/// loose parameters.
+/// Grouped `config game` flags.
 #[derive(clap::Args)]
 pub(crate) struct GameConfigArgs {
     pub(crate) app_id: u32,

@@ -432,8 +432,7 @@ pub async fn force_reconnect() -> SessionStatus {
     status_after(true).await
 }
 
-/// Shared body of [`session_status`] / [`force_reconnect`]: optionally invalidate,
-/// ensure the session, then report the slot's health.
+/// Optionally invalidate, then report health.
 async fn status_after(invalidate: bool) -> SessionStatus {
     let state = init_state();
     if invalidate {

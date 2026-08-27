@@ -29,8 +29,7 @@ fn evidence_missing_suffix(meta: &EvidenceScanMetadata) -> &'static str {
     }
 }
 
-/// Shared body of Invariants B/C: warn (under `code`) for every unexpected
-/// native override of `dlls` and for a `WINEDLLPATH` containing `path_needle`.
+/// Shared Invariant B/C native-override check.
 fn check_unexpected_native(
     spec: &crate::infra::runners::CommandSpec,
     dlls: &[&str],

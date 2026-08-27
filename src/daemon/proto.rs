@@ -63,10 +63,10 @@ pub async fn read_frame<R: AsyncRead + Unpin>(
     Ok(Some((channel, buf)))
 }
 
-/// The write half of a connection, shared between concurrent frame writers.
+/// Write half shared between writers.
 pub type SharedWriter<W> = std::sync::Arc<tokio::sync::Mutex<W>>;
 
-/// Split a stream and wrap its write half for shared use.
+/// Split; share the write half.
 pub fn split_shared<S>(
     stream: S,
 ) -> (tokio::io::ReadHalf<S>, SharedWriter<tokio::io::WriteHalf<S>>)
@@ -77,7 +77,7 @@ where
     (reader, std::sync::Arc::new(tokio::sync::Mutex::new(writer)))
 }
 
-/// Lock the shared writer and send one frame.
+/// Lock writer; send one frame.
 pub async fn send_frame<W: AsyncWrite + Unpin>(
     writer: &SharedWriter<W>,
     channel: u8,

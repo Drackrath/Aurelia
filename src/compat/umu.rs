@@ -10,8 +10,7 @@
 //! dir when the user enables the feature and a game is actually routed through it.
 //!
 //! The payload lives under `~/.config/Aurelia/plugins/umu` so it is self-contained and
-//! removable. The download/discovery lifecycle is shared with the other plugins (see
-//! [`crate::compat::plugin`]).
+//! removable. Lifecycle shared via [`crate::compat::plugin`].
 
 use crate::compat::plugin::{self, InstalledPlugin, PluginSpec};
 use anyhow::{Context, Result};

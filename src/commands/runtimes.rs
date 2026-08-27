@@ -166,8 +166,7 @@ pub(crate) async fn cmd_proton_default(version: String, json: bool) -> Result<()
     Ok(())
 }
 
-/// Load the launcher config, refusing early (with an actionable message) when
-/// no Steam-runtime runner is configured. `gerund` names the attempted action.
+/// Config, refusing when runner unset.
 async fn steam_runtime_config(gerund: &str) -> Result<aurelia::core::config::LauncherConfig> {
     let config = load_launcher_config().await?;
     if config.steam_runtime_runner.as_os_str().is_empty() {
