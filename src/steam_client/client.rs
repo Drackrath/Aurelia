@@ -54,10 +54,7 @@ impl SteamClient {
     /// proactively. Uses `GetFamilyGroupForUser` — a single cheap service method —
     /// bounded by an explicit timeout so a dead socket is detected promptly.
     pub async fn probe_alive(&self) -> Result<()> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
         let mut req = CFamilyGroups_GetFamilyGroupForUser_Request::new();
         req.set_steamid(u64::from(connection.steam_id()));
         let _: CFamilyGroups_GetFamilyGroupForUser_Response =
@@ -70,11 +67,7 @@ impl SteamClient {
 
     /// Build a Steam Cloud client over the current connection (for save sync).
     pub fn cloud_client(&self) -> Result<crate::library::cloud_sync::CloudClient> {
-        let connection = self
-            .connection
-            .as_ref()
-            .cloned()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection_owned()?;
         Ok(crate::library::cloud_sync::CloudClient::new(connection))
     }
 
@@ -93,10 +86,7 @@ impl SteamClient {
     }
 
     pub async fn get_app_ticket(&self, appid: u32) -> Result<Vec<u8>> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
 
         let mut request = CMsgClientGetAppOwnershipTicket::new();
         request.set_app_id(appid);
@@ -116,10 +106,7 @@ impl SteamClient {
 
     /// Request an encrypted app ticket.
     pub async fn request_encrypted_app_ticket(&self, appid: u32) -> Result<EncryptedTicketOutcome> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
 
         let mut request = CMsgClientRequestEncryptedAppTicket::new();
         request.set_app_id(appid);

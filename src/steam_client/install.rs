@@ -36,10 +36,7 @@ impl SteamClient {
     /// `ctx` is folded into the request-failure error message so callers keep
     /// their original, distinct context strings.
     async fn fetch_appinfo_buffer(&self, appid: u32, ctx: &'static str) -> Result<Vec<u8>> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
 
         let mut request = CMsgClientPICSProductInfoRequest::new();
         request
@@ -186,11 +183,7 @@ impl SteamClient {
         branch: Option<String>,
         shared_state: Arc<std::sync::RwLock<crate::core::models::DownloadState>>,
     ) -> Result<Receiver<DownloadProgress>> {
-        let connection = self
-            .connection
-            .as_ref()
-            .cloned()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection_owned()?;
 
         let cfg = load_launcher_config().await?;
         // Install into the caller-chosen library (a drive/location picked in the
@@ -792,11 +785,7 @@ impl SteamClient {
         dest: &std::path::Path,
         shared_state: Arc<std::sync::RwLock<crate::core::models::DownloadState>>,
     ) -> anyhow::Result<u64> {
-        let connection = self
-            .connection
-            .as_ref()
-            .cloned()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection_owned()?;
 
         let hosts = self.get_content_servers(connection.cell_id()).await?;
         let key = self.get_depot_key(app_id, depot_id).await

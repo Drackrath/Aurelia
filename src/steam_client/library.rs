@@ -6,10 +6,7 @@ use super::*;
 
 impl SteamClient {
     pub async fn fetch_owned_games(&mut self) -> Result<Vec<OwnedGame>> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
 
         let request = CPlayer_GetOwnedGames_Request {
             steamid: Some(u64::from(connection.steam_id())),
@@ -49,10 +46,7 @@ impl SteamClient {
     /// account does **not** itself own. Returns an empty list if the account is not
     /// part of a family group. These may or may not be installed locally.
     pub async fn fetch_family_shared_apps(&self) -> Result<Vec<SharedApp>> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
         let my_steamid = u64::from(connection.steam_id());
 
         // 1. Resolve the family group this account belongs to.
@@ -178,10 +172,7 @@ impl SteamClient {
     }
 
     pub(crate) async fn remote_manifest_ids(&self, appid: u32, branch: &str) -> Result<HashMap<u64, u64>> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
         SteamClient::remote_manifest_ids_static(connection, appid, branch).await
     }
 
@@ -218,10 +209,7 @@ impl SteamClient {
 
     /// Fetch one app's raw PICS product-info buffer (usually *binary* VDF).
     async fn fetch_pics_buffer(&self, appid: u32, request_context: &'static str) -> Result<Vec<u8>> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
 
         let mut request = CMsgClientPICSProductInfoRequest::new();
         request
@@ -342,10 +330,7 @@ impl SteamClient {
         if app_ids.is_empty() {
             return Ok(Vec::new());
         }
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
 
         let mut data = StoreBrowseItemDataRequest::new();
         data.set_include_basic_info(true);

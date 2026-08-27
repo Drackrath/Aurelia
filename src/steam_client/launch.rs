@@ -165,10 +165,7 @@ impl SteamClient {
 
         if cloud_enabled {
             let client = CloudClient::new(
-                self.connection
-                    .as_ref()
-                    .cloned()
-                    .context("steam connection not initialized")?,
+                self.require_connection_owned()?,
             );
             let remote_root = default_cloud_root(client.steam_id(), app.app_id)?.join("remote");
             // `%Win*%` cloud roots point inside the game's Proton prefix; without it
@@ -334,11 +331,7 @@ impl SteamClient {
         verify_mode: bool,
         shared_state: Arc<std::sync::RwLock<crate::core::models::DownloadState>>,
     ) -> Result<Receiver<DownloadProgress>> {
-        let connection = self
-            .connection
-            .as_ref()
-            .cloned()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection_owned()?;
 
         let install_root = self.install_root_for_app(appid).await?;
         let manifest_path = self.appmanifest_path(appid).await?;

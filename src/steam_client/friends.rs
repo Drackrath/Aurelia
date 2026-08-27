@@ -306,10 +306,7 @@ impl SteamClient {
     /// is a raw EPersonaState (1 = online, 7 = invisible); `need_persona_response`
     /// asks Steam to push the friends' persona state in reply.
     pub async fn announce_persona(&self, persona_state: u32) -> Result<()> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
         let mut status = CMsgClientChangeStatus::new();
         status.set_persona_state(persona_state);
         status.set_need_persona_response(true);
@@ -336,10 +333,7 @@ impl SteamClient {
     /// fire-and-forget: the responses arrive asynchronously as
     /// `CMsgClientPersonaState` messages. A no-op for an empty id list.
     pub async fn request_friend_data(&self, ids: &[u64]) -> Result<()> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
         if ids.is_empty() {
             return Ok(());
         }
@@ -405,11 +399,7 @@ impl SteamClient {
     pub async fn run_friends_watcher(&self, roster: Arc<RwLock<Roster>>) -> Result<()> {
         // Keep a local clone of the connection alive: the streams returned by
         // `on::<T>()` are tied to the connection value's lifetime.
-        let connection = self
-            .connection
-            .as_ref()
-            .cloned()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection_owned()?;
         let mut friends_stream = connection.on::<CMsgClientFriendsList>();
         let mut persona_stream = connection.on::<CMsgClientPersonaState>();
 
@@ -468,11 +458,7 @@ impl SteamClient {
     /// sorted by persona name (None last) then SteamID64.
     pub async fn collect_friends(&self, wait: std::time::Duration) -> Result<Vec<Friend>> {
         // Keep the connection clone alive for the duration of the streams.
-        let connection = self
-            .connection
-            .as_ref()
-            .cloned()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection_owned()?;
         // Only the persona stream is needed: the friends list itself is recovered
         // from `rest` below, not awaited live.
         let mut persona_stream = connection.on::<CMsgClientPersonaState>();
@@ -509,10 +495,7 @@ impl SteamClient {
     /// Send a friend request to `steam_id`. Waits for Steam's response and reports
     /// the resolved account (and its display name) on success.
     pub async fn add_friend(&self, steam_id: u64) -> Result<AddedFriend> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
         let mut req = CMsgClientAddFriend::new();
         req.set_steamid_to_add(steam_id);
 
@@ -538,10 +521,7 @@ impl SteamClient {
     /// Remove a friend, or cancel/decline a pending request, by SteamID64.
     /// Fire-and-forget — Steam sends no acknowledgement.
     pub async fn remove_friend(&self, steam_id: u64) -> Result<()> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
         let mut req = CMsgClientRemoveFriend::new();
         req.set_friendid(steam_id);
         connection
