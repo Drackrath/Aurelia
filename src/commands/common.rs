@@ -18,7 +18,10 @@ use aurelia::steam_client::{SharedApp, SteamClient};
 pub(crate) fn print_json<T: serde::Serialize + ?Sized>(value: &T) {
     match serde_json::to_string_pretty(value) {
         Ok(s) => cli_println!("{s}"),
-        Err(_) => cli_println!("{{}}"),
+        Err(e) => {
+            cli_eprintln!("failed serializing JSON output: {e}");
+            cli_println!("{{}}");
+        }
     }
 }
 

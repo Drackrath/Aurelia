@@ -177,7 +177,7 @@ pub(crate) async fn cmd_info(
     let mut extended_by_id: std::collections::HashMap<u32, ExtendedInfo> =
         std::collections::HashMap::new();
     if extended {
-        match reqwest::Client::builder().user_agent("aurelia/0.1").build() {
+        match aurelia::core::net::steam_web_client() {
             Ok(http) => {
                 for &id in &app_ids {
                     if !base.contains_key(&id) {

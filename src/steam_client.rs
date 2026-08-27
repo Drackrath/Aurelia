@@ -1265,11 +1265,7 @@ pub fn parse_pics_product_info(buffer: &[u8]) -> Result<HashMap<u64, u64>> {
 /// [`extract_manifest_id_robust`]. Shared by the text and binary parse paths.
 fn depot_map_from_vdf_root(root: &steam_vdf_parser::Value) -> HashMap<u64, u64> {
     let mut depot_map = HashMap::new();
-    let depots_val = root.get("depots").or_else(|| {
-        root.get("appinfo")
-            .and_then(|v| v.as_obj())
-            .and_then(|o| o.get("depots"))
-    });
+    let depots_val = pics_app_section(root).get("depots");
 
     if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
         for (key, value) in depots.iter() {

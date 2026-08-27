@@ -267,10 +267,13 @@ impl SteamClient {
 
         // Preserve existing manifest
         let (last_owner, beta_key) = match std::fs::read_to_string(path) {
-            Ok(existing) => (
-                parse_last_owner_from_acf(&existing).unwrap_or(0),
-                Some(parse_active_branch_from_acf(&existing)).filter(|b| b != "public"),
-            ),
+            Ok(existing) => {
+                let parsed = crate::core::acf::parse_app_manifest(&existing);
+                (
+                    parsed.last_owner.unwrap_or(0),
+                    Some(parsed.active_branch).filter(|b| b != "public"),
+                )
+            }
             Err(_) => (0, None),
         };
 

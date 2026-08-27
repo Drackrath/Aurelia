@@ -65,11 +65,36 @@ pub(crate) fn detect_installed_platform_set(install_path: &str) -> Option<(bool,
     Some((linux, windows))
 }
 
-/// Single-platform verdict over [`detect_installed_platform_set`]: any Windows
-/// payload wins (a dual-depot install launches through Proton), else Linux.
+/// Single verdict; exhausted budget stays unknown.
 pub(crate) fn detect_installed_platform(install_path: &str) -> Option<String> {
-    detect_installed_platform_set(install_path)
-        .map(|(_, windows)| if windows { "windows" } else { "linux" }.to_string())
+    let root = std::path::Path::new(install_path);
+    if !root.is_dir() {
+        return None;
+    }
+    let mut queue = std::collections::VecDeque::from([root.to_path_buf()]);
+    let mut budget = 100_000usize;
+    while let Some(dir) = queue.pop_front() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if budget == 0 {
+                return None;
+            }
+            budget -= 1;
+            let path = entry.path();
+            if path.is_dir() {
+                queue.push_back(path);
+            } else if path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
+            {
+                return Some("windows".to_string());
+            }
+        }
+    }
+    Some("linux".to_string())
 }
 
 pub(crate) async fn cmd_list(
