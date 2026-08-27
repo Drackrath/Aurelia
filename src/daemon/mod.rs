@@ -423,17 +423,22 @@ async fn status_from_slot(slot: &Slot) -> SessionStatus {
 /// that hasn't been tried yet — but never re-logging-on a session that is already up
 /// or a token already known to be bad.
 pub async fn session_status() -> SessionStatus {
-    let state = init_state();
-    state.ensure_session().await;
-    let slot = state.slot.read().await;
-    status_from_slot(&slot).await
+    status_after(false).await
 }
 
 /// Force the shared session to be torn down and re-established from the stored token
 /// (e.g. after the live connection dropped). Returns the resulting status.
 pub async fn force_reconnect() -> SessionStatus {
+    status_after(true).await
+}
+
+/// Shared body of [`session_status`] / [`force_reconnect`]: optionally invalidate,
+/// ensure the session, then report the slot's health.
+async fn status_after(invalidate: bool) -> SessionStatus {
     let state = init_state();
-    state.invalidate().await;
+    if invalidate {
+        state.invalidate().await;
+    }
     state.ensure_session().await;
     let slot = state.slot.read().await;
     status_from_slot(&slot).await

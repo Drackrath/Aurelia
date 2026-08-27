@@ -1,12 +1,11 @@
 //! Daemon server: accept forwarded commands and run them against the shared session.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, Result};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 
 use super::transport::{self, Listener};
 use super::{proto, Header};
@@ -126,7 +125,7 @@ pub async fn run_server() -> Result<()> {
 
 /// The write half of a connection, shared between the exit-frame writer and the
 /// background stdout/stderr pump.
-type SharedWriter<W> = Arc<Mutex<W>>;
+use proto::SharedWriter;
 
 /// Read the opening frame and parse the argv header. The first frame on a connection
 /// must be the [`proto::C_HEADER`] frame carrying the request's argv.
@@ -157,8 +156,7 @@ where
                 Stream::Stdout => proto::C_STDOUT,
                 Stream::Stderr => proto::C_STDERR,
             };
-            let mut w = writer.lock().await;
-            if proto::write_frame(&mut *w, ch, &chunk.bytes).await.is_err() {
+            if proto::send_frame(&writer, ch, &chunk.bytes).await.is_err() {
                 break;
             }
         }
@@ -211,8 +209,7 @@ where
     // Count this request as in-flight so the upgrade watcher won't restart mid-run.
     let _inflight = InflightGuard::new();
 
-    let (mut reader, writer) = tokio::io::split(stream);
-    let writer = Arc::new(Mutex::new(writer));
+    let (mut reader, writer) = proto::split_shared(stream);
 
     let argv = read_header(&mut reader).await?;
 
