@@ -342,20 +342,14 @@ impl SteamClient {
             None => self.resolve_install_game_name(appid).await,
         };
         tokio::task::spawn(async move {
+            // No PICS pre-sum here; `on_manifest` fills the total per depot.
             if let Ok(mut state) = shared_state_clone.write() {
-                state.is_downloading = true;
-                state.is_paused = false;
-                state.app_id = appid;
-                state.app_name = game_name.clone();
-                state.downloaded_bytes = 0;
-                // Reset the byte counters the progress reporter reads so a previous
-                // operation's totals don't leak in. The whole-app total has no PICS
-                // pre-sum here; `on_manifest` fills it in as each depot is fetched.
-                state.total_bytes = 0;
-                state.depot_id = 0;
-                state.depot_downloaded_bytes = 0;
-                state.depot_total_bytes = 0;
-                state.status_text = format!("Preparing operation for {}...", game_name);
+                state.begin(
+                    appid,
+                    game_name.clone(),
+                    0,
+                    format!("Preparing operation for {}...", game_name),
+                );
             }
 
             let _ = tx

@@ -368,17 +368,15 @@ impl SteamClient {
                 })
                 .await;
 
-            // Update shared state for the start of the download
+            // Whole-app total (all selected depots), so progress is reported
+            // against the full install size, not just the current depot.
             if let Ok(mut state) = shared_state_clone.write() {
-                state.is_downloading = true;
-                state.is_paused = false;
-                state.app_id = appid;
-                state.app_name = game_name.clone();
-                state.downloaded_bytes = 0;
-                // Whole-app total (all selected depots), so progress is reported against
-                // the full install size rather than just the current depot.
-                state.total_bytes = grand_total_bytes;
-                state.status_text = format!("Initializing download for {}...", game_name);
+                state.begin(
+                    appid,
+                    game_name.clone(),
+                    grand_total_bytes,
+                    format!("Initializing download for {}...", game_name),
+                );
             }
 
             // Register the install start with Steam: write an "update required"

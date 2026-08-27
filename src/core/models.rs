@@ -312,6 +312,22 @@ pub struct DownloadState {
     pub abort_signal: Arc<AtomicBool>,
 }
 
+impl DownloadState {
+    /// Reset all counters for a new operation.
+    pub fn begin(&mut self, app_id: u32, app_name: String, total_bytes: u64, status_text: String) {
+        self.is_downloading = true;
+        self.is_paused = false;
+        self.app_id = app_id;
+        self.app_name = app_name;
+        self.downloaded_bytes = 0;
+        self.total_bytes = total_bytes;
+        self.depot_id = 0;
+        self.depot_downloaded_bytes = 0;
+        self.depot_total_bytes = 0;
+        self.status_text = status_text;
+    }
+}
+
 #[derive(Debug, serde::Deserialize)]
 pub struct AppInfoRoot {
     #[serde(default)]
