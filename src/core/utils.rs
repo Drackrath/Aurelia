@@ -695,23 +695,7 @@ fn detect_dxvk(root: &Path, prefix: Option<&Path>) -> Option<ComponentInfo> {
     }
 
     // Legacy/Proton fallback
-    let bundled_dlls = [
-        "files/lib64/wine/dxvk/d3d11.dll",
-        "files/lib/wine/dxvk/d3d11.dll",
-        "dist/lib64/wine/dxvk/d3d11.dll",
-        "dist/lib/wine/dxvk/d3d11.dll",
-        "lib64/wine/dxvk/d3d11.dll",
-        "lib/wine/dxvk/d3d11.dll",
-    ];
-    if let Some(info) = check_bundled(
-        root,
-        &bundled_dlls,
-        &[
-            "files/share/dxvk/version",
-            "dist/share/dxvk/version",
-            "share/dxvk/version",
-        ],
-    ) {
+    if let Some(info) = check_bundled_legacy(root, "dxvk", "d3d11.dll") {
         return Some(info);
     }
 
@@ -721,7 +705,7 @@ fn detect_dxvk(root: &Path, prefix: Option<&Path>) -> Option<ComponentInfo> {
             "drive_c/windows/system32/d3d11.dll",
             "drive_c/windows/syswow64/d3d11.dll",
         ];
-        if let Some(info) = check_prefix(pfx, &prefix_dlls, "DXVK") {
+        if let Some(info) = check_prefix(pfx, &prefix_dlls) {
             return Some(info);
         }
     }
@@ -749,42 +733,14 @@ fn detect_vkd3d_proton(root: &Path, prefix: Option<&Path>) -> Option<ComponentIn
     }
 
     // Legacy/Proton fallback
-    let bundled_dlls = [
-        "files/lib64/wine/vkd3d-proton/d3d12.dll",
-        "files/lib/wine/vkd3d-proton/d3d12.dll",
-        "dist/lib64/wine/vkd3d-proton/d3d12.dll",
-        "dist/lib/wine/vkd3d-proton/d3d12.dll",
-        "lib64/wine/vkd3d-proton/d3d12.dll",
-        "lib/wine/vkd3d-proton/d3d12.dll",
-    ];
-    if let Some(info) = check_bundled(
-        root,
-        &bundled_dlls,
-        &[
-            "files/share/vkd3d-proton/version",
-            "dist/share/vkd3d-proton/version",
-            "share/vkd3d-proton/version",
-        ],
-    ) {
+    if let Some(info) = check_bundled_legacy(root, "vkd3d-proton", "d3d12.dll") {
         return Some(info);
     }
 
     // VKD3D-Proton replaces d3d12.dll — check prefix for it
     if let Some(pfx) = prefix {
-        let prefix_dlls = [
-            "drive_c/windows/system32/d3d12.dll",
-            "drive_c/windows/syswow64/d3d12.dll",
-        ];
-        for rel in prefix_dlls {
-            let p = pfx.join(rel);
-            if p.exists() && dll_contains_string(&p, "vkd3d-proton") {
-                let version = extract_version_from_dll(&p).unwrap_or_else(|| "unknown".to_string());
-                return Some(ComponentInfo {
-                    version,
-                    source: ComponentSource::InstalledInPrefix,
-                    path: Some(p),
-                });
-            }
+        if let Some(info) = check_prefix_d3d12(pfx, true) {
+            return Some(info);
         }
     }
 
@@ -820,7 +776,7 @@ fn detect_nvapi(root: &Path, prefix: Option<&Path>) -> Option<ComponentInfo> {
             "drive_c/windows/system32/nvapi64.dll",
             "drive_c/windows/syswow64/nvapi.dll",
         ];
-        if let Some(info) = check_prefix(pfx, &prefix_dlls, "NVAPI") {
+        if let Some(info) = check_prefix(pfx, &prefix_dlls) {
             return Some(info);
         }
     }
@@ -838,43 +794,14 @@ fn detect_vkd3d(root: &Path, prefix: Option<&Path>) -> Option<ComponentInfo> {
         return Some(info);
     }
 
-    // Legacy/Proton fallback
-    // Upstream Wine VKD3D uses libvkd3d.dll/libvkd3d-1.dll and libvkd3d-shader.dll
-    let bundled_dlls = [
-        "files/lib64/wine/vkd3d/libvkd3d-1.dll",
-        "files/lib/wine/vkd3d/libvkd3d-1.dll",
-        "dist/lib64/wine/vkd3d/libvkd3d-1.dll",
-        "dist/lib/wine/vkd3d/libvkd3d-1.dll",
-        "lib64/wine/vkd3d/libvkd3d-1.dll",
-        "lib/wine/vkd3d/libvkd3d-1.dll",
-    ];
-    if let Some(info) = check_bundled(
-        root,
-        &bundled_dlls,
-        &[
-            "files/share/vkd3d/version",
-            "dist/share/vkd3d/version",
-            "share/vkd3d/version",
-        ],
-    ) {
+    // Legacy/Proton fallback. Upstream Wine VKD3D uses libvkd3d-1.dll.
+    if let Some(info) = check_bundled_legacy(root, "vkd3d", "libvkd3d-1.dll") {
         return Some(info);
     }
 
     if let Some(pfx) = prefix {
-        let prefix_dlls = [
-            "drive_c/windows/system32/d3d12.dll",
-            "drive_c/windows/syswow64/d3d12.dll",
-        ];
-        for rel in prefix_dlls {
-            let p = pfx.join(rel);
-            if p.exists() && !dll_contains_string(&p, "vkd3d-proton") {
-                let version = extract_version_from_dll(&p).unwrap_or_else(|| "unknown".to_string());
-                return Some(ComponentInfo {
-                    version,
-                    source: ComponentSource::InstalledInPrefix,
-                    path: Some(p),
-                });
-            }
+        if let Some(info) = check_prefix_d3d12(pfx, false) {
+            return Some(info);
         }
     }
 
@@ -926,6 +853,43 @@ fn detect_bundled_modern<S: AsRef<str>>(
     None
 }
 
+/// Legacy/Proton bundled-layout probe for one component:
+/// `<root>/{files,dist,}/lib{64,}/wine/<component>/<dll>` with a
+/// `{files,dist,}/share/<component>/version` stamp.
+fn check_bundled_legacy(root: &Path, component: &str, dll: &str) -> Option<ComponentInfo> {
+    let dll_candidates: Vec<String> = ["files/lib64", "files/lib", "dist/lib64", "dist/lib", "lib64", "lib"]
+        .iter()
+        .map(|base| format!("{base}/wine/{component}/{dll}"))
+        .collect();
+    let version_files: Vec<String> = ["files/share", "dist/share", "share"]
+        .iter()
+        .map(|base| format!("{base}/{component}/version"))
+        .collect();
+    let dll_refs: Vec<&str> = dll_candidates.iter().map(String::as_str).collect();
+    let version_refs: Vec<&str> = version_files.iter().map(String::as_str).collect();
+    check_bundled(root, &dll_refs, &version_refs)
+}
+
+/// Probe the prefix's `d3d12.dll` and attribute it to vkd3d-proton
+/// (`want_proton`) or upstream vkd3d by the embedded marker string.
+fn check_prefix_d3d12(pfx: &Path, want_proton: bool) -> Option<ComponentInfo> {
+    for rel in [
+        "drive_c/windows/system32/d3d12.dll",
+        "drive_c/windows/syswow64/d3d12.dll",
+    ] {
+        let p = pfx.join(rel);
+        if p.exists() && dll_contains_string(&p, "vkd3d-proton") == want_proton {
+            let version = extract_version_from_dll(&p).unwrap_or_else(|| "unknown".to_string());
+            return Some(ComponentInfo {
+                version,
+                source: ComponentSource::InstalledInPrefix,
+                path: Some(p),
+            });
+        }
+    }
+    None
+}
+
 fn check_bundled(root: &Path, dll_candidates: &[&str], version_files: &[&str]) -> Option<ComponentInfo> {
     let Some(found_dll) = dll_candidates.iter().find(|rel| root.join(rel).exists()) else {
         return None;
@@ -961,7 +925,7 @@ fn check_bundled(root: &Path, dll_candidates: &[&str], version_files: &[&str]) -
     })
 }
 
-fn check_prefix(prefix: &Path, dll_candidates: &[&str], _name: &str) -> Option<ComponentInfo> {
+fn check_prefix(prefix: &Path, dll_candidates: &[&str]) -> Option<ComponentInfo> {
     for rel in dll_candidates {
         let p = prefix.join(rel);
         if p.exists() {
