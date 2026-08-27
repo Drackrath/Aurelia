@@ -1195,6 +1195,23 @@ pub(crate) struct DepotLoopOpts {
 }
 
 /// Depot fetch loop; `None` reports failure.
+/// Content-server hosts; `None` after reporting failure.
+pub(crate) async fn fetch_content_hosts(
+    client: &SteamClient,
+    connection: &Connection,
+    tx: &tokio::sync::mpsc::Sender<DownloadProgress>,
+    appid: u32,
+) -> Option<Vec<String>> {
+    tracing::info!("Fetching Content Servers for AppID: {}...", appid);
+    match client.get_content_servers(connection.cell_id()).await {
+        Ok(h) => Some(h),
+        Err(e) => {
+            emit_failed(tx, format!("Failed to fetch content servers: {}", e)).await;
+            None
+        }
+    }
+}
+
 pub(crate) async fn run_depot_loop(
     client: &SteamClient,
     connection: &Connection,
@@ -1203,17 +1220,9 @@ pub(crate) async fn run_depot_loop(
     appid: u32,
     selections: Vec<ManifestSelection>,
     dest: &Path,
+    hosts: &[String],
     opts: &DepotLoopOpts,
 ) -> Option<Vec<(u32, u64, u64)>> {
-    tracing::info!("Fetching Content Servers for AppID: {}...", appid);
-    let hosts = match client.get_content_servers(connection.cell_id()).await {
-        Ok(h) => h,
-        Err(e) => {
-            emit_failed(tx, format!("Failed to fetch content servers: {}", e)).await;
-            return None;
-        }
-    };
-
     let verb = if opts.verify_mode { "Verifying" } else { "Downloading" };
     let fail_verb = if opts.verify_mode { "download/verify" } else { "download" };
     let mut successful_depots = Vec::new();
@@ -1294,7 +1303,7 @@ pub(crate) async fn run_depot_loop(
                 selection.manifest_id,
                 dest,
                 shared_state.clone(),
-                &hosts,
+                hosts,
                 opts.grand_total_bytes,
                 connection,
                 key,

@@ -412,25 +412,30 @@ impl SteamClient {
             );
 
             // 2-3. Shared content-server + depot loop.
-            let Some(successful_depots) = run_depot_loop(
-                &client_clone,
-                &connection,
-                &tx,
-                &shared_state_clone,
-                appid,
-                selections,
-                &install_dir,
-                &DepotLoopOpts {
-                    verify_mode: false,
-                    grand_total_bytes,
-                    manifest_overrides,
-                },
-            )
-            .await
-            else {
+            let outcome = match fetch_content_hosts(&client_clone, &connection, &tx, appid).await {
+                Some(hosts) => {
+                    run_depot_loop(
+                        &client_clone,
+                        &connection,
+                        &tx,
+                        &shared_state_clone,
+                        appid,
+                        selections,
+                        &install_dir,
+                        &hosts,
+                        &DepotLoopOpts {
+                            verify_mode: false,
+                            grand_total_bytes,
+                            manifest_overrides,
+                        },
+                    )
+                    .await
+                }
+                None => None,
+            };
+            let Some(successful_depots) = outcome else {
                 if let Ok(mut state) = shared_state_clone.write() {
-                    state.is_downloading = false;
-                    state.status_text = "Download failed".to_string();
+                    state.finish("Download failed");
                 }
                 return;
             };

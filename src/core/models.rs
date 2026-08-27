@@ -326,6 +326,12 @@ impl DownloadState {
         self.depot_total_bytes = 0;
         self.status_text = status_text;
     }
+
+    /// Mark the operation finished with `status_text`.
+    pub fn finish(&mut self, status_text: &str) {
+        self.is_downloading = false;
+        self.status_text = status_text.to_string();
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]

@@ -410,6 +410,15 @@ impl SteamClient {
                 return;
             };
 
+            // Hosts first, so a fetch failure emits no trailing frames.
+            let Some(hosts) = fetch_content_hosts(&client_clone, &connection, &tx, appid).await
+            else {
+                if let Ok(mut state) = shared_state_clone.write() {
+                    state.finish("Operation failed or paused");
+                }
+                return;
+            };
+
             // Periodically forward the live byte counters over the channel.
             spawn_progress_reporter(
                 tx.clone(),
@@ -430,6 +439,7 @@ impl SteamClient {
                 appid,
                 selections,
                 &install_root,
+                &hosts,
                 &DepotLoopOpts {
                     verify_mode,
                     grand_total_bytes: 0,
@@ -439,8 +449,7 @@ impl SteamClient {
             .await
             else {
                 if let Ok(mut state) = shared_state_clone.write() {
-                    state.is_downloading = false;
-                    state.status_text = "Operation failed or paused".to_string();
+                    state.finish("Operation failed or paused");
                 }
                 return;
             };
