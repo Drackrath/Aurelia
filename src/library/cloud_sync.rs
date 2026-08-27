@@ -700,28 +700,16 @@ impl CloudClient {
                         continue; // a pending down-change we're not applying now
                     }
                     let Some(c) = cloud else { continue };
-                    match self.download_to(appid, &name, &local_path, c).await {
-                        Ok(()) => {
-                            baseline
-                                .files
-                                .insert(name.clone(), cloud_baseline(c, &local_path));
-                            outcome.downloaded.push(name.clone());
-                        }
-                        Err(e) => outcome.record_failure(&name, "down", &e),
-                    }
+                    self.apply_download(appid, &name, &local_path, c, &mut baseline, &mut outcome)
+                        .await;
                 }
                 PlannedAction::Upload => {
                     if direction == SyncDirection::Down {
                         continue;
                     }
                     let Some(l) = &local else { continue };
-                    match self.upload_from(appid, &name, &local_path, l.timestamp).await {
-                        Ok(()) => {
-                            baseline.files.insert(name.clone(), l.as_baseline());
-                            outcome.uploaded.push(name.clone());
-                        }
-                        Err(e) => outcome.record_failure(&name, "up", &e),
-                    }
+                    self.apply_upload(appid, &name, &local_path, l, &mut baseline, &mut outcome)
+                        .await;
                 }
                 PlannedAction::Conflict => {
                     let (Some(l), Some(c)) = (&local, cloud) else { continue };
@@ -739,24 +727,12 @@ impl CloudClient {
                             });
                         }
                         ConflictPolicy::TakeCloud => {
-                            match self.download_to(appid, &name, &local_path, c).await {
-                                Ok(()) => {
-                                    baseline
-                                        .files
-                                        .insert(name.clone(), cloud_baseline(c, &local_path));
-                                    outcome.downloaded.push(name.clone());
-                                }
-                                Err(e) => outcome.record_failure(&name, "down", &e),
-                            }
+                            self.apply_download(appid, &name, &local_path, c, &mut baseline, &mut outcome)
+                                .await;
                         }
                         ConflictPolicy::TakeLocal => {
-                            match self.upload_from(appid, &name, &local_path, l.timestamp).await {
-                                Ok(()) => {
-                                    baseline.files.insert(name.clone(), l.as_baseline());
-                                    outcome.uploaded.push(name.clone());
-                                }
-                                Err(e) => outcome.record_failure(&name, "up", &e),
-                            }
+                            self.apply_upload(appid, &name, &local_path, l, &mut baseline, &mut outcome)
+                                .await;
                         }
                     }
                 }
@@ -769,6 +745,48 @@ impl CloudClient {
 
     /// Download one cloud file to `local_path` and stamp its mtime to the cloud's,
     /// so the next sync sees the two as in step rather than locally modified.
+    /// Apply a planned download: fetch the cloud copy, then record the new
+    /// baseline fingerprint and outcome bookkeeping.
+    async fn apply_download(
+        &self,
+        appid: u32,
+        name: &str,
+        local_path: &Path,
+        cloud: &CloudFileEntry,
+        baseline: &mut SyncBaseline,
+        outcome: &mut SyncOutcome,
+    ) {
+        match self.download_to(appid, name, local_path, cloud).await {
+            Ok(()) => {
+                baseline
+                    .files
+                    .insert(name.to_string(), cloud_baseline(cloud, local_path));
+                outcome.downloaded.push(name.to_string());
+            }
+            Err(e) => outcome.record_failure(name, "down", &e),
+        }
+    }
+
+    /// Apply a planned upload: push the local copy, then record the new
+    /// baseline fingerprint and outcome bookkeeping.
+    async fn apply_upload(
+        &self,
+        appid: u32,
+        name: &str,
+        local_path: &Path,
+        local: &LocalInfo,
+        baseline: &mut SyncBaseline,
+        outcome: &mut SyncOutcome,
+    ) {
+        match self.upload_from(appid, name, local_path, local.timestamp).await {
+            Ok(()) => {
+                baseline.files.insert(name.to_string(), local.as_baseline());
+                outcome.uploaded.push(name.to_string());
+            }
+            Err(e) => outcome.record_failure(name, "up", &e),
+        }
+    }
+
     async fn download_to(
         &self,
         appid: u32,
