@@ -82,26 +82,6 @@ impl SteamClient {
         crate::library::probe_install_dir_by_appid(steamapps, appid)
     }
 
-    /// Locate the `depots` object inside a PICS appinfo VDF, accounting for both
-    /// the unwrapped layout (root holds the sections directly) and the wrapped
-    /// layout (sections nested under an `appinfo` key).
-    fn pics_depots_value<'a>(
-        vdf: &'a steam_vdf_parser::Vdf<'static>,
-        appid: u32,
-    ) -> Option<&'a steam_vdf_parser::Value<'static>> {
-        let root_obj = vdf.as_obj()?;
-        if vdf.key() == "appinfo" || vdf.key() == appid.to_string() {
-            root_obj.get("depots")
-        } else {
-            root_obj.get("depots").or_else(|| {
-                root_obj
-                    .get("appinfo")
-                    .and_then(|v| v.as_obj())
-                    .and_then(|o| o.get("depots"))
-            })
-        }
-    }
-
     pub(crate) async fn remote_manifest_ids_static(
         connection: &Connection,
         appid: u32,
@@ -111,7 +91,7 @@ impl SteamClient {
 
         let mut manifests = HashMap::new();
         if let Ok(vdf) = find_vdf_in_pics(&buffer) {
-            let depots_val = Self::pics_depots_value(&vdf, appid);
+            let depots_val = pics_depots_value(&vdf);
 
             if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
                 for (key, value) in depots.iter() {
@@ -138,7 +118,7 @@ impl SteamClient {
     ) -> Option<String> {
         let buffer = pics_app_buffer(connection, appid, "failed requesting appinfo product info for update metadata").await.ok()?;
         let vdf = find_vdf_in_pics(&buffer).ok()?;
-        let depots_val = Self::pics_depots_value(&vdf, appid);
+        let depots_val = pics_depots_value(&vdf);
 
         let buildid = |b: &str| {
             depots_val

@@ -1108,9 +1108,9 @@ pub fn find_vdf_in_pics(buffer: &[u8]) -> Result<steam_vdf_parser::Vdf<'static>>
 /// under a single root key — either the literal `appinfo` or the numeric appid.
 /// Return the inner value that actually holds those sections, descending one level
 /// past the wrapper when present so callers can navigate by section name directly.
-pub(crate) fn pics_app_section<'a>(
-    root: &'a steam_vdf_parser::Value<'static>,
-) -> &'a steam_vdf_parser::Value<'static> {
+pub(crate) fn pics_app_section<'a, 'text>(
+    root: &'a steam_vdf_parser::Value<'text>,
+) -> &'a steam_vdf_parser::Value<'text> {
     fn has_sections(v: &steam_vdf_parser::Value) -> bool {
         ["common", "extended", "config", "depots"]
             .iter()
@@ -1123,6 +1123,14 @@ pub(crate) fn pics_app_section<'a>(
         return inner;
     }
     root
+}
+
+/// The `depots` object of a parsed PICS appinfo VDF, descending past the
+/// `appinfo`/`<appid>` wrapper when present (see [`pics_app_section`]).
+pub(crate) fn pics_depots_value<'a, 'text>(
+    vdf: &'a steam_vdf_parser::Vdf<'text>,
+) -> Option<&'a steam_vdf_parser::Value<'text>> {
+    pics_app_section(vdf.value()).get("depots")
 }
 
 /// Steam Auto-Cloud save-file rules from an app's `ufs/savefiles` PICS section.

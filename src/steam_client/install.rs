@@ -4,30 +4,6 @@
 //! and free helpers live in the parent module (in scope via `use super::*`).
 use super::*;
 
-/// Locate the `depots` object within a parsed appinfo VDF root object.
-///
-/// When the VDF root key is the well-known `appinfo`/`<appid>` wrapper, the
-/// `depots` node sits directly under the root; otherwise it may be nested one
-/// level down inside the first child object. Shared by `fetch_branches` and
-/// `get_available_platforms`, which locate depots identically.
-fn locate_depots<'a, 'text>(
-    root_obj: &'a steam_vdf_parser::Obj<'text>,
-    vdf_key: &str,
-    appid: u32,
-) -> Option<&'a steam_vdf_parser::Value<'text>> {
-    if vdf_key == "appinfo" || vdf_key == appid.to_string() {
-        root_obj.get("depots")
-    } else {
-        root_obj.get("depots").or_else(|| {
-            root_obj
-                .values()
-                .next()
-                .and_then(|v| v.as_obj())
-                .and_then(|o| o.get("depots"))
-        })
-    }
-}
-
 impl SteamClient {
     pub async fn fetch_branches(&self, appid: u32) -> Result<Vec<String>> {
         // PICS returns the appinfo as *binary* VDF; parse that first and only fall
@@ -42,8 +18,7 @@ impl SteamClient {
             .or_else(|_| steam_vdf_parser::parse_text(&appinfo_vdf_text).map(|v| v.into_owned()))
             .context("failed parsing appinfo VDF")?;
 
-        let root_obj = vdf.as_obj().context("appinfo VDF root is not an object")?;
-        let depots = locate_depots(root_obj, vdf.key(), appid);
+        let depots = pics_depots_value(&vdf);
 
         let mut names: Vec<String> = Vec::new();
         if let Some(branches) = depots
@@ -89,8 +64,7 @@ impl SteamClient {
             .or_else(|_| steam_vdf_parser::parse_text(&appinfo_vdf_text).map(|v| v.into_owned()));
 
         if let Ok(vdf) = vdf_res {
-            let root_obj = vdf.as_obj().unwrap();
-            let depots_val = locate_depots(root_obj, vdf.key(), appid);
+            let depots_val = pics_depots_value(&vdf);
 
             if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
                 for value in depots.values() {
