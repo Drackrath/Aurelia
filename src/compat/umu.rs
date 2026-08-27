@@ -31,11 +31,6 @@ static SPEC: PluginSpec = PluginSpec {
     archive_marker_missing: "umu-launcher archive did not contain a `umu-run` executable",
 };
 
-/// The directory Aurelia extracts the umu payload into.
-pub fn plugin_dir() -> Result<PathBuf> {
-    plugin::plugin_dir(&SPEC)
-}
-
 /// Find the install root under `base`: `base` itself if it holds an `umu-run`,
 /// otherwise the first immediate subdirectory that does (the tarball's own top dir).
 fn find_entry_root(base: &Path) -> Option<PathBuf> {

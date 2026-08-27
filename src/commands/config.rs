@@ -425,7 +425,6 @@ async fn installed_platform_set(app_id: u32) -> Option<(bool, bool)> {
 }
 
 /// `config game`: view or set a game's per-game launch settings.
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<()> {
     let GameConfigArgs {
         app_id,

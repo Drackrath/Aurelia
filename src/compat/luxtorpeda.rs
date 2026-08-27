@@ -26,11 +26,6 @@ static SPEC: PluginSpec = PluginSpec {
     archive_marker_missing: "luxtorpeda archive did not contain a toolmanifest.vdf",
 };
 
-/// The directory Aurelia extracts the luxtorpeda payload into.
-pub fn plugin_dir() -> Result<PathBuf> {
-    plugin::plugin_dir(&SPEC)
-}
-
 /// Find the tool root under `base`: `base` itself if it holds a `toolmanifest.vdf`,
 /// otherwise the first immediate subdirectory that does (the tarball's own top dir).
 fn find_tool_root(base: &Path) -> Option<PathBuf> {

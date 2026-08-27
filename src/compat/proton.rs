@@ -290,7 +290,7 @@ pub(crate) struct GhAsset {
 
 /// Build a reqwest client with the headers GitHub requires (a User-Agent) and an
 /// optional `GITHUB_TOKEN` to lift the unauthenticated rate limit.
-fn github_client() -> Result<reqwest::Client> {
+pub(crate) fn github_client() -> Result<reqwest::Client> {
     let mut builder = reqwest::Client::builder().user_agent("aurelia-proton-manager");
     if let Some(token) = std::env::var("GITHUB_TOKEN").ok().filter(|t| !t.is_empty()) {
         let mut headers = reqwest::header::HeaderMap::new();

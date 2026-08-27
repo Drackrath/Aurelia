@@ -84,10 +84,16 @@ pub(crate) fn managed_install(spec: &PluginSpec) -> Option<(String, PathBuf)> {
 
 /// Query the forge for the latest release and pick its tarball asset.
 async fn latest_release(spec: &PluginSpec) -> Result<PluginRelease> {
-    let client = reqwest::Client::builder()
-        .user_agent(spec.user_agent)
-        .build()
-        .with_context(|| format!("failed to build the {} HTTP client", spec.host))?;
+    // GitHub lookups reuse the token-aware client.
+    let client = if spec.release_api.starts_with("https://api.github.com/") {
+        crate::compat::proton::github_client()
+    } else {
+        reqwest::Client::builder()
+            .user_agent(spec.user_agent)
+            .build()
+            .map_err(anyhow::Error::new)
+    }
+    .with_context(|| format!("failed to build the {} HTTP client", spec.host))?;
 
     // Gitea and GitHub releases share this JSON shape.
     let release: crate::compat::proton::GhRelease = client
