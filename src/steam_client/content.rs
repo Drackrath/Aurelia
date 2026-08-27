@@ -5,25 +5,6 @@
 use super::*;
 
 impl SteamClient {
-    /// Resolve the `depots` object from a parsed PICS VDF, descending past the
-    /// numeric/`appinfo` wrapper when the depots aren't already at the root.
-    fn locate_depots_value<'a>(
-        vdf: &'a steam_vdf_parser::Vdf<'static>,
-        app_id: u32,
-    ) -> Option<&'a steam_vdf_parser::Value<'static>> {
-        let root_obj = vdf.as_obj()?;
-        if vdf.key() == "appinfo" || vdf.key() == app_id.to_string() {
-            root_obj.get("depots")
-        } else {
-            root_obj.get("depots").or_else(|| {
-                root_obj
-                    .get("appinfo")
-                    .and_then(|v| v.as_obj())
-                    .and_then(|o| o.get("depots"))
-            })
-        }
-    }
-
     pub async fn get_content_servers(&self, cell_id: u32) -> Result<Vec<String>> {
         let connection = self.require_connection()?;
         let mut request = CContentServerDirectory_GetServersForSteamPipe_Request::new();
@@ -124,7 +105,7 @@ impl SteamClient {
         let mut out = Vec::new();
         if let Ok(vdf) = find_vdf_in_pics(&buffer) {
             vdf.as_obj().context("root is not an object")?;
-            let depots_val = Self::locate_depots_value(&vdf, app_id);
+            let depots_val = pics_depots_value(&vdf);
 
             if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
                 for (key, value) in depots.iter() {
@@ -190,7 +171,7 @@ impl SteamClient {
 
         let mut out = Vec::new();
         if let Ok(vdf) = find_vdf_in_pics(&buffer) {
-            let depots_val = Self::locate_depots_value(&vdf, app_id);
+            let depots_val = pics_depots_value(&vdf);
             if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
                 for (key, value) in depots.iter() {
                     let Ok(depot_id) = key.parse::<u32>() else { continue };
@@ -252,7 +233,7 @@ impl SteamClient {
         let mut est = InstallSizeEstimate::default();
         let vdf = find_vdf_in_pics(&buffer).context("failed to parse product info VDF")?;
         vdf.as_obj().context("root is not an object")?;
-        let depots_val = Self::locate_depots_value(&vdf, app_id);
+        let depots_val = pics_depots_value(&vdf);
 
         if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
             for (key, value) in depots.iter() {
