@@ -6,7 +6,6 @@
 //! a directory. Everything but the marker/entry-point specifics lives here.
 
 use anyhow::{Context, Result};
-use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
 /// A plugin install discovered on disk.
@@ -83,19 +82,6 @@ pub(crate) fn managed_install(spec: &PluginSpec) -> Option<(String, PathBuf)> {
     Some((version, root))
 }
 
-#[derive(Debug, Deserialize)]
-struct ForgeRelease {
-    tag_name: String,
-    #[serde(default)]
-    assets: Vec<ForgeAsset>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ForgeAsset {
-    name: String,
-    browser_download_url: String,
-}
-
 /// Query the forge for the latest release and pick its tarball asset.
 async fn latest_release(spec: &PluginSpec) -> Result<PluginRelease> {
     let client = reqwest::Client::builder()
@@ -103,7 +89,8 @@ async fn latest_release(spec: &PluginSpec) -> Result<PluginRelease> {
         .build()
         .with_context(|| format!("failed to build the {} HTTP client", spec.host))?;
 
-    let release: ForgeRelease = client
+    // Gitea and GitHub releases share this JSON shape.
+    let release: crate::compat::proton::GhRelease = client
         .get(spec.release_api)
         .send()
         .await
