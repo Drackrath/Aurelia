@@ -180,8 +180,14 @@ pub(crate) async fn cmd_play(
     if !json {
         cli_println!("Launching {} ...", game.name);
     }
+    let announce_target: &(dyn Fn(Option<&str>) + Send + Sync) = &|proton: Option<&str>| {
+        match proton {
+            Some(p) => cli_println!("Platform: Windows via Proton ({p})"),
+            None => cli_println!("Platform: native Linux"),
+        }
+    };
     client
-        .play_game(&game, proton_path.as_deref(), user_config, force_windows, native_engine, umu, script, no_script, steam, prefers_linux)
+        .play_game(&game, proton_path.as_deref(), user_config, force_windows, native_engine, umu, script, no_script, steam, prefers_linux, (!json).then_some(&announce_target))
         .await
         .with_context(|| format!("failed to launch {}", game.name))?;
     if json {

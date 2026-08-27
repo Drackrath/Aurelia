@@ -86,6 +86,7 @@ impl SteamClient {
         disable_launch_script: bool,
         steam_enabled: bool,
         prefer_native_target: bool,
+        on_target_resolved: Option<&(dyn Fn(Option<&str>) + Send + Sync)>,
     ) -> Result<LaunchInfo> {
         // A Family-Shared game (licensed to another account) can only be authorised
         // by a running Steam client, so it always needs Steam integration regardless
@@ -118,6 +119,16 @@ impl SteamClient {
                 .ok_or_else(|| anyhow!("no launch options"))?;
 
         let launcher_config = load_launcher_config().await?;
+
+        // None = native Linux; Some = the effective Proton runner.
+        if let Some(cb) = on_target_resolved {
+            cb(match launch_info.target {
+                LaunchTarget::NativeLinux => None,
+                LaunchTarget::WindowsProton => {
+                    Some(proton_path.unwrap_or(&launcher_config.proton_version))
+                }
+            });
+        }
 
         // Proton/Wine only exists on Linux. On Windows, a Windows game runs natively, so
         // run its executable directly instead of routing through the Proton pipeline.
