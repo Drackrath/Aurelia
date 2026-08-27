@@ -5,12 +5,6 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use steam_vent::connection::Connection;
-use steam_vent_proto::steammessages_clientserver_appinfo::{
-    cmsg_client_picsproduct_info_request, CMsgClientPICSProductInfoRequest,
-    CMsgClientPICSProductInfoResponse,
-};
-use steam_vent::ConnectionTrait;
-
 use steam_cdn::CDNClient;
 use std::sync::Arc;
 
@@ -201,25 +195,12 @@ async fn resolve_manifest_id(
 }
 
 async fn fetch_appinfo(connection: &Connection, appid: u32) -> Result<AppInfoRoot> {
-    let mut request = CMsgClientPICSProductInfoRequest::new();
-    request
-        .apps
-        .push(cmsg_client_picsproduct_info_request::AppInfo {
-            appid: Some(appid),
-            ..Default::default()
-        });
-
-    let response: CMsgClientPICSProductInfoResponse = connection
-        .job(request)
-        .await
-        .context("failed requesting appinfo product info")?;
-
-    let app = response
-        .apps
-        .iter()
-        .find(|entry| entry.appid() == appid)
-        .ok_or_else(|| anyhow!("missing appinfo payload for app {appid}"))?;
-
-    let raw_vdf = String::from_utf8_lossy(app.buffer());
+    let buffer = crate::steam_client::pics_app_buffer(
+        connection,
+        appid,
+        "failed requesting appinfo product info",
+    )
+    .await?;
+    let raw_vdf = String::from_utf8_lossy(&buffer);
     keyvalues_serde::from_str(&raw_vdf).context("failed parsing appinfo VDF")
 }

@@ -166,9 +166,9 @@ impl SteamClient {
         let raw = std::fs::read_to_string(&manifest_path)
             .with_context(|| format!("failed reading {}", manifest_path.display()))?;
         let manifests = parse_installed_depots_from_acf(&raw);
-        let branch = parse_active_branch_from_acf(&raw);
-        let update_pending = manifest_update_pending(&raw);
-        Ok((manifests, branch, update_pending))
+        let parsed = crate::core::acf::parse_app_manifest(&raw);
+        let update_pending = parsed.update_pending();
+        Ok((manifests, parsed.active_branch, update_pending))
     }
 
     pub(crate) async fn remote_manifest_ids(&self, appid: u32, branch: &str) -> Result<HashMap<u64, u64>> {

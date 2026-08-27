@@ -17,6 +17,7 @@ impl SteamClient {
         let vdf = steam_vdf_parser::parse_binary(&buffer)
             .or_else(|_| steam_vdf_parser::parse_text(&appinfo_vdf_text).map(|v| v.into_owned()))
             .context("failed parsing appinfo VDF")?;
+        vdf.as_obj().context("appinfo VDF root is not an object")?;
 
         let depots = pics_depots_value(&vdf);
 
@@ -143,14 +144,15 @@ impl SteamClient {
             .join("steamapps")
             .join(format!("appmanifest_{appid}.acf"));
         if let Ok(raw) = std::fs::read_to_string(&existing_manifest) {
-            if let Some(dir) = parse_installdir_from_acf(&raw) {
+            let parsed = crate::core::acf::parse_app_manifest(&raw);
+            if let Some(dir) = parsed.install_dir.clone() {
                 let existing_dir = Path::new(&library_root).join("steamapps").join("common").join(&dir);
                 if existing_dir.is_dir() && !dir.trim().is_empty() {
                     installdir = dir;
                 }
             }
             if game_name.starts_with("App ") {
-                if let Some(name) = parse_name_from_acf(&raw).filter(|n| !n.starts_with("App ")) {
+                if let Some(name) = parsed.display_name().filter(|n| !n.starts_with("App ")) {
                     game_name = name;
                 }
             }
