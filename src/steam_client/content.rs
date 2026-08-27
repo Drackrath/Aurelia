@@ -13,10 +13,7 @@ impl SteamClient {
         app_id: u32,
         job_context: &'static str,
     ) -> Result<Vec<u8>> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
 
         let mut request = CMsgClientPICSProductInfoRequest::new();
         request
@@ -58,7 +55,7 @@ impl SteamClient {
     }
 
     pub async fn get_content_servers(&self, cell_id: u32) -> Result<Vec<String>> {
-        let connection = self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))?;
+        let connection = self.require_connection()?;
         let mut request = CContentServerDirectory_GetServersForSteamPipe_Request::new();
         request.set_cell_id(cell_id);
         request.set_max_servers(20);
@@ -88,7 +85,7 @@ impl SteamClient {
         depot_id: u32,
         manifest_id: u64,
     ) -> Result<u64> {
-        let connection = self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))?;
+        let connection = self.require_connection()?;
         let mut request = CContentServerDirectory_GetManifestRequestCode_Request::new();
         request.set_app_id(app_id);
         request.set_depot_id(depot_id);
@@ -120,7 +117,7 @@ impl SteamClient {
         depot_id: u32,
         host_name: &str,
     ) -> Result<String> {
-        let connection = self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))?;
+        let connection = self.require_connection()?;
         let mut request = CContentServerDirectory_GetCDNAuthToken_Request::new();
         request.set_app_id(app_id);
         request.set_depot_id(depot_id);
@@ -415,10 +412,7 @@ impl SteamClient {
         appid: u32,
         language: &str,
     ) -> Result<Vec<GameAchievement>> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
         let steam_id = self
             .steam_id()
             .context("not logged in — achievements need an authenticated session")?;
@@ -505,10 +499,7 @@ impl SteamClient {
     }
 
     pub async fn get_depot_key(&self, app_id: u32, depot_id: u32) -> Result<Vec<u8>> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
         let mut request = CMsgClientGetDepotDecryptionKey::new();
         request.set_depot_id(depot_id);
         request.set_app_id(app_id);
@@ -525,10 +516,7 @@ impl SteamClient {
     }
 
     pub async fn fetch_depots(&self, appid: u32) -> Result<Vec<BrowserDepotInfo>> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
         depot_browser::fetch_depots(connection, appid).await
     }
 
@@ -538,10 +526,7 @@ impl SteamClient {
         depot_id: u32,
         manifest_ref: &str,
     ) -> Result<Vec<ManifestFileEntry>> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
         depot_browser::fetch_manifest_files(connection, appid, depot_id, manifest_ref).await
     }
 
@@ -553,10 +538,7 @@ impl SteamClient {
         file_path: &str,
         output_dir: &Path,
     ) -> Result<()> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
         depot_browser::download_single_file(
             connection,
             appid,

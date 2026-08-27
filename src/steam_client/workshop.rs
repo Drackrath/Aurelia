@@ -65,12 +65,6 @@ fn detail_to_workshop_item(detail: &PublishedFileDetails, fallback_app_id: u32) 
 }
 
 impl SteamClient {
-    /// Borrow the live Steam [`Connection`], or fail with the standard
-    /// "No connection" error every networked Workshop method here shares.
-    fn require_connection(&self) -> Result<&Connection> {
-        self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))
-    }
-
     /// Fetch metadata for a batch of Workshop published files in a single
     /// `PublishedFile.GetDetails` call. Ids that the service returns no data for
     /// (deleted/private/invalid) are skipped with a warning rather than failing

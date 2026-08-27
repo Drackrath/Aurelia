@@ -1571,6 +1571,16 @@ fn split_args(args: &str) -> Vec<String> {
 
 
 impl SteamClient {
+    /// Borrow the live CM [`Connection`], failing when not connected yet.
+    pub(crate) fn require_connection(&self) -> Result<&Connection> {
+        self.connection.as_ref().context("steam connection not initialized")
+    }
+
+    /// Clone of the live CM [`Connection`] for use inside spawned tasks.
+    pub(crate) fn require_connection_owned(&self) -> Result<Connection> {
+        self.require_connection().cloned()
+    }
+
     pub fn find_mangohud_lib() -> Option<PathBuf> {
         // Common install locations across distros
         let candidates = [

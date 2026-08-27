@@ -335,10 +335,7 @@ impl SteamClient {
         library: PathBuf,
         platform: DepotPlatform,
     ) -> Result<PathBuf> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
 
         let mut request = CMsgClientPICSProductInfoRequest::new();
         request
