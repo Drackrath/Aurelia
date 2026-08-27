@@ -377,19 +377,9 @@ impl SteamClient {
         }
 
         // 2. Remove the DLC appid from any "DisabledDLC" lists (enable it).
-        let dlc_str = dlc_appid.to_string();
-        let re = regex::Regex::new(r#""DisabledDLC"(\s*)"([^"]*)""#)
-            .expect("valid DisabledDLC regex");
-        let updated = re.replace_all(&content, |caps: &regex::Captures| {
-            let kept: Vec<&str> = caps[2]
-                .split(',')
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty() && *s != dlc_str)
-                .collect();
-            format!("\"DisabledDLC\"{}\"{}\"", &caps[1], kept.join(","))
-        });
+        let updated = apply_dlc_disabled(&content, dlc_appid, false);
         if updated != content {
-            content = updated.into_owned();
+            content = updated;
             changed = true;
         }
 

@@ -168,6 +168,21 @@ impl SteamClient {
         None
     }
 
+    /// A process's environment as one lossily-decoded string, or `None` if
+    /// unreadable (typically: not ours).
+    #[cfg(unix)]
+    fn proc_environ(pid_path: &Path) -> Option<String> {
+        let bytes = std::fs::read(pid_path.join("environ")).ok()?;
+        Some(String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    /// A process's cmdline, NUL separators replaced by spaces.
+    #[cfg(unix)]
+    fn proc_cmdline(pid_path: &Path) -> Option<String> {
+        let bytes = std::fs::read(pid_path.join("cmdline")).ok()?;
+        Some(String::from_utf8_lossy(&bytes).replace('\0', " "))
+    }
+
     /// Terminate every wine process running inside `wineprefix` (identified by the
     /// prefix path appearing in the process environment). Used to stop a
     /// Proton/Wine game whose processes outlive the runner we spawned. Only call
@@ -178,11 +193,7 @@ impl SteamClient {
         let signal = if force { libc::SIGKILL } else { libc::SIGTERM };
 
         Self::scan_proc_pids(|pid_path, pid_str| {
-            let environ = match std::fs::read(pid_path.join("environ")) {
-                Ok(b) => String::from_utf8_lossy(&b).into_owned(),
-                Err(_) => return None,
-            };
-            if !environ.contains(&prefix_str) {
+            if !Self::proc_environ(pid_path)?.contains(&prefix_str) {
                 return None;
             }
 
@@ -202,10 +213,7 @@ impl SteamClient {
             let prefix_str = wineprefix.to_string_lossy().to_string();
 
             Self::scan_proc_pids(|pid_path, pid_str| {
-                let cmdline = match std::fs::read(pid_path.join("cmdline")) {
-                    Ok(b) => String::from_utf8_lossy(&b).replace('\0', " "),
-                    Err(_) => return None,
-                };
+                let cmdline = Self::proc_cmdline(pid_path)?;
                 // Kill steam.exe and steamwebhelper.exe processes in this prefix
                 if !cmdline.to_lowercase().contains("steam.exe")
                     && !cmdline.to_lowercase().contains("steamwebhelper.exe")
@@ -213,11 +221,7 @@ impl SteamClient {
                     return None;
                 }
 
-                let environ = match std::fs::read(pid_path.join("environ")) {
-                    Ok(b) => String::from_utf8_lossy(&b).into_owned(),
-                    Err(_) => return None,
-                };
-                if !environ.contains(&prefix_str) {
+                if !Self::proc_environ(pid_path)?.contains(&prefix_str) {
                     return None;
                 }
 
@@ -244,22 +248,12 @@ impl SteamClient {
 
             Self::scan_proc_pids(|pid_path, _pid_str| {
                 // Must have steam.exe in cmdline
-                let cmdline = match std::fs::read(pid_path.join("cmdline")) {
-                    Ok(b) => b,
-                    Err(_) => return None,
-                };
-                let cmdline_str = String::from_utf8_lossy(&cmdline).replace('\0', " ");
-                if !cmdline_str.to_lowercase().contains("steam.exe") {
+                if !Self::proc_cmdline(pid_path)?.to_lowercase().contains("steam.exe") {
                     return None;
                 }
 
                 // Must have our WINEPREFIX in its environment
-                let environ = match std::fs::read(pid_path.join("environ")) {
-                    Ok(b) => b,
-                    Err(_) => return None,
-                };
-                let environ_str = String::from_utf8_lossy(&environ);
-                environ_str.contains(&prefix_str).then_some(true)
+                Self::proc_environ(pid_path)?.contains(&prefix_str).then_some(true)
             })
             .unwrap_or(false)
         }
@@ -287,8 +281,7 @@ impl SteamClient {
                 return false;
             }
             Self::scan_proc_pids(|pid_path, _pid_str| {
-                let cmdline = std::fs::read(pid_path.join("cmdline")).ok()?;
-                let cmdline_str = String::from_utf8_lossy(&cmdline).replace('\0', " ").to_lowercase();
+                let cmdline_str = Self::proc_cmdline(pid_path)?.to_lowercase();
                 if !(cmdline_str.contains(&needle) && cmdline_str.contains(".exe")) {
                     return None;
                 }
@@ -296,8 +289,7 @@ impl SteamClient {
                 if cmdline_str.contains("steam.exe") || cmdline_str.contains("steamwebhelper") {
                     return None;
                 }
-                let environ = std::fs::read(pid_path.join("environ")).ok()?;
-                String::from_utf8_lossy(&environ).contains(&prefix_str).then_some(true)
+                Self::proc_environ(pid_path)?.contains(&prefix_str).then_some(true)
             })
             .unwrap_or(false)
         }

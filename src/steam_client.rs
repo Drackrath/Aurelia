@@ -1077,11 +1077,14 @@ fn parse_launch_info_from_vdf(appid: u32, raw_vdf: &str) -> Result<Vec<LaunchInf
     Ok(options)
 }
 
+/// Whether a PICS product-info buffer is *text* VDF (starts with `"` or `{`)
+/// rather than binary.
+fn pics_buffer_is_text(buffer: &[u8]) -> bool {
+    buffer.first().map(|&b| b == 0x22 || b == 0x7B).unwrap_or(false)
+}
+
 pub fn find_vdf_in_pics(buffer: &[u8]) -> Result<steam_vdf_parser::Vdf<'static>> {
-    let is_text = buffer
-        .first()
-        .map(|&b| b == 0x22 || b == 0x7B)
-        .unwrap_or(false);
+    let is_text = pics_buffer_is_text(buffer);
 
     if is_text {
         let text = String::from_utf8_lossy(buffer);
@@ -1236,10 +1239,7 @@ pub(crate) fn dlc_ids_from_section(section: &steam_vdf_parser::Value) -> Vec<u32
 }
 
 pub fn parse_pics_product_info(buffer: &[u8]) -> Result<HashMap<u64, u64>> {
-    let is_text = buffer
-        .first()
-        .map(|&b| b == 0x22 || b == 0x7B)
-        .unwrap_or(false);
+    let is_text = pics_buffer_is_text(buffer);
 
     if is_text {
         parse_text_vdf(buffer)
