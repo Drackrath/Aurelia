@@ -335,6 +335,23 @@ impl SteamClient {
         self.state = LoginState::AwaitingPollResult;
         self.state = LoginState::AwaitingAccessTokenLogon;
 
+        // One login shape, three Steam Guard handlers.
+        async fn login_with<H: AuthConfirmationHandler>(
+            server_list: &ServerList,
+            account_name: &str,
+            password: &str,
+            handler: H,
+        ) -> std::result::Result<Connection, ConnectionError> {
+            Connection::login(
+                server_list,
+                account_name,
+                password,
+                FileGuardDataStore::user_cache(),
+                handler,
+            )
+            .await
+        }
+
         let login_result = if let Some(code) = guard_code.filter(|v| !v.trim().is_empty()) {
             let (mut writer, reader) = duplex(64);
             writer
@@ -346,14 +363,7 @@ impl SteamClient {
             let handler = UserProvidedAuthConfirmationHandler::new(reader, sink())
                 .or(DeviceConfirmationHandler);
 
-            Connection::login(
-                &server_list,
-                &account_name,
-                &password,
-                FileGuardDataStore::user_cache(),
-                handler,
-            )
-            .await
+            login_with(&server_list, &account_name, &password, handler).await
         } else if interactive_pin {
             // Read the Steam Guard code from stdin when Steam asks for it; fall back
             // to mobile-app approval if the account only allows that.
@@ -364,23 +374,9 @@ impl SteamClient {
                 UserProvidedAuthConfirmationHandler::new(tokio::io::stdin(), tokio::io::stderr())
                     .or(DeviceConfirmationHandler);
 
-            Connection::login(
-                &server_list,
-                &account_name,
-                &password,
-                FileGuardDataStore::user_cache(),
-                handler,
-            )
-            .await
+            login_with(&server_list, &account_name, &password, handler).await
         } else {
-            Connection::login(
-                &server_list,
-                &account_name,
-                &password,
-                FileGuardDataStore::user_cache(),
-                DeviceConfirmationHandler,
-            )
-            .await
+            login_with(&server_list, &account_name, &password, DeviceConfirmationHandler).await
         };
 
         let connection = match login_result {

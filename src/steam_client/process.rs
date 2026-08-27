@@ -315,20 +315,19 @@ NoSavePersonalInfo=1
     }
 
     /// Launch a Windows game's executable directly, with no Proton/Wine layer.
-    /// Used on Windows hosts (and when `--windows` is forced), where the game's
-    /// native `.exe` runs without a compatibility layer.
-    pub(crate) async fn spawn_windows_native(
+    /// Resolve install dir, executable, args, workingdir.
+    async fn resolve_exec_plan(
         &self,
         app: &LibraryGame,
         launch_info: &LaunchInfo,
         user_config: Option<&crate::core::models::UserAppConfig>,
-    ) -> Result<std::process::Child> {
+    ) -> Result<(PathBuf, PathBuf, Vec<String>, PathBuf)> {
         let install_dir = match app.install_path.as_ref().map(PathBuf::from) {
             Some(p) if p.exists() => p,
             _ => self.install_root_for_app(app.app_id).await?,
         };
 
-        // Steam VDF stores Windows paths with backslashes; normalize for the host separator.
+        // Steam VDF stores Windows paths with backslashes; normalize them.
         let exe_relative = launch_info.executable.replace('\\', "/");
         let executable = install_dir.join(&exe_relative);
         let mut args = split_args(&launch_info.arguments);
@@ -339,6 +338,7 @@ NoSavePersonalInfo=1
             }
         }
 
+        // Working dir: VDF `workingdir`, else exe parent, else install dir.
         let game_working_dir: PathBuf = launch_info
             .workingdir
             .as_deref()
@@ -346,6 +346,20 @@ NoSavePersonalInfo=1
             .map(|wd| install_dir.join(wd.replace('\\', "/")))
             .or_else(|| executable.parent().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| install_dir.clone());
+
+        Ok((install_dir, executable, args, game_working_dir))
+    }
+
+    /// Used on Windows hosts (and when `--windows` is forced), where the game's
+    /// native `.exe` runs without a compatibility layer.
+    pub(crate) async fn spawn_windows_native(
+        &self,
+        app: &LibraryGame,
+        launch_info: &LaunchInfo,
+        user_config: Option<&crate::core::models::UserAppConfig>,
+    ) -> Result<std::process::Child> {
+        let (_install_dir, executable, args, game_working_dir) =
+            self.resolve_exec_plan(app, launch_info, user_config).await?;
 
         // Standard Steam identity fallback so the game can resolve its app id.
         let app_id_path = game_working_dir.join("steam_appid.txt");
@@ -424,34 +438,9 @@ NoSavePersonalInfo=1
         _launcher_config: &crate::core::config::LauncherConfig,
         user_config: Option<&crate::core::models::UserAppConfig>,
     ) -> Result<std::process::Child> {
-        let install_dir = match app.install_path.as_ref().map(PathBuf::from) {
-            Some(p) if p.exists() => p,
-            _ => self.install_root_for_app(app.app_id).await?,
-        };
-
-        // Steam VDF stores Windows paths with backslashes; normalize for Linux
-        let exe_relative = launch_info.executable.replace('\\', "/");
-        let executable = install_dir.join(&exe_relative);
-        let mut args = split_args(&launch_info.arguments);
-
-        if let Some(config) = user_config {
-            if !config.launch_options.trim().is_empty() {
-                args.extend(split_args(&config.launch_options));
-            }
-        }
-
-        // Standard Steam identity fallback: steam_appid.txt
+        let (install_dir, executable, args, game_working_dir) =
+            self.resolve_exec_plan(app, launch_info, user_config).await?;
         let app_id_str = app.app_id.to_string();
-        // Resolve working directory:
-        // 1. Use VDF-specified workingdir if present (normalized from backslashes)
-        // 2. Fall back to executable's parent
-        // 3. Fall back to install_dir
-        let game_working_dir: PathBuf = launch_info.workingdir
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .map(|wd| install_dir.join(wd.replace('\\', "/")))
-            .or_else(|| executable.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| install_dir.clone());
 
         match launch_info.target {
             LaunchTarget::NativeLinux => {
