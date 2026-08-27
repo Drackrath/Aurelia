@@ -117,11 +117,7 @@ fn nonempty(s: &str) -> Option<String> {
 /// Fetch a Steam Community profile XML document (the `?xml=1` view, which needs no
 /// API key) with a short timeout.
 async fn fetch_community_xml(url: &str) -> Result<String> {
-    let client = reqwest::Client::builder()
-        .user_agent("aurelia")
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .context("failed to build HTTP client")?;
+    let client = crate::core::net::http_client(std::time::Duration::from_secs(10))?;
     client
         .get(url)
         .send()
