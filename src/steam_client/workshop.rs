@@ -444,48 +444,11 @@ impl SteamClient {
 
             // Forward the live byte counters the download updates into progress
             // messages, on a timer — same pattern as `install_game`.
-            let progress_tx = tx.clone();
-            let progress_state = shared_state.clone();
-            let ticker = tokio::spawn(async move {
-                let mut ticker = tokio::time::interval(std::time::Duration::from_millis(250));
-                loop {
-                    ticker.tick().await;
-                    let snapshot = progress_state.read().ok().map(|s| {
-                        (
-                            s.is_downloading,
-                            s.downloaded_bytes,
-                            s.total_bytes,
-                            s.status_text.clone(),
-                            s.depot_id,
-                            s.depot_downloaded_bytes,
-                            s.depot_total_bytes,
-                        )
-                    });
-                    let Some((downloading, downloaded, total, status, depot_id, depot_dl, depot_total)) =
-                        snapshot
-                    else {
-                        break;
-                    };
-                    if !downloading {
-                        break;
-                    }
-                    if progress_tx
-                        .send(DownloadProgress {
-                            state: DownloadProgressState::Downloading,
-                            bytes_downloaded: downloaded,
-                            total_bytes: total,
-                            current_file: status,
-                            depot_id,
-                            depot_bytes_downloaded: depot_dl,
-                            depot_total_bytes: depot_total,
-                        })
-                        .await
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-            });
+            let ticker = spawn_progress_reporter(
+                tx.clone(),
+                shared_state.clone(),
+                DownloadProgressState::Downloading,
+            );
 
             let outcome = client
                 .download_depot_to(app_id, depot_id, manifest_id, &dest, shared_state.clone())

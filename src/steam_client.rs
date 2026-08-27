@@ -1125,6 +1125,59 @@ pub(crate) fn pics_app_section<'a, 'text>(
     root
 }
 
+/// Spawn a ticker that forwards the live byte counters in `state` over `tx`
+/// every 250ms as `report_state` progress messages, stopping when the download
+/// flag clears or the receiver is dropped. Shared by the install, verify and
+/// Workshop download flows.
+pub(crate) fn spawn_progress_reporter(
+    tx: tokio::sync::mpsc::Sender<DownloadProgress>,
+    state: Arc<std::sync::RwLock<crate::core::models::DownloadState>>,
+    report_state: DownloadProgressState,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_millis(250));
+        loop {
+            ticker.tick().await;
+            let snapshot = match state.read() {
+                Ok(s) => Some((
+                    s.is_downloading,
+                    s.downloaded_bytes,
+                    s.total_bytes,
+                    s.status_text.clone(),
+                    s.depot_id,
+                    s.depot_downloaded_bytes,
+                    s.depot_total_bytes,
+                )),
+                Err(_) => None,
+            };
+            let Some((downloading, downloaded, total, status, depot_id, depot_downloaded, depot_total)) =
+                snapshot
+            else {
+                break;
+            };
+            if !downloading {
+                break;
+            }
+            // Stop if the receiver is gone (terminal message already consumed).
+            if tx
+                .send(DownloadProgress {
+                    state: report_state,
+                    bytes_downloaded: downloaded,
+                    total_bytes: total,
+                    current_file: status,
+                    depot_id,
+                    depot_bytes_downloaded: depot_downloaded,
+                    depot_total_bytes: depot_total,
+                })
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    })
+}
+
 /// The `depots` object of a parsed PICS appinfo VDF, descending past the
 /// `appinfo`/`<appid>` wrapper when present (see [`pics_app_section`]).
 pub(crate) fn pics_depots_value<'a, 'text>(
