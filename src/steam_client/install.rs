@@ -29,42 +29,13 @@ fn locate_depots<'a, 'text>(
 }
 
 impl SteamClient {
-    /// Issue a single PICS `ProductInfo` request for `appid` and return the raw
-    /// appinfo VDF buffer for that app. Shared by `fetch_branches` and
-    /// `get_available_platforms`, which both need exactly this round-trip.
-    ///
-    /// `ctx` is folded into the request-failure error message so callers keep
-    /// their original, distinct context strings.
-    async fn fetch_appinfo_buffer(&self, appid: u32, ctx: &'static str) -> Result<Vec<u8>> {
-        let connection = self.require_connection()?;
-
-        let mut request = CMsgClientPICSProductInfoRequest::new();
-        request
-            .apps
-            .push(cmsg_client_picsproduct_info_request::AppInfo {
-                appid: Some(appid),
-                ..Default::default()
-            });
-
-        let response: CMsgClientPICSProductInfoResponse =
-            connection.job(request).await.context(ctx)?;
-
-        let app = response
-            .apps
-            .iter()
-            .find(|entry| entry.appid() == appid)
-            .ok_or_else(|| anyhow!("missing app info payload for app {appid}"))?;
-
-        Ok(app.buffer().to_vec())
-    }
-
     pub async fn fetch_branches(&self, appid: u32) -> Result<Vec<String>> {
         // PICS returns the appinfo as *binary* VDF; parse that first and only fall
         // back to text (mirroring `get_available_platforms`). Parsing the binary
         // buffer as text — as this used to — fails with "Expected a valid token for
         // object start", which is why `branches` was broken.
         let buffer = self
-            .fetch_appinfo_buffer(appid, "failed requesting appinfo product info for branches")
+            .pics_buffer(appid, "failed requesting appinfo product info for branches")
             .await?;
         let appinfo_vdf_text = String::from_utf8_lossy(&buffer);
         let vdf = steam_vdf_parser::parse_binary(&buffer)
@@ -107,7 +78,7 @@ impl SteamClient {
         appid: u32,
     ) -> Result<(Vec<DepotPlatform>, Vec<u8>)> {
         let buffer = self
-            .fetch_appinfo_buffer(appid, "failed requesting appinfo product info")
+            .pics_buffer(appid, "failed requesting appinfo product info")
             .await?;
         let appinfo_vdf_text = String::from_utf8_lossy(&buffer);
 
@@ -273,42 +244,23 @@ impl SteamClient {
                 appinfo_vdf_bytes_owned = cached;
                 &appinfo_vdf_bytes_owned
             } else {
-                let mut request = CMsgClientPICSProductInfoRequest::new();
-                request
-                    .apps
-                    .push(cmsg_client_picsproduct_info_request::AppInfo {
-                        appid: Some(appid),
-                        ..Default::default()
-                    });
-
-                let response: CMsgClientPICSProductInfoResponse = match connection.job(request).await
+                match super::pics_app_buffer(&connection, appid, "failed requesting appinfo").await
                 {
-                    Ok(res) => res,
+                    Ok(buffer) => {
+                        appinfo_vdf_bytes_owned = buffer;
+                        &appinfo_vdf_bytes_owned
+                    }
                     Err(e) => {
                         let _ = tx
                             .send(DownloadProgress {
                                 state: DownloadProgressState::Failed,
-                                current_file: format!("failed requesting appinfo: {e}"),
+                                current_file: format!("{e:#}"),
                                 ..Default::default()
                             })
                             .await;
                         return;
                     }
-                };
-
-                let app = response.apps.iter().find(|entry| entry.appid() == appid);
-                let Some(app) = app else {
-                    let _ = tx
-                        .send(DownloadProgress {
-                            state: DownloadProgressState::Failed,
-                            current_file: "missing appinfo payload".to_string(),
-                            ..Default::default()
-                        })
-                        .await;
-                    return;
-                };
-                appinfo_vdf_bytes_owned = app.buffer().to_vec();
-                &appinfo_vdf_bytes_owned
+                }
             };
 
             let mut selections = Vec::new();

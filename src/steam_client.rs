@@ -1570,6 +1570,34 @@ fn split_args(args: &str) -> Vec<String> {
 }
 
 
+
+/// Issue a single PICS `ProductInfo` request for `appid` and return that app's
+/// raw appinfo VDF buffer (text or binary VDF). `job_context` is folded into
+/// the request-failure error so callers keep distinct messages.
+pub(crate) async fn pics_app_buffer(
+    connection: &Connection,
+    appid: u32,
+    job_context: &'static str,
+) -> Result<Vec<u8>> {
+    let mut request = CMsgClientPICSProductInfoRequest::new();
+    request
+        .apps
+        .push(cmsg_client_picsproduct_info_request::AppInfo {
+            appid: Some(appid),
+            ..Default::default()
+        });
+
+    let response: CMsgClientPICSProductInfoResponse =
+        connection.job(request).await.context(job_context)?;
+
+    let app = response
+        .apps
+        .iter()
+        .find(|entry| entry.appid() == appid)
+        .ok_or_else(|| anyhow!("missing appinfo payload for app {appid}"))?;
+    Ok(app.buffer().to_vec())
+}
+
 impl SteamClient {
     /// Borrow the live CM [`Connection`], failing when not connected yet.
     pub(crate) fn require_connection(&self) -> Result<&Connection> {
@@ -1579,6 +1607,11 @@ impl SteamClient {
     /// Clone of the live CM [`Connection`] for use inside spawned tasks.
     pub(crate) fn require_connection_owned(&self) -> Result<Connection> {
         self.require_connection().cloned()
+    }
+
+    /// [`pics_app_buffer`] against this client's live connection.
+    pub(crate) async fn pics_buffer(&self, appid: u32, job_context: &'static str) -> Result<Vec<u8>> {
+        pics_app_buffer(self.require_connection()?, appid, job_context).await
     }
 
     pub fn find_mangohud_lib() -> Option<PathBuf> {
