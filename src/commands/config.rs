@@ -11,7 +11,7 @@ use aurelia::core::config::save_launcher_config;
 pub(crate) async fn cmd_config_show(_json: bool) -> Result<()> {
     // The launcher configuration is structured data; it always renders as JSON.
     let config = load_launcher_config().await?;
-    cli_println!("{}", serde_json::to_string_pretty(&config)?);
+    print_json(&config);
     Ok(())
 }
 

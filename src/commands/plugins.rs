@@ -135,17 +135,7 @@ async fn plugin_install(p: &PluginCmd, json: bool) -> Result<()> {
     if !json {
         cli_println!("Downloading {} ...", p.project);
     }
-    let mut last_pct: i64 = -1;
-    let mut on_progress = |done: u64, total: u64| {
-        if json || total == 0 {
-            return;
-        }
-        let pct = (done.saturating_mul(100) / total) as i64;
-        if pct != last_pct {
-            last_pct = pct;
-            cli_print!("\r  {pct:>3}%  ({} / {})        ", human_bytes(done), human_bytes(total));
-        }
-    };
+    let mut on_progress = byte_progress_printer(json);
     let entry = (p.install)(&mut on_progress)
         .await
         .with_context(|| format!("failed installing {}", p.project))?;
