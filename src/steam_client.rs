@@ -1485,6 +1485,7 @@ pub(crate) fn manifest_is_fully_installed(raw: &str) -> bool {
 }
 
 /// Fetch `StateUpdateRequired` flag
+#[cfg(test)]
 pub(crate) fn manifest_update_pending(raw: &str) -> bool {
     crate::core::acf::parse_app_manifest(raw).update_pending()
 }
