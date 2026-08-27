@@ -46,7 +46,7 @@ struct SteamLayout {
 }
 
 impl SteamLayout {
-    /// Derive the layout from the launch context.
+    /// Derive the layout from `ctx`.
     fn derive(ctx: &LaunchContext) -> Self {
         let library_root = PathBuf::from(&ctx.launcher_config.steam_library_path);
         let (steam_mode, steam_mode_source) = resolve_steam_mode(ctx);
@@ -96,10 +96,7 @@ impl Runner for WineTkgRunner {
         std::fs::create_dir_all(&effective_game_prefix)
             .map_err(|e| LaunchError::new(LaunchErrorKind::Permission, format!("failed creating {}", effective_game_prefix.display())).with_source(anyhow!(e)))?;
 
-        // Proton's `setup_prefix` opens its lock at `$STEAM_COMPAT_DATA_PATH/pfx.lock`
-        // with O_CREAT, which fails with ENOENT unless the compatdata directory
-        // already exists (Steam itself pre-creates it). Create it here so the
-        // path build_env hands Proton is guaranteed to exist.
+        // Proton's `pfx.lock` needs existing compatdata.
         let compat_data_path = layout.compat_data_path.clone();
         std::fs::create_dir_all(&compat_data_path)
             .map_err(|e| LaunchError::new(LaunchErrorKind::Permission, format!("failed creating {}", compat_data_path.display())).with_source(anyhow!(e)))?;

@@ -342,7 +342,7 @@ impl SteamClient {
             None => self.resolve_install_game_name(appid).await,
         };
         tokio::task::spawn(async move {
-            // No PICS pre-sum here; `on_manifest` fills the total per depot.
+            // `on_manifest` fills the total per-depot.
             if let Ok(mut state) = shared_state_clone.write() {
                 state.begin(
                     appid,

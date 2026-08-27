@@ -335,7 +335,7 @@ impl SteamClient {
         self.state = LoginState::AwaitingPollResult;
         self.state = LoginState::AwaitingAccessTokenLogon;
 
-        // One login shape, three Steam Guard handlers.
+        // One login, three guard handlers.
         async fn login_with<H: AuthConfirmationHandler>(
             server_list: &ServerList,
             account_name: &str,

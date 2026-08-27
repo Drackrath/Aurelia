@@ -120,7 +120,7 @@ pub struct PipelineContext {
 }
 
 impl PipelineContext {
-    /// Log to the session event log, if attached.
+    /// Log to the session event log.
     pub fn log_event(
         &self,
         level: crate::infra::logging::LogLevel,

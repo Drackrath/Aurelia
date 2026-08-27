@@ -368,8 +368,7 @@ impl SteamClient {
                 })
                 .await;
 
-            // Whole-app total (all selected depots), so progress is reported
-            // against the full install size, not just the current depot.
+            // Whole-app total for overall progress.
             if let Ok(mut state) = shared_state_clone.write() {
                 state.begin(
                     appid,
@@ -412,7 +411,7 @@ impl SteamClient {
                 DownloadProgressState::Downloading,
             );
 
-            // 2-3. Fetch content servers once, then run the shared depot loop.
+            // 2-3. Shared content-server + depot loop.
             let Some(successful_depots) = run_depot_loop(
                 &client_clone,
                 &connection,

@@ -58,7 +58,7 @@ pub struct DllCandidate {
     pub exists: bool,
 }
 
-/// Inputs threaded through one DLL resolution pass.
+/// Inputs for one resolution pass.
 pub struct DllResolveRequest<'a> {
     pub game_exe_dir: &'a Path,
     pub runner_path: &'a Path,

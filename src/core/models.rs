@@ -313,7 +313,7 @@ pub struct DownloadState {
 }
 
 impl DownloadState {
-    /// Reset all counters for a new operation.
+    /// Reset counters for a new operation.
     pub fn begin(&mut self, app_id: u32, app_name: String, total_bytes: u64, status_text: String) {
         self.is_downloading = true;
         self.is_paused = false;

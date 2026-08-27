@@ -924,14 +924,14 @@ fn parse_achievement_schema_inner(schema: &[u8]) -> HashMap<String, (u32, u32)> 
     map
 }
 
-/// Platform-matched, non-DLC depots with their public-manifest object.
+/// Platform-matched non-DLC depot rows.
 pub(crate) fn platform_depot_rows<'a, 'text>(
     depots: &'a steam_vdf_parser::Obj<'text>,
     platform: DepotPlatform,
 ) -> Vec<(u32, &'a steam_vdf_parser::Obj<'text>, Option<&'a steam_vdf_parser::Obj<'text>>)> {
     let mut rows = Vec::new();
     for (key, value) in depots.iter() {
-        // Only numeric keys are depots (skip `branches`, ...).
+        // Only numeric keys are depots.
         let Ok(depot_id) = key.parse::<u32>() else {
             continue;
         };
@@ -1188,13 +1188,13 @@ pub(crate) async fn emit_failed(tx: &tokio::sync::mpsc::Sender<DownloadProgress>
 pub(crate) struct DepotLoopOpts {
     /// Re-verify existing chunks instead of downloading.
     pub verify_mode: bool,
-    /// Whole-app byte total; `0` accumulates per depot.
+    /// Whole-app total; `0` accumulates per-depot.
     pub grand_total_bytes: u64,
     /// Depot-pinned manifests; failures become hard errors.
     pub manifest_overrides: Option<std::collections::HashMap<u32, u64>>,
 }
 
-/// Shared per-depot fetch loop; `None` after reporting failure.
+/// Depot fetch loop; `None` reports failure.
 pub(crate) async fn run_depot_loop(
     client: &SteamClient,
     connection: &Connection,
@@ -1258,10 +1258,7 @@ pub(crate) async fn run_depot_loop(
             }
         }
 
-        // Fetch the depot decryption key here so that a missing key
-        // (not owned) silently skips this depot and continues to the
-        // next. For an overridden (downgrade) depot a missing key is
-        // instead a hard error, since the user asked for that depot.
+        // Missing key skips; overridden depots hard-fail.
         let key = match client.get_depot_key(appid, selection.depot_id).await {
             Ok(k) => k,
             Err(e) => {

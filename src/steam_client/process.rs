@@ -217,7 +217,7 @@ impl SteamClient {
         {
             let prefix_str = wineprefix.to_string_lossy().to_string();
 
-            // Kill steam.exe and steamwebhelper.exe processes in this prefix.
+            // Kill Steam processes in this prefix.
             Self::sweep_proc_pids(libc::SIGTERM, |pid_path| {
                 let Some(cmdline) = Self::proc_cmdline(pid_path) else {
                     return false;
@@ -321,7 +321,7 @@ NoSavePersonalInfo=1
             _ => self.install_root_for_app(app.app_id).await?,
         };
 
-        // Steam VDF stores Windows paths with backslashes; normalize them.
+        // Normalize VDF backslash paths.
         let exe_relative = launch_info.executable.replace('\\', "/");
         let executable = install_dir.join(&exe_relative);
         let mut args = split_args(&launch_info.arguments);
@@ -332,7 +332,7 @@ NoSavePersonalInfo=1
             }
         }
 
-        // Working dir: VDF `workingdir`, else exe parent, else install dir.
+        // Workingdir, exe parent, install dir.
         let game_working_dir: PathBuf = launch_info
             .workingdir
             .as_deref()
