@@ -400,21 +400,63 @@ fn kill_process_tree(pid: u32, force: bool) {
 
     #[cfg(unix)]
     {
-        let pid = pid as i32;
+        let tree = process_tree_pids(pid as i32);
         if force {
-            unsafe {
-                libc::kill(pid, libc::SIGKILL);
+            for &p in &tree {
+                unsafe {
+                    libc::kill(p, libc::SIGKILL);
+                }
             }
         } else {
-            unsafe {
-                libc::kill(pid, libc::SIGTERM);
+            for &p in &tree {
+                unsafe {
+                    libc::kill(p, libc::SIGTERM);
+                }
             }
             std::thread::sleep(Duration::from_millis(500));
-            unsafe {
-                libc::kill(pid, libc::SIGKILL);
+            for &p in &tree {
+                unsafe {
+                    libc::kill(p, libc::SIGKILL);
+                }
             }
         }
     }
+}
+
+/// Root pid plus live descendants.
+#[cfg(unix)]
+fn process_tree_pids(root: i32) -> Vec<i32> {
+    let mut parent_of: Vec<(i32, i32)> = Vec::new();
+    if let Ok(dir) = std::fs::read_dir("/proc") {
+        for entry in dir.flatten() {
+            let name = entry.file_name();
+            let Some(pid) = name.to_str().and_then(|s| s.parse::<i32>().ok()) else {
+                continue;
+            };
+            let Ok(status) = std::fs::read_to_string(entry.path().join("status")) else {
+                continue;
+            };
+            if let Some(ppid) = status
+                .lines()
+                .find_map(|l| l.strip_prefix("PPid:"))
+                .and_then(|v| v.trim().parse::<i32>().ok())
+            {
+                parent_of.push((pid, ppid));
+            }
+        }
+    }
+    let mut tree = vec![root];
+    let mut i = 0;
+    while i < tree.len() {
+        let cur = tree[i];
+        for &(pid, ppid) in &parent_of {
+            if ppid == cur && !tree.contains(&pid) {
+                tree.push(pid);
+            }
+        }
+        i += 1;
+    }
+    tree
 }
 
 pub fn sanitize_install_dir(name: &str) -> String {

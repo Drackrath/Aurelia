@@ -30,6 +30,30 @@ async fn require_experimental(what: &str) -> Result<()> {
     )
 }
 
+/// Re-encrypt the freshly saved session with `password`.
+///
+/// Called after a successful login: a credentials login reuses the Steam
+/// account password, a QR login the hash of the scanned challenge. Best-effort
+/// — a failure here must not undo a login that already succeeded.
+async fn encrypt_session_with(password: &str) {
+    use aurelia::core::config::{load_launcher_config, save_launcher_config};
+
+    aurelia::core::session_crypto::cache_password(password);
+    let result = async {
+        let mut config = load_launcher_config().await?;
+        if !config.encrypt_session {
+            config.encrypt_session = true;
+            save_launcher_config(&config).await?;
+        }
+        let session = load_session().await?;
+        save_session(&session).await
+    }
+    .await;
+    if let Err(e) = result {
+        tracing::warn!("could not encrypt session.json: {e:#}");
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn cmd_login(
     username: Option<String>,
@@ -89,6 +113,7 @@ pub(crate) async fn cmd_login(
 
     match attempt {
         Ok(_) => {
+            encrypt_session_with(&password).await;
             report_login_success(&account, json);
             Ok(())
         }
@@ -104,9 +129,10 @@ pub(crate) async fn cmd_login(
                 tracing::info!("Login method awaited: Steam Guard code");
                 let code = prompt_line("Steam Guard code: ")?;
                 client
-                    .login(username, password, Some(code), false)
+                    .login(username, password.clone(), Some(code), false)
                     .await
                     .context("login failed after providing Steam Guard code")?;
+                encrypt_session_with(&password).await;
                 report_login_success(&account, json);
                 Ok(())
             } else if client
@@ -130,13 +156,50 @@ pub(crate) async fn cmd_login(
 /// the QR itself; otherwise it's drawn to stderr as a terminal QR.
 pub(crate) async fn cmd_login_qr(json: bool) -> Result<()> {
     let mut client = SteamClient::new()?;
+    // Remember the challenge that got scanned.
+    let mut last_url = String::new();
     let result = if json {
-        client.login_qr(emit_qr_challenge_json).await
+        client
+            .login_qr(|e| {
+                if let QrEvent::Challenge(url) = &e {
+                    last_url = url.to_string();
+                }
+                emit_qr_challenge_json(e)
+            })
+            .await
     } else {
-        client.login_qr(render_login_qr).await
+        client
+            .login_qr(|e| {
+                if let QrEvent::Challenge(url) = &e {
+                    last_url = url.to_string();
+                }
+                render_login_qr(e)
+            })
+            .await
     };
     let session = result.context("QR login failed")?;
     let account = session.account_name.clone().unwrap_or_default();
+
+    // QR logins encrypt with the challenge hash.
+    if !last_url.is_empty() {
+        use sha1::{Digest, Sha1};
+        let qr_password = hex::encode(Sha1::digest(last_url.as_bytes()));
+        encrypt_session_with(&qr_password).await;
+        if json {
+            eprint_json_line(&serde_json::json!({
+                "event": "session_encrypted",
+                "password": qr_password,
+            }));
+        } else {
+            cli_println!("session.json is now encrypted. Session password (QR hash):");
+            cli_println!("  {qr_password}");
+            cli_println!(
+                "Save it — later runs need it to decrypt the session (prompt or \
+                 AURELIA_SESSION_PASSWORD)."
+            );
+        }
+    }
+
     report_login_success(&account, json);
     Ok(())
 }
@@ -377,6 +440,7 @@ pub(crate) async fn cmd_login_json(
 
     match login_with_timeout(&mut client, &username, &password, guard.clone()).await {
         Ok(_) => {
+            encrypt_session_with(&password).await;
             report_login_success(&account, true);
             Ok(())
         }
@@ -400,6 +464,7 @@ pub(crate) async fn cmd_login_json(
                 login_with_timeout(&mut client, &username, &password, Some(code))
                     .await
                     .context("login failed after providing Steam Guard code")?;
+                encrypt_session_with(&password).await;
                 report_login_success(&account, true);
                 Ok(())
             } else if client

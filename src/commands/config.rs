@@ -110,6 +110,67 @@ pub(crate) async fn cmd_config_experimental(enabled: Option<bool>, json: bool) -
     Ok(())
 }
 
+/// `config session-password [--clear]`: set (or remove) the password that keeps
+/// `session.json` encrypted on disk. Loading first decrypts with the current
+/// password when the file is already encrypted, so changing the password re-wraps
+/// the same session. The password itself is never persisted.
+pub(crate) async fn cmd_config_session_password(clear: bool, json: bool) -> Result<()> {
+    use aurelia::core::config::{delete_session, load_session, save_session};
+    use aurelia::core::session_crypto::cache_password;
+
+    // Prompts for the current password if encrypted.
+    let session = load_session()
+        .await
+        .context("failed loading the current session")?;
+
+    let mut config = load_launcher_config().await?;
+
+    if clear {
+        config.encrypt_session = false;
+        save_launcher_config(&config)
+            .await
+            .context("failed saving session-encryption config")?;
+        // Rewrite plaintext: drop the encrypted file first.
+        delete_session().await?;
+        save_session(&session).await?;
+        if json {
+            print_json(&serde_json::json!({ "encrypt_session": false }));
+        } else {
+            cli_println!("Session encryption disabled; session.json rewritten as plaintext.");
+        }
+        return Ok(());
+    }
+
+    let password = rpassword::prompt_password("New session password: ")
+        .context("failed reading new session password")?;
+    if password.is_empty() {
+        anyhow::bail!("the session password must not be empty (use --clear to disable encryption)");
+    }
+    let confirm = rpassword::prompt_password("Confirm session password: ")
+        .context("failed reading password confirmation")?;
+    if password != confirm {
+        anyhow::bail!("passwords do not match");
+    }
+
+    cache_password(&password);
+    config.encrypt_session = true;
+    save_launcher_config(&config)
+        .await
+        .context("failed saving session-encryption config")?;
+    save_session(&session).await?;
+
+    if json {
+        print_json(&serde_json::json!({ "encrypt_session": true }));
+    } else {
+        cli_println!("Session encryption enabled; session.json is now encrypted.");
+        cli_println!(
+            "Commands will ask for the password once per run; set AURELIA_SESSION_PASSWORD \
+             for non-interactive use (required by the session daemon)."
+        );
+    }
+    Ok(())
+}
+
 /// `config proxy [<url>] [--no-proxy <list>] [--clear]`: view or set the network
 /// proxy used for all HTTP(S) communication (Steam web endpoints, depot downloads, and
 /// Proton/plugin release lookups). With no arguments, prints the current setting.
@@ -325,6 +386,57 @@ pub(crate) async fn cmd_config_protons(json: bool) -> Result<()> {
     Ok(())
 }
 
+/// `config clear-games`: reset every game's per-game settings (both stores).
+pub(crate) async fn cmd_config_clear_games(yes: bool, json: bool) -> Result<()> {
+    let mut cfg = load_launcher_config().await?;
+    let mut user_configs = aurelia::core::config::load_user_configs().await?;
+    let ids: std::collections::BTreeSet<u32> = cfg
+        .game_configs
+        .keys()
+        .chain(user_configs.keys())
+        .copied()
+        .collect();
+    if ids.is_empty() {
+        if json {
+            print_json(&serde_json::json!({ "cleared": 0 }));
+        } else {
+            cli_println!("No per-game settings to clear.");
+        }
+        return Ok(());
+    }
+    if !yes {
+        if json {
+            anyhow::bail!("refusing to clear without confirmation — pass `--yes` in --json mode");
+        }
+        let answer = crate::commands::common::prompt_line(&format!(
+            "About to reset the per-game settings of {} game(s) to defaults. Continue? [y/N] ",
+            ids.len()
+        ))?;
+        if !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+            anyhow::bail!("aborted");
+        }
+    }
+    cfg.game_configs.clear();
+    user_configs.clear();
+    cfg.save().await.context("failed saving game config")?;
+    aurelia::core::config::save_user_configs(&user_configs)
+        .await
+        .context("failed saving per-game config")?;
+    if json {
+        print_json(&serde_json::json!({ "cleared": ids.len() }));
+    } else {
+        cli_println!("Cleared the per-game settings of {} game(s).", ids.len());
+    }
+    Ok(())
+}
+
+/// Which platform payloads are installed: (linux, windows).
+async fn installed_platform_set(app_id: u32) -> Option<(bool, bool)> {
+    let installed = aurelia::library::scan_installed_app_info().await.ok()?;
+    let info = installed.get(&app_id)?;
+    crate::commands::library::detect_installed_platform_set(&info.install_path.to_string_lossy())
+}
+
 /// `config game`: view or set a game's per-game launch settings.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn cmd_config_game(
@@ -332,6 +444,8 @@ pub(crate) async fn cmd_config_game(
     proton: Option<String>,
     clear_proton: bool,
     platform: Option<PlatformArg>,
+    no_platform: bool,
+    clear: bool,
     native_engine: bool,
     no_native_engine: bool,
     umu: bool,
@@ -349,7 +463,9 @@ pub(crate) async fn cmd_config_game(
     // GameConfig fields above (config.json). Update whichever store each flag targets.
     let mut user_configs = aurelia::core::config::load_user_configs().await?;
     let mut user_changed = false;
-    {
+    if clear {
+        user_changed = user_configs.remove(&app_id).is_some();
+    } else {
         let ua = user_configs.entry(app_id).or_default();
         if let Some(sr) = steam_runtime {
             ua.steam_runtime_policy = match sr {
@@ -375,7 +491,9 @@ pub(crate) async fn cmd_config_game(
 
     let mut cfg = load_launcher_config().await?;
     let mut changed = false;
-    {
+    if clear {
+        changed = cfg.game_configs.remove(&app_id).is_some();
+    } else {
         let entry = cfg.game_configs.entry(app_id).or_default();
         if clear_proton {
             entry.forced_proton_version = None;
@@ -384,7 +502,10 @@ pub(crate) async fn cmd_config_game(
             entry.forced_proton_version = Some(p);
             changed = true;
         }
-        if let Some(pl) = platform {
+        if no_platform {
+            entry.platform_preference = None;
+            changed = true;
+        } else if let Some(pl) = platform {
             entry.platform_preference = Some(
                 match pl {
                     PlatformArg::Windows => "windows",
@@ -420,16 +541,43 @@ pub(crate) async fn cmd_config_game(
     }
 
     let entry = cfg.game_configs.get(&app_id).cloned().unwrap_or_default();
-    let runner_label = match entry.runner {
-        GameRunner::Auto => "auto",
-        GameRunner::Luxtorpeda => "luxtorpeda (native engine)",
-        GameRunner::Umu => "umu (Proton via umu-launcher)",
-    };
     let ua = user_configs.get(&app_id).cloned().unwrap_or_default();
+    let platforms = installed_platform_set(app_id).await;
+    let platform_resolved = match platforms {
+        Some((true, true)) => "linux + windows installed",
+        Some((true, false)) => "linux",
+        Some((false, true)) => "windows",
+        Some((false, false)) => "no recognizable payload",
+        None => "unknown until installed",
+    };
+    let runner_label = match entry.runner {
+        GameRunner::Auto => match (platforms, entry.platform_preference.as_deref()) {
+            (Some((true, true)), Some("linux")) => "auto (Native, by linux preference)",
+            (Some((true, true)), Some("windows")) => {
+                "auto (Proton via Wine-TKG, by windows preference)"
+            }
+            (Some((true, true)), _) => "auto (Native or Proton, no platform preference)",
+            (Some((true, false)), _) => "auto (Native)",
+            (Some((false, true)), _) => "auto (Proton via Wine-TKG)",
+            _ => "auto (resolved at launch)",
+        }
+        .to_string(),
+        GameRunner::Luxtorpeda => "luxtorpeda (native engine)".to_string(),
+        GameRunner::Umu => "umu (Proton via umu-launcher)".to_string(),
+    };
     let steam_runtime_label = match ua.steam_runtime_policy {
-        SteamRuntimePolicy::Auto => "auto (inherits global `config steam-runtime-policy`)",
-        SteamRuntimePolicy::Enabled => "on",
-        SteamRuntimePolicy::Disabled => "off",
+        SteamRuntimePolicy::Auto if ua.use_steam_runtime => {
+            "auto (on: legacy per-game flag)".to_string()
+        }
+        SteamRuntimePolicy::Auto => match cfg.steam_runtime_policy {
+            SteamRuntimePolicy::Enabled => "auto (on, from global)".to_string(),
+            SteamRuntimePolicy::Disabled => "auto (off, from global)".to_string(),
+            SteamRuntimePolicy::Auto => {
+                "auto (global auto: bridges host Steam if running, else standalone)".to_string()
+            }
+        },
+        SteamRuntimePolicy::Enabled => "on".to_string(),
+        SteamRuntimePolicy::Disabled => "off".to_string(),
     };
     let prefix_mode_label = match ua.steam_prefix_mode {
         SteamPrefixMode::Shared => "shared",
@@ -447,13 +595,15 @@ pub(crate) async fn cmd_config_game(
         }));
     } else {
         cli_println!("App {app_id}:");
+        let proton_default = format!("(global default: {})", cfg.proton_version);
         cli_println!(
             "  Proton       : {}",
-            entry.forced_proton_version.as_deref().unwrap_or("(global default)")
+            entry.forced_proton_version.as_deref().unwrap_or(&proton_default)
         );
+        let platform_auto = format!("(auto: {platform_resolved})");
         cli_println!(
             "  Platform     : {}",
-            entry.platform_preference.as_deref().unwrap_or("(auto)")
+            entry.platform_preference.as_deref().unwrap_or(&platform_auto)
         );
         cli_println!("  Runner       : {runner_label}");
         cli_println!(

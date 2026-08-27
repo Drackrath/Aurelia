@@ -64,19 +64,34 @@ impl Runner for NativeRunner {
         })
     }
     fn launch(&self, spec: &CommandSpec) -> std::result::Result<std::process::Child, LaunchError> {
-        let mut cmd = std::process::Command::new(&spec.program);
-        cmd.args(&spec.args);
-        if let Some(cwd) = &spec.cwd { cmd.current_dir(cwd); }
-        cmd.envs(&spec.env);
-        match session_log_file(spec, "AURELIA_STDOUT_LOG") {
-            Some(file) => { cmd.stdout(file); }
-            None => { cmd.stdout(std::process::Stdio::inherit()); }
+        let spawn = |program: &std::path::Path, script: Option<&std::path::Path>| {
+            let mut cmd = std::process::Command::new(program);
+            if let Some(script) = script { cmd.arg(script); }
+            cmd.args(&spec.args);
+            if let Some(cwd) = &spec.cwd { cmd.current_dir(cwd); }
+            cmd.envs(&spec.env);
+            match session_log_file(spec, "AURELIA_STDOUT_LOG") {
+                Some(file) => { cmd.stdout(file); }
+                None => { cmd.stdout(std::process::Stdio::inherit()); }
+            }
+            match session_log_file(spec, "AURELIA_STDERR_LOG") {
+                Some(file) => { cmd.stderr(file); }
+                None => { cmd.stderr(std::process::Stdio::inherit()); }
+            }
+            cmd.spawn()
+        };
+        #[allow(unused_mut)]
+        let mut result = spawn(&spec.program, None);
+        // Shebang-less script: retry via sh.
+        #[cfg(unix)]
+        if result.as_ref().err().and_then(|e| e.raw_os_error()) == Some(libc::ENOEXEC) {
+            tracing::info!(
+                "{} is not executable directly (ENOEXEC); retrying via /bin/sh",
+                spec.program.display()
+            );
+            result = spawn(std::path::Path::new("/bin/sh"), Some(&spec.program));
         }
-        match session_log_file(spec, "AURELIA_STDERR_LOG") {
-            Some(file) => { cmd.stderr(file); }
-            None => { cmd.stderr(std::process::Stdio::inherit()); }
-        }
-        cmd.spawn().map_err(|e| LaunchError::new(LaunchErrorKind::Process, "Native launch failed").with_source(anyhow::anyhow!(e)))
+        result.map_err(|e| LaunchError::new(LaunchErrorKind::Process, "Native launch failed").with_source(anyhow::anyhow!(e)))
     }
 }
 

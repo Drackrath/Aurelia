@@ -74,6 +74,14 @@ impl DepotManifest {
                     key,
                 )?)?
                 .to_string();
+                if !file.linktarget.is_empty() {
+                    let mut encrypted = base64_decode(file.linktarget.as_bytes())?;
+                    file.linktarget = str::from_utf8(&aes256::decrypt_cbc_with_iv_extraction(
+                        &mut encrypted[..],
+                        key,
+                    )?)?
+                    .to_string();
+                }
             }
             self.filenames_encrypted = false;
         }

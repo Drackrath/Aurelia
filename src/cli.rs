@@ -421,6 +421,21 @@ pub(crate) enum ConfigCommand {
         /// `true` or `false`. Omit to print the current setting.
         enabled: Option<bool>,
     },
+    /// Set or remove the password that encrypts `session.json`.
+    ///
+    /// The session file holds a long-lived Steam refresh token. With a password
+    /// set, it is stored encrypted (ChaCha20-Poly1305, key derived with Argon2id)
+    /// and decrypted on the fly when a command needs the session. The password is
+    /// never written to disk: it is taken from `AURELIA_SESSION_PASSWORD` or an
+    /// interactive prompt (once per run). Non-interactive contexts like the session
+    /// daemon need the environment variable. With no flags, prompts for a new
+    /// password and re-encrypts the current session.
+    SessionPassword {
+        /// Decrypt `session.json` back to plaintext and disable encryption
+        /// (asks for the current password first).
+        #[arg(long)]
+        clear: bool,
+    },
     /// View or set the Wine/Proton runner that hosts the Windows Steam runtime.
     ///
     /// Used by `steam-runtime install`/`repair` to drive `SteamSetup.exe` and the
@@ -475,6 +490,14 @@ pub(crate) enum ConfigCommand {
         /// Force the game's platform target (`windows` runs through Proton on Linux).
         #[arg(long)]
         platform: Option<PlatformArg>,
+        /// Clear the platform preference (back to auto-detection).
+        #[arg(long, conflicts_with = "platform")]
+        no_platform: bool,
+        /// Reset ALL of this game's per-game settings to defaults (both stores).
+        #[arg(long, conflicts_with_all = ["proton", "clear_proton", "platform", "no_platform",
+            "native_engine", "no_native_engine", "umu", "no_umu", "launch_script",
+            "no_launch_script", "steam_runtime", "steam_prefix_mode"])]
+        clear: bool,
         /// Route this game through the luxtorpeda native-engine plugin (Linux only;
         /// requires `aurelia luxtorpeda enable`).
         #[arg(long)]
@@ -506,6 +529,12 @@ pub(crate) enum ConfigCommand {
         /// prefix directly; `per-game` copies Steam into the game's own prefix.
         #[arg(long, value_name = "shared|per-game")]
         steam_prefix_mode: Option<SteamPrefixModeArg>,
+    },
+    /// Reset the per-game settings of ALL games to defaults (both stores).
+    ClearGames {
+        /// Skip the confirmation prompt.
+        #[arg(long)]
+        yes: bool,
     },
 }
 
