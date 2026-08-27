@@ -175,21 +175,6 @@ impl SteamClient {
         buildid(branch).or_else(|| buildid("public"))
     }
 
-    pub async fn fetch_app_metadata(&self, appid: u32) -> Option<AppMetadata> {
-        let url = format!("https://store.steampowered.com/api/appdetails?appids={appid}&filters=basic");
-        let resp = reqwest::get(url).await.ok()?;
-        let json: serde_json::Value = resp.json().await.ok()?;
-        let data = json.get(appid.to_string())?.get("data")?;
-
-        let name = data.get("name")?.as_str()?.to_string();
-        let header_image = data
-            .get("header_image")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        Some(AppMetadata { name, header_image })
-    }
-
     /// If `appid` is a DLC, return the base game's appid it depends on.
     /// Returns `None` for base games (or if the relationship can't be determined).
     /// Tries the authoritative PICS appinfo first, then the StoreBrowse service as

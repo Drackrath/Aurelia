@@ -224,12 +224,6 @@ pub struct StoreAppAssets {
     pub logo: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-pub struct AppMetadata {
-    pub name: String,
-    pub header_image: Option<String>,
-}
-
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DepotInfo {
     pub id: u64,
@@ -1315,10 +1309,6 @@ fn parse_binary_vdf_with_offset(data: &[u8]) -> Result<HashMap<u64, u64>> {
         }
     }
     bail!("Failed to locate valid Binary VDF in PICS buffer")
-}
-
-pub fn parse_depots_robust(data: &[u8]) -> Result<HashMap<u64, u64>> {
-    parse_pics_product_info(data)
 }
 
 fn extract_manifest_id_robust(value: &steam_vdf_parser::Value, branch: &str) -> Option<u64> {

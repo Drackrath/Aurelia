@@ -524,32 +524,6 @@ impl SteamClient {
         Ok(response.depot_encryption_key().to_vec())
     }
 
-    pub async fn verify_depot_ownership(&self, app_id: u32, depot_ids: Vec<u64>) -> HashMap<u64, bool> {
-        tracing::info!("Verifying ownership for {} depots...", depot_ids.len());
-        let mut results = HashMap::new();
-
-        let Some(connection) = self.connection.as_ref() else {
-            results.extend(depot_ids.into_iter().map(|id| (id, false)));
-            return results;
-        };
-
-        // 1. Ensure we have an App Ticket (Warm up session)
-        let _ = self.get_app_ticket(app_id).await;
-
-        for depot_id in depot_ids {
-            let mut request = CMsgClientGetDepotDecryptionKey::new();
-            request.set_depot_id(depot_id as u32);
-            request.set_app_id(app_id);
-
-            let response: std::result::Result<CMsgClientGetDepotDecryptionKeyResponse, _> =
-                connection.job(request).await;
-            // EResult::OK == 1
-            let owned = matches!(response, Ok(r) if r.eresult() == 1);
-            results.insert(depot_id, owned);
-        }
-        results
-    }
-
     pub async fn fetch_depots(&self, appid: u32) -> Result<Vec<BrowserDepotInfo>> {
         let connection = self
             .connection

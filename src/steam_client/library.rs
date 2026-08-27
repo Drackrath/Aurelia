@@ -106,14 +106,6 @@ impl SteamClient {
         Ok(shared)
     }
 
-    pub async fn refresh_owned_games(&mut self, _session: &SessionState) -> Result<Vec<OwnedGame>> {
-        self.fetch_owned_games().await
-    }
-
-    pub async fn load_cached_owned_games(&self) -> Result<Vec<OwnedGame>> {
-        load_library_cache().await
-    }
-
     // (see `installed_depots_need_update` below for the update-detection logic)
 
     pub async fn check_for_updates(&self, games: &mut [LibraryGame]) -> Result<()> {
