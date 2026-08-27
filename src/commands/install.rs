@@ -312,30 +312,53 @@ pub(crate) async fn cmd_move(
     Ok(())
 }
 
+/// Shared body of `relink`/`import`: run a library-mutating operation with
+/// Steam stopped, then report the resolved install path uniformly.
+async fn steam_guarded_relocate<F, Fut>(
+    app_id: u32,
+    library: PathBuf,
+    restart_steam: bool,
+    json: bool,
+    status: &'static str,
+    verb: &'static str,
+    human: impl FnOnce(&std::path::Path) -> String,
+    op: F,
+) -> Result<()>
+where
+    F: FnOnce(SteamClient, PathBuf) -> Fut,
+    Fut: Future<Output = Result<std::path::PathBuf>>,
+{
+    let client = authed_client().await?;
+    let managed = steam_guard_stop(restart_steam, json)?;
+    let result = op(client, library.clone()).await;
+    steam_guard_restart(managed, json)?;
+    let path = result.with_context(|| format!("failed to {verb} app {app_id}"))?;
+
+    if json {
+        print_json(&serde_json::json!({
+            "app_id": app_id,
+            "status": status,
+            "library": library.to_string_lossy(),
+            "install_path": path.to_string_lossy(),
+            "steam_restarted": managed,
+        }));
+    } else {
+        cli_println!("{}", human(&path));
+    }
+    Ok(())
+}
+
 pub(crate) async fn cmd_relink(
     app_id: u32,
     library: PathBuf,
     restart_steam: bool,
     json: bool,
 ) -> Result<()> {
-    let client = authed_client().await?;
-    let managed = steam_guard_stop(restart_steam, json)?;
-    let result = client.relink_install(app_id, library.clone()).await;
-    steam_guard_restart(managed, json)?;
-    let path = result.with_context(|| format!("failed to relink app {app_id}"))?;
-
-    if json {
-        print_json(&serde_json::json!({
-            "app_id": app_id,
-            "status": "relinked",
-            "library": library.to_string_lossy(),
-            "install_path": path.to_string_lossy(),
-            "steam_restarted": managed,
-        }));
-    } else {
-        cli_println!("Relinked app {app_id} to {}.", library.display());
-    }
-    Ok(())
+    let human = |_: &std::path::Path| format!("Relinked app {app_id} to {}.", library.display());
+    steam_guarded_relocate(app_id, library.clone(), restart_steam, json, "relinked", "relink", human,
+        |client, lib| async move { client.relink_install(app_id, lib).await },
+    )
+    .await
 }
 
 pub(crate) async fn cmd_import(
@@ -345,31 +368,17 @@ pub(crate) async fn cmd_import(
     restart_steam: bool,
     json: bool,
 ) -> Result<()> {
-    let client = authed_client().await?;
     // Default to the OS we're running on for the depot/platform match.
     let platform: DepotPlatform = platform.map(Into::into).unwrap_or(if cfg!(target_os = "windows") {
         DepotPlatform::Windows
     } else {
         DepotPlatform::Linux
     });
-
-    let managed = steam_guard_stop(restart_steam, json)?;
-    let result = client.import_install(app_id, library.clone(), platform).await;
-    steam_guard_restart(managed, json)?;
-    let path = result.with_context(|| format!("failed to import app {app_id}"))?;
-
-    if json {
-        print_json(&serde_json::json!({
-            "app_id": app_id,
-            "status": "imported",
-            "library": library.to_string_lossy(),
-            "install_path": path.to_string_lossy(),
-            "steam_restarted": managed,
-        }));
-    } else {
-        cli_println!("Imported app {app_id} from {}.", path.display());
-    }
-    Ok(())
+    let human = |path: &std::path::Path| format!("Imported app {app_id} from {}.", path.display());
+    steam_guarded_relocate(app_id, library, restart_steam, json, "imported", "import", human,
+        move |client, lib| async move { client.import_install(app_id, lib, platform).await },
+    )
+    .await
 }
 
 pub(crate) async fn cmd_available(app_id: u32, json: bool) -> Result<()> {
