@@ -4,7 +4,7 @@ pub mod depot_browser;
 pub mod relocate;
 pub mod cloud_sync;
 
-use crate::core::config::{detect_steam_path, load_launcher_config};
+use crate::core::config::load_launcher_config;
 use crate::core::models::{GameLibrary, LibraryGame, OwnedGame};
 use crate::core::utils::extract_quoted_values;
 use anyhow::{Context, Result};
@@ -527,10 +527,6 @@ pub fn steam_root_candidates() -> Vec<PathBuf> {
             roots.push(PathBuf::from(xdg).join("Steam"));
         }
     }
-
-    // Whatever the platform-specific detection finds, in case it knows a location
-    // this list does not.
-    roots.extend(detect_steam_path());
 
     roots.retain(|root| root.exists());
     roots.sort();
