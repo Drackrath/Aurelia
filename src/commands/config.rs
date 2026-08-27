@@ -481,16 +481,35 @@ pub(crate) async fn cmd_config_game(
     }
 
     let entry = cfg.game_configs.get(&app_id).cloned().unwrap_or_default();
-    let runner_label = match entry.runner {
-        GameRunner::Auto => "auto",
-        GameRunner::Luxtorpeda => "luxtorpeda (native engine)",
-        GameRunner::Umu => "umu (Proton via umu-launcher)",
-    };
     let ua = user_configs.get(&app_id).cloned().unwrap_or_default();
+    let platform_resolved = match native_linux {
+        Some(true) => "linux",
+        Some(false) => "windows",
+        None => "unknown until installed",
+    };
+    let runner_label = match entry.runner {
+        GameRunner::Auto => match native_linux {
+            Some(true) => "auto (Native)",
+            Some(false) => "auto (Proton via Wine-TKG)",
+            None => "auto (resolved at launch)",
+        }
+        .to_string(),
+        GameRunner::Luxtorpeda => "luxtorpeda (native engine)".to_string(),
+        GameRunner::Umu => "umu (Proton via umu-launcher)".to_string(),
+    };
     let steam_runtime_label = match ua.steam_runtime_policy {
-        SteamRuntimePolicy::Auto => "auto (inherits global `config steam-runtime-policy`)",
-        SteamRuntimePolicy::Enabled => "on",
-        SteamRuntimePolicy::Disabled => "off",
+        SteamRuntimePolicy::Auto if ua.use_steam_runtime => {
+            "auto (on: legacy per-game flag)".to_string()
+        }
+        SteamRuntimePolicy::Auto => match cfg.steam_runtime_policy {
+            SteamRuntimePolicy::Enabled => "auto (on, from global)".to_string(),
+            SteamRuntimePolicy::Disabled => "auto (off, from global)".to_string(),
+            SteamRuntimePolicy::Auto => {
+                "auto (global auto: bridges host Steam if running, else standalone)".to_string()
+            }
+        },
+        SteamRuntimePolicy::Enabled => "on".to_string(),
+        SteamRuntimePolicy::Disabled => "off".to_string(),
     };
     let prefix_mode_label = match ua.steam_prefix_mode {
         SteamPrefixMode::Shared => "shared",
@@ -508,13 +527,15 @@ pub(crate) async fn cmd_config_game(
         }));
     } else {
         cli_println!("App {app_id}:");
+        let proton_default = format!("(global default: {})", cfg.proton_version);
         cli_println!(
             "  Proton       : {}",
-            entry.forced_proton_version.as_deref().unwrap_or("(global default)")
+            entry.forced_proton_version.as_deref().unwrap_or(&proton_default)
         );
+        let platform_auto = format!("(auto: {platform_resolved})");
         cli_println!(
             "  Platform     : {}",
-            entry.platform_preference.as_deref().unwrap_or("(auto)")
+            entry.platform_preference.as_deref().unwrap_or(&platform_auto)
         );
         cli_println!("  Runner       : {runner_label}");
         cli_println!(
