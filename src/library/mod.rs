@@ -688,56 +688,9 @@ async fn parse_app_manifest_info(path: &Path) -> Result<Option<(u32, InstalledAp
         .await
         .with_context(|| format!("failed reading {}", path.display()))?;
 
-    let mut app_id = None;
-    let mut install_dir_name = None;
-    let mut name = None;
-    let mut last_owner = None;
-    let mut active_branch = "public".to_string();
-    let mut state_flags: Option<u32> = None;
-    let mut last_updated: u64 = 0;
-    let mut build_id: u64 = 0;
+    let manifest = crate::core::acf::parse_app_manifest(&raw);
 
-    let mut in_user_config = false;
-
-    for line in raw.lines() {
-        let trimmed = line.trim();
-        let parts = extract_quoted_values(trimmed);
-
-        if parts.len() == 1 && parts[0].eq_ignore_ascii_case("userconfig") {
-            in_user_config = true;
-            continue;
-        }
-
-        if trimmed == "{" || trimmed == "}" {
-            if trimmed == "}" && in_user_config {
-                in_user_config = false;
-            }
-            continue;
-        }
-
-        if parts.len() >= 2 {
-            let key = parts[0].to_lowercase();
-            let value = &parts[1];
-
-            if !in_user_config {
-                match key.as_str() {
-                    "appid" => app_id = value.parse::<u32>().ok(),
-                    "installdir" => install_dir_name = Some(value.to_string()),
-                    "name" => name = Some(value.to_string()),
-                    // "0" means no owner recorded; treat as unknown.
-                    "lastowner" => last_owner = value.parse::<u64>().ok().filter(|&id| id != 0),
-                    "stateflags" => state_flags = value.parse::<u32>().ok(),
-                    "lastupdated" => last_updated = value.parse::<u64>().unwrap_or(0),
-                    "buildid" => build_id = value.parse::<u64>().unwrap_or(0),
-                    _ => {}
-                }
-            } else if key == "betakey" && !value.trim().is_empty() {
-                active_branch = value.to_string();
-            }
-        }
-    }
-
-    let (Some(id), Some(dir)) = (app_id, install_dir_name) else {
+    let (Some(id), Some(dir)) = (manifest.app_id, manifest.install_dir.clone()) else {
         return Ok(None);
     };
 
@@ -746,7 +699,7 @@ async fn parse_app_manifest_info(path: &Path) -> Result<Option<(u32, InstalledAp
     // carries only StateUpdateRequired (2); if the install is cancelled that
     // partial manifest remains, and without this check the game would wrongly be
     // reported as installed by `list`.
-    if !state_flags.is_some_and(|flags| flags & 4 != 0) {
+    if !manifest.fully_installed() {
         return Ok(None);
     }
     let steamapps = path.parent().map(Path::to_path_buf).unwrap_or_default();
@@ -765,13 +718,13 @@ async fn parse_app_manifest_info(path: &Path) -> Result<Option<(u32, InstalledAp
         id,
         InstalledAppInfo {
             install_path,
-            active_branch,
-            name,
-            last_owner,
+            active_branch: manifest.active_branch,
+            name: manifest.name,
+            last_owner: manifest.last_owner,
             from_windows_steam: false,
             manifest_path: path.to_path_buf(),
-            last_updated,
-            build_id,
+            last_updated: manifest.last_updated,
+            build_id: manifest.build_id,
         },
     )))
 }

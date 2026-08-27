@@ -1464,57 +1464,27 @@ struct ProductLaunchConfigInner {
 }
 
 fn parse_installdir_from_acf(raw: &str) -> Option<String> {
-    for line in raw.lines() {
-        let quoted = extract_quoted_values(line.trim());
-        if quoted.len() >= 2 && quoted[0] == "installdir" {
-            return Some(quoted[1].clone());
-        }
-    }
-    None
+    crate::core::acf::parse_app_manifest(raw).install_dir
 }
 
 /// Read the `name` value from an appmanifest, if present and non-empty.
 pub(crate) fn parse_name_from_acf(raw: &str) -> Option<String> {
-    for line in raw.lines() {
-        let quoted = extract_quoted_values(line.trim());
-        if quoted.len() >= 2 && quoted[0].eq_ignore_ascii_case("name") {
-            let name = quoted[1].trim();
-            return (!name.is_empty()).then(|| name.to_string());
-        }
-    }
-    None
+    crate::core::acf::parse_app_manifest(raw).display_name()
 }
 
 /// Read `LastOwner` (SteamID64) from an appmanifest; `None` when absent or `0`.
 pub(crate) fn parse_last_owner_from_acf(raw: &str) -> Option<u64> {
-    for line in raw.lines() {
-        let quoted = extract_quoted_values(line.trim());
-        if quoted.len() >= 2 && quoted[0].eq_ignore_ascii_case("lastowner") {
-            return quoted[1].parse::<u64>().ok().filter(|&id| id != 0);
-        }
-    }
-    None
-}
-
-/// Read the `StateFlags` value from an appmanifest, if present.
-fn parse_state_flags_from_acf(raw: &str) -> Option<u32> {
-    for line in raw.lines() {
-        let quoted = extract_quoted_values(line.trim());
-        if quoted.len() >= 2 && quoted[0].eq_ignore_ascii_case("stateflags") {
-            return quoted[1].parse::<u32>().ok();
-        }
-    }
-    None
+    crate::core::acf::parse_app_manifest(raw).last_owner
 }
 
 /// Download StateFlags
 pub(crate) fn manifest_is_fully_installed(raw: &str) -> bool {
-    parse_state_flags_from_acf(raw).is_some_and(|flags| flags & 4 != 0)
+    crate::core::acf::parse_app_manifest(raw).fully_installed()
 }
 
 /// Fetch `StateUpdateRequired` flag
 pub(crate) fn manifest_update_pending(raw: &str) -> bool {
-    parse_state_flags_from_acf(raw).is_some_and(|flags| flags & 2 != 0)
+    crate::core::acf::parse_app_manifest(raw).update_pending()
 }
 
 fn parse_installed_depots_from_acf(raw: &str) -> HashMap<u64, u64> {
@@ -1557,30 +1527,7 @@ fn parse_installed_depots_from_acf(raw: &str) -> HashMap<u64, u64> {
 }
 
 fn parse_active_branch_from_acf(raw: &str) -> String {
-    let mut in_user_config = false;
-    for line in raw.lines() {
-        let trimmed = line.trim();
-        let parts = extract_quoted_values(trimmed);
-
-        if parts.len() == 1 && parts[0].eq_ignore_ascii_case("userconfig") {
-            in_user_config = true;
-            continue;
-        }
-
-        if trimmed == "{" || trimmed == "}" {
-            if trimmed == "}" && in_user_config {
-                in_user_config = false;
-            }
-            continue;
-        }
-
-        if parts.len() >= 2 && in_user_config && parts[0].eq_ignore_ascii_case("betakey") {
-            if !parts[1].trim().is_empty() {
-                return parts[1].to_string();
-            }
-        }
-    }
-    "public".to_string()
+    crate::core::acf::parse_app_manifest(raw).active_branch
 }
 
 
