@@ -15,17 +15,28 @@ pub(crate) async fn cmd_config_show(_json: bool) -> Result<()> {
     Ok(())
 }
 
+/// Shared view-or-set skeleton: load the launcher config and, when `value` is
+/// given, apply `mutate` and save. Returns the (possibly updated) config and
+/// whether it was written.
+async fn view_or_set<T>(
+    value: Option<T>,
+    mutate: impl FnOnce(&mut aurelia::core::config::LauncherConfig, T),
+) -> Result<(aurelia::core::config::LauncherConfig, bool)> {
+    let mut config = load_launcher_config().await?;
+    let changed = value.is_some();
+    if let Some(v) = value {
+        mutate(&mut config, v);
+        save_launcher_config(&config).await?;
+    }
+    Ok((config, changed))
+}
+
 /// `config presence [online|offline]`: view or set the presence the daemon
 /// announces for friends/chat. `offline` is an invisible presence — you appear
 /// offline to friends but still sync your friends list and receive chat.
 pub(crate) async fn cmd_config_presence(mode: Option<ChatPresenceArg>, json: bool) -> Result<()> {
     use aurelia::core::config::ChatPresence;
-    let mut config = load_launcher_config().await?;
-    let changed = mode.is_some();
-    if let Some(mode) = mode {
-        config.chat_presence = mode.into();
-        save_launcher_config(&config).await?;
-    }
+    let (config, changed) = view_or_set(mode, |c, m| c.chat_presence = m.into()).await?;
     let current = match config.chat_presence {
         ChatPresence::Online => "online",
         ChatPresence::Offline => "offline",
@@ -47,13 +58,11 @@ pub(crate) async fn cmd_config_presence(mode: Option<ChatPresenceArg>, json: boo
 /// used by `aurelia achievements` when `--lang` is not given. Pass an empty
 /// value to clear it (falling back to English).
 pub(crate) async fn cmd_config_language(lang: Option<String>, json: bool) -> Result<()> {
-    let mut config = load_launcher_config().await?;
-    let changed = lang.is_some();
-    if let Some(lang) = lang {
+    let (config, changed) = view_or_set(lang, |c, lang| {
         let value = lang.trim().to_ascii_lowercase();
-        config.language = if value.is_empty() { None } else { Some(value) };
-        save_launcher_config(&config).await?;
-    }
+        c.language = if value.is_empty() { None } else { Some(value) };
+    })
+    .await?;
     let current = config.language.as_deref();
     if json {
         print_json(&serde_json::json!({ "language": current }));
@@ -72,14 +81,7 @@ pub(crate) async fn cmd_config_language(lang: Option<String>, json: bool) -> Res
 /// `config experimental [true|false]`: view or set the experimental-features gate
 /// that unlocks `login --openid` and `login --web-token`. See [`ConfigCommand::Experimental`].
 pub(crate) async fn cmd_config_experimental(enabled: Option<bool>, json: bool) -> Result<()> {
-    let mut config = load_launcher_config().await?;
-    let changed = enabled.is_some();
-    if let Some(value) = enabled {
-        config.experimental = value;
-        save_launcher_config(&config)
-            .await
-            .context("failed saving experimental config")?;
-    }
+    let (config, changed) = view_or_set(enabled, |c, value| c.experimental = value).await?;
     // The env var forces experimental on for a single run regardless of the file.
     let env_override = std::env::var_os("AURELIA_EXPERIMENTAL").is_some_and(|v| {
         let v = v.to_string_lossy();
@@ -308,14 +310,7 @@ pub(crate) async fn cmd_config_steam_runtime_policy(
 ) -> Result<()> {
     use aurelia::core::models::SteamRuntimePolicy;
 
-    let mut config = load_launcher_config().await?;
-    let changed = policy.is_some();
-    if let Some(arg) = policy {
-        config.steam_runtime_policy = arg.into();
-        save_launcher_config(&config)
-            .await
-            .context("failed saving steam-runtime-policy")?;
-    }
+    let (config, changed) = view_or_set(policy, |c, arg| c.steam_runtime_policy = arg.into()).await?;
 
     let label = match config.steam_runtime_policy {
         SteamRuntimePolicy::Auto => {
