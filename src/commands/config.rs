@@ -490,15 +490,6 @@ pub(crate) async fn cmd_config_clear_games(yes: bool, json: bool) -> Result<()> 
     Ok(())
 }
 
-/// Which platform payloads are installed: (linux, windows).
-async fn installed_platform_set(app_id: u32) -> Option<(bool, bool)> {
-    let installed = aurelia::library::scan_installed_app_info().await.ok()?;
-    let info = installed.get(&app_id)?;
-    crate::commands::library::detect_installed_platform_set(&info.install_path.to_string_lossy())
-}
-
-/// `config game`: view or set a game's per-game launch settings.
-#[allow(clippy::too_many_arguments)]
 /// Best-effort online-required lookup via PICS.
 async fn online_required_for(app_id: u32) -> Option<bool> {
     let client = restored_client().await.ok()?;
@@ -508,16 +499,15 @@ async fn online_required_for(app_id: u32) -> Option<bool> {
     client.fetch_online_required(app_id).await.ok()
 }
 
-/// Whether the installed depot is native Linux.
-async fn is_native_linux_install(app_id: u32) -> Option<bool> {
+/// Which platform payloads are installed: (linux, windows).
+async fn installed_platform_set(app_id: u32) -> Option<(bool, bool)> {
     let installed = aurelia::library::scan_installed_app_info().await.ok()?;
     let info = installed.get(&app_id)?;
-    let platform = crate::commands::library::detect_installed_platform(
-        &info.install_path.to_string_lossy(),
-    )?;
-    Some(platform == "linux")
+    crate::commands::library::detect_installed_platform_set(&info.install_path.to_string_lossy())
 }
 
+/// `config game`: view or set a game's per-game launch settings.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn cmd_config_game(
     app_id: u32,
     proton: Option<String>,
@@ -539,14 +529,16 @@ pub(crate) async fn cmd_config_game(
     use aurelia::core::config::GameRunner;
     use aurelia::core::models::{SteamEmulatorPolicy, SteamPrefixMode, SteamRuntimePolicy};
 
-    // Emulator knob is native-Linux-only.
-    let native_linux = is_native_linux_install(app_id).await;
+    // Emulator knob needs a native Linux payload; it only ever
+    // applies to native launches, so a dual-depot install is fine.
+    let platforms = installed_platform_set(app_id).await;
+    let native_linux = platforms.map(|(linux, _)| linux);
     if steam_emulator.is_some() && native_linux != Some(true) {
         anyhow::bail!(
-            "`--steam-emulator` only applies to installed native Linux games; app {app_id} {}",
-            match native_linux {
-                Some(false) => "has a Windows depot installed",
-                _ => "is not installed (or its platform is unknown)",
+            "`--steam-emulator` needs an installed native Linux build; app {app_id} {}",
+            match platforms {
+                Some(_) => "has no native Linux depot installed",
+                None => "is not installed (or its platform is unknown)",
             }
         );
     }
