@@ -120,6 +120,18 @@ impl SteamClient {
 
         let launcher_config = load_launcher_config().await?;
 
+        match launch_info.target {
+            LaunchTarget::NativeLinux => {
+                tracing::info!(app_id = app.app_id, "resolved launch platform: native Linux");
+            }
+            LaunchTarget::WindowsProton => {
+                tracing::info!(
+                    app_id = app.app_id,
+                    proton = proton_path.unwrap_or(&launcher_config.proton_version),
+                    "resolved launch platform: Windows via Proton"
+                );
+            }
+        }
         // None = native Linux; Some = the effective Proton runner.
         if let Some(cb) = on_target_resolved {
             cb(match launch_info.target {
