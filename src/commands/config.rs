@@ -446,6 +446,15 @@ pub(crate) async fn cmd_config_protons(json: bool) -> Result<()> {
     Ok(())
 }
 
+/// Best-effort online-required lookup via PICS.
+async fn online_required_for(app_id: u32) -> Option<bool> {
+    let client = restored_client().await.ok()?;
+    if !client.is_authenticated() || client.is_offline() {
+        return None;
+    }
+    client.fetch_online_required(app_id).await.ok()
+}
+
 /// `config clear-games`: reset every game's per-game settings (both stores).
 pub(crate) async fn cmd_config_clear_games(yes: bool, json: bool) -> Result<()> {
     let mut cfg = load_launcher_config().await?;
@@ -488,15 +497,6 @@ pub(crate) async fn cmd_config_clear_games(yes: bool, json: bool) -> Result<()> 
         cli_println!("Cleared the per-game settings of {} game(s).", ids.len());
     }
     Ok(())
-}
-
-/// Best-effort online-required lookup via PICS.
-async fn online_required_for(app_id: u32) -> Option<bool> {
-    let client = restored_client().await.ok()?;
-    if !client.is_authenticated() || client.is_offline() {
-        return None;
-    }
-    client.fetch_online_required(app_id).await.ok()
 }
 
 /// Which platform payloads are installed: (linux, windows).
@@ -649,7 +649,6 @@ pub(crate) async fn cmd_config_game(
 
     let entry = cfg.game_configs.get(&app_id).cloned().unwrap_or_default();
     let ua = user_configs.get(&app_id).cloned().unwrap_or_default();
-    let platforms = installed_platform_set(app_id).await;
     let platform_resolved = match platforms {
         Some((true, true)) => "linux + windows installed",
         Some((true, false)) => "linux",

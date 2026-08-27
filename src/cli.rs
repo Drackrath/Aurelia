@@ -516,7 +516,7 @@ pub(crate) enum ConfigCommand {
         /// Reset ALL of this game's per-game settings to defaults (both stores).
         #[arg(long, conflicts_with_all = ["proton", "clear_proton", "platform", "no_platform",
             "native_engine", "no_native_engine", "umu", "no_umu", "launch_script",
-            "no_launch_script", "steam_runtime", "steam_prefix_mode"])]
+            "no_launch_script", "steam_runtime", "steam_prefix_mode", "steam_emulator"])]
         clear: bool,
         /// Route this game through the luxtorpeda native-engine plugin (Linux only;
         /// requires `aurelia luxtorpeda enable`).
