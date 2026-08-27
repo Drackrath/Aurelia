@@ -166,14 +166,21 @@ pub(crate) async fn cmd_proton_default(version: String, json: bool) -> Result<()
     Ok(())
 }
 
+/// Load the launcher config, refusing early (with an actionable message) when
+/// no Steam-runtime runner is configured. `gerund` names the attempted action.
+async fn steam_runtime_config(gerund: &str) -> Result<aurelia::core::config::LauncherConfig> {
+    let config = load_launcher_config().await?;
+    if config.steam_runtime_runner.as_os_str().is_empty() {
+        bail!("{}", aurelia::core::utils::steam_runtime_runner_unset_msg(gerund));
+    }
+    Ok(config)
+}
+
 /// `steam-runtime install`: install Steam into the master Windows prefix.
 pub(crate) async fn cmd_steam_runtime_install(reinstall: bool, json: bool) -> Result<()> {
-    let config = load_launcher_config().await?;
     // Pre-check here (before install_master_steam downloads SteamSetup.exe) so an
     // unconfigured runner fails fast with an actionable message and no wasted work.
-    if config.steam_runtime_runner.as_os_str().is_empty() {
-        bail!("{}", aurelia::core::utils::steam_runtime_runner_unset_msg("installing"));
-    }
+    let config = steam_runtime_config("installing").await?;
     // `--reinstall`: wipe the old (possibly corrupted) prefix first, then install fresh.
     if reinstall {
         if !json {
@@ -221,10 +228,7 @@ pub(crate) async fn cmd_steam_runtime_uninstall(json: bool) -> Result<()> {
 
 /// `steam-runtime repair`: back up the master prefix and reinstall.
 pub(crate) async fn cmd_steam_runtime_repair(json: bool) -> Result<()> {
-    let config = load_launcher_config().await?;
-    if config.steam_runtime_runner.as_os_str().is_empty() {
-        bail!("{}", aurelia::core::utils::steam_runtime_runner_unset_msg("repairing"));
-    }
+    let config = steam_runtime_config("repairing").await?;
     aurelia::launch::repair_master_steam(&config).await?;
     let steam_cfg = aurelia::core::utils::get_master_steam_config();
     if json {
@@ -241,10 +245,7 @@ pub(crate) async fn cmd_steam_runtime_repair(json: bool) -> Result<()> {
 /// `steam-runtime login`: (re-)start the in-Wine Steam client interactively so the
 /// user can sign in again (expired session, or switching accounts) without a reinstall.
 pub(crate) async fn cmd_steam_runtime_login(json: bool) -> Result<()> {
-    let config = load_launcher_config().await?;
-    if config.steam_runtime_runner.as_os_str().is_empty() {
-        bail!("{}", aurelia::core::utils::steam_runtime_runner_unset_msg("signing in"));
-    }
+    let config = steam_runtime_config("signing in").await?;
     aurelia::launch::relogin_master_steam(&config).await?;
     let steam_cfg = aurelia::core::utils::get_master_steam_config();
     if json {
