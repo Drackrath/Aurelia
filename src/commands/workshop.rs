@@ -127,11 +127,62 @@ pub(crate) async fn workshop_resolve_ids(
     }
 }
 
-/// `workshop install`: download item(s)/collection(s) and register them.
-pub(crate) async fn cmd_workshop_install(ids: Vec<u64>, no_recurse: bool, json: bool) -> Result<()> {
+/// Shared prologue of the bulk Workshop commands: connect, expand collections
+/// (unless `no_recurse`), and resolve each id's metadata.
+async fn resolve_workshop_items(
+    ids: Vec<u64>,
+    no_recurse: bool,
+) -> Result<(SteamClient, Vec<aurelia::core::models::WorkshopItem>)> {
     let client = authed_client().await?;
     let leaf_ids = workshop_resolve_ids(&client, ids, no_recurse).await?;
     let items = client.fetch_published_file_details(&leaf_ids).await?;
+    Ok((client, items))
+}
+
+/// Run `op` for every item, reporting per-item progress in human mode and
+/// returning the ids acted on.
+async fn for_each_workshop_item<'a, F, Fut>(
+    client: &'a SteamClient,
+    items: &'a [aurelia::core::models::WorkshopItem],
+    past_tense: &str,
+    fail_verb: &str,
+    json: bool,
+    op: F,
+) -> Result<Vec<u64>>
+where
+    F: Fn(&'a SteamClient, u64, u32) -> Fut,
+    Fut: Future<Output = Result<()>>,
+{
+    let mut acted = Vec::new();
+    for item in items {
+        op(client, item.id, item.app_id)
+            .await
+            .with_context(|| format!("failed to {fail_verb} Workshop item {}", item.id))?;
+        acted.push(item.id);
+        if !json {
+            cli_println!("{past_tense} Workshop item {} ({}).", item.id, item.title);
+        }
+    }
+    Ok(acted)
+}
+
+/// Start the download for one Workshop item and drive its progress stream.
+async fn install_one_workshop_item(
+    client: &SteamClient,
+    item: &aurelia::core::models::WorkshopItem,
+    json: bool,
+) -> Result<()> {
+    let state = Arc::new(RwLock::new(DownloadState::default()));
+    let rx = client
+        .install_workshop_item(item, state)
+        .await
+        .with_context(|| format!("failed to start install for Workshop item {}", item.id))?;
+    drive_progress(rx, json).await
+}
+
+/// `workshop install`: download item(s)/collection(s) and register them.
+pub(crate) async fn cmd_workshop_install(ids: Vec<u64>, no_recurse: bool, json: bool) -> Result<()> {
+    let (client, items) = resolve_workshop_items(ids, no_recurse).await?;
     if items.is_empty() {
         bail!("no installable Workshop items resolved");
     }
@@ -140,12 +191,7 @@ pub(crate) async fn cmd_workshop_install(ids: Vec<u64>, no_recurse: bool, json: 
         if !json {
             cli_println!("Installing Workshop item {} ({}) ...", item.id, item.title);
         }
-        let state = Arc::new(RwLock::new(DownloadState::default()));
-        let rx = client
-            .install_workshop_item(item, state)
-            .await
-            .with_context(|| format!("failed to start install for Workshop item {}", item.id))?;
-        drive_progress(rx, json).await?;
+        install_one_workshop_item(&client, item, json).await?;
         if json {
             print_json_line(&serde_json::json!({
                 "event": "result",
@@ -160,22 +206,13 @@ pub(crate) async fn cmd_workshop_install(ids: Vec<u64>, no_recurse: bool, json: 
 
 /// `workshop uninstall`: remove installed item(s)/collection(s).
 pub(crate) async fn cmd_workshop_uninstall(ids: Vec<u64>, no_recurse: bool, json: bool) -> Result<()> {
-    let client = authed_client().await?;
-    let leaf_ids = workshop_resolve_ids(&client, ids, no_recurse).await?;
     // GetDetails resolves each item's owning app id (needed to find its files).
-    let items = client.fetch_published_file_details(&leaf_ids).await?;
+    let (client, items) = resolve_workshop_items(ids, no_recurse).await?;
 
-    let mut removed = Vec::new();
-    for item in &items {
-        client
-            .uninstall_workshop_item(item.id, item.app_id)
-            .await
-            .with_context(|| format!("failed to uninstall Workshop item {}", item.id))?;
-        removed.push(item.id);
-        if !json {
-            cli_println!("Uninstalled Workshop item {} ({}).", item.id, item.title);
-        }
-    }
+    let removed = for_each_workshop_item(&client, &items, "Uninstalled", "uninstall", json, |c, id, app| {
+        c.uninstall_workshop_item(id, app)
+    })
+    .await?;
     if json {
         print_json(&serde_json::json!({ "uninstalled": removed }));
     } else if removed.is_empty() {
@@ -191,33 +228,20 @@ pub(crate) async fn cmd_workshop_subscribe(
     no_recurse: bool,
     json: bool,
 ) -> Result<()> {
-    let client = authed_client().await?;
-    let leaf_ids = workshop_resolve_ids(&client, ids, no_recurse).await?;
-    let items = client.fetch_published_file_details(&leaf_ids).await?;
+    let (client, items) = resolve_workshop_items(ids, no_recurse).await?;
 
-    let mut subscribed = Vec::new();
-    for item in &items {
-        client
-            .subscribe_published_file(item.id, item.app_id)
-            .await
-            .with_context(|| format!("failed to subscribe to Workshop item {}", item.id))?;
-        subscribed.push(item.id);
-        if !json {
-            cli_println!("Subscribed to Workshop item {} ({}).", item.id, item.title);
-        }
-    }
+    let subscribed =
+        for_each_workshop_item(&client, &items, "Subscribed to", "subscribe to", json, |c, id, app| {
+            c.subscribe_published_file(id, app)
+        })
+        .await?;
 
     if install {
         for item in &items {
             if !json {
                 cli_println!("Installing Workshop item {} ...", item.id);
             }
-            let state = Arc::new(RwLock::new(DownloadState::default()));
-            let rx = client
-                .install_workshop_item(item, state)
-                .await
-                .with_context(|| format!("failed to start install for Workshop item {}", item.id))?;
-            drive_progress(rx, json).await?;
+            install_one_workshop_item(&client, item, json).await?;
         }
     }
 
@@ -229,21 +253,17 @@ pub(crate) async fn cmd_workshop_subscribe(
 
 /// `workshop unsubscribe`: unsubscribe from item(s)/collection(s).
 pub(crate) async fn cmd_workshop_unsubscribe(ids: Vec<u64>, no_recurse: bool, json: bool) -> Result<()> {
-    let client = authed_client().await?;
-    let leaf_ids = workshop_resolve_ids(&client, ids, no_recurse).await?;
-    let items = client.fetch_published_file_details(&leaf_ids).await?;
+    let (client, items) = resolve_workshop_items(ids, no_recurse).await?;
 
-    let mut unsubscribed = Vec::new();
-    for item in &items {
-        client
-            .unsubscribe_published_file(item.id, item.app_id)
-            .await
-            .with_context(|| format!("failed to unsubscribe from Workshop item {}", item.id))?;
-        unsubscribed.push(item.id);
-        if !json {
-            cli_println!("Unsubscribed from Workshop item {} ({}).", item.id, item.title);
-        }
-    }
+    let unsubscribed = for_each_workshop_item(
+        &client,
+        &items,
+        "Unsubscribed from",
+        "unsubscribe from",
+        json,
+        |c, id, app| c.unsubscribe_published_file(id, app),
+    )
+    .await?;
     if json {
         print_json(&serde_json::json!({ "unsubscribed": unsubscribed }));
     }
