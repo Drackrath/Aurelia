@@ -76,13 +76,11 @@ impl PipelineStage for ResolveDllProvidersStage {
             // Pre-populate this so downstream stages can use it
             ctx.resolved_executable_path = Some(exe_path.clone());
 
-            if let Some(logger) = &ctx.logger {
-                let mut metadata = std::collections::HashMap::new();
-                metadata.insert("exe_path".into(), exe_path.to_string_lossy().to_string());
-                metadata.insert("detected_arch".into(), format!("{:?}", ctx.target_architecture).to_lowercase());
-                metadata.insert("detection_method".into(), "PE header".to_string());
-                let _ = logger.info("arch_detected", "Target executable architecture determined".into(), Some("ResolveDllProviders".into()), metadata);
-            }
+            let mut metadata = std::collections::HashMap::new();
+            metadata.insert("exe_path".into(), exe_path.to_string_lossy().to_string());
+            metadata.insert("detected_arch".into(), format!("{:?}", ctx.target_architecture).to_lowercase());
+            metadata.insert("detection_method".into(), "PE header".to_string());
+            ctx.log_info("arch_detected", "Target executable architecture determined".into(), Some("ResolveDllProviders".into()), metadata);
         }
 
         let (mut resolutions, scan_report) = resolver.resolve(
@@ -167,30 +165,28 @@ impl PipelineStage for ResolveDllProvidersStage {
             }
         }
 
-        if let Some(logger) = &ctx.logger {
-            if scan_report.warnings.is_empty() && scan_report.scan_roots.is_empty() {
-                let _ = logger.log(crate::infra::logging::LogLevel::Warn, "zero_runner_roots", "Zero Runner roots derived from runner path".into(), Some("ResolveDllProviders".into()), std::collections::HashMap::new());
+        if scan_report.warnings.is_empty() && scan_report.scan_roots.is_empty() {
+            ctx.log_event(crate::infra::logging::LogLevel::Warn, "zero_runner_roots", "Zero Runner roots derived from runner path".into(), Some("ResolveDllProviders".into()), std::collections::HashMap::new());
+        }
+
+        for res in &ctx.dll_resolutions {
+            let mut metadata = std::collections::HashMap::new();
+            metadata.insert("dll".into(), res.name.clone());
+            metadata.insert("provider".into(), format!("{:?}", res.chosen_provider));
+            if let Some(path) = &res.chosen_path {
+                metadata.insert("path".into(), path.to_string_lossy().to_string());
             }
 
-            for res in &ctx.dll_resolutions {
-                let mut metadata = std::collections::HashMap::new();
-                metadata.insert("dll".into(), res.name.clone());
-                metadata.insert("provider".into(), format!("{:?}", res.chosen_provider));
-                if let Some(path) = &res.chosen_path {
-                    metadata.insert("path".into(), path.to_string_lossy().to_string());
-                }
+            use crate::launch::dll_provider_resolver::DllProvider;
+            let count_existing = |provider: DllProvider| {
+                res.candidates.iter().filter(|c| c.provider == provider && c.exists).count()
+            };
 
-                use crate::launch::dll_provider_resolver::DllProvider;
-                let count_existing = |provider: DllProvider| {
-                    res.candidates.iter().filter(|c| c.provider == provider && c.exists).count()
-                };
+            metadata.insert("count_gamelocal".into(), count_existing(DllProvider::GameLocal).to_string());
+            metadata.insert("count_runner".into(), count_existing(DllProvider::Runner).to_string());
+            metadata.insert("count_system".into(), count_existing(DllProvider::System).to_string());
 
-                metadata.insert("count_gamelocal".into(), count_existing(DllProvider::GameLocal).to_string());
-                metadata.insert("count_runner".into(), count_existing(DllProvider::Runner).to_string());
-                metadata.insert("count_system".into(), count_existing(DllProvider::System).to_string());
-
-                let _ = logger.info("dll_resolved", format!("Resolved {} to {:?}", res.name, res.chosen_provider), Some("ResolveDllProviders".into()), metadata);
-            }
+            ctx.log_info("dll_resolved", format!("Resolved {} to {:?}", res.name, res.chosen_provider), Some("ResolveDllProviders".into()), metadata);
         }
 
         Ok(())

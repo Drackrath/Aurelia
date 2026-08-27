@@ -229,17 +229,15 @@ impl PipelineStage for PreflightStage {
         }
 
         // 6. Architecture Hint & Context
-        if let Some(logger) = &ctx.logger {
-            let mut metadata = std::collections::HashMap::new();
-            metadata.insert("runner_path".to_string(), report.runner_path.clone());
-            metadata.insert("target_architecture".to_string(), format!("{:?}", report.target_architecture).to_lowercase());
-            metadata.insert("success".to_string(), report.success.to_string());
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("runner_path".to_string(), report.runner_path.clone());
+        metadata.insert("target_architecture".to_string(), format!("{:?}", report.target_architecture).to_lowercase());
+        metadata.insert("success".to_string(), report.success.to_string());
 
-            let event_type = if report.success { "preflight_success" } else { "preflight_failure" };
-            let message = if report.success { "Preflight validation successful".to_string() } else { "Preflight validation failed".to_string() };
+        let event_type = if report.success { "preflight_success" } else { "preflight_failure" };
+        let message = if report.success { "Preflight validation successful".to_string() } else { "Preflight validation failed".to_string() };
 
-            let _ = logger.info(event_type, message, Some("Preflight".to_string()), metadata);
-        }
+        ctx.log_info(event_type, message, Some("Preflight".to_string()), metadata);
 
         final_res
     }
