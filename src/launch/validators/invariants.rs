@@ -29,6 +29,26 @@ fn evidence_missing_suffix(meta: &EvidenceScanMetadata) -> &'static str {
     }
 }
 
+/// Shared Invariant B/C native-override check.
+fn check_unexpected_native(
+    spec: &crate::infra::runners::CommandSpec,
+    dlls: &[&str],
+    path_needle: &str,
+    code: &'static str,
+    override_msg: impl Fn(&str) -> String,
+    path_msg: &str,
+    warnings: &mut Vec<(&'static str, String)>,
+) {
+    if let Some(overrides) = spec.env.get("WINEDLLOVERRIDES") {
+        for dll in native_dll_overrides(overrides, dlls) {
+            warnings.push((code, override_msg(&dll)));
+        }
+    }
+    if spec.env.get("WINEDLLPATH").is_some_and(|p| p.contains(path_needle)) {
+        warnings.push((code, path_msg.into()));
+    }
+}
+
 pub struct LaunchInvariantValidator;
 
 impl LaunchValidator for LaunchInvariantValidator {
@@ -61,42 +81,30 @@ impl LaunchValidator for LaunchInvariantValidator {
         if ctx.graphics_stack.effective_backend != "DXVK"
             && let Some(spec) = &ctx.command_spec
         {
-            if let Some(overrides) = spec.env.get("WINEDLLOVERRIDES") {
-                let dxvk_dlls = ["d3d8", "d3d9", "d3d10core", "d3d11", "dxgi"];
-                for dll in native_dll_overrides(overrides, &dxvk_dlls) {
-                    warnings.push((
-                        "INVARIANT_B_VIOLATION",
-                        format!("Effective backend is not DXVK but found native override for DXVK DLL: {}", dll),
-                    ));
-                }
-            }
-            if spec.env.get("WINEDLLPATH").is_some_and(|p| p.contains("dxvk")) {
-                warnings.push((
-                    "INVARIANT_B_VIOLATION",
-                    "Effective backend is not DXVK but WINEDLLPATH contains 'dxvk'".into(),
-                ));
-            }
+            check_unexpected_native(
+                spec,
+                &["d3d8", "d3d9", "d3d10core", "d3d11", "dxgi"],
+                "dxvk",
+                "INVARIANT_B_VIOLATION",
+                |dll| format!("Effective backend is not DXVK but found native override for DXVK DLL: {dll}"),
+                "Effective backend is not DXVK but WINEDLLPATH contains 'dxvk'",
+                &mut warnings,
+            );
         }
 
         // Invariant C: If effective D3D12 provider is unset/default/not-selected, there must be no forced D3D12 provider injection.
         if ctx.graphics_stack.effective_d3d12_provider == "None"
             && let Some(spec) = &ctx.command_spec
         {
-            if let Some(overrides) = spec.env.get("WINEDLLOVERRIDES") {
-                let d3d12_dlls = ["d3d12", "d3d12core"];
-                for dll in native_dll_overrides(overrides, &d3d12_dlls) {
-                    warnings.push((
-                        "INVARIANT_C_VIOLATION",
-                        format!("Effective D3D12 provider is None but found native override for DLL: {}", dll),
-                    ));
-                }
-            }
-            if spec.env.get("WINEDLLPATH").is_some_and(|p| p.contains("vkd3d")) {
-                warnings.push((
-                    "INVARIANT_C_VIOLATION",
-                    "Effective D3D12 provider is None but WINEDLLPATH contains 'vkd3d'".into(),
-                ));
-            }
+            check_unexpected_native(
+                spec,
+                &["d3d12", "d3d12core"],
+                "vkd3d",
+                "INVARIANT_C_VIOLATION",
+                |dll| format!("Effective D3D12 provider is None but found native override for DLL: {dll}"),
+                "Effective D3D12 provider is None but WINEDLLPATH contains 'vkd3d'",
+                &mut warnings,
+            );
         }
 
         // Detailed Invariant C: Effective D3D12 provider must match resolved provider paths if one is active.

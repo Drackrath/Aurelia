@@ -114,10 +114,7 @@ impl SteamClient {
     /// `Authentication.GenerateAccessTokenForApp`, then builds the cookie set. This
     /// reuses the one shared connection — no extra logon.
     pub async fn web_session(&self) -> Result<WebSession> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
         let steam_id = u64::from(connection.steam_id());
         let refresh_token = connection
             .access_token()
@@ -190,11 +187,7 @@ pub async fn wallet_via(web: &WebSession) -> Result<WalletBalance> {
 
 /// A `reqwest` client for public (no-auth) market lookups.
 fn public_client() -> Result<reqwest::Client> {
-    reqwest::Client::builder()
-        .user_agent("aurelia")
-        .timeout(std::time::Duration::from_secs(20))
-        .build()
-        .context("failed to build HTTP client")
+    crate::core::net::steam_web_client()
 }
 
 /// Look up an item's market price (`priceoverview`). Public — no session required.

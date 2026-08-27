@@ -3,7 +3,6 @@
 use crate::cli::*;
 use crate::commands::common::*;
 
-use std::path::PathBuf;
 use anyhow::{Context, Result};
 use aurelia::core::config::load_launcher_config;
 use aurelia::core::config::save_launcher_config;
@@ -11,8 +10,22 @@ use aurelia::core::config::save_launcher_config;
 pub(crate) async fn cmd_config_show(_json: bool) -> Result<()> {
     // The launcher configuration is structured data; it always renders as JSON.
     let config = load_launcher_config().await?;
-    cli_println!("{}", serde_json::to_string_pretty(&config)?);
+    print_json(&config);
     Ok(())
+}
+
+/// Load config; optionally mutate, save.
+async fn view_or_set<T>(
+    value: Option<T>,
+    mutate: impl FnOnce(&mut aurelia::core::config::LauncherConfig, T),
+) -> Result<(aurelia::core::config::LauncherConfig, bool)> {
+    let mut config = load_launcher_config().await?;
+    let changed = value.is_some();
+    if let Some(v) = value {
+        mutate(&mut config, v);
+        save_launcher_config(&config).await?;
+    }
+    Ok((config, changed))
 }
 
 /// `config presence [online|offline]`: view or set the presence the daemon
@@ -20,12 +33,7 @@ pub(crate) async fn cmd_config_show(_json: bool) -> Result<()> {
 /// offline to friends but still sync your friends list and receive chat.
 pub(crate) async fn cmd_config_presence(mode: Option<ChatPresenceArg>, json: bool) -> Result<()> {
     use aurelia::core::config::ChatPresence;
-    let mut config = load_launcher_config().await?;
-    let changed = mode.is_some();
-    if let Some(mode) = mode {
-        config.chat_presence = mode.into();
-        save_launcher_config(&config).await?;
-    }
+    let (config, changed) = view_or_set(mode, |c, m| c.chat_presence = m.into()).await?;
     let current = match config.chat_presence {
         ChatPresence::Online => "online",
         ChatPresence::Offline => "offline",
@@ -47,13 +55,11 @@ pub(crate) async fn cmd_config_presence(mode: Option<ChatPresenceArg>, json: boo
 /// used by `aurelia achievements` when `--lang` is not given. Pass an empty
 /// value to clear it (falling back to English).
 pub(crate) async fn cmd_config_language(lang: Option<String>, json: bool) -> Result<()> {
-    let mut config = load_launcher_config().await?;
-    let changed = lang.is_some();
-    if let Some(lang) = lang {
+    let (config, changed) = view_or_set(lang, |c, lang| {
         let value = lang.trim().to_ascii_lowercase();
-        config.language = if value.is_empty() { None } else { Some(value) };
-        save_launcher_config(&config).await?;
-    }
+        c.language = if value.is_empty() { None } else { Some(value) };
+    })
+    .await?;
     let current = config.language.as_deref();
     if json {
         print_json(&serde_json::json!({ "language": current }));
@@ -72,14 +78,7 @@ pub(crate) async fn cmd_config_language(lang: Option<String>, json: bool) -> Res
 /// `config experimental [true|false]`: view or set the experimental-features gate
 /// that unlocks `login --openid` and `login --web-token`. See [`ConfigCommand::Experimental`].
 pub(crate) async fn cmd_config_experimental(enabled: Option<bool>, json: bool) -> Result<()> {
-    let mut config = load_launcher_config().await?;
-    let changed = enabled.is_some();
-    if let Some(value) = enabled {
-        config.experimental = value;
-        save_launcher_config(&config)
-            .await
-            .context("failed saving experimental config")?;
-    }
+    let (config, changed) = view_or_set(enabled, |c, value| c.experimental = value).await?;
     // The env var forces experimental on for a single run regardless of the file.
     let env_override = std::env::var_os("AURELIA_EXPERIMENTAL").is_some_and(|v| {
         let v = v.to_string_lossy();
@@ -308,18 +307,7 @@ pub(crate) async fn cmd_config_steam_runtime_policy(
 ) -> Result<()> {
     use aurelia::core::models::SteamRuntimePolicy;
 
-    let mut config = load_launcher_config().await?;
-    let changed = policy.is_some();
-    if let Some(arg) = policy {
-        config.steam_runtime_policy = match arg {
-            SteamRuntimeArg::Auto => SteamRuntimePolicy::Auto,
-            SteamRuntimeArg::On => SteamRuntimePolicy::Enabled,
-            SteamRuntimeArg::Off => SteamRuntimePolicy::Disabled,
-        };
-        save_launcher_config(&config)
-            .await
-            .context("failed saving steam-runtime-policy")?;
-    }
+    let (config, changed) = view_or_set(policy, |c, arg| c.steam_runtime_policy = arg.into()).await?;
 
     let label = match config.steam_runtime_policy {
         SteamRuntimePolicy::Auto => {
@@ -404,18 +392,15 @@ pub(crate) async fn cmd_config_clear_games(yes: bool, json: bool) -> Result<()> 
         }
         return Ok(());
     }
-    if !yes {
-        if json {
-            anyhow::bail!("refusing to clear without confirmation — pass `--yes` in --json mode");
-        }
-        let answer = crate::commands::common::prompt_line(&format!(
+    crate::commands::common::confirm_write(
+        "clear",
+        &format!(
             "About to reset the per-game settings of {} game(s) to defaults. Continue? [y/N] ",
             ids.len()
-        ))?;
-        if !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
-            anyhow::bail!("aborted");
-        }
-    }
+        ),
+        yes,
+        json,
+    )?;
     cfg.game_configs.clear();
     user_configs.clear();
     cfg.save().await.context("failed saving game config")?;
@@ -438,24 +423,23 @@ async fn installed_platform_set(app_id: u32) -> Option<(bool, bool)> {
 }
 
 /// `config game`: view or set a game's per-game launch settings.
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn cmd_config_game(
-    app_id: u32,
-    proton: Option<String>,
-    clear_proton: bool,
-    platform: Option<PlatformArg>,
-    no_platform: bool,
-    clear: bool,
-    native_engine: bool,
-    no_native_engine: bool,
-    umu: bool,
-    no_umu: bool,
-    launch_script: Option<PathBuf>,
-    no_launch_script: bool,
-    steam_runtime: Option<SteamRuntimeArg>,
-    steam_prefix_mode: Option<SteamPrefixModeArg>,
-    json: bool,
-) -> Result<()> {
+pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<()> {
+    let GameConfigArgs {
+        app_id,
+        proton,
+        clear_proton,
+        platform,
+        no_platform,
+        clear,
+        native_engine,
+        no_native_engine,
+        umu,
+        no_umu,
+        launch_script,
+        no_launch_script,
+        steam_runtime,
+        steam_prefix_mode,
+    } = args;
     use aurelia::core::config::GameRunner;
     use aurelia::core::models::{SteamPrefixMode, SteamRuntimePolicy};
 
@@ -468,18 +452,11 @@ pub(crate) async fn cmd_config_game(
     } else {
         let ua = user_configs.entry(app_id).or_default();
         if let Some(sr) = steam_runtime {
-            ua.steam_runtime_policy = match sr {
-                SteamRuntimeArg::Auto => SteamRuntimePolicy::Auto,
-                SteamRuntimeArg::On => SteamRuntimePolicy::Enabled,
-                SteamRuntimeArg::Off => SteamRuntimePolicy::Disabled,
-            };
+            ua.steam_runtime_policy = sr.into();
             user_changed = true;
         }
         if let Some(pm) = steam_prefix_mode {
-            ua.steam_prefix_mode = match pm {
-                SteamPrefixModeArg::Shared => SteamPrefixMode::Shared,
-                SteamPrefixModeArg::PerGame => SteamPrefixMode::PerGame,
-            };
+            ua.steam_prefix_mode = pm.into();
             user_changed = true;
         }
     }

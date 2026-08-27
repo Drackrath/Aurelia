@@ -14,11 +14,14 @@ use aurelia::library::{build_game_library, scan_installed_app_info};
 use aurelia::core::models::{DownloadProgress, DownloadProgressState, DownloadState, LibraryGame};
 use aurelia::steam_client::{SharedApp, SteamClient};
 
-/// Print a JSON value to stdout (pretty-printed).
-pub(crate) fn print_json(value: &serde_json::Value) {
+/// Pretty-print JSON to stdout.
+pub(crate) fn print_json<T: serde::Serialize + ?Sized>(value: &T) {
     match serde_json::to_string_pretty(value) {
         Ok(s) => cli_println!("{s}"),
-        Err(_) => cli_println!("{{}}"),
+        Err(e) => {
+            cli_eprintln!("failed serializing JSON output: {e}");
+            cli_println!("{{}}");
+        }
     }
 }
 
@@ -172,23 +175,30 @@ pub(crate) async fn find_game(client: &mut SteamClient, app_id: u32) -> Result<L
         .with_context(|| format!("app {app_id} is not in your library"))
 }
 
-/// Confirm a mutating cloud write, honoring `--yes` and `--json`. Returns `Ok(())`
-/// to proceed, or an error to abort. In `--json` mode `--yes` is mandatory.
-pub(crate) fn confirm_cloud_write(action: &str, count: usize, yes: bool, json: bool) -> Result<()> {
+/// Confirm action; honors `--yes`/`--json`.
+pub(crate) fn confirm_write(action: &str, prompt: &str, yes: bool, json: bool) -> Result<()> {
     if yes {
         return Ok(());
     }
     if json {
         bail!("refusing to {action} without confirmation — pass `--yes` in --json mode");
     }
-    let answer = prompt_line(&format!(
-        "About to {action} {count} collection(s) to your Steam account. Continue? [y/N] "
-    ))?;
+    let answer = prompt_line(prompt)?;
     if matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
         Ok(())
     } else {
         bail!("aborted");
     }
+}
+
+/// Cloud-collections wrapper over [`confirm_write`].
+pub(crate) fn confirm_cloud_write(action: &str, count: usize, yes: bool, json: bool) -> Result<()> {
+    confirm_write(
+        action,
+        &format!("About to {action} {count} collection(s) to your Steam account. Continue? [y/N] "),
+        yes,
+        json,
+    )
 }
 
 /// Human label for a raw EPersonaState value.
@@ -232,6 +242,13 @@ pub(crate) struct InstallGuard {
 }
 
 impl InstallGuard {
+    /// Register a fresh shared [`DownloadState`].
+    pub(crate) fn begin(app_id: u32) -> Result<(Self, Arc<RwLock<DownloadState>>)> {
+        let state = Arc::new(RwLock::new(DownloadState::default()));
+        let guard = Self::register(app_id, Arc::clone(&state))?;
+        Ok((guard, state))
+    }
+
     /// Register `app_id`'s operation
     pub(crate) fn register(app_id: u32, state: Arc<RwLock<DownloadState>>) -> Result<Self> {
         let mut map = active_installs()
@@ -272,6 +289,21 @@ pub(crate) fn available_space_for(path: &std::path::Path) -> Option<u64> {
 }
 
 /// Format a byte count as a human-readable size (binary units).
+/// Percent progress printer; JSON-silent.
+pub(crate) fn byte_progress_printer(json: bool) -> impl FnMut(u64, u64) {
+    let mut last_pct: i64 = -1;
+    move |done: u64, total: u64| {
+        if json || total == 0 {
+            return;
+        }
+        let pct = (done.saturating_mul(100) / total) as i64;
+        if pct != last_pct {
+            last_pct = pct;
+            cli_print!("\r  {pct:>3}%  ({} / {})        ", human_bytes(done), human_bytes(total));
+        }
+    }
+}
+
 pub(crate) fn human_bytes(bytes: u64) -> String {
     const UNITS: [&str; 6] = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
     if bytes == 0 {
@@ -312,6 +344,18 @@ pub(crate) fn steam_guard_stop(restart_steam: bool, json: bool) -> Result<bool> 
     Ok(false)
 }
 
+/// Stop Steam if wanted and running.
+pub(crate) fn steam_guard_stop_optional(want: bool, json: bool) -> Result<bool> {
+    if !(want && SteamClient::steam_is_running()) {
+        return Ok(false);
+    }
+    if !json {
+        cli_println!("Stopping Steam ...");
+    }
+    SteamClient::shutdown_steam()?;
+    Ok(true)
+}
+
 /// Restart Steam if [`steam_guard_stop`] stopped it.
 pub(crate) fn steam_guard_restart(managed: bool, json: bool) -> Result<()> {
     if managed {
@@ -321,6 +365,15 @@ pub(crate) fn steam_guard_restart(managed: bool, json: bool) -> Result<()> {
         SteamClient::start_steam()?;
     }
     Ok(())
+}
+
+/// Non-default branch suffix, else empty.
+pub(crate) fn branch_suffix(game: &LibraryGame) -> String {
+    if game.active_branch != "public" {
+        format!(" [{}]", game.active_branch)
+    } else {
+        String::new()
+    }
 }
 
 /// Print the final result of a streaming operation (install/verify/update).

@@ -82,61 +82,16 @@ impl SteamClient {
         crate::library::probe_install_dir_by_appid(steamapps, appid)
     }
 
-    /// Request the PICS appinfo product-info for a single app and return its raw
-    /// appinfo buffer. The buffer is either text or binary VDF (see
-    /// [`find_vdf_in_pics`] / [`parse_appinfo`]). Shared by every PICS appinfo
-    /// lookup in this module so the request/job/find-app boilerplate lives once.
-    async fn pics_app_buffer(connection: &Connection, appid: u32) -> Result<Vec<u8>> {
-        let mut request = CMsgClientPICSProductInfoRequest::new();
-        request
-            .apps
-            .push(cmsg_client_picsproduct_info_request::AppInfo {
-                appid: Some(appid),
-                ..Default::default()
-            });
-
-        let response: CMsgClientPICSProductInfoResponse = connection
-            .job(request)
-            .await
-            .context("failed requesting appinfo product info for update metadata")?;
-        let app = response
-            .apps
-            .iter()
-            .find(|entry| entry.appid() == appid)
-            .ok_or_else(|| anyhow!("missing appinfo payload for app {appid}"))?;
-        Ok(app.buffer().to_vec())
-    }
-
-    /// Locate the `depots` object inside a PICS appinfo VDF, accounting for both
-    /// the unwrapped layout (root holds the sections directly) and the wrapped
-    /// layout (sections nested under an `appinfo` key).
-    fn pics_depots_value<'a>(
-        vdf: &'a steam_vdf_parser::Vdf<'static>,
-        appid: u32,
-    ) -> Option<&'a steam_vdf_parser::Value<'static>> {
-        let root_obj = vdf.as_obj()?;
-        if vdf.key() == "appinfo" || vdf.key() == appid.to_string() {
-            root_obj.get("depots")
-        } else {
-            root_obj.get("depots").or_else(|| {
-                root_obj
-                    .get("appinfo")
-                    .and_then(|v| v.as_obj())
-                    .and_then(|o| o.get("depots"))
-            })
-        }
-    }
-
     pub(crate) async fn remote_manifest_ids_static(
         connection: &Connection,
         appid: u32,
         branch: &str,
     ) -> Result<HashMap<u64, u64>> {
-        let buffer = Self::pics_app_buffer(connection, appid).await?;
+        let buffer = pics_app_buffer(connection, appid, "failed requesting appinfo product info for update metadata").await?;
 
         let mut manifests = HashMap::new();
         if let Ok(vdf) = find_vdf_in_pics(&buffer) {
-            let depots_val = Self::pics_depots_value(&vdf, appid);
+            let depots_val = pics_depots_value(&vdf);
 
             if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
                 for (key, value) in depots.iter() {
@@ -161,9 +116,9 @@ impl SteamClient {
         appid: u32,
         branch: &str,
     ) -> Option<String> {
-        let buffer = Self::pics_app_buffer(connection, appid).await.ok()?;
+        let buffer = pics_app_buffer(connection, appid, "failed requesting appinfo product info for update metadata").await.ok()?;
         let vdf = find_vdf_in_pics(&buffer).ok()?;
-        let depots_val = Self::pics_depots_value(&vdf, appid);
+        let depots_val = pics_depots_value(&vdf);
 
         let buildid = |b: &str| {
             depots_val
@@ -173,21 +128,6 @@ impl SteamClient {
                 .map(|s| s.to_string())
         };
         buildid(branch).or_else(|| buildid("public"))
-    }
-
-    pub async fn fetch_app_metadata(&self, appid: u32) -> Option<AppMetadata> {
-        let url = format!("https://store.steampowered.com/api/appdetails?appids={appid}&filters=basic");
-        let resp = reqwest::get(url).await.ok()?;
-        let json: serde_json::Value = resp.json().await.ok()?;
-        let data = json.get(appid.to_string())?.get("data")?;
-
-        let name = data.get("name")?.as_str()?.to_string();
-        let header_image = data
-            .get("header_image")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        Some(AppMetadata { name, header_image })
     }
 
     /// If `appid` is a DLC, return the base game's appid it depends on.
@@ -227,7 +167,7 @@ impl SteamClient {
     pub(crate) async fn dlc_parent_from_pics(&self, appid: u32) -> Option<u32> {
         let connection = self.connection.as_ref()?;
 
-        let buffer = Self::pics_app_buffer(connection, appid).await.ok()?;
+        let buffer = pics_app_buffer(connection, appid, "failed requesting appinfo product info for update metadata").await.ok()?;
         let vdf = find_vdf_in_pics(&buffer).ok()?;
         let section = pics_app_section(vdf.value());
 
@@ -257,7 +197,7 @@ impl SteamClient {
 
         // PICS is authoritative for both the name and the install directory.
         if let Some(conn) = self.connection.as_ref() {
-            match Self::pics_app_buffer(conn, appid).await {
+            match pics_app_buffer(conn, appid, "failed requesting appinfo product info for update metadata").await {
                 Ok(buffer) => match find_vdf_in_pics(&buffer) {
                     Ok(vdf) => {
                         let section = pics_app_section(vdf.value());
@@ -327,10 +267,13 @@ impl SteamClient {
 
         // Preserve existing manifest
         let (last_owner, beta_key) = match std::fs::read_to_string(path) {
-            Ok(existing) => (
-                parse_last_owner_from_acf(&existing).unwrap_or(0),
-                Some(parse_active_branch_from_acf(&existing)).filter(|b| b != "public"),
-            ),
+            Ok(existing) => {
+                let parsed = crate::core::acf::parse_app_manifest(&existing);
+                (
+                    parsed.last_owner.unwrap_or(0),
+                    Some(parsed.active_branch).filter(|b| b != "public"),
+                )
+            }
             Err(_) => (0, None),
         };
 
@@ -345,10 +288,7 @@ impl SteamClient {
         // downgraded build in place against the official client's eager re-patching).
         let auto_update_behavior = if pin_updates { 1 } else { 0 };
         let bytes_have = if fully_installed { size_on_disk } else { 0 };
-        let last_updated = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        let last_updated = crate::core::utils::now_unix();
 
         let mut content = format!(
             "\"AppState\"\n{{\n\
@@ -440,19 +380,9 @@ impl SteamClient {
         }
 
         // 2. Remove the DLC appid from any "DisabledDLC" lists (enable it).
-        let dlc_str = dlc_appid.to_string();
-        let re = regex::Regex::new(r#""DisabledDLC"(\s*)"([^"]*)""#)
-            .expect("valid DisabledDLC regex");
-        let updated = re.replace_all(&content, |caps: &regex::Captures| {
-            let kept: Vec<&str> = caps[2]
-                .split(',')
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty() && *s != dlc_str)
-                .collect();
-            format!("\"DisabledDLC\"{}\"{}\"", &caps[1], kept.join(","))
-        });
+        let updated = apply_dlc_disabled(&content, dlc_appid, false);
         if updated != content {
-            content = updated.into_owned();
+            content = updated;
             changed = true;
         }
 

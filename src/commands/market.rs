@@ -9,7 +9,7 @@ pub(crate) async fn cmd_inventory(app_id: u32, context: u32, json: bool) -> Resu
     let web = web_access().await?;
     let items = aurelia::steam_client::inventory_via(&web, app_id, context).await?;
     if json {
-        cli_println!("{}", serde_json::to_string_pretty(&items)?);
+        print_json(&items);
         return Ok(());
     }
     if items.is_empty() {
@@ -79,12 +79,7 @@ pub(crate) async fn cmd_market_search(
     let (total, results) =
         aurelia::steam_client::market_search(query.as_deref(), app_id, count).await?;
     if json {
-        cli_println!(
-            "{}",
-            serde_json::to_string_pretty(
-                &serde_json::json!({ "total_count": total, "results": results })
-            )?
-        );
+        print_json(&serde_json::json!({ "total_count": total, "results": results }));
         return Ok(());
     }
     if results.is_empty() {
@@ -110,7 +105,7 @@ pub(crate) async fn cmd_market_listings(json: bool) -> Result<()> {
     let web = web_access().await?;
     let state = aurelia::steam_client::my_listings_via(&web).await?;
     if json {
-        cli_println!("{}", serde_json::to_string_pretty(&state)?);
+        print_json(&state);
         return Ok(());
     }
     if state.listings.is_empty() && state.buy_orders.is_empty() {

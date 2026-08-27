@@ -5,60 +5,8 @@
 use super::*;
 
 impl SteamClient {
-    /// Request PICS appinfo for a single app and return that app's raw VDF buffer.
-    /// `job_context` is attached to the network call so each caller's error message
-    /// is preserved. Shared by the depot/size/launch-option readers below.
-    async fn request_app_pics_buffer(
-        &self,
-        app_id: u32,
-        job_context: &'static str,
-    ) -> Result<Vec<u8>> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
-
-        let mut request = CMsgClientPICSProductInfoRequest::new();
-        request
-            .apps
-            .push(cmsg_client_picsproduct_info_request::AppInfo {
-                appid: Some(app_id),
-                ..Default::default()
-            });
-
-        let response: CMsgClientPICSProductInfoResponse =
-            connection.job(request).await.context(job_context)?;
-
-        let app = response
-            .apps
-            .iter()
-            .find(|entry| entry.appid() == app_id)
-            .ok_or_else(|| anyhow!("missing appinfo payload for app {app_id}"))?;
-
-        Ok(app.buffer().to_vec())
-    }
-
-    /// Resolve the `depots` object from a parsed PICS VDF, descending past the
-    /// numeric/`appinfo` wrapper when the depots aren't already at the root.
-    fn locate_depots_value<'a>(
-        vdf: &'a steam_vdf_parser::Vdf<'static>,
-        app_id: u32,
-    ) -> Option<&'a steam_vdf_parser::Value<'static>> {
-        let root_obj = vdf.as_obj()?;
-        if vdf.key() == "appinfo" || vdf.key() == app_id.to_string() {
-            root_obj.get("depots")
-        } else {
-            root_obj.get("depots").or_else(|| {
-                root_obj
-                    .get("appinfo")
-                    .and_then(|v| v.as_obj())
-                    .and_then(|o| o.get("depots"))
-            })
-        }
-    }
-
     pub async fn get_content_servers(&self, cell_id: u32) -> Result<Vec<String>> {
-        let connection = self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))?;
+        let connection = self.require_connection()?;
         let mut request = CContentServerDirectory_GetServersForSteamPipe_Request::new();
         request.set_cell_id(cell_id);
         request.set_max_servers(20);
@@ -88,7 +36,7 @@ impl SteamClient {
         depot_id: u32,
         manifest_id: u64,
     ) -> Result<u64> {
-        let connection = self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))?;
+        let connection = self.require_connection()?;
         let mut request = CContentServerDirectory_GetManifestRequestCode_Request::new();
         request.set_app_id(app_id);
         request.set_depot_id(depot_id);
@@ -120,7 +68,7 @@ impl SteamClient {
         depot_id: u32,
         host_name: &str,
     ) -> Result<String> {
-        let connection = self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))?;
+        let connection = self.require_connection()?;
         let mut request = CContentServerDirectory_GetCDNAuthToken_Request::new();
         request.set_app_id(app_id);
         request.set_depot_id(depot_id);
@@ -151,13 +99,13 @@ impl SteamClient {
 
     pub async fn get_depot_list(&self, app_id: u32) -> Result<Vec<DepotInfo>> {
         let buffer = self
-            .request_app_pics_buffer(app_id, "failed requesting appinfo product info for depot list")
+            .pics_buffer(app_id, "failed requesting appinfo product info for depot list")
             .await?;
 
         let mut out = Vec::new();
         if let Ok(vdf) = find_vdf_in_pics(&buffer) {
             vdf.as_obj().context("root is not an object")?;
-            let depots_val = Self::locate_depots_value(&vdf, app_id);
+            let depots_val = pics_depots_value(&vdf);
 
             if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
                 for (key, value) in depots.iter() {
@@ -210,7 +158,7 @@ impl SteamClient {
     /// install pipeline reads.
     pub async fn list_depot_manifests(&self, app_id: u32) -> Result<Vec<DepotManifestInfo>> {
         let buffer = self
-            .request_app_pics_buffer(app_id, "failed requesting appinfo product info for manifests")
+            .pics_buffer(app_id, "failed requesting appinfo product info for manifests")
             .await?;
 
         // Parse a gid value that may be encoded as a quoted string or a raw u64.
@@ -223,7 +171,7 @@ impl SteamClient {
 
         let mut out = Vec::new();
         if let Ok(vdf) = find_vdf_in_pics(&buffer) {
-            let depots_val = Self::locate_depots_value(&vdf, app_id);
+            let depots_val = pics_depots_value(&vdf);
             if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
                 for (key, value) in depots.iter() {
                     let Ok(depot_id) = key.parse::<u32>() else { continue };
@@ -276,7 +224,7 @@ impl SteamClient {
         platform: DepotPlatform,
     ) -> Result<InstallSizeEstimate> {
         let buffer = self
-            .request_app_pics_buffer(
+            .pics_buffer(
                 app_id,
                 "failed requesting appinfo product info for size estimate",
             )
@@ -285,7 +233,7 @@ impl SteamClient {
         let mut est = InstallSizeEstimate::default();
         let vdf = find_vdf_in_pics(&buffer).context("failed to parse product info VDF")?;
         vdf.as_obj().context("root is not an object")?;
-        let depots_val = Self::locate_depots_value(&vdf, app_id);
+        let depots_val = pics_depots_value(&vdf);
 
         if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
             for (key, value) in depots.iter() {
@@ -351,7 +299,7 @@ impl SteamClient {
     /// text PICS payloads). Entry `"0"` is sorted first (the default).
     pub async fn fetch_launch_options(&self, app_id: u32) -> Result<Vec<LaunchOptionInfo>> {
         let buffer = self
-            .request_app_pics_buffer(
+            .pics_buffer(
                 app_id,
                 "failed requesting appinfo product info for launch options",
             )
@@ -415,10 +363,7 @@ impl SteamClient {
         appid: u32,
         language: &str,
     ) -> Result<Vec<GameAchievement>> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
         let steam_id = self
             .steam_id()
             .context("not logged in — achievements need an authenticated session")?;
@@ -505,10 +450,7 @@ impl SteamClient {
     }
 
     pub async fn get_depot_key(&self, app_id: u32, depot_id: u32) -> Result<Vec<u8>> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
         let mut request = CMsgClientGetDepotDecryptionKey::new();
         request.set_depot_id(depot_id);
         request.set_app_id(app_id);
@@ -524,37 +466,8 @@ impl SteamClient {
         Ok(response.depot_encryption_key().to_vec())
     }
 
-    pub async fn verify_depot_ownership(&self, app_id: u32, depot_ids: Vec<u64>) -> HashMap<u64, bool> {
-        tracing::info!("Verifying ownership for {} depots...", depot_ids.len());
-        let mut results = HashMap::new();
-
-        let Some(connection) = self.connection.as_ref() else {
-            results.extend(depot_ids.into_iter().map(|id| (id, false)));
-            return results;
-        };
-
-        // 1. Ensure we have an App Ticket (Warm up session)
-        let _ = self.get_app_ticket(app_id).await;
-
-        for depot_id in depot_ids {
-            let mut request = CMsgClientGetDepotDecryptionKey::new();
-            request.set_depot_id(depot_id as u32);
-            request.set_app_id(app_id);
-
-            let response: std::result::Result<CMsgClientGetDepotDecryptionKeyResponse, _> =
-                connection.job(request).await;
-            // EResult::OK == 1
-            let owned = matches!(response, Ok(r) if r.eresult() == 1);
-            results.insert(depot_id, owned);
-        }
-        results
-    }
-
     pub async fn fetch_depots(&self, appid: u32) -> Result<Vec<BrowserDepotInfo>> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
         depot_browser::fetch_depots(connection, appid).await
     }
 
@@ -564,10 +477,7 @@ impl SteamClient {
         depot_id: u32,
         manifest_ref: &str,
     ) -> Result<Vec<ManifestFileEntry>> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
         depot_browser::fetch_manifest_files(connection, appid, depot_id, manifest_ref).await
     }
 
@@ -579,10 +489,7 @@ impl SteamClient {
         file_path: &str,
         output_dir: &Path,
     ) -> Result<()> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
         depot_browser::download_single_file(
             connection,
             appid,

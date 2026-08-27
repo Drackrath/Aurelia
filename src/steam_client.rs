@@ -224,12 +224,6 @@ pub struct StoreAppAssets {
     pub logo: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-pub struct AppMetadata {
-    pub name: String,
-    pub header_image: Option<String>,
-}
-
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DepotInfo {
     pub id: u64,
@@ -1083,11 +1077,13 @@ fn parse_launch_info_from_vdf(appid: u32, raw_vdf: &str) -> Result<Vec<LaunchInf
     Ok(options)
 }
 
+/// Whether the buffer is text VDF.
+fn pics_buffer_is_text(buffer: &[u8]) -> bool {
+    buffer.first().map(|&b| b == 0x22 || b == 0x7B).unwrap_or(false)
+}
+
 pub fn find_vdf_in_pics(buffer: &[u8]) -> Result<steam_vdf_parser::Vdf<'static>> {
-    let is_text = buffer
-        .first()
-        .map(|&b| b == 0x22 || b == 0x7B)
-        .unwrap_or(false);
+    let is_text = pics_buffer_is_text(buffer);
 
     if is_text {
         let text = String::from_utf8_lossy(buffer);
@@ -1114,9 +1110,9 @@ pub fn find_vdf_in_pics(buffer: &[u8]) -> Result<steam_vdf_parser::Vdf<'static>>
 /// under a single root key — either the literal `appinfo` or the numeric appid.
 /// Return the inner value that actually holds those sections, descending one level
 /// past the wrapper when present so callers can navigate by section name directly.
-pub(crate) fn pics_app_section<'a>(
-    root: &'a steam_vdf_parser::Value<'static>,
-) -> &'a steam_vdf_parser::Value<'static> {
+pub(crate) fn pics_app_section<'a, 'text>(
+    root: &'a steam_vdf_parser::Value<'text>,
+) -> &'a steam_vdf_parser::Value<'text> {
     fn has_sections(v: &steam_vdf_parser::Value) -> bool {
         ["common", "extended", "config", "depots"]
             .iter()
@@ -1129,6 +1125,86 @@ pub(crate) fn pics_app_section<'a>(
         return inner;
     }
     root
+}
+
+/// Returns whether the user has signalled an abort for the in-progress
+/// download/verify. A poisoned lock is treated as "not aborted" so a transient
+/// lock failure can't spuriously cancel the operation.
+pub(crate) fn download_aborted(
+    state: &Arc<std::sync::RwLock<crate::core::models::DownloadState>>,
+) -> bool {
+    state
+        .read()
+        .map(|s| s.abort_signal.load(std::sync::atomic::Ordering::Relaxed))
+        .unwrap_or(false)
+}
+
+/// Send a terminal `Failed` progress message.
+pub(crate) async fn emit_failed(tx: &tokio::sync::mpsc::Sender<DownloadProgress>, msg: impl Into<String>) {
+    let _ = tx
+        .send(DownloadProgress {
+            state: DownloadProgressState::Failed,
+            current_file: msg.into(),
+            ..Default::default()
+        })
+        .await;
+}
+
+/// Forward byte counters every 250ms.
+pub(crate) fn spawn_progress_reporter(
+    tx: tokio::sync::mpsc::Sender<DownloadProgress>,
+    state: Arc<std::sync::RwLock<crate::core::models::DownloadState>>,
+    report_state: DownloadProgressState,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_millis(250));
+        loop {
+            ticker.tick().await;
+            let snapshot = match state.read() {
+                Ok(s) => Some((
+                    s.is_downloading,
+                    s.downloaded_bytes,
+                    s.total_bytes,
+                    s.status_text.clone(),
+                    s.depot_id,
+                    s.depot_downloaded_bytes,
+                    s.depot_total_bytes,
+                )),
+                Err(_) => None,
+            };
+            let Some((downloading, downloaded, total, status, depot_id, depot_downloaded, depot_total)) =
+                snapshot
+            else {
+                break;
+            };
+            if !downloading {
+                break;
+            }
+            // Stop if the receiver is gone (terminal message already consumed).
+            if tx
+                .send(DownloadProgress {
+                    state: report_state,
+                    bytes_downloaded: downloaded,
+                    total_bytes: total,
+                    current_file: status,
+                    depot_id,
+                    depot_bytes_downloaded: depot_downloaded,
+                    depot_total_bytes: depot_total,
+                })
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    })
+}
+
+/// The `depots` object, descending wrappers.
+pub(crate) fn pics_depots_value<'a, 'text>(
+    vdf: &'a steam_vdf_parser::Vdf<'text>,
+) -> Option<&'a steam_vdf_parser::Value<'text>> {
+    pics_app_section(vdf.value()).get("depots")
 }
 
 /// Steam Auto-Cloud save-file rules from an app's `ufs/savefiles` PICS section.
@@ -1169,10 +1245,7 @@ pub(crate) fn dlc_ids_from_section(section: &steam_vdf_parser::Value) -> Vec<u32
 }
 
 pub fn parse_pics_product_info(buffer: &[u8]) -> Result<HashMap<u64, u64>> {
-    let is_text = buffer
-        .first()
-        .map(|&b| b == 0x22 || b == 0x7B)
-        .unwrap_or(false);
+    let is_text = pics_buffer_is_text(buffer);
 
     if is_text {
         parse_text_vdf(buffer)
@@ -1187,11 +1260,7 @@ pub fn parse_pics_product_info(buffer: &[u8]) -> Result<HashMap<u64, u64>> {
 /// [`extract_manifest_id_robust`]. Shared by the text and binary parse paths.
 fn depot_map_from_vdf_root(root: &steam_vdf_parser::Value) -> HashMap<u64, u64> {
     let mut depot_map = HashMap::new();
-    let depots_val = root.get("depots").or_else(|| {
-        root.get("appinfo")
-            .and_then(|v| v.as_obj())
-            .and_then(|o| o.get("depots"))
-    });
+    let depots_val = pics_app_section(root).get("depots");
 
     if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
         for (key, value) in depots.iter() {
@@ -1317,10 +1386,6 @@ fn parse_binary_vdf_with_offset(data: &[u8]) -> Result<HashMap<u64, u64>> {
     bail!("Failed to locate valid Binary VDF in PICS buffer")
 }
 
-pub fn parse_depots_robust(data: &[u8]) -> Result<HashMap<u64, u64>> {
-    parse_pics_product_info(data)
-}
-
 fn extract_manifest_id_robust(value: &steam_vdf_parser::Value, branch: &str) -> Option<u64> {
     if let Some(obj) = value.as_obj() {
         // Deep search for branch manifest
@@ -1401,57 +1466,28 @@ struct ProductLaunchConfigInner {
 }
 
 fn parse_installdir_from_acf(raw: &str) -> Option<String> {
-    for line in raw.lines() {
-        let quoted = extract_quoted_values(line.trim());
-        if quoted.len() >= 2 && quoted[0] == "installdir" {
-            return Some(quoted[1].clone());
-        }
-    }
-    None
+    crate::core::acf::parse_app_manifest(raw).install_dir
 }
 
 /// Read the `name` value from an appmanifest, if present and non-empty.
 pub(crate) fn parse_name_from_acf(raw: &str) -> Option<String> {
-    for line in raw.lines() {
-        let quoted = extract_quoted_values(line.trim());
-        if quoted.len() >= 2 && quoted[0].eq_ignore_ascii_case("name") {
-            let name = quoted[1].trim();
-            return (!name.is_empty()).then(|| name.to_string());
-        }
-    }
-    None
+    crate::core::acf::parse_app_manifest(raw).display_name()
 }
 
 /// Read `LastOwner` (SteamID64) from an appmanifest; `None` when absent or `0`.
 pub(crate) fn parse_last_owner_from_acf(raw: &str) -> Option<u64> {
-    for line in raw.lines() {
-        let quoted = extract_quoted_values(line.trim());
-        if quoted.len() >= 2 && quoted[0].eq_ignore_ascii_case("lastowner") {
-            return quoted[1].parse::<u64>().ok().filter(|&id| id != 0);
-        }
-    }
-    None
-}
-
-/// Read the `StateFlags` value from an appmanifest, if present.
-fn parse_state_flags_from_acf(raw: &str) -> Option<u32> {
-    for line in raw.lines() {
-        let quoted = extract_quoted_values(line.trim());
-        if quoted.len() >= 2 && quoted[0].eq_ignore_ascii_case("stateflags") {
-            return quoted[1].parse::<u32>().ok();
-        }
-    }
-    None
+    crate::core::acf::parse_app_manifest(raw).last_owner
 }
 
 /// Download StateFlags
 pub(crate) fn manifest_is_fully_installed(raw: &str) -> bool {
-    parse_state_flags_from_acf(raw).is_some_and(|flags| flags & 4 != 0)
+    crate::core::acf::parse_app_manifest(raw).fully_installed()
 }
 
 /// Fetch `StateUpdateRequired` flag
+#[cfg(test)]
 pub(crate) fn manifest_update_pending(raw: &str) -> bool {
-    parse_state_flags_from_acf(raw).is_some_and(|flags| flags & 2 != 0)
+    crate::core::acf::parse_app_manifest(raw).update_pending()
 }
 
 fn parse_installed_depots_from_acf(raw: &str) -> HashMap<u64, u64> {
@@ -1494,30 +1530,7 @@ fn parse_installed_depots_from_acf(raw: &str) -> HashMap<u64, u64> {
 }
 
 fn parse_active_branch_from_acf(raw: &str) -> String {
-    let mut in_user_config = false;
-    for line in raw.lines() {
-        let trimmed = line.trim();
-        let parts = extract_quoted_values(trimmed);
-
-        if parts.len() == 1 && parts[0].eq_ignore_ascii_case("userconfig") {
-            in_user_config = true;
-            continue;
-        }
-
-        if trimmed == "{" || trimmed == "}" {
-            if trimmed == "}" && in_user_config {
-                in_user_config = false;
-            }
-            continue;
-        }
-
-        if parts.len() >= 2 && in_user_config && parts[0].eq_ignore_ascii_case("betakey") {
-            if !parts[1].trim().is_empty() {
-                return parts[1].to_string();
-            }
-        }
-    }
-    "public".to_string()
+    crate::core::acf::parse_app_manifest(raw).active_branch
 }
 
 
@@ -1580,7 +1593,48 @@ fn split_args(args: &str) -> Vec<String> {
 }
 
 
+
+/// One-app PICS `ProductInfo` buffer request.
+pub(crate) async fn pics_app_buffer(
+    connection: &Connection,
+    appid: u32,
+    job_context: &'static str,
+) -> Result<Vec<u8>> {
+    let mut request = CMsgClientPICSProductInfoRequest::new();
+    request
+        .apps
+        .push(cmsg_client_picsproduct_info_request::AppInfo {
+            appid: Some(appid),
+            ..Default::default()
+        });
+
+    let response: CMsgClientPICSProductInfoResponse =
+        connection.job(request).await.context(job_context)?;
+
+    let app = response
+        .apps
+        .iter()
+        .find(|entry| entry.appid() == appid)
+        .ok_or_else(|| anyhow!("missing appinfo payload for app {appid}"))?;
+    Ok(app.buffer().to_vec())
+}
+
 impl SteamClient {
+    /// Borrow the live CM connection.
+    pub(crate) fn require_connection(&self) -> Result<&Connection> {
+        self.connection.as_ref().context("steam connection not initialized")
+    }
+
+    /// Cloned connection for spawned tasks.
+    pub(crate) fn require_connection_owned(&self) -> Result<Connection> {
+        self.require_connection().cloned()
+    }
+
+    /// [`pics_app_buffer`] against this client's live connection.
+    pub(crate) async fn pics_buffer(&self, appid: u32, job_context: &'static str) -> Result<Vec<u8>> {
+        pics_app_buffer(self.require_connection()?, appid, job_context).await
+    }
+
     pub fn find_mangohud_lib() -> Option<PathBuf> {
         // Common install locations across distros
         let candidates = [

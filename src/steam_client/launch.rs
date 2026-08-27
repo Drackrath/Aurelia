@@ -165,10 +165,7 @@ impl SteamClient {
 
         if cloud_enabled {
             let client = CloudClient::new(
-                self.connection
-                    .as_ref()
-                    .cloned()
-                    .context("steam connection not initialized")?,
+                self.require_connection_owned()?,
             );
             let remote_root = default_cloud_root(client.steam_id(), app.app_id)?.join("remote");
             // `%Win*%` cloud roots point inside the game's Proton prefix; without it
@@ -334,11 +331,7 @@ impl SteamClient {
         verify_mode: bool,
         shared_state: Arc<std::sync::RwLock<crate::core::models::DownloadState>>,
     ) -> Result<Receiver<DownloadProgress>> {
-        let connection = self
-            .connection
-            .as_ref()
-            .cloned()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection_owned()?;
 
         let install_root = self.install_root_for_app(appid).await?;
         let manifest_path = self.appmanifest_path(appid).await?;
@@ -431,26 +424,14 @@ impl SteamClient {
                          depot was resolved for the active branch)"
                     )
                 };
-                let _ = tx
-                    .send(DownloadProgress {
-                        state: DownloadProgressState::Failed,
-                        current_file: message,
-                        ..Default::default()
-                    })
-                    .await;
+                emit_failed(&tx, message).await;
                 return;
             };
 
             let hosts = match client_clone.get_content_servers(connection.cell_id()).await {
                 Ok(h) => h,
                 Err(e) => {
-                    let _ = tx
-                        .send(DownloadProgress {
-                            state: DownloadProgressState::Failed,
-                            current_file: format!("Failed to fetch content servers: {}", e),
-                            ..Default::default()
-                        })
-                        .await;
+                    emit_failed(&tx, format!("Failed to fetch content servers: {}", e)).await;
                     return;
                 }
             };
@@ -459,62 +440,15 @@ impl SteamClient {
             let mut successful_depots = Vec::new();
 
             // Periodically forward the live byte counters over the channel.
-            let progress_tx = tx.clone();
-            let progress_state = shared_state_clone.clone();
-            let report_verify_mode = verify_mode;
-            tokio::spawn(async move {
-                let mut ticker =
-                    tokio::time::interval(std::time::Duration::from_millis(250));
-                loop {
-                    ticker.tick().await;
-                    let snapshot = match progress_state.read() {
-                        Ok(s) => Some((
-                            s.is_downloading,
-                            s.downloaded_bytes,
-                            s.total_bytes,
-                            s.status_text.clone(),
-                            s.depot_id,
-                            s.depot_downloaded_bytes,
-                            s.depot_total_bytes,
-                        )),
-                        Err(_) => None,
-                    };
-                    let Some((
-                        downloading,
-                        downloaded,
-                        total,
-                        status,
-                        depot_id,
-                        depot_downloaded,
-                        depot_total,
-                    )) = snapshot
-                    else {
-                        break;
-                    };
-                    if !downloading {
-                        break;
-                    }
-                    if progress_tx
-                        .send(DownloadProgress {
-                            state: if report_verify_mode {
-                                DownloadProgressState::Verifying
-                            } else {
-                                DownloadProgressState::Downloading
-                            },
-                            bytes_downloaded: downloaded,
-                            total_bytes: total,
-                            current_file: status,
-                            depot_id,
-                            depot_bytes_downloaded: depot_downloaded,
-                            depot_total_bytes: depot_total,
-                        })
-                        .await
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-            });
+            spawn_progress_reporter(
+                tx.clone(),
+                shared_state_clone.clone(),
+                if verify_mode {
+                    DownloadProgressState::Verifying
+                } else {
+                    DownloadProgressState::Downloading
+                },
+            );
 
             for selection in selections {
                 // Restart the per-depot counters so the current depot's progress is
@@ -542,118 +476,46 @@ impl SteamClient {
                     }
                 };
 
-                let manifest_code: Option<u64> = client_clone
-                    .get_manifest_request_code(appid, selection.depot_id, selection.manifest_id)
+                // Zero grand total: per-depot accumulation.
+                match client_clone
+                    .download_depot_to_with_hosts(
+                        appid,
+                        selection.depot_id,
+                        selection.manifest_id,
+                        &install_root,
+                        shared_state_clone.clone(),
+                        &hosts,
+                        0,
+                        &connection,
+                        key,
+                        verify_mode,
+                    )
                     .await
-                    .ok();
-
-                let mut depot_success = false;
-                for host in &hosts {
-                    let token: Option<String> = client_clone
-                        .get_cdn_auth_token(appid, selection.depot_id, host)
-                        .await
-                        .ok();
-
-                    let (host_name, port) = match host.split_once(':') {
-                        Some((name, port)) => (name, port.parse::<u16>().unwrap_or(80)),
-                        None => (host.as_str(), 80),
-                    };
-
-                    let cdn_server = steam_cdn::web_api::content_service::CDNServer {
-                        r#type: "CDN".to_string(),
-                        https: port == 443,
-                        host: host_name.to_string(),
-                        vhost: host_name.to_string(),
-                        port,
-                        cell_id: connection.cell_id(),
-                        load: 0,
-                        weighted_load: 0,
-                        auth_token: token,
-                    };
-
-                    let cdn_client = steam_cdn::CDNClient::with_server(
-                        Arc::new(connection.clone()),
-                        cdn_server,
-                    );
-
-                    // Advance the cumulative byte counters 
-                    let state_for_progress = shared_state_clone.clone();
-                    let on_progress = Arc::new(move |bytes: u64| {
-                        if let Ok(mut state) = state_for_progress.write() {
-                            state.downloaded_bytes += bytes;
-                            state.depot_downloaded_bytes += bytes;
-                        }
-                    });
-
-                    let depot_size = Arc::new(std::sync::atomic::AtomicU64::new(0));
-                    let size_clone = depot_size.clone();
-                    let state_for_manifest = shared_state_clone.clone();
-                    let on_manifest = Arc::new(move |total_bytes: u64| {
-                        size_clone.store(total_bytes, std::sync::atomic::Ordering::SeqCst);
-                        if let Ok(mut state) = state_for_manifest.write() {
-                            // Accumulate per-depot totals
-                            state.depot_total_bytes = total_bytes;
-                            state.total_bytes += total_bytes;
-                        }
-                    });
-
-                    let abort_signal = shared_state_clone
-                        .read()
-                        .ok()
-                        .map(|s| s.abort_signal.clone());
-
-                    match cdn_client
-                        .download_depot(
-                            appid,
+                {
+                    Ok(depot_size) => {
+                        successful_depots.push((
                             selection.depot_id,
                             selection.manifest_id,
-                            &key,
-                            &install_root,
-                            manifest_code,
-                            verify_mode,
-                            abort_signal,
-                            Some(on_progress),
-                            Some(on_manifest),
-                        )
-                        .await
-                    {
-                        Ok(_) => {
-                            if download_aborted(&shared_state_clone) {
-                                break;
-                            }
-
-                            depot_success = true;
-                            successful_depots.push((
-                                selection.depot_id,
-                                selection.manifest_id,
-                                depot_size.load(std::sync::atomic::Ordering::SeqCst),
-                            ));
+                            depot_size,
+                        ));
+                    }
+                    Err(_) => {
+                        if download_aborted(&shared_state_clone) {
+                            success = false;
                             break;
                         }
-                        Err(e) => {
-                            tracing::error!("CDN Error from {}: {}", host, e);
-                        }
-                    }
-                }
 
-                if !depot_success {
-                    if download_aborted(&shared_state_clone) {
-                        success = false;
-                        break;
-                    }
-
-                    let _ = tx
-                        .send(DownloadProgress {
-                            state: DownloadProgressState::Failed,
-                            current_file: format!(
+                        emit_failed(
+                            &tx,
+                            format!(
                                 "Failed to download/verify depot {} from all servers",
                                 selection.depot_id
                             ),
-                            ..Default::default()
-                        })
+                        )
                         .await;
-                    success = false;
-                    break;
+                        success = false;
+                        break;
+                    }
                 }
             }
 
@@ -711,14 +573,4 @@ impl SteamClient {
         Ok(rx)
     }
 
-}
-
-/// Returns whether the user has signalled an abort for the in-progress
-/// download/verify. A poisoned lock is treated as "not aborted" so a transient
-/// lock failure can't spuriously cancel the operation.
-fn download_aborted(state: &Arc<std::sync::RwLock<crate::core::models::DownloadState>>) -> bool {
-    state
-        .read()
-        .map(|s| s.abort_signal.load(std::sync::atomic::Ordering::Relaxed))
-        .unwrap_or(false)
 }

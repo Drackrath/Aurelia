@@ -335,38 +335,14 @@ impl SteamClient {
         library: PathBuf,
         platform: DepotPlatform,
     ) -> Result<PathBuf> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let buffer = self
+            .pics_buffer(appid, "failed requesting appinfo product info for import")
+            .await?;
 
-        let mut request = CMsgClientPICSProductInfoRequest::new();
-        request
-            .apps
-            .push(cmsg_client_picsproduct_info_request::AppInfo {
-                appid: Some(appid),
-                ..Default::default()
-            });
-        let response: CMsgClientPICSProductInfoResponse = connection
-            .job(request)
-            .await
-            .context("failed requesting appinfo product info for import")?;
-        let app = response
-            .apps
-            .iter()
-            .find(|e| e.appid() == appid)
-            .ok_or_else(|| anyhow!("missing appinfo payload for app {appid}"))?;
-
-        let vdf = find_vdf_in_pics(app.buffer()).context("failed to parse product info VDF")?;
-        let root_obj = vdf.as_obj().context("root is not an object")?;
-        let app_obj = if vdf.key() == "appinfo" || vdf.key() == appid.to_string() {
-            root_obj
-        } else {
-            root_obj
-                .get("appinfo")
-                .and_then(|v| v.as_obj())
-                .unwrap_or(root_obj)
-        };
+        let vdf = find_vdf_in_pics(&buffer).context("failed to parse product info VDF")?;
+        let app_obj = pics_app_section(vdf.value())
+            .as_obj()
+            .context("root is not an object")?;
 
         let common = app_obj.get("common").and_then(|v| v.as_obj());
         let name = common

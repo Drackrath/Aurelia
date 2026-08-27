@@ -9,66 +9,27 @@
 //!
 //! The payload lives under `~/.config/Aurelia/plugins/luxtorpeda` so it is self-contained
 //! and removable, independent of Steam's `compatibilitytools.d`.
+//! Lifecycle shared via [`crate::compat::plugin`].
 
+use crate::compat::plugin::{self, InstalledPlugin, PluginSpec};
 use anyhow::{Context, Result};
-use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
-/// Codeberg (Gitea) "latest release" endpoint for the luxtorpeda client.
-const RELEASE_API: &str =
-    "https://codeberg.org/api/v1/repos/luxtorpeda/luxtorpeda/releases/latest";
-
-/// A luxtorpeda install discovered on disk.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct InstalledLux {
-    /// The release tag that was installed (from the stamped version file).
-    pub version: String,
-    /// The tool root (the directory containing `toolmanifest.vdf`).
-    pub root: PathBuf,
-    /// The executable Aurelia invokes (`<root>/luxtorpeda` unless the manifest says otherwise).
-    pub entry: PathBuf,
-}
-
-/// A release asset selected for download.
-#[derive(Debug, Clone)]
-struct LuxRelease {
-    tag: String,
-    url: String,
-    ext: String,
-}
-
-// ---------------------------------------------------------------------------
-// Paths
-// ---------------------------------------------------------------------------
-
-/// The directory Aurelia extracts the luxtorpeda payload into.
-pub fn plugin_dir() -> Result<PathBuf> {
-    Ok(crate::core::config::config_dir()?.join("plugins").join("luxtorpeda"))
-}
-
-/// Path of the file we stamp with the installed release tag.
-fn version_stamp(base: &Path) -> PathBuf {
-    base.join(".aurelia_version")
-}
-
-// ---------------------------------------------------------------------------
-// Discovery
-// ---------------------------------------------------------------------------
+/// The shared-plugin description of luxtorpeda.
+static SPEC: PluginSpec = PluginSpec {
+    id: "luxtorpeda",
+    display: "luxtorpeda",
+    host: "Codeberg",
+    release_api: "https://codeberg.org/api/v1/repos/luxtorpeda/luxtorpeda/releases/latest",
+    user_agent: "aurelia-luxtorpeda-plugin",
+    root_marker: |p| p.join("toolmanifest.vdf").exists(),
+    archive_marker_missing: "luxtorpeda archive did not contain a toolmanifest.vdf",
+};
 
 /// Find the tool root under `base`: `base` itself if it holds a `toolmanifest.vdf`,
 /// otherwise the first immediate subdirectory that does (the tarball's own top dir).
 fn find_tool_root(base: &Path) -> Option<PathBuf> {
-    if base.join("toolmanifest.vdf").exists() {
-        return Some(base.to_path_buf());
-    }
-    let entries = std::fs::read_dir(base).ok()?;
-    for entry in entries.flatten() {
-        let p = entry.path();
-        if p.is_dir() && p.join("toolmanifest.vdf").exists() {
-            return Some(p);
-        }
-    }
-    None
+    plugin::find_root(&SPEC, base)
 }
 
 /// Resolve the executable to invoke. Parses the `commandline` value from
@@ -97,119 +58,27 @@ fn parse_commandline(manifest: &str) -> Option<String> {
 
 /// Return the install in use, if any. A configured `custom` path (an externally-managed
 /// luxtorpeda) takes precedence over Aurelia's managed plugin directory.
-pub fn installed(custom: Option<&Path>) -> Option<InstalledLux> {
+pub fn installed(custom: Option<&Path>) -> Option<InstalledPlugin> {
     if let Some(custom) = custom {
         let root = find_tool_root(custom)?;
-        return Some(InstalledLux {
+        return Some(InstalledPlugin {
             version: "custom".to_string(),
             entry: entry_point(&root),
             root,
         });
     }
-    let base = plugin_dir().ok()?;
-    let root = find_tool_root(&base)?;
-    let version = std::fs::read_to_string(version_stamp(&base))
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|_| "unknown".to_string());
-    Some(InstalledLux {
+    let (version, root) = plugin::managed_install(&SPEC)?;
+    Some(InstalledPlugin {
         version,
         entry: entry_point(&root),
         root,
     })
 }
 
-// ---------------------------------------------------------------------------
-// Release lookup
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Deserialize)]
-struct GiteaRelease {
-    tag_name: String,
-    #[serde(default)]
-    assets: Vec<GiteaAsset>,
-}
-
-#[derive(Debug, Deserialize)]
-struct GiteaAsset {
-    name: String,
-    browser_download_url: String,
-}
-
-/// Query Codeberg for the latest luxtorpeda client release and pick its tarball asset.
-async fn latest_release() -> Result<LuxRelease> {
-    let client = reqwest::Client::builder()
-        .user_agent("aurelia-luxtorpeda-plugin")
-        .build()
-        .context("failed to build the Codeberg HTTP client")?;
-
-    let release: GiteaRelease = client
-        .get(RELEASE_API)
-        .send()
-        .await
-        .context("failed requesting the luxtorpeda latest release")?
-        .error_for_status()
-        .context("Codeberg returned an error for the luxtorpeda latest release")?
-        .json()
-        .await
-        .context("failed parsing the luxtorpeda release JSON")?;
-
-    // Prefer a .tar.gz, then .tar.xz; skip checksum sidecars (.sha*).
-    let pick = |ext: &str| {
-        release
-            .assets
-            .iter()
-            .find(|a| a.name.ends_with(ext) && !a.name.contains(".sha"))
-    };
-    let (asset, ext) = pick(".tar.gz")
-        .map(|a| (a, ".tar.gz"))
-        .or_else(|| pick(".tar.xz").map(|a| (a, ".tar.xz")))
-        .with_context(|| {
-            format!(
-                "no .tar.gz/.tar.xz asset on luxtorpeda release '{}'",
-                release.tag_name
-            )
-        })?;
-
-    Ok(LuxRelease {
-        tag: release.tag_name.clone(),
-        url: asset.browser_download_url.clone(),
-        ext: ext.to_string(),
-    })
-}
-
-// ---------------------------------------------------------------------------
-// Install / update / remove
-// ---------------------------------------------------------------------------
-
 /// Download the latest luxtorpeda release and extract it into the plugin directory,
 /// replacing any previous payload. Returns the resolved entry point.
 pub async fn install(on_progress: &mut (dyn FnMut(u64, u64) + Send)) -> Result<PathBuf> {
-    let release = latest_release().await?;
-    let base = plugin_dir()?;
-
-    // Start clean so a stale layout can't shadow the new one.
-    if base.exists() {
-        std::fs::remove_dir_all(&base)
-            .with_context(|| format!("failed clearing {}", base.display()))?;
-    }
-    std::fs::create_dir_all(&base)
-        .with_context(|| format!("failed creating {}", base.display()))?;
-
-    let tmp = base.join(format!(".download{}", release.ext));
-    crate::compat::proton::download_to(&release.url, &tmp, on_progress)
-        .await
-        .context("failed downloading luxtorpeda")?;
-
-    let result = crate::compat::proton::extract_tarball(&tmp, &release.ext, &base)
-        .context("failed extracting luxtorpeda");
-    let _ = std::fs::remove_file(&tmp);
-    result?;
-
-    std::fs::write(version_stamp(&base), &release.tag)
-        .with_context(|| format!("failed stamping version in {}", base.display()))?;
-
-    let root = find_tool_root(&base)
-        .context("luxtorpeda archive did not contain a toolmanifest.vdf")?;
+    let root = plugin::install_payload(&SPEC, on_progress).await?;
     Ok(entry_point(&root))
 }
 
@@ -237,13 +106,7 @@ pub async fn ensure_installed(custom: Option<&Path>) -> Result<PathBuf> {
 
 /// Remove the luxtorpeda payload from disk. Returns `false` if nothing was installed.
 pub fn uninstall() -> Result<bool> {
-    let base = plugin_dir()?;
-    if !base.exists() {
-        return Ok(false);
-    }
-    std::fs::remove_dir_all(&base)
-        .with_context(|| format!("failed removing {}", base.display()))?;
-    Ok(true)
+    plugin::uninstall(&SPEC)
 }
 
 #[cfg(test)]

@@ -31,6 +31,65 @@ pub struct LaunchContext {
 unsafe impl Send for LaunchContext {}
 unsafe impl Sync for LaunchContext {}
 
+impl LaunchContext {
+    /// Run `f` on the verification record.
+    pub fn with_verification(&self, f: impl FnOnce(&mut crate::infra::logging::LaunchVerification)) {
+        if self.verification_ptr.is_null() {
+            return;
+        }
+        unsafe { f(&mut *self.verification_ptr) }
+    }
+
+    /// Resolve install dir, executable, workingdir.
+    pub fn game_paths(
+        &self,
+    ) -> std::result::Result<(PathBuf, PathBuf, PathBuf), crate::launch::pipeline::LaunchError> {
+        use crate::launch::pipeline::{LaunchError, LaunchErrorKind};
+        let install_dir = PathBuf::from(self.app.install_path.clone().ok_or_else(|| {
+            LaunchError::new(
+                LaunchErrorKind::GameData,
+                format!("game {} is not installed", self.app.app_id),
+            )
+        })?);
+
+        let exe_rel = self.launch_info.executable.replace('\\', "/");
+        let executable = if std::path::Path::new(&exe_rel).is_absolute() {
+            PathBuf::from(&exe_rel)
+        } else {
+            install_dir.join(&exe_rel)
+        };
+        let working_dir = self
+            .launch_info
+            .workingdir
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .map(|wd| install_dir.join(wd.replace('\\', "/")))
+            .or_else(|| executable.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| install_dir.clone());
+
+        Ok((install_dir, executable, working_dir))
+    }
+}
+
+/// Point compat install path at trap.
+pub fn insert_fake_steam_trap(
+    env: &mut HashMap<String, String>,
+) -> std::result::Result<PathBuf, crate::launch::pipeline::LaunchError> {
+    use crate::launch::pipeline::{LaunchError, LaunchErrorKind};
+    let config_dir = crate::core::config::config_dir().map_err(|e| {
+        LaunchError::new(LaunchErrorKind::Environment, "failed to get config dir").with_source(e)
+    })?;
+    let fake_env = crate::core::utils::setup_fake_steam_trap(&config_dir).map_err(|e| {
+        LaunchError::new(LaunchErrorKind::Permission, "failed to setup fake steam trap")
+            .with_source(e)
+    })?;
+    env.insert(
+        "STEAM_COMPAT_CLIENT_INSTALL_PATH".to_string(),
+        fake_env.to_string_lossy().to_string(),
+    );
+    Ok(fake_env)
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct CommandSpec {
     pub program: PathBuf,

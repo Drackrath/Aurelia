@@ -65,12 +65,6 @@ fn detail_to_workshop_item(detail: &PublishedFileDetails, fallback_app_id: u32) 
 }
 
 impl SteamClient {
-    /// Borrow the live Steam [`Connection`], or fail with the standard
-    /// "No connection" error every networked Workshop method here shares.
-    fn require_connection(&self) -> Result<&Connection> {
-        self.connection.as_ref().ok_or_else(|| anyhow!("No connection"))
-    }
-
     /// Fetch metadata for a batch of Workshop published files in a single
     /// `PublishedFile.GetDetails` call. Ids that the service returns no data for
     /// (deleted/private/invalid) are skipped with a warning rather than failing
@@ -450,48 +444,11 @@ impl SteamClient {
 
             // Forward the live byte counters the download updates into progress
             // messages, on a timer — same pattern as `install_game`.
-            let progress_tx = tx.clone();
-            let progress_state = shared_state.clone();
-            let ticker = tokio::spawn(async move {
-                let mut ticker = tokio::time::interval(std::time::Duration::from_millis(250));
-                loop {
-                    ticker.tick().await;
-                    let snapshot = progress_state.read().ok().map(|s| {
-                        (
-                            s.is_downloading,
-                            s.downloaded_bytes,
-                            s.total_bytes,
-                            s.status_text.clone(),
-                            s.depot_id,
-                            s.depot_downloaded_bytes,
-                            s.depot_total_bytes,
-                        )
-                    });
-                    let Some((downloading, downloaded, total, status, depot_id, depot_dl, depot_total)) =
-                        snapshot
-                    else {
-                        break;
-                    };
-                    if !downloading {
-                        break;
-                    }
-                    if progress_tx
-                        .send(DownloadProgress {
-                            state: DownloadProgressState::Downloading,
-                            bytes_downloaded: downloaded,
-                            total_bytes: total,
-                            current_file: status,
-                            depot_id,
-                            depot_bytes_downloaded: depot_dl,
-                            depot_total_bytes: depot_total,
-                        })
-                        .await
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-            });
+            let ticker = spawn_progress_reporter(
+                tx.clone(),
+                shared_state.clone(),
+                DownloadProgressState::Downloading,
+            );
 
             let outcome = client
                 .download_depot_to(app_id, depot_id, manifest_id, &dest, shared_state.clone())
@@ -514,15 +471,13 @@ impl SteamClient {
                     if let Err(e) =
                         super::workshop_manifest::upsert_installed_item(&manifest_path, app_id, record)
                     {
-                        let _ = tx
-                            .send(DownloadProgress {
-                                state: DownloadProgressState::Failed,
-                                current_file: format!(
-                                    "content downloaded but failed updating workshop manifest: {e:#}"
-                                ),
-                                ..Default::default()
-                            })
-                            .await;
+                        emit_failed(
+                            &tx,
+                            format!(
+                                "content downloaded but failed updating workshop manifest: {e:#}"
+                            ),
+                        )
+                        .await;
                         return;
                     }
                     let _ = tx
@@ -533,13 +488,7 @@ impl SteamClient {
                         .await;
                 }
                 Err(e) => {
-                    let _ = tx
-                        .send(DownloadProgress {
-                            state: DownloadProgressState::Failed,
-                            current_file: format!("failed downloading Workshop item {published_file_id}: {e:#}"),
-                            ..Default::default()
-                        })
-                        .await;
+                    emit_failed(&tx, format!("failed downloading Workshop item {published_file_id}: {e:#}")).await;
                 }
             }
         });

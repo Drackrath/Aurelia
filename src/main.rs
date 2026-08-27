@@ -415,22 +415,7 @@ async fn run(cli: Cli) -> Result<()> {
             ConfigCommand::Proxy { url, no_proxy, clear } => {
                 cmd_config_proxy(url, no_proxy, clear, json).await
             }
-            ConfigCommand::Game {
-                app_id,
-                proton,
-                clear_proton,
-                platform,
-                no_platform,
-                clear,
-                native_engine,
-                no_native_engine,
-                umu,
-                no_umu,
-                launch_script,
-                no_launch_script,
-                steam_runtime,
-                steam_prefix_mode,
-            } => cmd_config_game(app_id, proton, clear_proton, platform, no_platform, clear, native_engine, no_native_engine, umu, no_umu, launch_script, no_launch_script, steam_runtime, steam_prefix_mode, json).await,
+            ConfigCommand::Game { args } => cmd_config_game(args, json).await,
             ConfigCommand::ClearGames { yes } => cmd_config_clear_games(yes, json).await,
         },
         Command::Cloud { command } => match command {

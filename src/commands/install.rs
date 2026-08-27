@@ -46,13 +46,7 @@ pub(crate) async fn cmd_install(
 
     // For a DLC, stop Steam before editing its base appmanifest (Steam overwrites it
     // on exit), then restart it afterward so the running client picks up the change.
-    let manage_steam = restart_steam && is_dlc && SteamClient::steam_is_running();
-    if manage_steam {
-        if !json {
-            cli_println!("Stopping Steam ...");
-        }
-        SteamClient::shutdown_steam()?;
-    }
+    let manage_steam = steam_guard_stop_optional(restart_steam && is_dlc, json)?;
 
     let (platform, cached_vdf) = match platform {
         Some(p) => (p.into(), None),
@@ -103,14 +97,8 @@ pub(crate) async fn cmd_install(
         .with_context(|| format!("failed to start install for app {app_id}"))?;
     drive_progress(rx, json).await?;
 
-    let mut steam_restarted = false;
-    if manage_steam {
-        if !json {
-            cli_println!("Starting Steam ...");
-        }
-        SteamClient::start_steam()?;
-        steam_restarted = true;
-    }
+    steam_guard_restart(manage_steam, json)?;
+    let steam_restarted = manage_steam;
 
     // A newly installed DLC is invisible to an already-running Steam client until it
     // re-reads the appmanifest (which it does at startup).
@@ -324,30 +312,52 @@ pub(crate) async fn cmd_move(
     Ok(())
 }
 
+/// Steam-guarded relink/import shared body.
+async fn steam_guarded_relocate<F, Fut>(
+    app_id: u32,
+    library: PathBuf,
+    restart_steam: bool,
+    json: bool,
+    status: &'static str,
+    verb: &'static str,
+    human: impl FnOnce(&std::path::Path) -> String,
+    op: F,
+) -> Result<()>
+where
+    F: FnOnce(SteamClient, PathBuf) -> Fut,
+    Fut: Future<Output = Result<std::path::PathBuf>>,
+{
+    let client = authed_client().await?;
+    let managed = steam_guard_stop(restart_steam, json)?;
+    let result = op(client, library.clone()).await;
+    steam_guard_restart(managed, json)?;
+    let path = result.with_context(|| format!("failed to {verb} app {app_id}"))?;
+
+    if json {
+        print_json(&serde_json::json!({
+            "app_id": app_id,
+            "status": status,
+            "library": library.to_string_lossy(),
+            "install_path": path.to_string_lossy(),
+            "steam_restarted": managed,
+        }));
+    } else {
+        cli_println!("{}", human(&path));
+    }
+    Ok(())
+}
+
 pub(crate) async fn cmd_relink(
     app_id: u32,
     library: PathBuf,
     restart_steam: bool,
     json: bool,
 ) -> Result<()> {
-    let client = authed_client().await?;
-    let managed = steam_guard_stop(restart_steam, json)?;
-    let result = client.relink_install(app_id, library.clone()).await;
-    steam_guard_restart(managed, json)?;
-    let path = result.with_context(|| format!("failed to relink app {app_id}"))?;
-
-    if json {
-        print_json(&serde_json::json!({
-            "app_id": app_id,
-            "status": "relinked",
-            "library": library.to_string_lossy(),
-            "install_path": path.to_string_lossy(),
-            "steam_restarted": managed,
-        }));
-    } else {
-        cli_println!("Relinked app {app_id} to {}.", library.display());
-    }
-    Ok(())
+    let human = |_: &std::path::Path| format!("Relinked app {app_id} to {}.", library.display());
+    steam_guarded_relocate(app_id, library.clone(), restart_steam, json, "relinked", "relink", human,
+        |client, lib| async move { client.relink_install(app_id, lib).await },
+    )
+    .await
 }
 
 pub(crate) async fn cmd_import(
@@ -357,31 +367,17 @@ pub(crate) async fn cmd_import(
     restart_steam: bool,
     json: bool,
 ) -> Result<()> {
-    let client = authed_client().await?;
     // Default to the OS we're running on for the depot/platform match.
     let platform: DepotPlatform = platform.map(Into::into).unwrap_or(if cfg!(target_os = "windows") {
         DepotPlatform::Windows
     } else {
         DepotPlatform::Linux
     });
-
-    let managed = steam_guard_stop(restart_steam, json)?;
-    let result = client.import_install(app_id, library.clone(), platform).await;
-    steam_guard_restart(managed, json)?;
-    let path = result.with_context(|| format!("failed to import app {app_id}"))?;
-
-    if json {
-        print_json(&serde_json::json!({
-            "app_id": app_id,
-            "status": "imported",
-            "library": library.to_string_lossy(),
-            "install_path": path.to_string_lossy(),
-            "steam_restarted": managed,
-        }));
-    } else {
-        cli_println!("Imported app {app_id} from {}.", path.display());
-    }
-    Ok(())
+    let human = |path: &std::path::Path| format!("Imported app {app_id} from {}.", path.display());
+    steam_guarded_relocate(app_id, library, restart_steam, json, "imported", "import", human,
+        move |client, lib| async move { client.import_install(app_id, lib, platform).await },
+    )
+    .await
 }
 
 pub(crate) async fn cmd_available(app_id: u32, json: bool) -> Result<()> {
@@ -399,10 +395,7 @@ pub(crate) async fn cmd_available(app_id: u32, json: bool) -> Result<()> {
             "available": available,
             "install_path": install_path,
             "pinned": pinned,
-            "pinned_manifests": pinned_manifests
-                .iter()
-                .map(|(d, m)| (d.to_string(), *m))
-                .collect::<std::collections::BTreeMap<String, u64>>(),
+            "pinned_manifests": manifests_json(&pinned_manifests),
         }));
     } else {
         cli_println!(
@@ -417,11 +410,15 @@ pub(crate) async fn cmd_available(app_id: u32, json: bool) -> Result<()> {
     Ok(())
 }
 
+/// Stable JSON map, stringified keys.
+fn manifests_json(map: &std::collections::HashMap<u32, u64>) -> std::collections::BTreeMap<String, u64> {
+    map.iter().map(|(d, m)| (d.to_string(), *m)).collect()
+}
+
 pub(crate) async fn cmd_verify(app_id: u32, json: bool) -> Result<()> {
     let client = authed_client().await?;
-    let state = Arc::new(RwLock::new(DownloadState::default()));
     // Registered so `install stop`
-    let _install_guard = InstallGuard::register(app_id, Arc::clone(&state))?;
+    let (_install_guard, state) = InstallGuard::begin(app_id)?;
     let rx = client
         .verify_game(app_id, state)
         .await
@@ -439,8 +436,7 @@ pub(crate) async fn cmd_update(app_id: u32, force: bool, json: bool) -> Result<(
     }
 
     let client = authed_client().await?;
-    let state = Arc::new(RwLock::new(DownloadState::default()));
-    let _install_guard = InstallGuard::register(app_id, Arc::clone(&state))?;
+    let (_install_guard, state) = InstallGuard::begin(app_id)?;
     let rx = client
         .update_game(app_id, state)
         .await
@@ -510,11 +506,7 @@ pub(crate) async fn cmd_check_updates(json: bool) -> Result<()> {
     } else {
         cli_println!("{:>9}  NAME", "APPID");
         for g in &updates {
-            let branch = if g.active_branch != "public" {
-                format!(" [{}]", g.active_branch)
-            } else {
-                String::new()
-            };
+            let branch = branch_suffix(g);
             cli_println!("{:>9}  {}{}", g.app_id, g.name, branch);
         }
         cli_println!(
@@ -739,10 +731,7 @@ pub(crate) async fn cmd_downgrade(args: DowngradeArgs, json: bool) -> Result<()>
             "app_id": args.app_id,
             "status": "downgraded",
             "pinned": pinned,
-            "manifests": overrides
-                .iter()
-                .map(|(d, m)| (d.to_string(), *m))
-                .collect::<std::collections::BTreeMap<String, u64>>(),
+            "manifests": manifests_json(&overrides),
         }));
     } else {
         cli_println!(
@@ -781,10 +770,7 @@ pub(crate) async fn cmd_pin(app_id: u32, json: bool) -> Result<()> {
         print_json(&serde_json::json!({
             "app_id": app_id,
             "pinned": true,
-            "manifests": manifests
-                .iter()
-                .map(|(d, m)| (d.to_string(), *m))
-                .collect::<std::collections::BTreeMap<String, u64>>(),
+            "manifests": manifests_json(&manifests),
         }));
     } else {
         cli_println!(

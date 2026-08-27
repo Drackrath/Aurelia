@@ -65,6 +65,7 @@ pub(crate) fn detect_installed_platform_set(install_path: &str) -> Option<(bool,
     Some((linux, windows))
 }
 
+/// Single verdict; exhausted budget stays unknown.
 pub(crate) fn detect_installed_platform(install_path: &str) -> Option<String> {
     let root = std::path::Path::new(install_path);
     if !root.is_dir() {
@@ -236,7 +237,7 @@ pub(crate) async fn cmd_list(
                 v
             })
             .collect();
-        cli_println!("{}", serde_json::to_string_pretty(&enriched)?);
+        print_json(&enriched);
         return Ok(());
     }
 
@@ -273,11 +274,7 @@ pub(crate) async fn cmd_list(
         } else {
             "unlicensed"
         };
-        let mut branch = if g.active_branch != "public" {
-            format!(" [{}]", g.active_branch)
-        } else {
-            String::new()
-        };
+        let mut branch = branch_suffix(g);
         // Flag games whose only local copy lives in the in-Wine Steam runtime's own
         // library (installed via the in-Wine Steam, e.g. Family-Shared titles) — they
         // launch through the in-Wine Steam rather than Aurelia's Proton pipeline.
@@ -340,7 +337,7 @@ pub(crate) async fn cmd_account(json: bool) -> Result<()> {
             "vac_bans": data.vac_bans,
             "vac_banned_apps": data.vac_banned_apps,
         });
-        cli_println!("{}", serde_json::to_string_pretty(&value)?);
+        print_json(&value);
         return Ok(());
     }
 

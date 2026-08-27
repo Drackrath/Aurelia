@@ -15,6 +15,31 @@ use crate::core::config::{config_dir, LauncherConfig};
 use crate::steam_client::SteamClient;
 use crate::core::utils::MasterSteamConfig;
 
+/// Kill processes holding `wine_prefix`.
+fn stop_prefix_processes(wine_prefix: &Path) {
+    SteamClient::kill_steam_in_prefix(wine_prefix);
+    #[cfg(unix)]
+    SteamClient::kill_wine_processes_in_prefix(wine_prefix, true);
+}
+
+/// Resolve the runner's wine binary.
+fn resolve_runtime_wine(config: &LauncherConfig) -> Result<PathBuf> {
+    let runner_name = config.steam_runtime_runner.to_string_lossy();
+    let library_root = PathBuf::from(&config.steam_library_path);
+    crate::core::utils::resolve_steam_runtime_wine(&runner_name, &library_root)
+}
+
+/// Installed `steam.exe` or install-first error.
+fn require_steam_exe(steam_cfg: &MasterSteamConfig) -> Result<PathBuf> {
+    steam_cfg.steam_exe.clone().ok_or_else(|| {
+        anyhow!(
+            "the Windows Steam runtime is not installed yet (no steam.exe under {}). \
+             Run `aurelia steam-runtime install` first.",
+            steam_cfg.wine_prefix.display()
+        )
+    })
+}
+
 /// Ensure Steam is installed into the master Windows prefix, then start it.
 ///
 /// Two distinct phases with very different process semantics:
@@ -30,9 +55,7 @@ pub async fn install_master_steam(config: &LauncherConfig) -> Result<()> {
 
     // Resolve the runner FIRST: a misconfigured runner must fail before we spend a
     // download on an installer we have no way to execute.
-    let runner_name = config.steam_runtime_runner.to_string_lossy();
-    let library_root = PathBuf::from(&config.steam_library_path);
-    let wine = crate::core::utils::resolve_steam_runtime_wine(&runner_name, &library_root)?;
+    let wine = resolve_runtime_wine(config)?;
 
     tracing::info!("Unified Master Steam resolution:");
     tracing::info!("  - Root Dir: {}", steam_cfg.root_dir.display());
@@ -203,10 +226,7 @@ fn apply_install_diagnostics(cmd: &mut Command, base_dir: &Path) {
         tracing::warn!("AURELIA_DIAGNOSE_INSTALL set but could not create log dir {}: {}", logs_dir.display(), e);
         return;
     }
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let stamp = crate::core::utils::now_unix();
     let log_path = logs_dir.join(format!("steam_runtime_install_{stamp}.log"));
     match std::fs::File::create(&log_path) {
         Ok(file) => {
@@ -252,9 +272,7 @@ pub async fn repair_master_steam(config: &LauncherConfig) -> Result<()> {
         "Repair: stopping any processes holding the master prefix {}",
         steam_cfg.wine_prefix.display()
     );
-    SteamClient::kill_steam_in_prefix(&steam_cfg.wine_prefix);
-    #[cfg(unix)]
-    SteamClient::kill_wine_processes_in_prefix(&steam_cfg.wine_prefix, true);
+    stop_prefix_processes(&steam_cfg.wine_prefix);
 
     // 2. Snapshot the current prefix, retaining only ONE backup. Only if present.
     if steam_cfg.wine_prefix.exists() {
@@ -291,9 +309,7 @@ pub async fn repair_master_steam(config: &LauncherConfig) -> Result<()> {
 pub fn stop_master_steam() -> bool {
     let steam_cfg = crate::core::utils::get_master_steam_config();
     let was_running = SteamClient::is_steam_running_in_prefix(&steam_cfg.wine_prefix);
-    SteamClient::kill_steam_in_prefix(&steam_cfg.wine_prefix);
-    #[cfg(unix)]
-    SteamClient::kill_wine_processes_in_prefix(&steam_cfg.wine_prefix, true);
+    stop_prefix_processes(&steam_cfg.wine_prefix);
     was_running
 }
 
@@ -306,9 +322,7 @@ pub fn stop_master_steam() -> bool {
 pub async fn uninstall_master_steam() -> Result<()> {
     let steam_cfg = crate::core::utils::get_master_steam_config();
 
-    SteamClient::kill_steam_in_prefix(&steam_cfg.wine_prefix);
-    #[cfg(unix)]
-    SteamClient::kill_wine_processes_in_prefix(&steam_cfg.wine_prefix, true);
+    stop_prefix_processes(&steam_cfg.wine_prefix);
     // Give the wineserver a moment to release open file handles before deletion.
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
@@ -335,22 +349,12 @@ pub async fn relogin_master_steam(config: &LauncherConfig) -> Result<()> {
     let base_dir = config_dir()?;
     let steam_cfg = crate::core::utils::get_master_steam_config();
 
-    let steam_exe = steam_cfg.steam_exe.clone().ok_or_else(|| {
-        anyhow!(
-            "the Windows Steam runtime is not installed yet (no steam.exe under {}). \
-             Run `aurelia steam-runtime install` first.",
-            steam_cfg.wine_prefix.display()
-        )
-    })?;
+    let steam_exe = require_steam_exe(&steam_cfg)?;
 
-    let runner_name = config.steam_runtime_runner.to_string_lossy();
-    let library_root = PathBuf::from(&config.steam_library_path);
-    let wine = crate::core::utils::resolve_steam_runtime_wine(&runner_name, &library_root)?;
+    let wine = resolve_runtime_wine(config)?;
 
     // Stop any running (typically `-silent`) in-prefix Steam so the login UI opens.
-    SteamClient::kill_steam_in_prefix(&steam_cfg.wine_prefix);
-    #[cfg(unix)]
-    SteamClient::kill_wine_processes_in_prefix(&steam_cfg.wine_prefix, true);
+    stop_prefix_processes(&steam_cfg.wine_prefix);
 
     // The CEF login UI needs the runner's dxvk/vkd3d PE libs in the prefix (a
     // bare-wine prefix misses them and the UI crash-loops invisibly).
@@ -381,17 +385,9 @@ pub async fn launch_game_via_master_steam(
 ) -> Result<()> {
     let base_dir = config_dir()?;
     let steam_cfg = crate::core::utils::get_master_steam_config();
-    let steam_exe = steam_cfg.steam_exe.clone().ok_or_else(|| {
-        anyhow!(
-            "the Windows Steam runtime is not installed (no steam.exe under {}). \
-             Run `aurelia steam-runtime install` first.",
-            steam_cfg.wine_prefix.display()
-        )
-    })?;
+    let steam_exe = require_steam_exe(&steam_cfg)?;
 
-    let runner_name = config.steam_runtime_runner.to_string_lossy();
-    let library_root = PathBuf::from(&config.steam_library_path);
-    let wine = crate::core::utils::resolve_steam_runtime_wine(&runner_name, &library_root)?;
+    let wine = resolve_runtime_wine(config)?;
 
     // The in-Wine Steam CEF UI and the game's DXVK both need the runner's PE libs in
     // the prefix (a bare-wine prefix misses them).

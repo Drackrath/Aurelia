@@ -26,6 +26,14 @@ pub fn extract_quoted_values(line: &str) -> Vec<String> {
     out
 }
 
+/// Current Unix time in seconds.
+pub fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 pub fn build_runner_command(runner_path: &Path) -> Result<Command> {
     let mut final_path = runner_path.to_path_buf();
 
@@ -674,38 +682,6 @@ pub fn detect_runner_components(
     }
 }
 
-/// Detects NVIDIA Optimus / hybrid graphics and returns the env vars needed
-/// to force the discrete NVIDIA GPU. Returns empty map on non-hybrid systems.
-pub fn detect_prime_env() -> std::collections::HashMap<String, String> {
-    let mut vars = std::collections::HashMap::new();
-
-    let has_nvidia_dev = std::path::Path::new("/dev/nvidia0").exists()
-        || std::path::Path::new("/proc/driver/nvidia").exists();
-    // Check for a second DRM device (the integrated one)
-    let has_igpu = std::path::Path::new("/dev/dri/card1").exists();
-
-    if has_nvidia_dev && has_igpu {
-        // Optimus: force discrete NVIDIA for both Vulkan and OpenGL
-        vars.insert("__NV_PRIME_RENDER_OFFLOAD".to_string(), "1".to_string());
-        vars.insert(
-            "__NV_PRIME_RENDER_OFFLOAD_PROVIDER".to_string(),
-            "NVIDIA-G0".to_string(),
-        );
-        vars.insert(
-            "__VK_LAYER_NV_optimus".to_string(),
-            "NVIDIA_only".to_string(),
-        );
-        vars.insert("__GLX_VENDOR_LIBRARY_NAME".to_string(), "nvidia".to_string());
-
-        // Also hint VKD3D-Proton via its own knob
-        if let Ok(val) = std::env::var("VKD3D_FEATURE_FLAGS") {
-            vars.insert("VKD3D_FEATURE_FLAGS".to_string(), val);
-        }
-    }
-
-    vars
-}
-
 // ── DXVK ────────────────────────────────────────────────────────────────────
 
 fn detect_dxvk(root: &Path, prefix: Option<&Path>) -> Option<ComponentInfo> {
@@ -719,23 +695,7 @@ fn detect_dxvk(root: &Path, prefix: Option<&Path>) -> Option<ComponentInfo> {
     }
 
     // Legacy/Proton fallback
-    let bundled_dlls = [
-        "files/lib64/wine/dxvk/d3d11.dll",
-        "files/lib/wine/dxvk/d3d11.dll",
-        "dist/lib64/wine/dxvk/d3d11.dll",
-        "dist/lib/wine/dxvk/d3d11.dll",
-        "lib64/wine/dxvk/d3d11.dll",
-        "lib/wine/dxvk/d3d11.dll",
-    ];
-    if let Some(info) = check_bundled(
-        root,
-        &bundled_dlls,
-        &[
-            "files/share/dxvk/version",
-            "dist/share/dxvk/version",
-            "share/dxvk/version",
-        ],
-    ) {
+    if let Some(info) = check_bundled_legacy(root, "dxvk", "d3d11.dll") {
         return Some(info);
     }
 
@@ -745,7 +705,7 @@ fn detect_dxvk(root: &Path, prefix: Option<&Path>) -> Option<ComponentInfo> {
             "drive_c/windows/system32/d3d11.dll",
             "drive_c/windows/syswow64/d3d11.dll",
         ];
-        if let Some(info) = check_prefix(pfx, &prefix_dlls, "DXVK") {
+        if let Some(info) = check_prefix(pfx, &prefix_dlls) {
             return Some(info);
         }
     }
@@ -773,42 +733,14 @@ fn detect_vkd3d_proton(root: &Path, prefix: Option<&Path>) -> Option<ComponentIn
     }
 
     // Legacy/Proton fallback
-    let bundled_dlls = [
-        "files/lib64/wine/vkd3d-proton/d3d12.dll",
-        "files/lib/wine/vkd3d-proton/d3d12.dll",
-        "dist/lib64/wine/vkd3d-proton/d3d12.dll",
-        "dist/lib/wine/vkd3d-proton/d3d12.dll",
-        "lib64/wine/vkd3d-proton/d3d12.dll",
-        "lib/wine/vkd3d-proton/d3d12.dll",
-    ];
-    if let Some(info) = check_bundled(
-        root,
-        &bundled_dlls,
-        &[
-            "files/share/vkd3d-proton/version",
-            "dist/share/vkd3d-proton/version",
-            "share/vkd3d-proton/version",
-        ],
-    ) {
+    if let Some(info) = check_bundled_legacy(root, "vkd3d-proton", "d3d12.dll") {
         return Some(info);
     }
 
     // VKD3D-Proton replaces d3d12.dll — check prefix for it
     if let Some(pfx) = prefix {
-        let prefix_dlls = [
-            "drive_c/windows/system32/d3d12.dll",
-            "drive_c/windows/syswow64/d3d12.dll",
-        ];
-        for rel in prefix_dlls {
-            let p = pfx.join(rel);
-            if p.exists() && dll_contains_string(&p, "vkd3d-proton") {
-                let version = extract_version_from_dll(&p).unwrap_or_else(|| "unknown".to_string());
-                return Some(ComponentInfo {
-                    version,
-                    source: ComponentSource::InstalledInPrefix,
-                    path: Some(p),
-                });
-            }
+        if let Some(info) = check_prefix_d3d12(pfx, true) {
+            return Some(info);
         }
     }
 
@@ -844,7 +776,7 @@ fn detect_nvapi(root: &Path, prefix: Option<&Path>) -> Option<ComponentInfo> {
             "drive_c/windows/system32/nvapi64.dll",
             "drive_c/windows/syswow64/nvapi.dll",
         ];
-        if let Some(info) = check_prefix(pfx, &prefix_dlls, "NVAPI") {
+        if let Some(info) = check_prefix(pfx, &prefix_dlls) {
             return Some(info);
         }
     }
@@ -862,43 +794,14 @@ fn detect_vkd3d(root: &Path, prefix: Option<&Path>) -> Option<ComponentInfo> {
         return Some(info);
     }
 
-    // Legacy/Proton fallback
-    // Upstream Wine VKD3D uses libvkd3d.dll/libvkd3d-1.dll and libvkd3d-shader.dll
-    let bundled_dlls = [
-        "files/lib64/wine/vkd3d/libvkd3d-1.dll",
-        "files/lib/wine/vkd3d/libvkd3d-1.dll",
-        "dist/lib64/wine/vkd3d/libvkd3d-1.dll",
-        "dist/lib/wine/vkd3d/libvkd3d-1.dll",
-        "lib64/wine/vkd3d/libvkd3d-1.dll",
-        "lib/wine/vkd3d/libvkd3d-1.dll",
-    ];
-    if let Some(info) = check_bundled(
-        root,
-        &bundled_dlls,
-        &[
-            "files/share/vkd3d/version",
-            "dist/share/vkd3d/version",
-            "share/vkd3d/version",
-        ],
-    ) {
+    // Legacy/Proton fallback (upstream libvkd3d-1.dll).
+    if let Some(info) = check_bundled_legacy(root, "vkd3d", "libvkd3d-1.dll") {
         return Some(info);
     }
 
     if let Some(pfx) = prefix {
-        let prefix_dlls = [
-            "drive_c/windows/system32/d3d12.dll",
-            "drive_c/windows/syswow64/d3d12.dll",
-        ];
-        for rel in prefix_dlls {
-            let p = pfx.join(rel);
-            if p.exists() && !dll_contains_string(&p, "vkd3d-proton") {
-                let version = extract_version_from_dll(&p).unwrap_or_else(|| "unknown".to_string());
-                return Some(ComponentInfo {
-                    version,
-                    source: ComponentSource::InstalledInPrefix,
-                    path: Some(p),
-                });
-            }
+        if let Some(info) = check_prefix_d3d12(pfx, false) {
+            return Some(info);
         }
     }
 
@@ -950,6 +853,40 @@ fn detect_bundled_modern<S: AsRef<str>>(
     None
 }
 
+/// Legacy bundled-layout probe per component.
+fn check_bundled_legacy(root: &Path, component: &str, dll: &str) -> Option<ComponentInfo> {
+    let dll_candidates: Vec<String> = ["files/lib64", "files/lib", "dist/lib64", "dist/lib", "lib64", "lib"]
+        .iter()
+        .map(|base| format!("{base}/wine/{component}/{dll}"))
+        .collect();
+    let version_files: Vec<String> = ["files/share", "dist/share", "share"]
+        .iter()
+        .map(|base| format!("{base}/{component}/version"))
+        .collect();
+    let dll_refs: Vec<&str> = dll_candidates.iter().map(String::as_str).collect();
+    let version_refs: Vec<&str> = version_files.iter().map(String::as_str).collect();
+    check_bundled(root, &dll_refs, &version_refs)
+}
+
+/// Attribute prefix `d3d12.dll` by marker.
+fn check_prefix_d3d12(pfx: &Path, want_proton: bool) -> Option<ComponentInfo> {
+    for rel in [
+        "drive_c/windows/system32/d3d12.dll",
+        "drive_c/windows/syswow64/d3d12.dll",
+    ] {
+        let p = pfx.join(rel);
+        if p.exists() && dll_contains_string(&p, "vkd3d-proton") == want_proton {
+            let version = extract_version_from_dll(&p).unwrap_or_else(|| "unknown".to_string());
+            return Some(ComponentInfo {
+                version,
+                source: ComponentSource::InstalledInPrefix,
+                path: Some(p),
+            });
+        }
+    }
+    None
+}
+
 fn check_bundled(root: &Path, dll_candidates: &[&str], version_files: &[&str]) -> Option<ComponentInfo> {
     let Some(found_dll) = dll_candidates.iter().find(|rel| root.join(rel).exists()) else {
         return None;
@@ -985,7 +922,7 @@ fn check_bundled(root: &Path, dll_candidates: &[&str], version_files: &[&str]) -
     })
 }
 
-fn check_prefix(prefix: &Path, dll_candidates: &[&str], _name: &str) -> Option<ComponentInfo> {
+fn check_prefix(prefix: &Path, dll_candidates: &[&str]) -> Option<ComponentInfo> {
     for rel in dll_candidates {
         let p = prefix.join(rel);
         if p.exists() {
@@ -1137,13 +1074,6 @@ fn extract_version_from_dll(dll_path: &Path) -> Option<String> {
     // Sort: longer (more specific) versions first
     candidates.sort_by(|a, b| b.len().cmp(&a.len()));
     candidates.into_iter().next()
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum GraphicsLayer {
-    Dxvk,
-    Vkd3dProton,
-    Vkd3d,
 }
 
 /// Returns the WINEDLLOVERRIDES string needed to activate installed layers.
@@ -1424,15 +1354,6 @@ pub fn detect_exe_architecture(exe_path: &Path) -> crate::core::models::Executab
     }
 }
 
-pub fn detect_custom_components(path: &Path) -> crate::core::utils::RunnerComponents {
-    crate::core::utils::RunnerComponents {
-        dxvk: detect_dxvk(path, None),
-        vkd3d_proton: detect_vkd3d_proton(path, None),
-        vkd3d: detect_vkd3d(path, None),
-        nvapi: detect_nvapi(path, None),
-    }
-}
-
 /// Place a single DLL at `dest` as a symlink to `src` (a plain copy on non-unix),
 /// first clearing any existing entry: a real (non-symlink) file is moved aside to
 /// `*.dll.bak` (or removed if a backup already exists), and a stale symlink is
@@ -1647,11 +1568,15 @@ pub fn proton_compat_prefix(
     config: &crate::core::config::LauncherConfig,
     app_id: u32,
 ) -> std::path::PathBuf {
-    std::path::PathBuf::from(&config.steam_library_path)
+    compat_data_dir(std::path::Path::new(&config.steam_library_path), app_id).join("pfx")
+}
+
+/// `steamapps/compatdata/<appid>` under a library root.
+pub fn compat_data_dir(library_root: &Path, app_id: u32) -> PathBuf {
+    library_root
         .join("steamapps")
         .join("compatdata")
         .join(app_id.to_string())
-        .join("pfx")
 }
 
 /// The wine prefix a game's Windows files — saves included — actually live in.

@@ -45,11 +45,7 @@ impl SteamClient {
     /// [`ChatClient::listen`] on it — the event stream is type-tied to the client,
     /// so it must outlive the stream.
     pub fn chat_client(&self) -> Result<ChatClient> {
-        let connection = self
-            .connection
-            .as_ref()
-            .cloned()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection_owned()?;
         Ok(ChatClient::new(connection))
     }
 
@@ -71,10 +67,7 @@ impl SteamClient {
     /// Fetch recent messages exchanged with a friend (by SteamID64), in the order
     /// Steam returns them (most-recent first).
     pub async fn recent_chat_messages(&self, target: u64, count: u32) -> Result<Vec<ChatMessage>> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
         let me = u64::from(connection.steam_id());
         // FriendMessage carries only the 32-bit account id of the sender; compare
         // it against our own to tell our messages from the friend's. In a 1:1

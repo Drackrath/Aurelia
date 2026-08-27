@@ -4,78 +4,22 @@
 //! and free helpers live in the parent module (in scope via `use super::*`).
 use super::*;
 
-/// Locate the `depots` object within a parsed appinfo VDF root object.
-///
-/// When the VDF root key is the well-known `appinfo`/`<appid>` wrapper, the
-/// `depots` node sits directly under the root; otherwise it may be nested one
-/// level down inside the first child object. Shared by `fetch_branches` and
-/// `get_available_platforms`, which locate depots identically.
-fn locate_depots<'a, 'text>(
-    root_obj: &'a steam_vdf_parser::Obj<'text>,
-    vdf_key: &str,
-    appid: u32,
-) -> Option<&'a steam_vdf_parser::Value<'text>> {
-    if vdf_key == "appinfo" || vdf_key == appid.to_string() {
-        root_obj.get("depots")
-    } else {
-        root_obj.get("depots").or_else(|| {
-            root_obj
-                .values()
-                .next()
-                .and_then(|v| v.as_obj())
-                .and_then(|o| o.get("depots"))
-        })
-    }
-}
-
 impl SteamClient {
-    /// Issue a single PICS `ProductInfo` request for `appid` and return the raw
-    /// appinfo VDF buffer for that app. Shared by `fetch_branches` and
-    /// `get_available_platforms`, which both need exactly this round-trip.
-    ///
-    /// `ctx` is folded into the request-failure error message so callers keep
-    /// their original, distinct context strings.
-    async fn fetch_appinfo_buffer(&self, appid: u32, ctx: &'static str) -> Result<Vec<u8>> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
-
-        let mut request = CMsgClientPICSProductInfoRequest::new();
-        request
-            .apps
-            .push(cmsg_client_picsproduct_info_request::AppInfo {
-                appid: Some(appid),
-                ..Default::default()
-            });
-
-        let response: CMsgClientPICSProductInfoResponse =
-            connection.job(request).await.context(ctx)?;
-
-        let app = response
-            .apps
-            .iter()
-            .find(|entry| entry.appid() == appid)
-            .ok_or_else(|| anyhow!("missing app info payload for app {appid}"))?;
-
-        Ok(app.buffer().to_vec())
-    }
-
     pub async fn fetch_branches(&self, appid: u32) -> Result<Vec<String>> {
         // PICS returns the appinfo as *binary* VDF; parse that first and only fall
         // back to text (mirroring `get_available_platforms`). Parsing the binary
         // buffer as text — as this used to — fails with "Expected a valid token for
         // object start", which is why `branches` was broken.
         let buffer = self
-            .fetch_appinfo_buffer(appid, "failed requesting appinfo product info for branches")
+            .pics_buffer(appid, "failed requesting appinfo product info for branches")
             .await?;
         let appinfo_vdf_text = String::from_utf8_lossy(&buffer);
         let vdf = steam_vdf_parser::parse_binary(&buffer)
             .or_else(|_| steam_vdf_parser::parse_text(&appinfo_vdf_text).map(|v| v.into_owned()))
             .context("failed parsing appinfo VDF")?;
+        vdf.as_obj().context("appinfo VDF root is not an object")?;
 
-        let root_obj = vdf.as_obj().context("appinfo VDF root is not an object")?;
-        let depots = locate_depots(root_obj, vdf.key(), appid);
+        let depots = pics_depots_value(&vdf);
 
         let mut names: Vec<String> = Vec::new();
         if let Some(branches) = depots
@@ -110,7 +54,7 @@ impl SteamClient {
         appid: u32,
     ) -> Result<(Vec<DepotPlatform>, Vec<u8>)> {
         let buffer = self
-            .fetch_appinfo_buffer(appid, "failed requesting appinfo product info")
+            .pics_buffer(appid, "failed requesting appinfo product info")
             .await?;
         let appinfo_vdf_text = String::from_utf8_lossy(&buffer);
 
@@ -121,8 +65,7 @@ impl SteamClient {
             .or_else(|_| steam_vdf_parser::parse_text(&appinfo_vdf_text).map(|v| v.into_owned()));
 
         if let Ok(vdf) = vdf_res {
-            let root_obj = vdf.as_obj().unwrap();
-            let depots_val = locate_depots(root_obj, vdf.key(), appid);
+            let depots_val = pics_depots_value(&vdf);
 
             if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
                 for value in depots.values() {
@@ -186,11 +129,7 @@ impl SteamClient {
         branch: Option<String>,
         shared_state: Arc<std::sync::RwLock<crate::core::models::DownloadState>>,
     ) -> Result<Receiver<DownloadProgress>> {
-        let connection = self
-            .connection
-            .as_ref()
-            .cloned()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection_owned()?;
 
         let cfg = load_launcher_config().await?;
         // Install into the caller-chosen library (a drive/location picked in the
@@ -205,14 +144,15 @@ impl SteamClient {
             .join("steamapps")
             .join(format!("appmanifest_{appid}.acf"));
         if let Ok(raw) = std::fs::read_to_string(&existing_manifest) {
-            if let Some(dir) = parse_installdir_from_acf(&raw) {
+            let parsed = crate::core::acf::parse_app_manifest(&raw);
+            if let Some(dir) = parsed.install_dir.clone() {
                 let existing_dir = Path::new(&library_root).join("steamapps").join("common").join(&dir);
                 if existing_dir.is_dir() && !dir.trim().is_empty() {
                     installdir = dir;
                 }
             }
             if game_name.starts_with("App ") {
-                if let Some(name) = parse_name_from_acf(&raw).filter(|n| !n.starts_with("App ")) {
+                if let Some(name) = parsed.display_name().filter(|n| !n.starts_with("App ")) {
                     game_name = name;
                 }
             }
@@ -280,42 +220,17 @@ impl SteamClient {
                 appinfo_vdf_bytes_owned = cached;
                 &appinfo_vdf_bytes_owned
             } else {
-                let mut request = CMsgClientPICSProductInfoRequest::new();
-                request
-                    .apps
-                    .push(cmsg_client_picsproduct_info_request::AppInfo {
-                        appid: Some(appid),
-                        ..Default::default()
-                    });
-
-                let response: CMsgClientPICSProductInfoResponse = match connection.job(request).await
+                match super::pics_app_buffer(&connection, appid, "failed requesting appinfo").await
                 {
-                    Ok(res) => res,
+                    Ok(buffer) => {
+                        appinfo_vdf_bytes_owned = buffer;
+                        &appinfo_vdf_bytes_owned
+                    }
                     Err(e) => {
-                        let _ = tx
-                            .send(DownloadProgress {
-                                state: DownloadProgressState::Failed,
-                                current_file: format!("failed requesting appinfo: {e}"),
-                                ..Default::default()
-                            })
-                            .await;
+                        emit_failed(&tx, format!("{e:#}")).await;
                         return;
                     }
-                };
-
-                let app = response.apps.iter().find(|entry| entry.appid() == appid);
-                let Some(app) = app else {
-                    let _ = tx
-                        .send(DownloadProgress {
-                            state: DownloadProgressState::Failed,
-                            current_file: "missing appinfo payload".to_string(),
-                            ..Default::default()
-                        })
-                        .await;
-                    return;
-                };
-                appinfo_vdf_bytes_owned = app.buffer().to_vec();
-                &appinfo_vdf_bytes_owned
+                }
             };
 
             let mut selections = Vec::new();
@@ -331,17 +246,7 @@ impl SteamClient {
                 // To keep filtering, we re-parse or re-use the find_vdf logic.
                 // We'll re-parse here to stay strictly compliant with Task 2's request to call parse_pics_product_info.
                 if let Ok(vdf) = find_vdf_in_pics(appinfo_vdf_bytes) {
-                    let root_obj = vdf.as_obj().unwrap();
-                    let depots_val = if vdf.key() == "appinfo" || vdf.key() == appid.to_string() {
-                        root_obj.get("depots")
-                    } else {
-                        root_obj.get("depots").or_else(|| {
-                            root_obj
-                                .get("appinfo")
-                                .and_then(|v| v.as_obj())
-                                .and_then(|o| o.get("depots"))
-                        })
-                    };
+                    let depots_val = pics_depots_value(&vdf);
 
                     // depots -> branches -> public -> buildid
                     build_id = depots_val
@@ -446,13 +351,7 @@ impl SteamClient {
                     "No matching depots found for the selected platform."
                 };
 
-                let _ = tx
-                    .send(DownloadProgress {
-                        state: DownloadProgressState::Failed,
-                        current_file: msg.to_string(),
-                        ..Default::default()
-                    })
-                    .await;
+                emit_failed(&tx, msg.to_string()).await;
                 return;
             }
 
@@ -515,57 +414,11 @@ impl SteamClient {
             // Periodically forward the live byte counters over the channel. The
             // download callbacks only mutate the shared state; this reporter is what
             // turns that into the progress the CLI renders.
-            let progress_tx = tx.clone();
-            let progress_state = shared_state_clone.clone();
-            tokio::spawn(async move {
-                let mut ticker = tokio::time::interval(std::time::Duration::from_millis(250));
-                loop {
-                    ticker.tick().await;
-                    let snapshot = match progress_state.read() {
-                        Ok(s) => Some((
-                            s.is_downloading,
-                            s.downloaded_bytes,
-                            s.total_bytes,
-                            s.status_text.clone(),
-                            s.depot_id,
-                            s.depot_downloaded_bytes,
-                            s.depot_total_bytes,
-                        )),
-                        Err(_) => None,
-                    };
-                    let Some((
-                        downloading,
-                        downloaded,
-                        total,
-                        status,
-                        depot_id,
-                        depot_downloaded,
-                        depot_total,
-                    )) = snapshot
-                    else {
-                        break;
-                    };
-                    if !downloading {
-                        break;
-                    }
-                    // Stop if the receiver is gone (terminal message already consumed).
-                    if progress_tx
-                        .send(DownloadProgress {
-                            state: DownloadProgressState::Downloading,
-                            bytes_downloaded: downloaded,
-                            total_bytes: total,
-                            current_file: status,
-                            depot_id,
-                            depot_bytes_downloaded: depot_downloaded,
-                            depot_total_bytes: depot_total,
-                        })
-                        .await
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-            });
+            spawn_progress_reporter(
+                tx.clone(),
+                shared_state_clone.clone(),
+                DownloadProgressState::Downloading,
+            );
 
             // 2. Fetch Content Servers via Service (once for all depots, so we hit the
             //    network only once regardless of how many depots are selected).
@@ -573,13 +426,7 @@ impl SteamClient {
             let hosts = match client_clone.get_content_servers(connection.cell_id()).await {
                 Ok(h) => h,
                 Err(e) => {
-                    let _ = tx
-                        .send(DownloadProgress {
-                            state: DownloadProgressState::Failed,
-                            current_file: format!("Failed to fetch content servers: {}", e),
-                            ..Default::default()
-                        })
-                        .await;
+                    emit_failed(&tx, format!("Failed to fetch content servers: {}", e)).await;
                     return;
                 }
             };
@@ -620,16 +467,14 @@ impl SteamClient {
                         Ok(code) if code != 0
                     );
                     if !ok {
-                        let _ = tx
-                            .send(DownloadProgress {
-                                state: DownloadProgressState::Failed,
-                                current_file: format!(
-                                    "Steam declined a request code for manifest {} on depot {} — it may be too old, or require owning the game with a non-anonymous login",
-                                    selection.manifest_id, selection.depot_id
-                                ),
-                                ..Default::default()
-                            })
-                            .await;
+                        emit_failed(
+                            &tx,
+                            format!(
+                                "Steam declined a request code for manifest {} on depot {} — it may be too old, or require owning the game with a non-anonymous login",
+                                selection.manifest_id, selection.depot_id
+                            ),
+                        )
+                        .await;
                         success = false;
                         break;
                     }
@@ -644,16 +489,14 @@ impl SteamClient {
                     Ok(k) => k,
                     Err(e) => {
                         if is_override {
-                            let _ = tx
-                                .send(DownloadProgress {
-                                    state: DownloadProgressState::Failed,
-                                    current_file: format!(
-                                        "No depot key for depot {} — downgrade requires owning the game with a non-anonymous login: {}",
-                                        selection.depot_id, e
-                                    ),
-                                    ..Default::default()
-                                })
-                                .await;
+                            emit_failed(
+                                &tx,
+                                format!(
+                                    "No depot key for depot {} — downgrade requires owning the game with a non-anonymous login: {}",
+                                    selection.depot_id, e
+                                ),
+                            )
+                            .await;
                             success = false;
                             break;
                         }
@@ -686,6 +529,7 @@ impl SteamClient {
                         grand_total_bytes,
                         &connection,
                         key,
+                        false,
                     )
                     .await
                 {
@@ -697,29 +541,19 @@ impl SteamClient {
                         ));
                     }
                     Err(e) => {
-                        let aborted = shared_state_clone
-                            .read()
-                            .map(|s| {
-                                s.abort_signal
-                                    .load(std::sync::atomic::Ordering::Relaxed)
-                            })
-                            .unwrap_or(false);
-
-                        if aborted {
+                        if download_aborted(&shared_state_clone) {
                             success = false;
                             break;
                         }
 
-                        let _ = tx
-                            .send(DownloadProgress {
-                                state: DownloadProgressState::Failed,
-                                current_file: format!(
-                                    "Failed to download depot {}: {}",
-                                    selection.depot_id, e
-                                ),
-                                ..Default::default()
-                            })
-                            .await;
+                        emit_failed(
+                            &tx,
+                            format!(
+                                "Failed to download depot {}: {}",
+                                selection.depot_id, e
+                            ),
+                        )
+                        .await;
                         success = false;
                         break;
                     }
@@ -792,11 +626,7 @@ impl SteamClient {
         dest: &std::path::Path,
         shared_state: Arc<std::sync::RwLock<crate::core::models::DownloadState>>,
     ) -> anyhow::Result<u64> {
-        let connection = self
-            .connection
-            .as_ref()
-            .cloned()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection_owned()?;
 
         let hosts = self.get_content_servers(connection.cell_id()).await?;
         let key = self.get_depot_key(app_id, depot_id).await
@@ -814,6 +644,7 @@ impl SteamClient {
             0,
             &connection,
             key,
+            false,
         )
         .await
     }
@@ -837,6 +668,7 @@ impl SteamClient {
         grand_total_bytes: u64,
         connection: &Connection,
         key: Vec<u8>,
+        verify_mode: bool,
     ) -> anyhow::Result<u64> {
         // A valid depot key is exactly 32 bytes; a short/all-zero key would
         // decrypt chunks to garbage (the chunk path then fails the zip parse
@@ -938,7 +770,7 @@ impl SteamClient {
                     &key,
                     dest,
                     manifest_code,
-                    false, // verify_mode: false
+                    verify_mode,
                     abort_signal,
                     Some(on_progress),
                     Some(on_manifest.clone()),
@@ -946,14 +778,7 @@ impl SteamClient {
                 .await
             {
                 Ok(_) => {
-                    let aborted = shared_state
-                        .read()
-                        .map(|s| {
-                            s.abort_signal
-                                .load(std::sync::atomic::Ordering::Relaxed)
-                        })
-                        .unwrap_or(false);
-                    if aborted {
+                    if download_aborted(&shared_state) {
                         anyhow::bail!("download aborted");
                     }
 

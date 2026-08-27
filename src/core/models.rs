@@ -162,34 +162,8 @@ pub struct UserProfile {
     pub is_online: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LocalGame {
-    pub app_id: u32,
-    pub name: String,
-    pub install_dir: PathBuf,
-    pub proton_version: Option<String>,
-    #[serde(default = "default_branch")]
-    pub active_branch: String,
-}
-
 fn default_branch() -> String {
     "public".to_string()
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GameModel {
-    pub app_id: u32,
-    pub name: String,
-    pub playtime_forever_minutes: Option<u32>,
-    pub install_dir: Option<PathBuf>,
-    pub proton_version: Option<String>,
-    pub image_cache_path: Option<PathBuf>,
-}
-
-impl GameModel {
-    pub fn installed(&self) -> bool {
-        self.install_dir.is_some()
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -257,12 +231,6 @@ pub struct DlcState {
     pub installed: bool,
     /// The DLC is listed in the base game's `DisabledDLC`, so Steam treats it as off.
     pub disabled: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LibraryFilter {
-    All,
-    Installed,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]

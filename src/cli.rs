@@ -479,56 +479,8 @@ pub(crate) enum ConfigCommand {
     },
     /// View or set per-game launch settings (Proton version, platform).
     Game {
-        app_id: u32,
-        /// Set the Proton/Wine version this game launches with. Use a name from
-        /// `aurelia proton list` (installed). Overrides the global default.
-        #[arg(long)]
-        proton: Option<String>,
-        /// Clear the per-game Proton version (fall back to the global default).
-        #[arg(long, conflicts_with = "proton")]
-        clear_proton: bool,
-        /// Force the game's platform target (`windows` runs through Proton on Linux).
-        #[arg(long)]
-        platform: Option<PlatformArg>,
-        /// Clear the platform preference (back to auto-detection).
-        #[arg(long, conflicts_with = "platform")]
-        no_platform: bool,
-        /// Reset ALL of this game's per-game settings to defaults (both stores).
-        #[arg(long, conflicts_with_all = ["proton", "clear_proton", "platform", "no_platform",
-            "native_engine", "no_native_engine", "umu", "no_umu", "launch_script",
-            "no_launch_script", "steam_runtime", "steam_prefix_mode"])]
-        clear: bool,
-        /// Route this game through the luxtorpeda native-engine plugin (Linux only;
-        /// requires `aurelia luxtorpeda enable`).
-        #[arg(long)]
-        native_engine: bool,
-        /// Clear the luxtorpeda routing (back to Aurelia's normal native/Proton selection).
-        #[arg(long, conflicts_with = "native_engine")]
-        no_native_engine: bool,
-        /// Route this game through the umu-launcher plugin (Proton via umu; Linux only;
-        /// requires `aurelia umu enable`).
-        #[arg(long, conflicts_with_all = ["native_engine", "no_native_engine"])]
-        umu: bool,
-        /// Clear the umu routing (back to Aurelia's normal native/Proton selection).
-        #[arg(long, conflicts_with = "umu")]
-        no_umu: bool,
-        /// Set a per-game launch script that wraps the resolved launch command. See
-        /// `aurelia scripts`. Overrides the auto-detected `<script_dir>/<app_id>.sh`.
-        #[arg(long, value_name = "PATH")]
-        launch_script: Option<PathBuf>,
-        /// Clear the per-game launch script (falls back to the auto-detected script).
-        #[arg(long, conflicts_with = "launch_script")]
-        no_launch_script: bool,
-        /// Use the self-contained Windows Steam runtime for this game: `on` starts the
-        /// master Steam client in Wine to satisfy Steamworks/DRM handshakes without the
-        /// host Steam client. Requires `aurelia config steam-runtime-runner` and
-        /// `aurelia steam-runtime install`. `auto` is the default (off).
-        #[arg(long, value_name = "auto|on|off")]
-        steam_runtime: Option<SteamRuntimeArg>,
-        /// How the master Steam prefix backs this game: `shared` runs it in the master
-        /// prefix directly; `per-game` copies Steam into the game's own prefix.
-        #[arg(long, value_name = "shared|per-game")]
-        steam_prefix_mode: Option<SteamPrefixModeArg>,
+        #[command(flatten)]
+        args: GameConfigArgs,
     },
     /// Reset the per-game settings of ALL games to defaults (both stores).
     ClearGames {
@@ -969,6 +921,17 @@ pub(crate) enum SteamRuntimeArg {
     Off,
 }
 
+impl From<SteamRuntimeArg> for aurelia::core::models::SteamRuntimePolicy {
+    fn from(value: SteamRuntimeArg) -> Self {
+        use aurelia::core::models::SteamRuntimePolicy;
+        match value {
+            SteamRuntimeArg::Auto => SteamRuntimePolicy::Auto,
+            SteamRuntimeArg::On => SteamRuntimePolicy::Enabled,
+            SteamRuntimeArg::Off => SteamRuntimePolicy::Disabled,
+        }
+    }
+}
+
 /// `--steam-prefix-mode shared|per-game`: how the master Steam prefix backs a game.
 #[derive(Clone, Copy, ValueEnum)]
 pub(crate) enum SteamPrefixModeArg {
@@ -976,6 +939,16 @@ pub(crate) enum SteamPrefixModeArg {
     Shared,
     /// Copy/symlink Steam into the game's own prefix.
     PerGame,
+}
+
+impl From<SteamPrefixModeArg> for aurelia::core::models::SteamPrefixMode {
+    fn from(value: SteamPrefixModeArg) -> Self {
+        use aurelia::core::models::SteamPrefixMode;
+        match value {
+            SteamPrefixModeArg::Shared => SteamPrefixMode::Shared,
+            SteamPrefixModeArg::PerGame => SteamPrefixMode::PerGame,
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -1055,4 +1028,59 @@ impl From<PlatformArg> for DepotPlatform {
             PlatformArg::Linux => DepotPlatform::Linux,
         }
     }
+}
+
+/// Grouped `config game` flags.
+#[derive(clap::Args)]
+pub(crate) struct GameConfigArgs {
+    pub(crate) app_id: u32,
+    /// Set the Proton/Wine version this game launches with. Use a name from
+    /// `aurelia proton list` (installed). Overrides the global default.
+    #[arg(long)]
+    pub(crate) proton: Option<String>,
+    /// Clear the per-game Proton version (fall back to the global default).
+    #[arg(long, conflicts_with = "proton")]
+    pub(crate) clear_proton: bool,
+    /// Force the game's platform target (`windows` runs through Proton on Linux).
+    #[arg(long)]
+    pub(crate) platform: Option<PlatformArg>,
+    /// Clear the platform preference (back to auto-detection).
+    #[arg(long, conflicts_with = "platform")]
+    pub(crate) no_platform: bool,
+    /// Reset ALL of this game's per-game settings to defaults (both stores).
+    #[arg(long, conflicts_with_all = ["proton", "clear_proton", "platform", "no_platform",
+        "native_engine", "no_native_engine", "umu", "no_umu", "launch_script",
+        "no_launch_script", "steam_runtime", "steam_prefix_mode"])]
+    pub(crate) clear: bool,
+    /// Route this game through the luxtorpeda native-engine plugin (Linux only;
+    /// requires `aurelia luxtorpeda enable`).
+    #[arg(long)]
+    pub(crate) native_engine: bool,
+    /// Clear the luxtorpeda routing (back to Aurelia's normal native/Proton selection).
+    #[arg(long, conflicts_with = "native_engine")]
+    pub(crate) no_native_engine: bool,
+    /// Route this game through the umu-launcher plugin (Proton via umu; Linux only;
+    /// requires `aurelia umu enable`).
+    #[arg(long, conflicts_with_all = ["native_engine", "no_native_engine"])]
+    pub(crate) umu: bool,
+    /// Clear the umu routing (back to Aurelia's normal native/Proton selection).
+    #[arg(long, conflicts_with = "umu")]
+    pub(crate) no_umu: bool,
+    /// Set a per-game launch script that wraps the resolved launch command. See
+    /// `aurelia scripts`. Overrides the auto-detected `<script_dir>/<app_id>.sh`.
+    #[arg(long, value_name = "PATH")]
+    pub(crate) launch_script: Option<PathBuf>,
+    /// Clear the per-game launch script (falls back to the auto-detected script).
+    #[arg(long, conflicts_with = "launch_script")]
+    pub(crate) no_launch_script: bool,
+    /// Use the self-contained Windows Steam runtime for this game: `on` starts the
+    /// master Steam client in Wine to satisfy Steamworks/DRM handshakes without the
+    /// host Steam client. Requires `aurelia config steam-runtime-runner` and
+    /// `aurelia steam-runtime install`. `auto` is the default (off).
+    #[arg(long, value_name = "auto|on|off")]
+    pub(crate) steam_runtime: Option<SteamRuntimeArg>,
+    /// How the master Steam prefix backs this game: `shared` runs it in the master
+    /// prefix directly; `per-game` copies Steam into the game's own prefix.
+    #[arg(long, value_name = "shared|per-game")]
+    pub(crate) steam_prefix_mode: Option<SteamPrefixModeArg>,
 }

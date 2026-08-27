@@ -26,7 +26,7 @@ pub(crate) async fn cmd_friends(json: bool) -> Result<()> {
     };
 
     if json {
-        cli_println!("{}", serde_json::to_string_pretty(&friends)?);
+        print_json(&friends);
         return Ok(());
     }
 
@@ -136,7 +136,7 @@ pub(crate) async fn cmd_chat_history(steamid: u64, count: u32, json: bool) -> Re
     let client = authed_client().await?;
     let messages = client.recent_chat_messages(steamid, count).await?;
     if json {
-        cli_println!("{}", serde_json::to_string_pretty(&messages)?);
+        print_json(&messages);
         return Ok(());
     }
     if messages.is_empty() {

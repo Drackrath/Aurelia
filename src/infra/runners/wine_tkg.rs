@@ -63,7 +63,7 @@ impl Runner for WineTkgRunner {
         };
         let compat_data_path = game_compat_data_path(
             &library_root,
-            &ctx.app.app_id.to_string(),
+            ctx.app.app_id,
             steam_mode,
             steam_prefix_mode.clone(),
             &master_wine_prefix,
@@ -203,19 +203,16 @@ impl Runner for WineTkgRunner {
 
                     let steam_running = SteamClient::is_steam_running_in_prefix(&steam_wineprefix);
 
-                    unsafe {
-                        if !ctx.verification_ptr.is_null() {
-                            let v = &mut *ctx.verification_ptr;
-                            v.steam_running_before_launch = steam_running;
-                            v.effective_game_wineprefix = Some(effective_game_prefix.to_string_lossy().to_string());
-                            v.effective_steam_wineprefix = Some(steam_wineprefix.to_string_lossy().to_string());
-                            v.per_game_prefix_requested = steam_prefix_mode == crate::core::models::SteamPrefixMode::PerGame;
-                            v.per_game_prefix_honored = effective_game_prefix == steam_wineprefix;
-                            v.steam_runtime_policy = format!("{:?}", ctx.user_config.as_ref().map(|c| &c.steam_runtime_policy).unwrap_or(&crate::core::models::SteamRuntimePolicy::Auto));
-                            v.steam_runtime_source = runtime_source.to_string();
-                            v.windows_steam_discovery_enabled = ctx.launcher_config.windows_steam_discovery_enabled;
-                        }
-                    }
+                    ctx.with_verification(|v| {
+                        v.steam_running_before_launch = steam_running;
+                        v.effective_game_wineprefix = Some(effective_game_prefix.to_string_lossy().to_string());
+                        v.effective_steam_wineprefix = Some(steam_wineprefix.to_string_lossy().to_string());
+                        v.per_game_prefix_requested = steam_prefix_mode == crate::core::models::SteamPrefixMode::PerGame;
+                        v.per_game_prefix_honored = effective_game_prefix == steam_wineprefix;
+                        v.steam_runtime_policy = format!("{:?}", ctx.user_config.as_ref().map(|c| &c.steam_runtime_policy).unwrap_or(&crate::core::models::SteamRuntimePolicy::Auto));
+                        v.steam_runtime_source = runtime_source.to_string();
+                        v.windows_steam_discovery_enabled = ctx.launcher_config.windows_steam_discovery_enabled;
+                    });
 
                     if steam_running {
                         println!("✅ Steam already running in prefix — skipping spawn");
@@ -258,25 +255,20 @@ impl Runner for WineTkgRunner {
                         );
 
                         // Record Steam runtime diagnostics
-                        unsafe {
-                            if !ctx.verification_ptr.is_null() {
-                                let v = &mut *ctx.verification_ptr;
-                                v.steam_runtime_exe = Some(steam_cmd.get_program().to_string_lossy().to_string());
-                                v.steam_runtime_args = steam_cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect();
-                                v.steam_runtime_milestone = "steam_process_spawn_requested".to_string();
-                                v.steam_auto_start_attempted = true;
-                            }
-                        }
+                        ctx.with_verification(|v| {
+                            v.steam_runtime_exe = Some(steam_cmd.get_program().to_string_lossy().to_string());
+                            v.steam_runtime_args = steam_cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect();
+                            v.steam_runtime_milestone = "steam_process_spawn_requested".to_string();
+                            v.steam_auto_start_attempted = true;
+                        });
 
                         let start_time = std::time::Instant::now();
                         let mut steam_process =
                             steam_cmd.spawn().map_err(|e| LaunchError::new(LaunchErrorKind::Process, "Failed to spawn background Steam").with_source(anyhow!(e)))?;
 
-                        unsafe {
-                            if !ctx.verification_ptr.is_null() {
-                                (*ctx.verification_ptr).steam_runtime_milestone = "steam_process_spawned".to_string();
-                            }
-                        }
+                        ctx.with_verification(|v| {
+                            v.steam_runtime_milestone = "steam_process_spawned".to_string();
+                        });
 
                         let readiness_timeout = 8;
                         println!("Waiting for Steam to initialise (max {}s)...", readiness_timeout);
@@ -298,14 +290,11 @@ impl Runner for WineTkgRunner {
                                 // Crash detection — bail immediately
                                 if let Ok(Some(status)) = steam_process.try_wait() {
                                     println!("❌ FATAL: Background Steam exited after {}s with: {}", i + 1, status);
-                                    unsafe {
-                                        if !ctx.verification_ptr.is_null() {
-                                            let v = &mut *ctx.verification_ptr;
-                                            v.steam_runtime_exit_code = status.code();
-                                            v.steam_runtime_lifetime_ms = Some(start_time.elapsed().as_millis() as u64);
-                                            v.steam_runtime_milestone = "steam_process_exited_early".to_string();
-                                        }
-                                    }
+                                    ctx.with_verification(|v| {
+                                        v.steam_runtime_exit_code = status.code();
+                                        v.steam_runtime_lifetime_ms = Some(start_time.elapsed().as_millis() as u64);
+                                        v.steam_runtime_milestone = "steam_process_exited_early".to_string();
+                                    });
                                     break 'wait false;
                                 }
 
@@ -336,11 +325,9 @@ impl Runner for WineTkgRunner {
                                     .unwrap_or(0);
                                 if log_count >= 2 {
                                     println!("✅ Steam ready after {}s ({} log files found)", i + 1, log_count);
-                                    unsafe {
-                                        if !ctx.verification_ptr.is_null() {
-                                            (*ctx.verification_ptr).steam_runtime_milestone = "steam_ready_signal_observed".to_string();
-                                        }
-                                    }
+                                    ctx.with_verification(|v| {
+                                        v.steam_runtime_milestone = "steam_ready_signal_observed".to_string();
+                                    });
                                     ready_signal = Some(format!("{} log files after {}s", log_count, i + 1));
                                     break;
                                 }
@@ -363,14 +350,11 @@ impl Runner for WineTkgRunner {
                                             "❌ FATAL: Background Steam signalled ready ({}) but exited within {}s grace (code {:?})",
                                             reason, READINESS_GRACE_SECS, code
                                         );
-                                        unsafe {
-                                            if !ctx.verification_ptr.is_null() {
-                                                let v = &mut *ctx.verification_ptr;
-                                                v.steam_runtime_exit_code = code;
-                                                v.steam_runtime_lifetime_ms = Some(start_time.elapsed().as_millis() as u64);
-                                                v.steam_runtime_milestone = "steam_process_exited_early".to_string();
-                                            }
-                                        }
+                                        ctx.with_verification(|v| {
+                                            v.steam_runtime_exit_code = code;
+                                            v.steam_runtime_lifetime_ms = Some(start_time.elapsed().as_millis() as u64);
+                                            v.steam_runtime_milestone = "steam_process_exited_early".to_string();
+                                        });
                                         break 'wait false;
                                     }
                                     // Still alive after the grace window — genuinely ready.
@@ -379,27 +363,23 @@ impl Runner for WineTkgRunner {
                             }
 
                             println!("⚠️ Steam did not signal ready after {}s, launching game anyway", readiness_timeout);
-                            unsafe {
-                                if !ctx.verification_ptr.is_null() {
-                                    (*ctx.verification_ptr).steam_runtime_milestone = "steam_ready_timeout".to_string();
-                                }
-                            }
+                            ctx.with_verification(|v| {
+                                v.steam_runtime_milestone = "steam_ready_timeout".to_string();
+                            });
                             true
                         };
 
                         if !ready {
-                            unsafe {
-                                if !ctx.verification_ptr.is_null() {
-                                    (*ctx.verification_ptr).steam_auto_start_failed = true;
-                                }
-                            }
+                            ctx.with_verification(|v| {
+                                v.steam_auto_start_failed = true;
+                            });
                             return Err(LaunchError::new(LaunchErrorKind::Process, "Background Steam crashed before the game could start"));
                         }
                     }
         }
 
         // Write steam_appid.txt to the game working directory
-        let (_install_dir, _executable, game_working_dir) = resolve_game_paths(ctx)?;
+        let (_install_dir, _executable, game_working_dir) = ctx.game_paths()?;
 
         let app_id_str = ctx.app.app_id.to_string();
         let app_id_path = game_working_dir.join("steam_appid.txt");
@@ -426,7 +406,7 @@ impl Runner for WineTkgRunner {
         };
         let compat_data_path = game_compat_data_path(
             &library_root,
-            &app_id_str,
+            ctx.app.app_id,
             steam_mode,
             steam_prefix_mode,
             &master_wine_prefix,
@@ -457,7 +437,7 @@ impl Runner for WineTkgRunner {
             .map(|c| c.steam_launch_config.no_overlay)
             .unwrap_or(true);
 
-        let (_install_dir, _executable, game_working_dir) = resolve_game_paths(ctx)?;
+        let (_install_dir, _executable, game_working_dir) = ctx.game_paths()?;
 
         // Resolve proton version for component detection and DLL path building
         let proton = forced_proton(ctx)
@@ -601,30 +581,21 @@ impl Runner for WineTkgRunner {
 
                 if let Some(path) = &res.chosen_path {
                     if let Some(parent) = path.parent() {
-                        let dir = parent.to_string_lossy().to_string();
-                        if !wine_dll_dirs.contains(&dir) {
-                            wine_dll_dirs.push(dir);
-                        }
+                        push_dll_dir_once(&mut wine_dll_dirs, parent);
 
                         // For Wine-TKG and similar layouts, we must ensure both 64-bit and 32-bit
                         // architecture folders are in WINEDLLPATH if they exist, so that both
                         // architectures of a game find their respective native DLLs.
                         let folder_name = parent.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                        if folder_name == "x86_64-windows" {
-                            let sibling = parent.parent().unwrap().join("i386-windows");
+                        let sibling_arch = match folder_name {
+                            "x86_64-windows" => Some("i386-windows"),
+                            "i386-windows" => Some("x86_64-windows"),
+                            _ => None,
+                        };
+                        if let Some(arch) = sibling_arch {
+                            let sibling = parent.parent().unwrap().join(arch);
                             if sibling.exists() {
-                                let s = sibling.to_string_lossy().to_string();
-                                if !wine_dll_dirs.contains(&s) {
-                                    wine_dll_dirs.push(s);
-                                }
-                            }
-                        } else if folder_name == "i386-windows" {
-                            let sibling = parent.parent().unwrap().join("x86_64-windows");
-                            if sibling.exists() {
-                                let s = sibling.to_string_lossy().to_string();
-                                if !wine_dll_dirs.contains(&s) {
-                                    wine_dll_dirs.push(s);
-                                }
+                                push_dll_dir_once(&mut wine_dll_dirs, &sibling);
                             }
                         }
                     }
@@ -643,10 +614,7 @@ impl Runner for WineTkgRunner {
         for lib_sub in crate::compat::proton::UNIFIED_LIB_SUBDIRS {
             let p = runner_root.join(lib_sub);
             if p.exists() {
-                let s = p.to_string_lossy().to_string();
-                if !wine_dll_dirs.contains(&s) {
-                    wine_dll_dirs.push(s);
-                }
+                push_dll_dir_once(&mut wine_dll_dirs, &p);
 
                 // Ensure architecture-specific subdirectories are also in WINEDLLPATH.
                 // This is critical for PE-based runners where Wine expects DLLs in
@@ -655,10 +623,7 @@ impl Runner for WineTkgRunner {
                 for arch in crate::compat::proton::ARCH_SUBDIRS {
                     let arch_p = p.join(arch);
                     if arch_p.exists() {
-                        let arch_s = arch_p.to_string_lossy().to_string();
-                        if !wine_dll_dirs.contains(&arch_s) {
-                            wine_dll_dirs.push(arch_s);
-                        }
+                        push_dll_dir_once(&mut wine_dll_dirs, &arch_p);
                     }
                 }
             }
@@ -688,29 +653,19 @@ impl Runner for WineTkgRunner {
         //                     with no host Steam (issue #3).
         //   - Standalone    → the fake-Steam trap (no DRM).
         let fake_trap = |env: &mut HashMap<String, String>| -> std::result::Result<(), LaunchError> {
-            let config_dir = crate::core::config::config_dir()
-                .map_err(|e| LaunchError::new(LaunchErrorKind::Environment, "failed to get config dir").with_source(e))?;
-            let fake_env = crate::core::utils::setup_fake_steam_trap(&config_dir)
-                .map_err(|e| LaunchError::new(LaunchErrorKind::Permission, "failed to setup fake steam trap").with_source(e))?;
-            env.insert("STEAM_COMPAT_CLIENT_INSTALL_PATH".to_string(), fake_env.to_string_lossy().to_string());
-            unsafe {
-                if !ctx.verification_ptr.is_null() {
-                    let v = &mut *ctx.verification_ptr;
-                    v.steam_client_install_path_exposed_to_game = Some(fake_env.to_string_lossy().to_string());
-                    v.steam_client_install_path_source = Some("fake_trap".to_string());
-                }
-            }
+            let fake_env = crate::infra::runners::insert_fake_steam_trap(env)?;
+            ctx.with_verification(|v| {
+                v.steam_client_install_path_exposed_to_game = Some(fake_env.to_string_lossy().to_string());
+                v.steam_client_install_path_source = Some("fake_trap".to_string());
+            });
             Ok(())
         };
         let expose = |env: &mut HashMap<String, String>, path: PathBuf, source: &str| {
             env.insert("STEAM_COMPAT_CLIENT_INSTALL_PATH".to_string(), path.to_string_lossy().to_string());
-            unsafe {
-                if !ctx.verification_ptr.is_null() {
-                    let v = &mut *ctx.verification_ptr;
-                    v.steam_client_install_path_exposed_to_game = Some(path.to_string_lossy().to_string());
-                    v.steam_client_install_path_source = Some(source.to_string());
-                }
-            }
+            ctx.with_verification(|v| {
+                v.steam_client_install_path_exposed_to_game = Some(path.to_string_lossy().to_string());
+                v.steam_client_install_path_source = Some(source.to_string());
+            });
         };
 
         match steam_mode {
@@ -927,7 +882,7 @@ impl Runner for WineTkgRunner {
             spec.args = base_cmd.get_args().map(|s| s.to_string_lossy().to_string()).collect();
         }
 
-        let (_install_dir, executable, game_working_dir) = resolve_game_paths(ctx)?;
+        let (_install_dir, executable, game_working_dir) = ctx.game_paths()?;
 
         spec.cwd = Some(game_working_dir);
         spec.args.push(executable.to_string_lossy().to_string());
@@ -1011,9 +966,17 @@ fn effective_game_prefix(ctx: &LaunchContext) -> PathBuf {
 }
 
 /// Resolve STEAM_COMPAT_DATA_PATH for the game.
+/// Push dir if not already present.
+fn push_dll_dir_once(dirs: &mut Vec<String>, path: &Path) {
+    let s = path.to_string_lossy().to_string();
+    if !dirs.contains(&s) {
+        dirs.push(s);
+    }
+}
+
 fn game_compat_data_path(
     library_root: &Path,
-    app_id_str: &str,
+    app_id: u32,
     steam_mode: SteamMode,
     steam_prefix_mode: crate::core::models::SteamPrefixMode,
     master_wine_prefix: &Path,
@@ -1027,10 +990,7 @@ fn game_compat_data_path(
             }
         }
     }
-    library_root
-        .join("steamapps")
-        .join("compatdata")
-        .join(app_id_str)
+    crate::core::utils::compat_data_dir(library_root, app_id)
 }
 
 /// Which Steam-integration mode a launch runs in.
@@ -1237,34 +1197,6 @@ fn resolve_background_steam_command(
     }
 }
 
-/// Resolve `(install_dir, executable, game_working_dir)` for the game.
-///
-/// Errors if the game is not installed. The executable is resolved relative to
-/// the install dir unless it is absolute; the working dir honours an explicit
-/// `workingdir`, then the executable's parent, then the install dir.
-fn resolve_game_paths(ctx: &LaunchContext) -> std::result::Result<(PathBuf, PathBuf, PathBuf), LaunchError> {
-    let install_dir = PathBuf::from(
-        ctx.app.install_path
-            .clone()
-            .ok_or_else(|| LaunchError::new(LaunchErrorKind::GameData, format!("game {} is not installed", ctx.app.app_id)))?,
-    );
-
-    let exe_rel = ctx.launch_info.executable.replace('\\', "/");
-    let executable = if Path::new(&exe_rel).is_absolute() {
-        PathBuf::from(&exe_rel)
-    } else {
-        install_dir.join(&exe_rel)
-    };
-    let game_working_dir: PathBuf = ctx.launch_info.workingdir
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .map(|wd| install_dir.join(wd.replace('\\', "/")))
-        .or_else(|| executable.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| install_dir.clone());
-
-    Ok((install_dir, executable, game_working_dir))
-}
-
 #[cfg(test)]
 mod compat_path_tests {
     use super::*;
@@ -1275,7 +1207,7 @@ mod compat_path_tests {
         let master = PathBuf::from("/home/u/.config/Aurelia/master_steam_prefix/pfx");
         let got = game_compat_data_path(
             Path::new("/games"),
-            "123",
+            123,
             SteamMode::InWineRuntime,
             SteamPrefixMode::Shared,
             &master,
@@ -1293,7 +1225,7 @@ mod compat_path_tests {
         let master = PathBuf::from("/home/u/.config/Aurelia/master_steam_prefix/pfx");
         let got = game_compat_data_path(
             Path::new("/games"),
-            "123",
+            123,
             SteamMode::InWineRuntime,
             SteamPrefixMode::PerGame,
             &master,
@@ -1306,7 +1238,7 @@ mod compat_path_tests {
         let master = PathBuf::from("/m/pfx");
         let got = game_compat_data_path(
             Path::new("/games"),
-            "123",
+            123,
             SteamMode::Standalone,
             SteamPrefixMode::Shared,
             &master,
@@ -1320,7 +1252,7 @@ mod compat_path_tests {
         let master = PathBuf::from("/home/u/.config/Aurelia/master_steam_prefix");
         let got = game_compat_data_path(
             Path::new("/games"),
-            "123",
+            123,
             SteamMode::InWineRuntime,
             SteamPrefixMode::Shared,
             &master,

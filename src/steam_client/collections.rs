@@ -29,10 +29,7 @@ impl SteamClient {
     ///
     /// Requires a logged-in (non-anonymous) session.
     pub async fn download_collections(&self) -> Result<RemoteNamespace> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
 
         let mut req = CCloudConfigStore_Download_Request::new();
         let mut nv = CCloudConfigStore_NamespaceVersion::new();
@@ -78,10 +75,7 @@ impl SteamClient {
         version: u64,
         entries: Vec<(String, Option<String>)>,
     ) -> Result<u64> {
-        let connection = self
-            .connection
-            .as_ref()
-            .context("steam connection not initialized")?;
+        let connection = self.require_connection()?;
 
         let mut nd = CCloudConfigStore_NamespaceData::new();
         nd.set_enamespace(COLLECTIONS_NAMESPACE);
