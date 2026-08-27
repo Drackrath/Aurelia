@@ -59,17 +59,7 @@ impl Runner for LuxtorpedaRunner {
 
         // Luxtorpeda (like Proton) wants a Steam client install path. Reuse Aurelia's
         // fake-steam trap so it resolves without a running Steam client.
-        let config_dir = crate::core::config::config_dir().map_err(|e| {
-            LaunchError::new(LaunchErrorKind::Environment, "failed to get config dir").with_source(e)
-        })?;
-        let fake_env = crate::core::utils::setup_fake_steam_trap(&config_dir).map_err(|e| {
-            LaunchError::new(LaunchErrorKind::Permission, "failed to setup fake steam trap")
-                .with_source(e)
-        })?;
-        env.insert(
-            "STEAM_COMPAT_CLIENT_INSTALL_PATH".to_string(),
-            fake_env.to_string_lossy().to_string(),
-        );
+        crate::infra::runners::insert_fake_steam_trap(&mut env)?;
 
         // Pass through display/session so the engine picker and game can open a window.
         for var in ["DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR"] {
