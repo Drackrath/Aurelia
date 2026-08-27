@@ -121,27 +121,13 @@ impl SteamClient {
         let needle = format!("STEAM_COMPAT_APP_ID={app_id}");
         let signal = if force { libc::SIGKILL } else { libc::SIGTERM };
 
-        Self::scan_proc_pids(|pid_path, pid_str| {
-            let environ = match std::fs::read(pid_path.join("environ")) {
-                Ok(b) => b,
-                Err(_) => return None,
-            };
-            // environ is NUL-separated `KEY=VALUE` entries; match one exactly so
-            // app id 945360 never matches 9453600.
-            let matches = environ
-                .split(|&b| b == 0)
-                .any(|entry| entry == needle.as_bytes());
-            if !matches {
-                return None;
-            }
-
-            if let Ok(pid) = pid_str.parse::<i32>() {
-                unsafe {
-                    libc::kill(pid, signal);
-                }
-            }
-            // Never short-circuit: sweep every matching process.
-            None::<()>
+        // Match a NUL-separated environ entry exactly.
+        Self::sweep_proc_pids(signal, |pid_path| {
+            std::fs::read(pid_path.join("environ")).is_ok_and(|environ| {
+                environ
+                    .split(|&b| b == 0)
+                    .any(|entry| entry == needle.as_bytes())
+            })
         });
     }
 
