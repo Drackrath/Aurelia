@@ -31,6 +31,17 @@ pub struct LaunchContext {
 unsafe impl Send for LaunchContext {}
 unsafe impl Sync for LaunchContext {}
 
+impl LaunchContext {
+    /// Run `f` against the pipeline's [`LaunchVerification`] record, if one is
+    /// attached. Confines the raw-pointer dereference to this one audited spot.
+    pub fn with_verification(&self, f: impl FnOnce(&mut crate::infra::logging::LaunchVerification)) {
+        if self.verification_ptr.is_null() {
+            return;
+        }
+        unsafe { f(&mut *self.verification_ptr) }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct CommandSpec {
     pub program: PathBuf,

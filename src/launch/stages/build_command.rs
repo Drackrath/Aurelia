@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use crate::launch::pipeline::{PipelineStage, PipelineContext, LaunchError, LaunchErrorKind};
+use crate::launch::pipeline::{PipelineStage, PipelineContext, LaunchError};
 
 pub struct BuildCommandStage;
 
@@ -7,24 +7,11 @@ pub struct BuildCommandStage;
 impl PipelineStage for BuildCommandStage {
     fn name(&self) -> &str { "BuildCommand" }
     async fn execute(&self, ctx: &mut PipelineContext) -> std::result::Result<(), LaunchError> {
-        use crate::infra::runners::LaunchContext;
-
+        if ctx.runner.is_none() {
+            return Ok(());
+        }
+        let runner_ctx = ctx.to_runner_context()?;
         if let Some(runner) = &ctx.runner {
-            let missing = |field: &str| LaunchError::new(LaunchErrorKind::Validation, format!("{field} missing"));
-            let runner_ctx = LaunchContext {
-                app: ctx.app.as_ref().ok_or_else(|| missing("app"))?.clone(),
-                launch_info: ctx.launch_info.as_ref().ok_or_else(|| missing("launch_info"))?.clone(),
-                launcher_config: ctx.launcher_config.as_ref().ok_or_else(|| missing("launcher_config"))?.clone(),
-                user_config: ctx.user_config.clone(),
-                proton_path: ctx.proton_path.clone(),
-                steam_enabled: ctx.steam_enabled,
-                use_umu: ctx.use_umu,
-                umu_run: ctx.umu_run.clone(),
-                target_architecture: ctx.target_architecture,
-                dll_resolutions: ctx.dll_resolutions.clone(),
-                game_fixups: ctx.game_fixups.clone(),
-                verification_ptr: &mut ctx.verification as *mut _,
-            };
             let spec = runner.build_command(&runner_ctx).await?;
             ctx.command_spec = Some(spec);
         }

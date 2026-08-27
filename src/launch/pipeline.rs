@@ -120,6 +120,39 @@ pub struct PipelineContext {
 }
 
 impl PipelineContext {
+    /// Snapshot this pipeline state into the [`LaunchContext`] handed to a
+    /// runner, failing when a required field wasn't resolved yet. Keeping the
+    /// only constructor here means a new `LaunchContext` field can't silently
+    /// diverge between stages.
+    pub fn to_runner_context(
+        &mut self,
+    ) -> std::result::Result<crate::infra::runners::LaunchContext, LaunchError> {
+        let missing =
+            |field: &str| LaunchError::new(LaunchErrorKind::Validation, format!("{field} missing"));
+        Ok(crate::infra::runners::LaunchContext {
+            app: self.app.as_ref().ok_or_else(|| missing("app"))?.clone(),
+            launch_info: self
+                .launch_info
+                .as_ref()
+                .ok_or_else(|| missing("launch_info"))?
+                .clone(),
+            launcher_config: self
+                .launcher_config
+                .as_ref()
+                .ok_or_else(|| missing("launcher_config"))?
+                .clone(),
+            user_config: self.user_config.clone(),
+            proton_path: self.proton_path.clone(),
+            steam_enabled: self.steam_enabled,
+            use_umu: self.use_umu,
+            umu_run: self.umu_run.clone(),
+            target_architecture: self.target_architecture,
+            dll_resolutions: self.dll_resolutions.clone(),
+            game_fixups: self.game_fixups.clone(),
+            verification_ptr: &mut self.verification as *mut _,
+        })
+    }
+
     pub fn new(app_id: u32) -> Self {
         Self {
             app_id,

@@ -203,19 +203,16 @@ impl Runner for WineTkgRunner {
 
                     let steam_running = SteamClient::is_steam_running_in_prefix(&steam_wineprefix);
 
-                    unsafe {
-                        if !ctx.verification_ptr.is_null() {
-                            let v = &mut *ctx.verification_ptr;
-                            v.steam_running_before_launch = steam_running;
-                            v.effective_game_wineprefix = Some(effective_game_prefix.to_string_lossy().to_string());
-                            v.effective_steam_wineprefix = Some(steam_wineprefix.to_string_lossy().to_string());
-                            v.per_game_prefix_requested = steam_prefix_mode == crate::core::models::SteamPrefixMode::PerGame;
-                            v.per_game_prefix_honored = effective_game_prefix == steam_wineprefix;
-                            v.steam_runtime_policy = format!("{:?}", ctx.user_config.as_ref().map(|c| &c.steam_runtime_policy).unwrap_or(&crate::core::models::SteamRuntimePolicy::Auto));
-                            v.steam_runtime_source = runtime_source.to_string();
-                            v.windows_steam_discovery_enabled = ctx.launcher_config.windows_steam_discovery_enabled;
-                        }
-                    }
+                    ctx.with_verification(|v| {
+                        v.steam_running_before_launch = steam_running;
+                        v.effective_game_wineprefix = Some(effective_game_prefix.to_string_lossy().to_string());
+                        v.effective_steam_wineprefix = Some(steam_wineprefix.to_string_lossy().to_string());
+                        v.per_game_prefix_requested = steam_prefix_mode == crate::core::models::SteamPrefixMode::PerGame;
+                        v.per_game_prefix_honored = effective_game_prefix == steam_wineprefix;
+                        v.steam_runtime_policy = format!("{:?}", ctx.user_config.as_ref().map(|c| &c.steam_runtime_policy).unwrap_or(&crate::core::models::SteamRuntimePolicy::Auto));
+                        v.steam_runtime_source = runtime_source.to_string();
+                        v.windows_steam_discovery_enabled = ctx.launcher_config.windows_steam_discovery_enabled;
+                    });
 
                     if steam_running {
                         println!("✅ Steam already running in prefix — skipping spawn");
@@ -258,25 +255,20 @@ impl Runner for WineTkgRunner {
                         );
 
                         // Record Steam runtime diagnostics
-                        unsafe {
-                            if !ctx.verification_ptr.is_null() {
-                                let v = &mut *ctx.verification_ptr;
-                                v.steam_runtime_exe = Some(steam_cmd.get_program().to_string_lossy().to_string());
-                                v.steam_runtime_args = steam_cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect();
-                                v.steam_runtime_milestone = "steam_process_spawn_requested".to_string();
-                                v.steam_auto_start_attempted = true;
-                            }
-                        }
+                        ctx.with_verification(|v| {
+                            v.steam_runtime_exe = Some(steam_cmd.get_program().to_string_lossy().to_string());
+                            v.steam_runtime_args = steam_cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect();
+                            v.steam_runtime_milestone = "steam_process_spawn_requested".to_string();
+                            v.steam_auto_start_attempted = true;
+                        });
 
                         let start_time = std::time::Instant::now();
                         let mut steam_process =
                             steam_cmd.spawn().map_err(|e| LaunchError::new(LaunchErrorKind::Process, "Failed to spawn background Steam").with_source(anyhow!(e)))?;
 
-                        unsafe {
-                            if !ctx.verification_ptr.is_null() {
-                                (*ctx.verification_ptr).steam_runtime_milestone = "steam_process_spawned".to_string();
-                            }
-                        }
+                        ctx.with_verification(|v| {
+                            v.steam_runtime_milestone = "steam_process_spawned".to_string();
+                        });
 
                         let readiness_timeout = 8;
                         println!("Waiting for Steam to initialise (max {}s)...", readiness_timeout);
@@ -298,14 +290,11 @@ impl Runner for WineTkgRunner {
                                 // Crash detection — bail immediately
                                 if let Ok(Some(status)) = steam_process.try_wait() {
                                     println!("❌ FATAL: Background Steam exited after {}s with: {}", i + 1, status);
-                                    unsafe {
-                                        if !ctx.verification_ptr.is_null() {
-                                            let v = &mut *ctx.verification_ptr;
-                                            v.steam_runtime_exit_code = status.code();
-                                            v.steam_runtime_lifetime_ms = Some(start_time.elapsed().as_millis() as u64);
-                                            v.steam_runtime_milestone = "steam_process_exited_early".to_string();
-                                        }
-                                    }
+                                    ctx.with_verification(|v| {
+                                        v.steam_runtime_exit_code = status.code();
+                                        v.steam_runtime_lifetime_ms = Some(start_time.elapsed().as_millis() as u64);
+                                        v.steam_runtime_milestone = "steam_process_exited_early".to_string();
+                                    });
                                     break 'wait false;
                                 }
 
@@ -336,11 +325,9 @@ impl Runner for WineTkgRunner {
                                     .unwrap_or(0);
                                 if log_count >= 2 {
                                     println!("✅ Steam ready after {}s ({} log files found)", i + 1, log_count);
-                                    unsafe {
-                                        if !ctx.verification_ptr.is_null() {
-                                            (*ctx.verification_ptr).steam_runtime_milestone = "steam_ready_signal_observed".to_string();
-                                        }
-                                    }
+                                    ctx.with_verification(|v| {
+                                        v.steam_runtime_milestone = "steam_ready_signal_observed".to_string();
+                                    });
                                     ready_signal = Some(format!("{} log files after {}s", log_count, i + 1));
                                     break;
                                 }
@@ -363,14 +350,11 @@ impl Runner for WineTkgRunner {
                                             "❌ FATAL: Background Steam signalled ready ({}) but exited within {}s grace (code {:?})",
                                             reason, READINESS_GRACE_SECS, code
                                         );
-                                        unsafe {
-                                            if !ctx.verification_ptr.is_null() {
-                                                let v = &mut *ctx.verification_ptr;
-                                                v.steam_runtime_exit_code = code;
-                                                v.steam_runtime_lifetime_ms = Some(start_time.elapsed().as_millis() as u64);
-                                                v.steam_runtime_milestone = "steam_process_exited_early".to_string();
-                                            }
-                                        }
+                                        ctx.with_verification(|v| {
+                                            v.steam_runtime_exit_code = code;
+                                            v.steam_runtime_lifetime_ms = Some(start_time.elapsed().as_millis() as u64);
+                                            v.steam_runtime_milestone = "steam_process_exited_early".to_string();
+                                        });
                                         break 'wait false;
                                     }
                                     // Still alive after the grace window — genuinely ready.
@@ -379,20 +363,16 @@ impl Runner for WineTkgRunner {
                             }
 
                             println!("⚠️ Steam did not signal ready after {}s, launching game anyway", readiness_timeout);
-                            unsafe {
-                                if !ctx.verification_ptr.is_null() {
-                                    (*ctx.verification_ptr).steam_runtime_milestone = "steam_ready_timeout".to_string();
-                                }
-                            }
+                            ctx.with_verification(|v| {
+                                v.steam_runtime_milestone = "steam_ready_timeout".to_string();
+                            });
                             true
                         };
 
                         if !ready {
-                            unsafe {
-                                if !ctx.verification_ptr.is_null() {
-                                    (*ctx.verification_ptr).steam_auto_start_failed = true;
-                                }
-                            }
+                            ctx.with_verification(|v| {
+                                v.steam_auto_start_failed = true;
+                            });
                             return Err(LaunchError::new(LaunchErrorKind::Process, "Background Steam crashed before the game could start"));
                         }
                     }
@@ -693,24 +673,18 @@ impl Runner for WineTkgRunner {
             let fake_env = crate::core::utils::setup_fake_steam_trap(&config_dir)
                 .map_err(|e| LaunchError::new(LaunchErrorKind::Permission, "failed to setup fake steam trap").with_source(e))?;
             env.insert("STEAM_COMPAT_CLIENT_INSTALL_PATH".to_string(), fake_env.to_string_lossy().to_string());
-            unsafe {
-                if !ctx.verification_ptr.is_null() {
-                    let v = &mut *ctx.verification_ptr;
-                    v.steam_client_install_path_exposed_to_game = Some(fake_env.to_string_lossy().to_string());
-                    v.steam_client_install_path_source = Some("fake_trap".to_string());
-                }
-            }
+            ctx.with_verification(|v| {
+                v.steam_client_install_path_exposed_to_game = Some(fake_env.to_string_lossy().to_string());
+                v.steam_client_install_path_source = Some("fake_trap".to_string());
+            });
             Ok(())
         };
         let expose = |env: &mut HashMap<String, String>, path: PathBuf, source: &str| {
             env.insert("STEAM_COMPAT_CLIENT_INSTALL_PATH".to_string(), path.to_string_lossy().to_string());
-            unsafe {
-                if !ctx.verification_ptr.is_null() {
-                    let v = &mut *ctx.verification_ptr;
-                    v.steam_client_install_path_exposed_to_game = Some(path.to_string_lossy().to_string());
-                    v.steam_client_install_path_source = Some(source.to_string());
-                }
-            }
+            ctx.with_verification(|v| {
+                v.steam_client_install_path_exposed_to_game = Some(path.to_string_lossy().to_string());
+                v.steam_client_install_path_source = Some(source.to_string());
+            });
         };
 
         match steam_mode {
