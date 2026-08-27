@@ -1125,6 +1125,18 @@ pub(crate) fn pics_app_section<'a, 'text>(
     root
 }
 
+/// Returns whether the user has signalled an abort for the in-progress
+/// download/verify. A poisoned lock is treated as "not aborted" so a transient
+/// lock failure can't spuriously cancel the operation.
+pub(crate) fn download_aborted(
+    state: &Arc<std::sync::RwLock<crate::core::models::DownloadState>>,
+) -> bool {
+    state
+        .read()
+        .map(|s| s.abort_signal.load(std::sync::atomic::Ordering::Relaxed))
+        .unwrap_or(false)
+}
+
 /// Spawn a ticker that forwards the live byte counters in `state` over `tx`
 /// every 250ms as `report_state` progress messages, stopping when the download
 /// flag clears or the receiver is dropped. Shared by the install, verify and
