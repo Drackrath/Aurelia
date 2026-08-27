@@ -369,30 +369,8 @@ impl SteamClient {
         // Platform-matched, non-DLC depots with a public manifest → InstalledDepots.
         let mut installed_depots: Vec<(u32, u64, u64)> = Vec::new();
         if let Some(depots) = depots_obj {
-            for (key, value) in depots.iter() {
-                let Ok(depot_id) = key.parse::<u32>() else {
-                    continue;
-                };
-                let Some(obj) = value.as_obj() else { continue };
-                if obj.get("dlcappid").is_some() {
-                    continue;
-                }
-                let oslist = obj
-                    .get("config")
-                    .and_then(|v| v.as_obj())
-                    .and_then(|c| c.get("oslist"))
-                    .and_then(|v| v.as_str());
-                if !should_keep_depot(oslist, platform) {
-                    continue;
-                }
-                let Some(public) = obj
-                    .get("manifests")
-                    .and_then(|v| v.as_obj())
-                    .and_then(|m| m.get("public"))
-                    .and_then(|v| v.as_obj())
-                else {
-                    continue;
-                };
+            for (depot_id, _obj, public) in platform_depot_rows(depots, platform) {
+                let Some(public) = public else { continue };
                 if let Some(mid) = public
                     .get("gid")
                     .and_then(|v| v.as_str())

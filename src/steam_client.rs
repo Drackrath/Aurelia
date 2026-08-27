@@ -924,6 +924,40 @@ fn parse_achievement_schema_inner(schema: &[u8]) -> HashMap<String, (u32, u32)> 
     map
 }
 
+/// Platform-matched, non-DLC depots with their public-manifest object.
+pub(crate) fn platform_depot_rows<'a, 'text>(
+    depots: &'a steam_vdf_parser::Obj<'text>,
+    platform: DepotPlatform,
+) -> Vec<(u32, &'a steam_vdf_parser::Obj<'text>, Option<&'a steam_vdf_parser::Obj<'text>>)> {
+    let mut rows = Vec::new();
+    for (key, value) in depots.iter() {
+        // Only numeric keys are depots (skip `branches`, ...).
+        let Ok(depot_id) = key.parse::<u32>() else {
+            continue;
+        };
+        let Some(obj) = value.as_obj() else { continue };
+        // Exclude DLC content depots.
+        if obj.get("dlcappid").is_some() {
+            continue;
+        }
+        let oslist = obj
+            .get("config")
+            .and_then(|v| v.as_obj())
+            .and_then(|c| c.get("oslist"))
+            .and_then(|v| v.as_str());
+        if !should_keep_depot(oslist, platform) {
+            continue;
+        }
+        let public = obj
+            .get("manifests")
+            .and_then(|v| v.as_obj())
+            .and_then(|m| m.get("public"))
+            .and_then(|v| v.as_obj());
+        rows.push((depot_id, obj, public));
+    }
+    rows
+}
+
 pub fn should_keep_depot(oslist: Option<&str>, target: DepotPlatform) -> bool {
     match target {
         DepotPlatform::Windows => match oslist {
