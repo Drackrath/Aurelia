@@ -26,6 +26,14 @@ pub fn extract_quoted_values(line: &str) -> Vec<String> {
     out
 }
 
+/// Current Unix time in seconds (0 if the clock is before the epoch).
+pub fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 pub fn build_runner_command(runner_path: &Path) -> Result<Command> {
     let mut final_path = runner_path.to_path_buf();
 

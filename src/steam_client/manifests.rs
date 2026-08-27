@@ -285,10 +285,7 @@ impl SteamClient {
         // downgraded build in place against the official client's eager re-patching).
         let auto_update_behavior = if pin_updates { 1 } else { 0 };
         let bytes_have = if fully_installed { size_on_disk } else { 0 };
-        let last_updated = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        let last_updated = crate::core::utils::now_unix();
 
         let mut content = format!(
             "\"AppState\"\n{{\n\

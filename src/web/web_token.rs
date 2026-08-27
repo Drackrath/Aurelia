@@ -153,13 +153,7 @@ fn unescape_json_slashes(s: &str) -> String {
     s.trim().replace("\\/", "/")
 }
 
-/// Current Unix time in seconds.
-pub fn now_unix() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
+pub use crate::core::utils::now_unix;
 
 /// Decode a JWT's payload (claims) segment. No signature verification — Steam
 /// verifies the token server-side; we only read metadata out of it.
