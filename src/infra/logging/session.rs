@@ -43,7 +43,7 @@ pub struct LaunchSummary {
     pub verification: LaunchVerification,
 }
 
-/// Read back the `summary.json` a [`LaunchSession`] wrote into `log_dir`.
+/// Read back `summary.json` from `log_dir`.
 pub fn load_launch_summary(log_dir: &std::path::Path) -> anyhow::Result<LaunchSummary> {
     use anyhow::Context;
     let summary_path = log_dir.join("summary.json");

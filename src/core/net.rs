@@ -78,7 +78,7 @@ pub fn validate_proxy_url(url: &str) -> anyhow::Result<()> {
 #[path = "net_tests.rs"]
 mod tests;
 
-/// A `reqwest` client with the standard Aurelia user agent and `timeout`.
+/// Aurelia-UA client with `timeout`.
 pub fn http_client(timeout: std::time::Duration) -> anyhow::Result<reqwest::Client> {
     use anyhow::Context;
     reqwest::Client::builder()
@@ -88,7 +88,7 @@ pub fn http_client(timeout: std::time::Duration) -> anyhow::Result<reqwest::Clie
         .context("failed to build HTTP client")
 }
 
-/// The default Steam-web client: "aurelia" UA with a 20s timeout.
+/// "aurelia" UA, 20-second timeout.
 pub fn steam_web_client() -> anyhow::Result<reqwest::Client> {
     http_client(std::time::Duration::from_secs(20))
 }

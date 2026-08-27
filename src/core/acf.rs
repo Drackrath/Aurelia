@@ -1,19 +1,15 @@
-//! Single-pass parsing of Steam appmanifest (`.acf`) text.
-//!
-//! Every ACF field reader in the codebase goes through [`parse_app_manifest`]
-//! so the format quirks (the `UserConfig` nesting of `BetaKey`, first-match
-//! semantics, `0` meaning "no owner") live in exactly one place.
+//! Single-pass Steam appmanifest parsing.
 
 use crate::core::utils::extract_quoted_values;
 
-/// Top-level fields of an `appmanifest_<appid>.acf`, extracted in one pass.
+/// Top-level appmanifest fields, one pass.
 #[derive(Debug, Default)]
 pub struct AppManifest {
     pub app_id: Option<u32>,
     pub install_dir: Option<String>,
-    /// Raw `name` value (may be empty); see [`AppManifest::display_name`].
+    /// Raw `name`; see [`AppManifest::display_name`].
     pub name: Option<String>,
-    /// `LastOwner` SteamID64; `None` when absent or `0`.
+    /// `LastOwner`; `None` when absent/zero.
     pub last_owner: Option<u64>,
     pub state_flags: Option<u32>,
     pub last_updated: u64,
@@ -33,15 +29,14 @@ impl AppManifest {
         self.state_flags.is_some_and(|flags| flags & 2 != 0)
     }
 
-    /// The `name` value trimmed, `None` when absent or empty.
+    /// Trimmed `name`, `None` when empty.
     pub fn display_name(&self) -> Option<String> {
         let name = self.name.as_deref()?.trim();
         (!name.is_empty()).then(|| name.to_string())
     }
 }
 
-/// Parse the top-level scalar fields of an appmanifest. The `BetaKey` of the
-/// nested `UserConfig` block is the only non-top-level value read.
+/// Parse top-level fields plus `BetaKey`.
 pub fn parse_app_manifest(raw: &str) -> AppManifest {
     let mut m = AppManifest {
         active_branch: "public".to_string(),

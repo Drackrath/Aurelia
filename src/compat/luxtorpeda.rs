@@ -8,8 +8,8 @@
 //! Steam invokes a compatibility tool).
 //!
 //! The payload lives under `~/.config/Aurelia/plugins/luxtorpeda` so it is self-contained
-//! and removable, independent of Steam's `compatibilitytools.d`. The download/discovery
-//! lifecycle is shared with the other plugins (see [`crate::compat::plugin`]).
+//! and removable, independent of Steam's `compatibilitytools.d`.
+//! Lifecycle shared via [`crate::compat::plugin`].
 
 use crate::compat::plugin::{self, InstalledPlugin, PluginSpec};
 use anyhow::{Context, Result};

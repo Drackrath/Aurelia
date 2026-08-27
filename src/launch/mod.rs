@@ -15,23 +15,21 @@ use crate::core::config::{config_dir, LauncherConfig};
 use crate::steam_client::SteamClient;
 use crate::core::utils::MasterSteamConfig;
 
-/// Stop any master-Steam / game wine processes still holding `wine_prefix`.
-/// `kill_steam_in_prefix` is cross-platform (a no-op on Windows); the broader
-/// wine sweep is unix-only.
+/// Kill processes holding `wine_prefix`.
 fn stop_prefix_processes(wine_prefix: &Path) {
     SteamClient::kill_steam_in_prefix(wine_prefix);
     #[cfg(unix)]
     SteamClient::kill_wine_processes_in_prefix(wine_prefix, true);
 }
 
-/// Resolve the configured Steam-runtime runner's wine binary.
+/// Resolve the runner's wine binary.
 fn resolve_runtime_wine(config: &LauncherConfig) -> Result<PathBuf> {
     let runner_name = config.steam_runtime_runner.to_string_lossy();
     let library_root = PathBuf::from(&config.steam_library_path);
     crate::core::utils::resolve_steam_runtime_wine(&runner_name, &library_root)
 }
 
-/// The installed `steam.exe`, or the standard "install it first" error.
+/// Installed `steam.exe` or install-first error.
 fn require_steam_exe(steam_cfg: &MasterSteamConfig) -> Result<PathBuf> {
     steam_cfg.steam_exe.clone().ok_or_else(|| {
         anyhow!(

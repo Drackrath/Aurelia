@@ -476,8 +476,7 @@ impl SteamClient {
                     }
                 };
 
-                // grand_total_bytes = 0: totals accumulate per depot as each
-                // manifest arrives (this flow has no whole-app total upfront).
+                // Zero grand total: per-depot accumulation.
                 match client_clone
                     .download_depot_to_with_hosts(
                         appid,

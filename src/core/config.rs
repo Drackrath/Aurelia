@@ -300,7 +300,7 @@ pub fn data_dir() -> Result<PathBuf> {
     config_dir()
 }
 
-/// Path of the stored Steam session (`session.json`).
+/// Stored session (`session.json`) path.
 pub fn session_path() -> Result<PathBuf> {
     Ok(config_dir()?.join("session.json"))
 }

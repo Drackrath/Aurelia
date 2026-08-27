@@ -966,7 +966,7 @@ fn effective_game_prefix(ctx: &LaunchContext) -> PathBuf {
 }
 
 /// Resolve STEAM_COMPAT_DATA_PATH for the game.
-/// Append `path` to the WINEDLLPATH dir list if not already present.
+/// Push dir if not already present.
 fn push_dll_dir_once(dirs: &mut Vec<String>, path: &Path) {
     let s = path.to_string_lossy().to_string();
     if !dirs.contains(&s) {

@@ -120,10 +120,7 @@ pub struct PipelineContext {
 }
 
 impl PipelineContext {
-    /// Snapshot this pipeline state into the [`LaunchContext`] handed to a
-    /// runner, failing when a required field wasn't resolved yet. Keeping the
-    /// only constructor here means a new `LaunchContext` field can't silently
-    /// diverge between stages.
+    /// Snapshot pipeline state for a runner.
     pub fn to_runner_context(
         &mut self,
     ) -> std::result::Result<crate::infra::runners::LaunchContext, LaunchError> {

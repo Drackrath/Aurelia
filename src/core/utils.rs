@@ -26,7 +26,7 @@ pub fn extract_quoted_values(line: &str) -> Vec<String> {
     out
 }
 
-/// Current Unix time in seconds (0 if the clock is before the epoch).
+/// Current Unix time in seconds.
 pub fn now_unix() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -794,7 +794,7 @@ fn detect_vkd3d(root: &Path, prefix: Option<&Path>) -> Option<ComponentInfo> {
         return Some(info);
     }
 
-    // Legacy/Proton fallback. Upstream Wine VKD3D uses libvkd3d-1.dll.
+    // Legacy/Proton fallback (upstream libvkd3d-1.dll).
     if let Some(info) = check_bundled_legacy(root, "vkd3d", "libvkd3d-1.dll") {
         return Some(info);
     }
@@ -853,9 +853,7 @@ fn detect_bundled_modern<S: AsRef<str>>(
     None
 }
 
-/// Legacy/Proton bundled-layout probe for one component:
-/// `<root>/{files,dist,}/lib{64,}/wine/<component>/<dll>` with a
-/// `{files,dist,}/share/<component>/version` stamp.
+/// Legacy bundled-layout probe per component.
 fn check_bundled_legacy(root: &Path, component: &str, dll: &str) -> Option<ComponentInfo> {
     let dll_candidates: Vec<String> = ["files/lib64", "files/lib", "dist/lib64", "dist/lib", "lib64", "lib"]
         .iter()
@@ -870,8 +868,7 @@ fn check_bundled_legacy(root: &Path, component: &str, dll: &str) -> Option<Compo
     check_bundled(root, &dll_refs, &version_refs)
 }
 
-/// Probe the prefix's `d3d12.dll` and attribute it to vkd3d-proton
-/// (`want_proton`) or upstream vkd3d by the embedded marker string.
+/// Attribute prefix `d3d12.dll` by marker.
 fn check_prefix_d3d12(pfx: &Path, want_proton: bool) -> Option<ComponentInfo> {
     for rel in [
         "drive_c/windows/system32/d3d12.dll",

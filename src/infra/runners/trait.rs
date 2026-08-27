@@ -32,8 +32,7 @@ unsafe impl Send for LaunchContext {}
 unsafe impl Sync for LaunchContext {}
 
 impl LaunchContext {
-    /// Run `f` against the pipeline's [`LaunchVerification`] record, if one is
-    /// attached. Confines the raw-pointer dereference to this one audited spot.
+    /// Run `f` on the verification record.
     pub fn with_verification(&self, f: impl FnOnce(&mut crate::infra::logging::LaunchVerification)) {
         if self.verification_ptr.is_null() {
             return;
@@ -41,11 +40,7 @@ impl LaunchContext {
         unsafe { f(&mut *self.verification_ptr) }
     }
 
-    /// Resolve `(install_dir, executable, working_dir)` for the game.
-    ///
-    /// Errors if the game is not installed. The executable is resolved relative
-    /// to the install dir unless it is absolute; the working dir honours an
-    /// explicit `workingdir`, then the executable's parent, then the install dir.
+    /// Resolve install dir, executable, workingdir.
     pub fn game_paths(
         &self,
     ) -> std::result::Result<(PathBuf, PathBuf, PathBuf), crate::launch::pipeline::LaunchError> {
@@ -76,9 +71,7 @@ impl LaunchContext {
     }
 }
 
-/// Point `STEAM_COMPAT_CLIENT_INSTALL_PATH` at Aurelia's fake-Steam trap so
-/// Proton-style tools resolve a client install without a running Steam.
-/// Returns the trap path for callers that record it.
+/// Point compat install path at trap.
 pub fn insert_fake_steam_trap(
     env: &mut HashMap<String, String>,
 ) -> std::result::Result<PathBuf, crate::launch::pipeline::LaunchError> {

@@ -127,8 +127,7 @@ pub(crate) async fn workshop_resolve_ids(
     }
 }
 
-/// Shared prologue of the bulk Workshop commands: connect, expand collections
-/// (unless `no_recurse`), and resolve each id's metadata.
+/// Connect, expand collections, resolve metadata.
 async fn resolve_workshop_items(
     ids: Vec<u64>,
     no_recurse: bool,
@@ -139,8 +138,7 @@ async fn resolve_workshop_items(
     Ok((client, items))
 }
 
-/// Run `op` for every item, reporting per-item progress in human mode and
-/// returning the ids acted on.
+/// Run `op` per item, reporting progress.
 async fn for_each_workshop_item<'a, F, Fut>(
     client: &'a SteamClient,
     items: &'a [aurelia::core::models::WorkshopItem],
@@ -166,7 +164,7 @@ where
     Ok(acted)
 }
 
-/// Start the download for one Workshop item and drive its progress stream.
+/// Download one item; drive progress.
 async fn install_one_workshop_item(
     client: &SteamClient,
     item: &aurelia::core::models::WorkshopItem,

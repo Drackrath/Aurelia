@@ -1077,8 +1077,7 @@ fn parse_launch_info_from_vdf(appid: u32, raw_vdf: &str) -> Result<Vec<LaunchInf
     Ok(options)
 }
 
-/// Whether a PICS product-info buffer is *text* VDF (starts with `"` or `{`)
-/// rather than binary.
+/// Whether the buffer is text VDF.
 fn pics_buffer_is_text(buffer: &[u8]) -> bool {
     buffer.first().map(|&b| b == 0x22 || b == 0x7B).unwrap_or(false)
 }
@@ -1140,7 +1139,7 @@ pub(crate) fn download_aborted(
         .unwrap_or(false)
 }
 
-/// Send a terminal `Failed` progress message carrying `msg` (receiver may be gone).
+/// Send a terminal `Failed` progress message.
 pub(crate) async fn emit_failed(tx: &tokio::sync::mpsc::Sender<DownloadProgress>, msg: impl Into<String>) {
     let _ = tx
         .send(DownloadProgress {
@@ -1151,10 +1150,7 @@ pub(crate) async fn emit_failed(tx: &tokio::sync::mpsc::Sender<DownloadProgress>
         .await;
 }
 
-/// Spawn a ticker that forwards the live byte counters in `state` over `tx`
-/// every 250ms as `report_state` progress messages, stopping when the download
-/// flag clears or the receiver is dropped. Shared by the install, verify and
-/// Workshop download flows.
+/// Forward byte counters every 250ms.
 pub(crate) fn spawn_progress_reporter(
     tx: tokio::sync::mpsc::Sender<DownloadProgress>,
     state: Arc<std::sync::RwLock<crate::core::models::DownloadState>>,
@@ -1204,8 +1200,7 @@ pub(crate) fn spawn_progress_reporter(
     })
 }
 
-/// The `depots` object of a parsed PICS appinfo VDF, descending past the
-/// `appinfo`/`<appid>` wrapper when present (see [`pics_app_section`]).
+/// The `depots` object, descending wrappers.
 pub(crate) fn pics_depots_value<'a, 'text>(
     vdf: &'a steam_vdf_parser::Vdf<'text>,
 ) -> Option<&'a steam_vdf_parser::Value<'text>> {
@@ -1598,9 +1593,7 @@ fn split_args(args: &str) -> Vec<String> {
 
 
 
-/// Issue a single PICS `ProductInfo` request for `appid` and return that app's
-/// raw appinfo VDF buffer (text or binary VDF). `job_context` is folded into
-/// the request-failure error so callers keep distinct messages.
+/// One-app PICS `ProductInfo` buffer request.
 pub(crate) async fn pics_app_buffer(
     connection: &Connection,
     appid: u32,
@@ -1626,12 +1619,12 @@ pub(crate) async fn pics_app_buffer(
 }
 
 impl SteamClient {
-    /// Borrow the live CM [`Connection`], failing when not connected yet.
+    /// Borrow the live CM connection.
     pub(crate) fn require_connection(&self) -> Result<&Connection> {
         self.connection.as_ref().context("steam connection not initialized")
     }
 
-    /// Clone of the live CM [`Connection`] for use inside spawned tasks.
+    /// Cloned connection for spawned tasks.
     pub(crate) fn require_connection_owned(&self) -> Result<Connection> {
         self.require_connection().cloned()
     }

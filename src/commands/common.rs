@@ -14,7 +14,7 @@ use aurelia::library::{build_game_library, scan_installed_app_info};
 use aurelia::core::models::{DownloadProgress, DownloadProgressState, DownloadState, LibraryGame};
 use aurelia::steam_client::{SharedApp, SteamClient};
 
-/// Print any serializable value to stdout as pretty JSON.
+/// Pretty-print JSON to stdout.
 pub(crate) fn print_json<T: serde::Serialize + ?Sized>(value: &T) {
     match serde_json::to_string_pretty(value) {
         Ok(s) => cli_println!("{s}"),
@@ -175,10 +175,7 @@ pub(crate) async fn find_game(client: &mut SteamClient, app_id: u32) -> Result<L
         .with_context(|| format!("app {app_id} is not in your library"))
 }
 
-/// Confirm a destructive/mutating action, honoring `--yes` and `--json`.
-/// Returns `Ok(())` to proceed, or an error to abort. In `--json` mode `--yes`
-/// is mandatory. `action` names the refusal ("upload", "clear"); `prompt` is
-/// the full question shown in interactive mode.
+/// Confirm action; honors `--yes`/`--json`.
 pub(crate) fn confirm_write(action: &str, prompt: &str, yes: bool, json: bool) -> Result<()> {
     if yes {
         return Ok(());
@@ -194,7 +191,7 @@ pub(crate) fn confirm_write(action: &str, prompt: &str, yes: bool, json: bool) -
     }
 }
 
-/// Confirm a mutating cloud-collections write via [`confirm_write`].
+/// Cloud-collections wrapper over [`confirm_write`].
 pub(crate) fn confirm_cloud_write(action: &str, count: usize, yes: bool, json: bool) -> Result<()> {
     confirm_write(
         action,
@@ -245,7 +242,7 @@ pub(crate) struct InstallGuard {
 }
 
 impl InstallGuard {
-    /// Allocate a fresh shared [`DownloadState`] and register it for `app_id`.
+    /// Register a fresh shared [`DownloadState`].
     pub(crate) fn begin(app_id: u32) -> Result<(Self, Arc<RwLock<DownloadState>>)> {
         let state = Arc::new(RwLock::new(DownloadState::default()));
         let guard = Self::register(app_id, Arc::clone(&state))?;
@@ -292,8 +289,7 @@ pub(crate) fn available_space_for(path: &std::path::Path) -> Option<u64> {
 }
 
 /// Format a byte count as a human-readable size (binary units).
-/// A `(done, total)` download callback rendering a single-line percentage bar,
-/// suppressed entirely in `--json` mode.
+/// Percent progress printer; JSON-silent.
 pub(crate) fn byte_progress_printer(json: bool) -> impl FnMut(u64, u64) {
     let mut last_pct: i64 = -1;
     move |done: u64, total: u64| {
@@ -348,10 +344,7 @@ pub(crate) fn steam_guard_stop(restart_steam: bool, json: bool) -> Result<bool> 
     Ok(false)
 }
 
-/// Stop Steam only when `want` (the caller's `--restart-steam` intent) and
-/// Steam is actually running. Unlike [`steam_guard_stop`] this never refuses —
-/// the edit is tolerated with Steam up (it may just not survive). Returns
-/// whether Steam was stopped (pass to [`steam_guard_restart`]).
+/// Stop Steam if wanted and running.
 pub(crate) fn steam_guard_stop_optional(want: bool, json: bool) -> Result<bool> {
     if !(want && SteamClient::steam_is_running()) {
         return Ok(false);
@@ -374,7 +367,7 @@ pub(crate) fn steam_guard_restart(managed: bool, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// ` [branch]` suffix for a game on a non-default branch, else empty.
+/// Non-default branch suffix, else empty.
 pub(crate) fn branch_suffix(game: &LibraryGame) -> String {
     if game.active_branch != "public" {
         format!(" [{}]", game.active_branch)
