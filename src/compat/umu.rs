@@ -13,7 +13,7 @@
 //! removable. The download/discovery lifecycle is shared with the other plugins (see
 //! [`crate::compat::plugin`]).
 
-use crate::compat::plugin::{self, PluginSpec};
+use crate::compat::plugin::{self, InstalledPlugin, PluginSpec};
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
@@ -30,17 +30,6 @@ static SPEC: PluginSpec = PluginSpec {
     root_marker: |p| p.join(ENTRY_NAME).is_file(),
     archive_marker_missing: "umu-launcher archive did not contain a `umu-run` executable",
 };
-
-/// A umu install discovered on disk.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct InstalledUmu {
-    /// The release tag that was installed (from the stamped version file).
-    pub version: String,
-    /// The install root (the directory containing `umu-run`).
-    pub root: PathBuf,
-    /// The executable Aurelia invokes (`<root>/umu-run`).
-    pub entry: PathBuf,
-}
 
 /// The directory Aurelia extracts the umu payload into.
 pub fn plugin_dir() -> Result<PathBuf> {
@@ -61,26 +50,26 @@ pub fn entry_point(root: &Path) -> PathBuf {
 /// Return the install in use, if any. A configured `custom` path (an externally-managed
 /// umu) takes precedence over Aurelia's managed plugin directory. A custom path may point
 /// at a directory containing `umu-run` **or** directly at a `umu-run` binary.
-pub fn installed(custom: Option<&Path>) -> Option<InstalledUmu> {
+pub fn installed(custom: Option<&Path>) -> Option<InstalledPlugin> {
     if let Some(custom) = custom {
         // A custom path may be the umu-run binary itself, or a directory holding it.
         if custom.is_file() && custom.file_name().and_then(|n| n.to_str()) == Some(ENTRY_NAME) {
             let root = custom.parent().map(Path::to_path_buf).unwrap_or_else(|| custom.to_path_buf());
-            return Some(InstalledUmu {
+            return Some(InstalledPlugin {
                 version: "custom".to_string(),
                 entry: custom.to_path_buf(),
                 root,
             });
         }
         let root = find_entry_root(custom)?;
-        return Some(InstalledUmu {
+        return Some(InstalledPlugin {
             version: "custom".to_string(),
             entry: entry_point(&root),
             root,
         });
     }
     let (version, root) = plugin::managed_install(&SPEC)?;
-    Some(InstalledUmu {
+    Some(InstalledPlugin {
         version,
         entry: entry_point(&root),
         root,

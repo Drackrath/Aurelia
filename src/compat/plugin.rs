@@ -9,6 +9,18 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
+/// A plugin install discovered on disk.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct InstalledPlugin {
+    /// The release tag that was installed (from the stamped version file),
+    /// `"custom"` for an externally-managed install.
+    pub version: String,
+    /// The install root (the directory holding the plugin's marker file).
+    pub root: PathBuf,
+    /// The executable Aurelia invokes.
+    pub entry: PathBuf,
+}
+
 /// The per-plugin specifics the shared download manager is parameterized by.
 pub(crate) struct PluginSpec {
     /// Directory name under `plugins/`.
