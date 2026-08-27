@@ -97,7 +97,7 @@ impl Runner for LuxtorpedaRunner {
             .with_source(e)
         })?;
 
-        let (executable, game_working_dir) = resolve_game_paths(ctx)?;
+        let (_install_dir, executable, game_working_dir) = ctx.game_paths()?;
 
         let mut args = vec!["run".to_string(), executable.to_string_lossy().to_string()];
         args.extend(
@@ -157,36 +157,8 @@ fn custom_path(ctx: &LaunchContext) -> Option<PathBuf> {
 
 /// Steam compat-data directory for this app under the active library.
 fn compat_data_path(ctx: &LaunchContext) -> PathBuf {
-    PathBuf::from(&ctx.launcher_config.steam_library_path)
-        .join("steamapps")
-        .join("compatdata")
-        .join(ctx.app.app_id.to_string())
-}
-
-/// Resolve `(executable, working_dir)` for the game, erroring if it isn't installed.
-/// Mirrors the resolution in [`super::WineTkgRunner`] (minus the install-dir return value).
-fn resolve_game_paths(ctx: &LaunchContext) -> Result<(PathBuf, PathBuf), LaunchError> {
-    let install_dir = PathBuf::from(ctx.app.install_path.clone().ok_or_else(|| {
-        LaunchError::new(
-            LaunchErrorKind::GameData,
-            format!("game {} is not installed", ctx.app.app_id),
-        )
-    })?);
-
-    let exe_rel = ctx.launch_info.executable.replace('\\', "/");
-    let executable = if Path::new(&exe_rel).is_absolute() {
-        PathBuf::from(&exe_rel)
-    } else {
-        install_dir.join(&exe_rel)
-    };
-    let working_dir = ctx
-        .launch_info
-        .workingdir
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .map(|wd| install_dir.join(wd.replace('\\', "/")))
-        .or_else(|| executable.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| install_dir.clone());
-
-    Ok((executable, working_dir))
+    crate::core::utils::compat_data_dir(
+        Path::new(&ctx.launcher_config.steam_library_path),
+        ctx.app.app_id,
+    )
 }

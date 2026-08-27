@@ -1571,11 +1571,15 @@ pub fn proton_compat_prefix(
     config: &crate::core::config::LauncherConfig,
     app_id: u32,
 ) -> std::path::PathBuf {
-    std::path::PathBuf::from(&config.steam_library_path)
+    compat_data_dir(std::path::Path::new(&config.steam_library_path), app_id).join("pfx")
+}
+
+/// `steamapps/compatdata/<appid>` under a library root.
+pub fn compat_data_dir(library_root: &Path, app_id: u32) -> PathBuf {
+    library_root
         .join("steamapps")
         .join("compatdata")
         .join(app_id.to_string())
-        .join("pfx")
 }
 
 /// The wine prefix a game's Windows files — saves included — actually live in.
