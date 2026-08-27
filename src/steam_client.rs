@@ -1140,6 +1140,17 @@ pub(crate) fn download_aborted(
         .unwrap_or(false)
 }
 
+/// Send a terminal `Failed` progress message carrying `msg` (receiver may be gone).
+pub(crate) async fn emit_failed(tx: &tokio::sync::mpsc::Sender<DownloadProgress>, msg: impl Into<String>) {
+    let _ = tx
+        .send(DownloadProgress {
+            state: DownloadProgressState::Failed,
+            current_file: msg.into(),
+            ..Default::default()
+        })
+        .await;
+}
+
 /// Spawn a ticker that forwards the live byte counters in `state` over `tx`
 /// every 250ms as `report_state` progress messages, stopping when the download
 /// flag clears or the receiver is dropped. Shared by the install, verify and
