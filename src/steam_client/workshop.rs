@@ -424,13 +424,7 @@ impl SteamClient {
         let client = self.clone();
 
         tokio::spawn(async move {
-            let _ = tx
-                .send(DownloadProgress {
-                    state: DownloadProgressState::Queued,
-                    current_file: String::new(),
-                    ..Default::default()
-                })
-                .await;
+            emit_queued(&tx).await;
 
             if let Ok(mut state) = shared_state.write() {
                 state.is_downloading = true;

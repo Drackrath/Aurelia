@@ -207,13 +207,7 @@ impl SteamClient {
         let pin_updates = manifest_overrides.is_some();
 
         tokio::task::spawn(async move {
-            let _ = tx
-                .send(DownloadProgress {
-                    state: DownloadProgressState::Queued,
-                    current_file: String::new(),
-                    ..Default::default()
-                })
-                .await;
+            emit_queued(&tx).await;
 
             let appinfo_vdf_bytes_owned;
             let appinfo_vdf_bytes = if let Some(cached) = cached_vdf {
@@ -589,15 +583,7 @@ impl SteamClient {
                         build_id.as_deref().unwrap_or("0")
                     );
                 }
-                let _ = tx
-                    .send(DownloadProgress {
-                        state: DownloadProgressState::Completed,
-                        bytes_downloaded: 1,
-                        total_bytes: 1,
-                        current_file: "completed".to_string(),
-                        ..Default::default()
-                    })
-                    .await;
+                emit_completed(&tx, "completed").await;
             } else {
                 if let Ok(mut state) = shared_state_clone.write() {
                     state.is_downloading = false;

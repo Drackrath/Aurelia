@@ -539,18 +539,7 @@ impl SteamClient {
                 ) {
                     tracing::warn!("failed writing appmanifest for {}: {}", appid, err);
                 }
-                let _ = tx
-                    .send(DownloadProgress {
-                        state: DownloadProgressState::Completed,
-                        bytes_downloaded: 1,
-                        total_bytes: 1,
-                        current_file: if verify_mode {
-                            "verify completed".to_string()
-                        } else {
-                            "update completed".to_string()
-                        },
-                        ..Default::default()
-                    })
+                emit_completed(&tx, if verify_mode { "verify completed" } else { "update completed" })
                     .await;
             } else if let Ok(mut state) = shared_state_clone.write() {
                 state.is_downloading = false;
