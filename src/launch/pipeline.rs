@@ -1306,76 +1306,78 @@ impl LaunchPipeline {
             let _ = session.write_summary(&summary);
 
             // Add concise summary block to events log
-             let mut metadata = HashMap::new();
-             if let Some(path) = &ctx.resolved_executable_path {
-                 metadata.insert("exe".to_string(), path.to_string_lossy().to_string());
-             }
-             metadata.insert("backend".to_string(), ctx.graphics_stack.effective_backend.clone());
-             metadata.insert("d3d12_provider".to_string(), ctx.graphics_stack.effective_d3d12_provider.clone());
-             metadata.insert("gpu".to_string(), ctx.graphics_stack.effective_gpu.clone().unwrap_or_else(|| "default".to_string()));
-             metadata.insert("arch".to_string(), format!("{:?}", ctx.target_architecture).to_lowercase());
-             if let Some(spec) = &ctx.command_spec {
-                 if let Some(overrides) = spec.env.get("WINEDLLOVERRIDES") {
-                     metadata.insert("overrides".to_string(), overrides.clone());
+            if ctx.logger.is_some() {
+                 let mut metadata = HashMap::new();
+                 if let Some(path) = &ctx.resolved_executable_path {
+                     metadata.insert("exe".to_string(), path.to_string_lossy().to_string());
                  }
-             }
-             metadata.insert("validation_passed".to_string(), ctx.warnings.is_empty().to_string());
-             metadata.insert("fallback_occurred".to_string(), (!ctx.graphics_stack.fallback_reasons.is_empty()).to_string());
-
-             if let Some(spec) = &ctx.command_spec {
-                 if let Some(prefix) = spec.env.get("WINEPREFIX") {
-                     metadata.insert("prefix".to_string(), prefix.clone());
+                 metadata.insert("backend".to_string(), ctx.graphics_stack.effective_backend.clone());
+                 metadata.insert("d3d12_provider".to_string(), ctx.graphics_stack.effective_d3d12_provider.clone());
+                 metadata.insert("gpu".to_string(), ctx.graphics_stack.effective_gpu.clone().unwrap_or_else(|| "default".to_string()));
+                 metadata.insert("arch".to_string(), format!("{:?}", ctx.target_architecture).to_lowercase());
+                 if let Some(spec) = &ctx.command_spec {
+                     if let Some(overrides) = spec.env.get("WINEDLLOVERRIDES") {
+                         metadata.insert("overrides".to_string(), overrides.clone());
+                     }
                  }
-             }
-             if let Some(config) = &ctx.launcher_config {
-                 metadata.insert("shared_prefix".to_string(), config.use_shared_compat_data.to_string());
-             }
-             metadata.insert("nvapi_requested".to_string(), ctx.graphics_stack.requested_nvapi.to_string());
-             metadata.insert("nvapi_exposed".to_string(), ctx.graphics_stack.effective_nvapi.to_string());
-             if let Some(ref detailed) = ctx.verification.detailed_status {
-                 metadata.insert("verification_detailed".to_string(), detailed.clone());
-             }
+                 metadata.insert("validation_passed".to_string(), ctx.warnings.is_empty().to_string());
+                 metadata.insert("fallback_occurred".to_string(), (!ctx.graphics_stack.fallback_reasons.is_empty()).to_string());
 
-             if let Some(ref username) = ctx.verification.windows_username {
-                  metadata.insert("windows_user".to_string(), username.clone());
-             }
-             metadata.insert("steam_client_exposed".to_string(), ctx.verification.steam_client_exposed.to_string());
-             metadata.insert("last_milestone".to_string(), ctx.verification.last_successful_startup_milestone.clone());
-             if !ctx.verification.dependency_families_detected.is_empty() {
-                  metadata.insert("dependency_families".to_string(), ctx.verification.dependency_families_detected.join(", "));
-             }
-             if !ctx.verification.steam_runtime_milestone.is_empty() {
-                  metadata.insert("steam_runtime_milestone".to_string(), ctx.verification.steam_runtime_milestone.clone());
-             }
-             if let Some(init) = ctx.verification.steam_api_initialized {
-                  metadata.insert("steam_api_initialized".to_string(), init.to_string());
-             }
-             if let Some(own) = ctx.verification.steam_ownership_confirmed {
-                  metadata.insert("steam_ownership_confirmed".to_string(), own.to_string());
-             }
-             if let Some(ref art) = ctx.verification.steam_client_artifact {
-                  metadata.insert("steam_client_artifact".to_string(), art.clone());
-             }
-             if let Some(ref pfx) = ctx.verification.effective_game_wineprefix {
-                  metadata.insert("effective_game_wineprefix".to_string(), pfx.clone());
-             }
-             if let Some(ref pfx) = ctx.verification.effective_steam_wineprefix {
-                  metadata.insert("effective_steam_wineprefix".to_string(), pfx.clone());
-             }
-             if let Some(ref path) = ctx.verification.steam_client_install_path_exposed_to_game {
-                  metadata.insert("steam_client_install_path_exposed_to_game".to_string(), path.clone());
-             }
-             if let Some(ref source) = ctx.verification.steam_client_install_path_source {
-                  metadata.insert("steam_client_install_path_source".to_string(), source.clone());
-             }
-             metadata.insert("per_game_prefix_requested".to_string(), ctx.verification.per_game_prefix_requested.to_string());
-             metadata.insert("per_game_prefix_honored".to_string(), ctx.verification.per_game_prefix_honored.to_string());
+                 if let Some(spec) = &ctx.command_spec {
+                     if let Some(prefix) = spec.env.get("WINEPREFIX") {
+                         metadata.insert("prefix".to_string(), prefix.clone());
+                     }
+                 }
+                 if let Some(config) = &ctx.launcher_config {
+                     metadata.insert("shared_prefix".to_string(), config.use_shared_compat_data.to_string());
+                 }
+                 metadata.insert("nvapi_requested".to_string(), ctx.graphics_stack.requested_nvapi.to_string());
+                 metadata.insert("nvapi_exposed".to_string(), ctx.graphics_stack.effective_nvapi.to_string());
+                 if let Some(ref detailed) = ctx.verification.detailed_status {
+                     metadata.insert("verification_detailed".to_string(), detailed.clone());
+                 }
 
-             metadata.insert("steam_running_before_launch".to_string(), ctx.verification.steam_running_before_launch.to_string());
-             metadata.insert("steam_auto_start_attempted".to_string(), ctx.verification.steam_auto_start_attempted.to_string());
-             metadata.insert("steam_auto_start_failed".to_string(), ctx.verification.steam_auto_start_failed.to_string());
+                 if let Some(ref username) = ctx.verification.windows_username {
+                      metadata.insert("windows_user".to_string(), username.clone());
+                 }
+                 metadata.insert("steam_client_exposed".to_string(), ctx.verification.steam_client_exposed.to_string());
+                 metadata.insert("last_milestone".to_string(), ctx.verification.last_successful_startup_milestone.clone());
+                 if !ctx.verification.dependency_families_detected.is_empty() {
+                      metadata.insert("dependency_families".to_string(), ctx.verification.dependency_families_detected.join(", "));
+                 }
+                 if !ctx.verification.steam_runtime_milestone.is_empty() {
+                      metadata.insert("steam_runtime_milestone".to_string(), ctx.verification.steam_runtime_milestone.clone());
+                 }
+                 if let Some(init) = ctx.verification.steam_api_initialized {
+                      metadata.insert("steam_api_initialized".to_string(), init.to_string());
+                 }
+                 if let Some(own) = ctx.verification.steam_ownership_confirmed {
+                      metadata.insert("steam_ownership_confirmed".to_string(), own.to_string());
+                 }
+                 if let Some(ref art) = ctx.verification.steam_client_artifact {
+                      metadata.insert("steam_client_artifact".to_string(), art.clone());
+                 }
+                 if let Some(ref pfx) = ctx.verification.effective_game_wineprefix {
+                      metadata.insert("effective_game_wineprefix".to_string(), pfx.clone());
+                 }
+                 if let Some(ref pfx) = ctx.verification.effective_steam_wineprefix {
+                      metadata.insert("effective_steam_wineprefix".to_string(), pfx.clone());
+                 }
+                 if let Some(ref path) = ctx.verification.steam_client_install_path_exposed_to_game {
+                      metadata.insert("steam_client_install_path_exposed_to_game".to_string(), path.clone());
+                 }
+                 if let Some(ref source) = ctx.verification.steam_client_install_path_source {
+                      metadata.insert("steam_client_install_path_source".to_string(), source.clone());
+                 }
+                 metadata.insert("per_game_prefix_requested".to_string(), ctx.verification.per_game_prefix_requested.to_string());
+                 metadata.insert("per_game_prefix_honored".to_string(), ctx.verification.per_game_prefix_honored.to_string());
 
-             ctx.log_info("launch_summary_concise", "Concise launch summary recorded".to_string(), None, metadata);
+                 metadata.insert("steam_running_before_launch".to_string(), ctx.verification.steam_running_before_launch.to_string());
+                 metadata.insert("steam_auto_start_attempted".to_string(), ctx.verification.steam_auto_start_attempted.to_string());
+                 metadata.insert("steam_auto_start_failed".to_string(), ctx.verification.steam_auto_start_failed.to_string());
+
+                 ctx.log_info("launch_summary_concise", "Concise launch summary recorded".to_string(), None, metadata);
+            }
         }
     }
 }

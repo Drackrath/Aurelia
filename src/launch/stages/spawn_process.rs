@@ -17,13 +17,16 @@ impl PipelineStage for SpawnProcessStage {
 
         if let Some(runner) = &ctx.runner {
             if let Some(spec) = &ctx.command_spec {
-                let mut metadata = std::collections::HashMap::new();
-                metadata.insert("program".to_string(), spec.program.to_string_lossy().to_string());
-                metadata.insert("args".to_string(), spec.args.join(" "));
-                for (k, v) in &spec.env {
-                    metadata.insert(format!("env:{}", k), v.clone());
+                // Stringifying the env is only worth it when logging.
+                if ctx.logger.is_some() {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("program".to_string(), spec.program.to_string_lossy().to_string());
+                    metadata.insert("args".to_string(), spec.args.join(" "));
+                    for (k, v) in &spec.env {
+                        metadata.insert(format!("env:{}", k), v.clone());
+                    }
+                    ctx.log_info("process_spawn_attempt", "Attempting to spawn process via runner".to_string(), Some("SpawnProcess".to_string()), metadata);
                 }
-                ctx.log_info("process_spawn_attempt", "Attempting to spawn process via runner".to_string(), Some("SpawnProcess".to_string()), metadata);
 
                 let child = runner.launch(spec).map_err(|e| {
                     match e.source.as_ref().and_then(|s| s.downcast_ref::<std::io::Error>()) {

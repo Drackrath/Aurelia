@@ -1525,25 +1525,20 @@ pub fn cleanup_dll_symlinks(prefix: &Path) -> Result<()> {
     Ok(())
 }
 
-/// [`steam_wineprefix_for_game`] for one optional per-app config.
-pub fn wineprefix_for_game(
-    config: &crate::core::config::LauncherConfig,
-    app_id: u32,
-    user_config: Option<&crate::core::models::UserAppConfig>,
-) -> std::path::PathBuf {
-    let store: crate::core::models::UserConfigStore = user_config
-        .map(|c| std::collections::HashMap::from([(app_id, c.clone())]))
-        .unwrap_or_default();
-    steam_wineprefix_for_game(config, app_id, &store)
-}
-
+/// [`wineprefix_for_game`] resolved through a full store.
 pub fn steam_wineprefix_for_game(
     config: &crate::core::config::LauncherConfig,
     app_id: u32,
     user_configs: &crate::core::models::UserConfigStore,
 ) -> std::path::PathBuf {
-    let user_config = user_configs.get(&app_id);
+    wineprefix_for_game(config, app_id, user_configs.get(&app_id))
+}
 
+pub fn wineprefix_for_game(
+    config: &crate::core::config::LauncherConfig,
+    app_id: u32,
+    user_config: Option<&crate::core::models::UserAppConfig>,
+) -> std::path::PathBuf {
     let use_steam_runtime = match user_config.map(|c| &c.steam_runtime_policy) {
         Some(crate::core::models::SteamRuntimePolicy::Enabled) => true,
         Some(crate::core::models::SteamRuntimePolicy::Disabled) => false,
