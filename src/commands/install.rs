@@ -763,10 +763,7 @@ pub(crate) async fn cmd_pin(app_id: u32, json: bool) -> Result<()> {
         print_json(&serde_json::json!({
             "app_id": app_id,
             "pinned": true,
-            "manifests": manifests
-                .iter()
-                .map(|(d, m)| (d.to_string(), *m))
-                .collect::<std::collections::BTreeMap<String, u64>>(),
+            "manifests": manifests_json(&manifests),
         }));
     } else {
         cli_println!(
