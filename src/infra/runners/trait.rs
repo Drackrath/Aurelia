@@ -76,6 +76,27 @@ impl LaunchContext {
     }
 }
 
+/// Point `STEAM_COMPAT_CLIENT_INSTALL_PATH` at Aurelia's fake-Steam trap so
+/// Proton-style tools resolve a client install without a running Steam.
+/// Returns the trap path for callers that record it.
+pub fn insert_fake_steam_trap(
+    env: &mut HashMap<String, String>,
+) -> std::result::Result<PathBuf, crate::launch::pipeline::LaunchError> {
+    use crate::launch::pipeline::{LaunchError, LaunchErrorKind};
+    let config_dir = crate::core::config::config_dir().map_err(|e| {
+        LaunchError::new(LaunchErrorKind::Environment, "failed to get config dir").with_source(e)
+    })?;
+    let fake_env = crate::core::utils::setup_fake_steam_trap(&config_dir).map_err(|e| {
+        LaunchError::new(LaunchErrorKind::Permission, "failed to setup fake steam trap")
+            .with_source(e)
+    })?;
+    env.insert(
+        "STEAM_COMPAT_CLIENT_INSTALL_PATH".to_string(),
+        fake_env.to_string_lossy().to_string(),
+    );
+    Ok(fake_env)
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct CommandSpec {
     pub program: PathBuf,

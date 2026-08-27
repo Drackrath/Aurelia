@@ -581,30 +581,21 @@ impl Runner for WineTkgRunner {
 
                 if let Some(path) = &res.chosen_path {
                     if let Some(parent) = path.parent() {
-                        let dir = parent.to_string_lossy().to_string();
-                        if !wine_dll_dirs.contains(&dir) {
-                            wine_dll_dirs.push(dir);
-                        }
+                        push_dll_dir_once(&mut wine_dll_dirs, parent);
 
                         // For Wine-TKG and similar layouts, we must ensure both 64-bit and 32-bit
                         // architecture folders are in WINEDLLPATH if they exist, so that both
                         // architectures of a game find their respective native DLLs.
                         let folder_name = parent.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                        if folder_name == "x86_64-windows" {
-                            let sibling = parent.parent().unwrap().join("i386-windows");
+                        let sibling_arch = match folder_name {
+                            "x86_64-windows" => Some("i386-windows"),
+                            "i386-windows" => Some("x86_64-windows"),
+                            _ => None,
+                        };
+                        if let Some(arch) = sibling_arch {
+                            let sibling = parent.parent().unwrap().join(arch);
                             if sibling.exists() {
-                                let s = sibling.to_string_lossy().to_string();
-                                if !wine_dll_dirs.contains(&s) {
-                                    wine_dll_dirs.push(s);
-                                }
-                            }
-                        } else if folder_name == "i386-windows" {
-                            let sibling = parent.parent().unwrap().join("x86_64-windows");
-                            if sibling.exists() {
-                                let s = sibling.to_string_lossy().to_string();
-                                if !wine_dll_dirs.contains(&s) {
-                                    wine_dll_dirs.push(s);
-                                }
+                                push_dll_dir_once(&mut wine_dll_dirs, &sibling);
                             }
                         }
                     }
@@ -623,10 +614,7 @@ impl Runner for WineTkgRunner {
         for lib_sub in crate::compat::proton::UNIFIED_LIB_SUBDIRS {
             let p = runner_root.join(lib_sub);
             if p.exists() {
-                let s = p.to_string_lossy().to_string();
-                if !wine_dll_dirs.contains(&s) {
-                    wine_dll_dirs.push(s);
-                }
+                push_dll_dir_once(&mut wine_dll_dirs, &p);
 
                 // Ensure architecture-specific subdirectories are also in WINEDLLPATH.
                 // This is critical for PE-based runners where Wine expects DLLs in
@@ -635,10 +623,7 @@ impl Runner for WineTkgRunner {
                 for arch in crate::compat::proton::ARCH_SUBDIRS {
                     let arch_p = p.join(arch);
                     if arch_p.exists() {
-                        let arch_s = arch_p.to_string_lossy().to_string();
-                        if !wine_dll_dirs.contains(&arch_s) {
-                            wine_dll_dirs.push(arch_s);
-                        }
+                        push_dll_dir_once(&mut wine_dll_dirs, &arch_p);
                     }
                 }
             }
@@ -668,11 +653,7 @@ impl Runner for WineTkgRunner {
         //                     with no host Steam (issue #3).
         //   - Standalone    → the fake-Steam trap (no DRM).
         let fake_trap = |env: &mut HashMap<String, String>| -> std::result::Result<(), LaunchError> {
-            let config_dir = crate::core::config::config_dir()
-                .map_err(|e| LaunchError::new(LaunchErrorKind::Environment, "failed to get config dir").with_source(e))?;
-            let fake_env = crate::core::utils::setup_fake_steam_trap(&config_dir)
-                .map_err(|e| LaunchError::new(LaunchErrorKind::Permission, "failed to setup fake steam trap").with_source(e))?;
-            env.insert("STEAM_COMPAT_CLIENT_INSTALL_PATH".to_string(), fake_env.to_string_lossy().to_string());
+            let fake_env = crate::infra::runners::insert_fake_steam_trap(env)?;
             ctx.with_verification(|v| {
                 v.steam_client_install_path_exposed_to_game = Some(fake_env.to_string_lossy().to_string());
                 v.steam_client_install_path_source = Some("fake_trap".to_string());
@@ -985,6 +966,14 @@ fn effective_game_prefix(ctx: &LaunchContext) -> PathBuf {
 }
 
 /// Resolve STEAM_COMPAT_DATA_PATH for the game.
+/// Append `path` to the WINEDLLPATH dir list if not already present.
+fn push_dll_dir_once(dirs: &mut Vec<String>, path: &Path) {
+    let s = path.to_string_lossy().to_string();
+    if !dirs.contains(&s) {
+        dirs.push(s);
+    }
+}
+
 fn game_compat_data_path(
     library_root: &Path,
     app_id: u32,
