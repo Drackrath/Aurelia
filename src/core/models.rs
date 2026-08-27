@@ -154,14 +154,6 @@ pub struct OwnedGame {
     pub update_available: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserProfile {
-    pub steam_id: u64,
-    pub account_name: String,
-    pub game_count: usize,
-    pub is_online: bool,
-}
-
 fn default_branch() -> String {
     "public".to_string()
 }

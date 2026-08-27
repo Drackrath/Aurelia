@@ -200,19 +200,6 @@ impl SteamClient {
         &self.pending_confirmations
     }
 
-    pub fn clear_pending_confirmations(&mut self) {
-        self.pending_confirmations.clear();
-    }
-
-    pub fn is_auth_error_text(message: &str) -> bool {
-        let msg = message.to_ascii_lowercase();
-        msg.contains("invalid access token")
-            || msg.contains("not logged on")
-            || msg.contains("apierror(notloggedon)")
-            || msg.contains("expired")
-            || msg.contains("session")
-    }
-
     /// Whether an error indicates the CM connection was dropped/closed rather than a
     /// logical failure. Steam commonly drops a long-idle connection — e.g. while a big
     /// depot download monopolises it — so a request issued afterwards fails with
@@ -284,15 +271,6 @@ impl SteamClient {
             return Ok(true);
         }
         Ok(false)
-    }
-
-    pub fn invalidate_session(&mut self) {
-        self.connection = None;
-        self.state = LoginState::Connected;
-    }
-
-    pub fn connected_seconds(&self) -> Option<u64> {
-        self.connected_at.map(|v| v.elapsed().as_secs())
     }
 
     pub fn active_cm(&self) -> Option<SocketAddr> {

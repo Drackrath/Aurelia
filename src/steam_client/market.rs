@@ -135,22 +135,6 @@ impl SteamClient {
         }
         WebSession::new(steam_id, token, connection.ip_country_code().as_deref())
     }
-
-    /// List the logged-in account's inventory for an app. `context_id` is the
-    /// inventory context (usually 2; e.g. Steam community items use 6).
-    pub async fn inventory(&self, app_id: u32, context_id: u32) -> Result<Vec<InventoryItem>> {
-        inventory_via(&self.web_session().await?, app_id, context_id).await
-    }
-
-    /// Fetch the account's active market listings and open buy orders.
-    pub async fn my_market_listings(&self) -> Result<MyMarketState> {
-        my_listings_via(&self.web_session().await?).await
-    }
-
-    /// Fetch the account's Steam Wallet balance.
-    pub async fn wallet(&self) -> Result<WalletBalance> {
-        wallet_via(&self.web_session().await?).await
-    }
 }
 
 // The web-surface fetchers take any [`WebSession`] — minted off the CM session

@@ -295,18 +295,6 @@ impl SteamClient {
         Ok(launch_info)
     }
 
-    pub async fn launch_game(
-        &self,
-        app: &LibraryGame,
-        launch_info: &LaunchInfo,
-        proton_path: Option<&str>,
-        user_config: Option<&crate::core::models::UserAppConfig>,
-    ) -> Result<()> {
-        let launcher_config = load_launcher_config().await?;
-        self.spawn_game_process(app, launch_info, proton_path, &launcher_config, user_config, false, false, None, false, false).await?;
-        Ok(())
-    }
-
     pub async fn update_game(
         &self,
         appid: u32,
