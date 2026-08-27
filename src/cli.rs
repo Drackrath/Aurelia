@@ -969,6 +969,17 @@ pub(crate) enum SteamRuntimeArg {
     Off,
 }
 
+impl From<SteamRuntimeArg> for aurelia::core::models::SteamRuntimePolicy {
+    fn from(value: SteamRuntimeArg) -> Self {
+        use aurelia::core::models::SteamRuntimePolicy;
+        match value {
+            SteamRuntimeArg::Auto => SteamRuntimePolicy::Auto,
+            SteamRuntimeArg::On => SteamRuntimePolicy::Enabled,
+            SteamRuntimeArg::Off => SteamRuntimePolicy::Disabled,
+        }
+    }
+}
+
 /// `--steam-prefix-mode shared|per-game`: how the master Steam prefix backs a game.
 #[derive(Clone, Copy, ValueEnum)]
 pub(crate) enum SteamPrefixModeArg {
@@ -976,6 +987,16 @@ pub(crate) enum SteamPrefixModeArg {
     Shared,
     /// Copy/symlink Steam into the game's own prefix.
     PerGame,
+}
+
+impl From<SteamPrefixModeArg> for aurelia::core::models::SteamPrefixMode {
+    fn from(value: SteamPrefixModeArg) -> Self {
+        use aurelia::core::models::SteamPrefixMode;
+        match value {
+            SteamPrefixModeArg::Shared => SteamPrefixMode::Shared,
+            SteamPrefixModeArg::PerGame => SteamPrefixMode::PerGame,
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]

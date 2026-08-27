@@ -172,23 +172,33 @@ pub(crate) async fn find_game(client: &mut SteamClient, app_id: u32) -> Result<L
         .with_context(|| format!("app {app_id} is not in your library"))
 }
 
-/// Confirm a mutating cloud write, honoring `--yes` and `--json`. Returns `Ok(())`
-/// to proceed, or an error to abort. In `--json` mode `--yes` is mandatory.
-pub(crate) fn confirm_cloud_write(action: &str, count: usize, yes: bool, json: bool) -> Result<()> {
+/// Confirm a destructive/mutating action, honoring `--yes` and `--json`.
+/// Returns `Ok(())` to proceed, or an error to abort. In `--json` mode `--yes`
+/// is mandatory. `action` names the refusal ("upload", "clear"); `prompt` is
+/// the full question shown in interactive mode.
+pub(crate) fn confirm_write(action: &str, prompt: &str, yes: bool, json: bool) -> Result<()> {
     if yes {
         return Ok(());
     }
     if json {
         bail!("refusing to {action} without confirmation — pass `--yes` in --json mode");
     }
-    let answer = prompt_line(&format!(
-        "About to {action} {count} collection(s) to your Steam account. Continue? [y/N] "
-    ))?;
+    let answer = prompt_line(prompt)?;
     if matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
         Ok(())
     } else {
         bail!("aborted");
     }
+}
+
+/// Confirm a mutating cloud-collections write via [`confirm_write`].
+pub(crate) fn confirm_cloud_write(action: &str, count: usize, yes: bool, json: bool) -> Result<()> {
+    confirm_write(
+        action,
+        &format!("About to {action} {count} collection(s) to your Steam account. Continue? [y/N] "),
+        yes,
+        json,
+    )
 }
 
 /// Human label for a raw EPersonaState value.

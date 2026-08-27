@@ -311,11 +311,7 @@ pub(crate) async fn cmd_config_steam_runtime_policy(
     let mut config = load_launcher_config().await?;
     let changed = policy.is_some();
     if let Some(arg) = policy {
-        config.steam_runtime_policy = match arg {
-            SteamRuntimeArg::Auto => SteamRuntimePolicy::Auto,
-            SteamRuntimeArg::On => SteamRuntimePolicy::Enabled,
-            SteamRuntimeArg::Off => SteamRuntimePolicy::Disabled,
-        };
+        config.steam_runtime_policy = arg.into();
         save_launcher_config(&config)
             .await
             .context("failed saving steam-runtime-policy")?;
@@ -404,18 +400,15 @@ pub(crate) async fn cmd_config_clear_games(yes: bool, json: bool) -> Result<()> 
         }
         return Ok(());
     }
-    if !yes {
-        if json {
-            anyhow::bail!("refusing to clear without confirmation — pass `--yes` in --json mode");
-        }
-        let answer = crate::commands::common::prompt_line(&format!(
+    crate::commands::common::confirm_write(
+        "clear",
+        &format!(
             "About to reset the per-game settings of {} game(s) to defaults. Continue? [y/N] ",
             ids.len()
-        ))?;
-        if !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
-            anyhow::bail!("aborted");
-        }
-    }
+        ),
+        yes,
+        json,
+    )?;
     cfg.game_configs.clear();
     user_configs.clear();
     cfg.save().await.context("failed saving game config")?;
@@ -468,18 +461,11 @@ pub(crate) async fn cmd_config_game(
     } else {
         let ua = user_configs.entry(app_id).or_default();
         if let Some(sr) = steam_runtime {
-            ua.steam_runtime_policy = match sr {
-                SteamRuntimeArg::Auto => SteamRuntimePolicy::Auto,
-                SteamRuntimeArg::On => SteamRuntimePolicy::Enabled,
-                SteamRuntimeArg::Off => SteamRuntimePolicy::Disabled,
-            };
+            ua.steam_runtime_policy = sr.into();
             user_changed = true;
         }
         if let Some(pm) = steam_prefix_mode {
-            ua.steam_prefix_mode = match pm {
-                SteamPrefixModeArg::Shared => SteamPrefixMode::Shared,
-                SteamPrefixModeArg::PerGame => SteamPrefixMode::PerGame,
-            };
+            ua.steam_prefix_mode = pm.into();
             user_changed = true;
         }
     }
