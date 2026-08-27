@@ -386,6 +386,50 @@ pub(crate) async fn cmd_config_protons(json: bool) -> Result<()> {
     Ok(())
 }
 
+/// `config clear-games`: reset every game's per-game settings (both stores).
+pub(crate) async fn cmd_config_clear_games(yes: bool, json: bool) -> Result<()> {
+    let mut cfg = load_launcher_config().await?;
+    let mut user_configs = aurelia::core::config::load_user_configs().await?;
+    let ids: std::collections::BTreeSet<u32> = cfg
+        .game_configs
+        .keys()
+        .chain(user_configs.keys())
+        .copied()
+        .collect();
+    if ids.is_empty() {
+        if json {
+            print_json(&serde_json::json!({ "cleared": 0 }));
+        } else {
+            cli_println!("No per-game settings to clear.");
+        }
+        return Ok(());
+    }
+    if !yes {
+        if json {
+            anyhow::bail!("refusing to clear without confirmation — pass `--yes` in --json mode");
+        }
+        let answer = crate::commands::common::prompt_line(&format!(
+            "About to reset the per-game settings of {} game(s) to defaults. Continue? [y/N] ",
+            ids.len()
+        ))?;
+        if !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+            anyhow::bail!("aborted");
+        }
+    }
+    cfg.game_configs.clear();
+    user_configs.clear();
+    cfg.save().await.context("failed saving game config")?;
+    aurelia::core::config::save_user_configs(&user_configs)
+        .await
+        .context("failed saving per-game config")?;
+    if json {
+        print_json(&serde_json::json!({ "cleared": ids.len() }));
+    } else {
+        cli_println!("Cleared the per-game settings of {} game(s).", ids.len());
+    }
+    Ok(())
+}
+
 /// Which platform payloads are installed: (linux, windows).
 async fn installed_platform_set(app_id: u32) -> Option<(bool, bool)> {
     let installed = aurelia::library::scan_installed_app_info().await.ok()?;
@@ -400,6 +444,8 @@ pub(crate) async fn cmd_config_game(
     proton: Option<String>,
     clear_proton: bool,
     platform: Option<PlatformArg>,
+    no_platform: bool,
+    clear: bool,
     native_engine: bool,
     no_native_engine: bool,
     umu: bool,
@@ -417,7 +463,9 @@ pub(crate) async fn cmd_config_game(
     // GameConfig fields above (config.json). Update whichever store each flag targets.
     let mut user_configs = aurelia::core::config::load_user_configs().await?;
     let mut user_changed = false;
-    {
+    if clear {
+        user_changed = user_configs.remove(&app_id).is_some();
+    } else {
         let ua = user_configs.entry(app_id).or_default();
         if let Some(sr) = steam_runtime {
             ua.steam_runtime_policy = match sr {
@@ -443,7 +491,9 @@ pub(crate) async fn cmd_config_game(
 
     let mut cfg = load_launcher_config().await?;
     let mut changed = false;
-    {
+    if clear {
+        changed = cfg.game_configs.remove(&app_id).is_some();
+    } else {
         let entry = cfg.game_configs.entry(app_id).or_default();
         if clear_proton {
             entry.forced_proton_version = None;
@@ -452,7 +502,10 @@ pub(crate) async fn cmd_config_game(
             entry.forced_proton_version = Some(p);
             changed = true;
         }
-        if let Some(pl) = platform {
+        if no_platform {
+            entry.platform_preference = None;
+            changed = true;
+        } else if let Some(pl) = platform {
             entry.platform_preference = Some(
                 match pl {
                     PlatformArg::Windows => "windows",
