@@ -424,26 +424,14 @@ impl SteamClient {
                          depot was resolved for the active branch)"
                     )
                 };
-                let _ = tx
-                    .send(DownloadProgress {
-                        state: DownloadProgressState::Failed,
-                        current_file: message,
-                        ..Default::default()
-                    })
-                    .await;
+                emit_failed(&tx, message).await;
                 return;
             };
 
             let hosts = match client_clone.get_content_servers(connection.cell_id()).await {
                 Ok(h) => h,
                 Err(e) => {
-                    let _ = tx
-                        .send(DownloadProgress {
-                            state: DownloadProgressState::Failed,
-                            current_file: format!("Failed to fetch content servers: {}", e),
-                            ..Default::default()
-                        })
-                        .await;
+                    emit_failed(&tx, format!("Failed to fetch content servers: {}", e)).await;
                     return;
                 }
             };
@@ -518,16 +506,14 @@ impl SteamClient {
                             break;
                         }
 
-                        let _ = tx
-                            .send(DownloadProgress {
-                                state: DownloadProgressState::Failed,
-                                current_file: format!(
-                                    "Failed to download/verify depot {} from all servers",
-                                    selection.depot_id
-                                ),
-                                ..Default::default()
-                            })
-                            .await;
+                        emit_failed(
+                            &tx,
+                            format!(
+                                "Failed to download/verify depot {} from all servers",
+                                selection.depot_id
+                            ),
+                        )
+                        .await;
                         success = false;
                         break;
                     }

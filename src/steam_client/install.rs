@@ -225,13 +225,7 @@ impl SteamClient {
                         &appinfo_vdf_bytes_owned
                     }
                     Err(e) => {
-                        let _ = tx
-                            .send(DownloadProgress {
-                                state: DownloadProgressState::Failed,
-                                current_file: format!("{e:#}"),
-                                ..Default::default()
-                            })
-                            .await;
+                        emit_failed(&tx, format!("{e:#}")).await;
                         return;
                     }
                 }
@@ -365,13 +359,7 @@ impl SteamClient {
                     "No matching depots found for the selected platform."
                 };
 
-                let _ = tx
-                    .send(DownloadProgress {
-                        state: DownloadProgressState::Failed,
-                        current_file: msg.to_string(),
-                        ..Default::default()
-                    })
-                    .await;
+                emit_failed(&tx, msg.to_string()).await;
                 return;
             }
 
@@ -446,13 +434,7 @@ impl SteamClient {
             let hosts = match client_clone.get_content_servers(connection.cell_id()).await {
                 Ok(h) => h,
                 Err(e) => {
-                    let _ = tx
-                        .send(DownloadProgress {
-                            state: DownloadProgressState::Failed,
-                            current_file: format!("Failed to fetch content servers: {}", e),
-                            ..Default::default()
-                        })
-                        .await;
+                    emit_failed(&tx, format!("Failed to fetch content servers: {}", e)).await;
                     return;
                 }
             };
@@ -493,16 +475,14 @@ impl SteamClient {
                         Ok(code) if code != 0
                     );
                     if !ok {
-                        let _ = tx
-                            .send(DownloadProgress {
-                                state: DownloadProgressState::Failed,
-                                current_file: format!(
-                                    "Steam declined a request code for manifest {} on depot {} — it may be too old, or require owning the game with a non-anonymous login",
-                                    selection.manifest_id, selection.depot_id
-                                ),
-                                ..Default::default()
-                            })
-                            .await;
+                        emit_failed(
+                            &tx,
+                            format!(
+                                "Steam declined a request code for manifest {} on depot {} — it may be too old, or require owning the game with a non-anonymous login",
+                                selection.manifest_id, selection.depot_id
+                            ),
+                        )
+                        .await;
                         success = false;
                         break;
                     }
@@ -517,16 +497,14 @@ impl SteamClient {
                     Ok(k) => k,
                     Err(e) => {
                         if is_override {
-                            let _ = tx
-                                .send(DownloadProgress {
-                                    state: DownloadProgressState::Failed,
-                                    current_file: format!(
-                                        "No depot key for depot {} — downgrade requires owning the game with a non-anonymous login: {}",
-                                        selection.depot_id, e
-                                    ),
-                                    ..Default::default()
-                                })
-                                .await;
+                            emit_failed(
+                                &tx,
+                                format!(
+                                    "No depot key for depot {} — downgrade requires owning the game with a non-anonymous login: {}",
+                                    selection.depot_id, e
+                                ),
+                            )
+                            .await;
                             success = false;
                             break;
                         }
@@ -576,16 +554,14 @@ impl SteamClient {
                             break;
                         }
 
-                        let _ = tx
-                            .send(DownloadProgress {
-                                state: DownloadProgressState::Failed,
-                                current_file: format!(
-                                    "Failed to download depot {}: {}",
-                                    selection.depot_id, e
-                                ),
-                                ..Default::default()
-                            })
-                            .await;
+                        emit_failed(
+                            &tx,
+                            format!(
+                                "Failed to download depot {}: {}",
+                                selection.depot_id, e
+                            ),
+                        )
+                        .await;
                         success = false;
                         break;
                     }

@@ -471,15 +471,13 @@ impl SteamClient {
                     if let Err(e) =
                         super::workshop_manifest::upsert_installed_item(&manifest_path, app_id, record)
                     {
-                        let _ = tx
-                            .send(DownloadProgress {
-                                state: DownloadProgressState::Failed,
-                                current_file: format!(
-                                    "content downloaded but failed updating workshop manifest: {e:#}"
-                                ),
-                                ..Default::default()
-                            })
-                            .await;
+                        emit_failed(
+                            &tx,
+                            format!(
+                                "content downloaded but failed updating workshop manifest: {e:#}"
+                            ),
+                        )
+                        .await;
                         return;
                     }
                     let _ = tx
@@ -490,13 +488,7 @@ impl SteamClient {
                         .await;
                 }
                 Err(e) => {
-                    let _ = tx
-                        .send(DownloadProgress {
-                            state: DownloadProgressState::Failed,
-                            current_file: format!("failed downloading Workshop item {published_file_id}: {e:#}"),
-                            ..Default::default()
-                        })
-                        .await;
+                    emit_failed(&tx, format!("failed downloading Workshop item {published_file_id}: {e:#}")).await;
                 }
             }
         });
