@@ -427,23 +427,23 @@ async fn installed_platform_set(app_id: u32) -> Option<(bool, bool)> {
 
 /// `config game`: view or set a game's per-game launch settings.
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn cmd_config_game(
-    app_id: u32,
-    proton: Option<String>,
-    clear_proton: bool,
-    platform: Option<PlatformArg>,
-    no_platform: bool,
-    clear: bool,
-    native_engine: bool,
-    no_native_engine: bool,
-    umu: bool,
-    no_umu: bool,
-    launch_script: Option<PathBuf>,
-    no_launch_script: bool,
-    steam_runtime: Option<SteamRuntimeArg>,
-    steam_prefix_mode: Option<SteamPrefixModeArg>,
-    json: bool,
-) -> Result<()> {
+pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<()> {
+    let GameConfigArgs {
+        app_id,
+        proton,
+        clear_proton,
+        platform,
+        no_platform,
+        clear,
+        native_engine,
+        no_native_engine,
+        umu,
+        no_umu,
+        launch_script,
+        no_launch_script,
+        steam_runtime,
+        steam_prefix_mode,
+    } = args;
     use aurelia::core::config::GameRunner;
     use aurelia::core::models::{SteamPrefixMode, SteamRuntimePolicy};
 
