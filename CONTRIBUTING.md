@@ -11,7 +11,7 @@ it. Contributions of every kind are welcome:
 - Improving documentation
 
 Aurelia is a pure-Rust command-line Steam client. If you're new to the codebase, start
-with the [README](README.md) for the big picture and [USAGE.md](USAGE.md) for what the
+with the [README](README.md) for the big picture and the [Usage page on the wiki](https://github.com/Drackrath/Aurelia/wiki/Usage) for what the
 CLI actually does.
 
 ## Getting set up

@@ -392,7 +392,7 @@ aurelia scripts remove 2270           # delete the dir-based script
 Add `--json` to any command for machine-readable output (errors included). It's a global
 flag, so `aurelia --json <command>` and `aurelia <command> --json` are equivalent.
 
-📖 **See [USAGE.md](USAGE.md) for complete documentation of every command and option.**
+📖 **See the [Usage page on the wiki](https://github.com/Drackrath/Aurelia/wiki/Usage) for complete documentation of every command and option.**
 
 ---
 
@@ -416,11 +416,14 @@ a standalone install.
 
 | Document | Contents |
 |---|---|
-| [USAGE.md](USAGE.md) | Full reference for every command and flag |
-| [WINDOWS_STEAM_RUNTIME.md](WINDOWS_STEAM_RUNTIME.md) | The self-contained Wine Steam prefix (`steam-runtime`) |
+| [Wiki home](https://github.com/Drackrath/Aurelia/wiki/) | Index of all documentation |
+| [Usage](https://github.com/Drackrath/Aurelia/wiki/Usage) | Full reference for every command and flag |
+| [Windows Steam Runtime](https://github.com/Drackrath/Aurelia/wiki/Windows-Steam-Runtime) | The self-contained Wine Steam prefix (`steam-runtime`) |
+| [Architecture](https://github.com/Drackrath/Aurelia/wiki/Architecture-00-Overview) | Per-subsystem architectural reference |
+| [Releasing](https://github.com/Drackrath/Aurelia/wiki/Releasing) | How to cut a release and publish binaries |
+| [Files Reviewed](https://github.com/Drackrath/Aurelia/wiki/Files-Reviewed) | Manual review checklist for the latest code-review changes |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
 | [SECURITY.md](SECURITY.md) | Reporting a vulnerability |
-| [FILES_REVIEWED.md](FILES_REVIEWED.md) | Manual review checklist for the latest code-review changes |
 
 ---
 

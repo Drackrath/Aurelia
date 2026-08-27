@@ -1,7 +1,8 @@
 name: Aurelia Release
 
 # Build release binaries for every target on a native runner (no cross-compiling)
-# and attach them to a GitHub Release. Asset names follow RELEASE.md (the names
+# and attach them to a GitHub Release. Asset names follow the wiki's Releasing page
+# (https://github.com/Drackrath/Aurelia/wiki/Releasing) (the names
 # Heroic's downloader expects): aurelia_<os>_<arch>[.exe]. The Linux jobs also
 # build and attach a Debian package (.deb) for standalone `apt`/`dpkg` installs.
 #
