@@ -424,7 +424,7 @@ impl SteamClient {
         let client = self.clone();
 
         tokio::spawn(async move {
-            emit_queued(&tx).await;
+            emit_queued(&tx, "").await;
 
             if let Ok(mut state) = shared_state.write() {
                 state.begin(
@@ -473,12 +473,7 @@ impl SteamClient {
                         .await;
                         return;
                     }
-                    let _ = tx
-                        .send(DownloadProgress {
-                            state: DownloadProgressState::Completed,
-                            ..Default::default()
-                        })
-                        .await;
+                    emit_completed(&tx, "").await;
                 }
                 Err(e) => {
                     emit_failed(&tx, format!("failed downloading Workshop item {published_file_id}: {e:#}")).await;

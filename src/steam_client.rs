@@ -1331,27 +1331,13 @@ pub(crate) async fn run_depot_loop(
 }
 
 /// Send the initial `Queued` progress message.
-pub(crate) async fn emit_queued(tx: &tokio::sync::mpsc::Sender<DownloadProgress>) {
-    let _ = tx
-        .send(DownloadProgress {
-            state: DownloadProgressState::Queued,
-            current_file: String::new(),
-            ..Default::default()
-        })
-        .await;
+pub(crate) async fn emit_queued(tx: &tokio::sync::mpsc::Sender<DownloadProgress>, msg: impl Into<String>) {
+    let _ = tx.send(DownloadProgress::queued(msg)).await;
 }
 
 /// Send a terminal `Completed` progress message.
 pub(crate) async fn emit_completed(tx: &tokio::sync::mpsc::Sender<DownloadProgress>, msg: impl Into<String>) {
-    let _ = tx
-        .send(DownloadProgress {
-            state: DownloadProgressState::Completed,
-            bytes_downloaded: 1,
-            total_bytes: 1,
-            current_file: msg.into(),
-            ..Default::default()
-        })
-        .await;
+    let _ = tx.send(DownloadProgress::completed(msg)).await;
 }
 
 /// Forward byte counters every 250ms.

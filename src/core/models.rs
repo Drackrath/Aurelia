@@ -292,6 +292,37 @@ pub struct DownloadProgress {
     pub depot_total_bytes: u64,
 }
 
+impl DownloadProgress {
+    /// Initial `Queued` message.
+    pub fn queued(msg: impl Into<String>) -> Self {
+        Self {
+            state: DownloadProgressState::Queued,
+            current_file: msg.into(),
+            ..Default::default()
+        }
+    }
+
+    /// Terminal `Completed` message.
+    pub fn completed(msg: impl Into<String>) -> Self {
+        Self {
+            state: DownloadProgressState::Completed,
+            bytes_downloaded: 1,
+            total_bytes: 1,
+            current_file: msg.into(),
+            ..Default::default()
+        }
+    }
+
+    /// Terminal `Failed` message.
+    pub fn failed(msg: impl Into<String>) -> Self {
+        Self {
+            state: DownloadProgressState::Failed,
+            current_file: msg.into(),
+            ..Default::default()
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct DownloadState {
     pub is_downloading: bool,

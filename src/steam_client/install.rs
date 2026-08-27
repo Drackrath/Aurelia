@@ -207,7 +207,7 @@ impl SteamClient {
         let pin_updates = manifest_overrides.is_some();
 
         tokio::task::spawn(async move {
-            emit_queued(&tx).await;
+            emit_queued(&tx, "").await;
 
             let appinfo_vdf_bytes_owned;
             let appinfo_vdf_bytes = if let Some(cached) = cached_vdf {

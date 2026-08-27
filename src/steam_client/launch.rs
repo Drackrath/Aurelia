@@ -352,17 +352,11 @@ impl SteamClient {
                 );
             }
 
-            let _ = tx
-                .send(DownloadProgress {
-                    state: DownloadProgressState::Queued,
-                    current_file: if verify_mode {
-                        "verifying installed chunks".to_string()
-                    } else {
-                        "resolving latest manifest".to_string()
-                    },
-                    ..Default::default()
-                })
-                .await;
+            emit_queued(
+                &tx,
+                if verify_mode { "verifying installed chunks" } else { "resolving latest manifest" },
+            )
+            .await;
 
             let remote_manifests = if verify_mode {
                 local_manifests.clone()
