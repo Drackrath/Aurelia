@@ -699,7 +699,10 @@ pub(crate) async fn cmd_config_game(
         SteamPrefixMode::PerGame => "per-game",
     };
     let steam_emulator_label = match ua.steam_emulator_policy {
-        SteamEmulatorPolicy::Auto => "auto (inherits global `config steam-emulator`)",
+        SteamEmulatorPolicy::Auto => match cfg.steam_emulator {
+            SteamEmulatorPolicy::Enabled => "auto (on, from global)",
+            _ => "auto (off, from global)",
+        },
         SteamEmulatorPolicy::Enabled => "on (steamless via Goldberg)",
         SteamEmulatorPolicy::Disabled => "off",
     };
