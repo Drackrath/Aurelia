@@ -14,8 +14,8 @@ use aurelia::library::{build_game_library, scan_installed_app_info};
 use aurelia::core::models::{DownloadProgress, DownloadProgressState, DownloadState, LibraryGame};
 use aurelia::steam_client::{SharedApp, SteamClient};
 
-/// Print a JSON value to stdout (pretty-printed).
-pub(crate) fn print_json(value: &serde_json::Value) {
+/// Print any serializable value to stdout as pretty JSON.
+pub(crate) fn print_json<T: serde::Serialize + ?Sized>(value: &T) {
     match serde_json::to_string_pretty(value) {
         Ok(s) => cli_println!("{s}"),
         Err(_) => cli_println!("{{}}"),
@@ -282,6 +282,22 @@ pub(crate) fn available_space_for(path: &std::path::Path) -> Option<u64> {
 }
 
 /// Format a byte count as a human-readable size (binary units).
+/// A `(done, total)` download callback rendering a single-line percentage bar,
+/// suppressed entirely in `--json` mode.
+pub(crate) fn byte_progress_printer(json: bool) -> impl FnMut(u64, u64) {
+    let mut last_pct: i64 = -1;
+    move |done: u64, total: u64| {
+        if json || total == 0 {
+            return;
+        }
+        let pct = (done.saturating_mul(100) / total) as i64;
+        if pct != last_pct {
+            last_pct = pct;
+            cli_print!("\r  {pct:>3}%  ({} / {})        ", human_bytes(done), human_bytes(total));
+        }
+    }
+}
+
 pub(crate) fn human_bytes(bytes: u64) -> String {
     const UNITS: [&str; 6] = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
     if bytes == 0 {

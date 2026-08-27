@@ -219,11 +219,11 @@ pub(crate) async fn cmd_info(
         // several ids produce an array.
         if single {
             match items.into_iter().next() {
-                Some(v) => cli_println!("{}", serde_json::to_string_pretty(&v)?),
+                Some(v) => print_json(&v),
                 None => bail!("no store information available for app {}", app_ids[0]),
             }
         } else {
-            cli_println!("{}", serde_json::to_string_pretty(&serde_json::Value::Array(items))?);
+            print_json(&serde_json::Value::Array(items));
         }
         return Ok(());
     }
@@ -471,7 +471,7 @@ pub(crate) async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
                 })
             }).collect::<Vec<_>>(),
         });
-        cli_println!("{}", serde_json::to_string_pretty(&value)?);
+        print_json(&value);
         return Ok(());
     }
 

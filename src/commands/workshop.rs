@@ -68,7 +68,7 @@ pub(crate) async fn cmd_workshop_info(ids: Vec<u64>, json: bool) -> Result<()> {
     let items = client.fetch_published_file_details(&ids).await?;
 
     if json {
-        cli_println!("{}", serde_json::to_string_pretty(&items)?);
+        print_json(&items);
         return Ok(());
     }
     if items.is_empty() {
@@ -99,7 +99,7 @@ pub(crate) async fn cmd_workshop_list(app_id: u32, json: bool) -> Result<()> {
     let items = client.fetch_published_file_details(&ids).await?;
 
     if json {
-        cli_println!("{}", serde_json::to_string_pretty(&items)?);
+        print_json(&items);
         return Ok(());
     }
     if items.is_empty() {

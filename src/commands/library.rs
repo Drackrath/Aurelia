@@ -212,7 +212,7 @@ pub(crate) async fn cmd_list(
                 v
             })
             .collect();
-        cli_println!("{}", serde_json::to_string_pretty(&enriched)?);
+        print_json(&enriched);
         return Ok(());
     }
 
@@ -316,7 +316,7 @@ pub(crate) async fn cmd_account(json: bool) -> Result<()> {
             "vac_bans": data.vac_bans,
             "vac_banned_apps": data.vac_banned_apps,
         });
-        cli_println!("{}", serde_json::to_string_pretty(&value)?);
+        print_json(&value);
         return Ok(());
     }
 

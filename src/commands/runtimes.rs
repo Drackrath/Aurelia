@@ -88,21 +88,7 @@ pub(crate) async fn cmd_proton_install(version: String, json: bool) -> Result<()
             if !json {
                 cli_println!("Downloading {} ({}) ...", pkg.name, pkg.label);
             }
-            let mut last_pct: i64 = -1;
-            let mut on_progress = |done: u64, total: u64| {
-                if json || total == 0 {
-                    return;
-                }
-                let pct = (done.saturating_mul(100) / total) as i64;
-                if pct != last_pct {
-                    last_pct = pct;
-                    cli_print!(
-                        "\r  {pct:>3}%  ({} / {})        ",
-                        human_bytes(done),
-                        human_bytes(total)
-                    );
-                }
-            };
+            let mut on_progress = byte_progress_printer(json);
             let path = aurelia::compat::proton::install_github_package(&pkg, &mut on_progress).await?;
             if !json {
                 cli_println!("\n  Extracted to {}", path.display());
