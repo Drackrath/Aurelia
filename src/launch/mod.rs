@@ -203,10 +203,7 @@ fn apply_install_diagnostics(cmd: &mut Command, base_dir: &Path) {
         tracing::warn!("AURELIA_DIAGNOSE_INSTALL set but could not create log dir {}: {}", logs_dir.display(), e);
         return;
     }
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let stamp = crate::core::utils::now_unix();
     let log_path = logs_dir.join(format!("steam_runtime_install_{stamp}.log"));
     match std::fs::File::create(&log_path) {
         Ok(file) => {

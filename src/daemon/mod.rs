@@ -196,7 +196,7 @@ fn init_state() -> &'static DaemonState {
 }
 
 async fn session_mtime() -> Option<SystemTime> {
-    let path = aurelia::core::config::config_dir().ok()?.join("session.json");
+    let path = aurelia::core::config::session_path().ok()?;
     tokio::fs::metadata(&path).await.ok()?.modified().ok()
 }
 

@@ -1240,10 +1240,7 @@ impl LaunchPipeline {
         }
 
         if let Some(session) = &ctx.session {
-            let timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
+            let timestamp = crate::core::utils::now_unix();
 
             let summary = crate::infra::logging::LaunchSummary {
                 session_id: session.id.to_string(),

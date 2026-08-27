@@ -300,8 +300,13 @@ pub fn data_dir() -> Result<PathBuf> {
     config_dir()
 }
 
+/// Path of the stored Steam session (`session.json`).
+pub fn session_path() -> Result<PathBuf> {
+    Ok(config_dir()?.join("session.json"))
+}
+
 pub async fn load_session() -> Result<SessionState> {
-    let session_path = config_dir()?.join("session.json");
+    let session_path = session_path()?;
     if !session_path.exists() {
         return Ok(SessionState::default());
     }
@@ -336,7 +341,7 @@ async fn session_encryption_active(session_path: &Path) -> bool {
 }
 
 pub async fn save_session(session: &SessionState) -> Result<()> {
-    let session_path = config_dir()?.join("session.json");
+    let session_path = session_path()?;
     if session_encryption_active(&session_path).await {
         let password = crate::core::session_crypto::session_password()?;
         let plain = serde_json::to_vec(session)?;
@@ -360,7 +365,7 @@ pub async fn save_session(session: &SessionState) -> Result<()> {
 }
 
 pub async fn delete_session() -> Result<()> {
-    let session_path = config_dir()?.join("session.json");
+    let session_path = session_path()?;
     if session_path.exists() {
         fs::remove_file(session_path).await?;
     }
@@ -507,12 +512,7 @@ fn info_cache_path(app_id: u32, language: &str) -> Result<PathBuf> {
     Ok(info_cache_dir()?.join(format!("{app_id}.{lang}.json")))
 }
 
-fn now_unix() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
+use crate::core::utils::now_unix;
 
 /// Load a cached `info` record for `app_id` if one exists and is still within
 /// `ttl`. Returns `None` on a miss, a stale entry, or any read/parse error, so the
