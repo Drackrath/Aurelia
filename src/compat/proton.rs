@@ -274,18 +274,18 @@ pub async fn resolve_package(name: &str) -> Result<ProtonPackage> {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
-struct GhRelease {
-    tag_name: String,
+pub(crate) struct GhRelease {
+    pub(crate) tag_name: String,
     #[serde(default)]
-    assets: Vec<GhAsset>,
+    pub(crate) assets: Vec<GhAsset>,
 }
 
 #[derive(Debug, Deserialize)]
-struct GhAsset {
-    name: String,
-    browser_download_url: String,
+pub(crate) struct GhAsset {
+    pub(crate) name: String,
+    pub(crate) browser_download_url: String,
     #[serde(default)]
-    size: u64,
+    pub(crate) size: u64,
 }
 
 /// Build a reqwest client with the headers GitHub requires (a User-Agent) and an
