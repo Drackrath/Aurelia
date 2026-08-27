@@ -488,118 +488,49 @@ impl SteamClient {
                     }
                 };
 
-                let manifest_code: Option<u64> = client_clone
-                    .get_manifest_request_code(appid, selection.depot_id, selection.manifest_id)
+                // grand_total_bytes = 0: totals accumulate per depot as each
+                // manifest arrives (this flow has no whole-app total upfront).
+                match client_clone
+                    .download_depot_to_with_hosts(
+                        appid,
+                        selection.depot_id,
+                        selection.manifest_id,
+                        &install_root,
+                        shared_state_clone.clone(),
+                        &hosts,
+                        0,
+                        &connection,
+                        key,
+                        verify_mode,
+                    )
                     .await
-                    .ok();
-
-                let mut depot_success = false;
-                for host in &hosts {
-                    let token: Option<String> = client_clone
-                        .get_cdn_auth_token(appid, selection.depot_id, host)
-                        .await
-                        .ok();
-
-                    let (host_name, port) = match host.split_once(':') {
-                        Some((name, port)) => (name, port.parse::<u16>().unwrap_or(80)),
-                        None => (host.as_str(), 80),
-                    };
-
-                    let cdn_server = steam_cdn::web_api::content_service::CDNServer {
-                        r#type: "CDN".to_string(),
-                        https: port == 443,
-                        host: host_name.to_string(),
-                        vhost: host_name.to_string(),
-                        port,
-                        cell_id: connection.cell_id(),
-                        load: 0,
-                        weighted_load: 0,
-                        auth_token: token,
-                    };
-
-                    let cdn_client = steam_cdn::CDNClient::with_server(
-                        Arc::new(connection.clone()),
-                        cdn_server,
-                    );
-
-                    // Advance the cumulative byte counters 
-                    let state_for_progress = shared_state_clone.clone();
-                    let on_progress = Arc::new(move |bytes: u64| {
-                        if let Ok(mut state) = state_for_progress.write() {
-                            state.downloaded_bytes += bytes;
-                            state.depot_downloaded_bytes += bytes;
-                        }
-                    });
-
-                    let depot_size = Arc::new(std::sync::atomic::AtomicU64::new(0));
-                    let size_clone = depot_size.clone();
-                    let state_for_manifest = shared_state_clone.clone();
-                    let on_manifest = Arc::new(move |total_bytes: u64| {
-                        size_clone.store(total_bytes, std::sync::atomic::Ordering::SeqCst);
-                        if let Ok(mut state) = state_for_manifest.write() {
-                            // Accumulate per-depot totals
-                            state.depot_total_bytes = total_bytes;
-                            state.total_bytes += total_bytes;
-                        }
-                    });
-
-                    let abort_signal = shared_state_clone
-                        .read()
-                        .ok()
-                        .map(|s| s.abort_signal.clone());
-
-                    match cdn_client
-                        .download_depot(
-                            appid,
+                {
+                    Ok(depot_size) => {
+                        successful_depots.push((
                             selection.depot_id,
                             selection.manifest_id,
-                            &key,
-                            &install_root,
-                            manifest_code,
-                            verify_mode,
-                            abort_signal,
-                            Some(on_progress),
-                            Some(on_manifest),
-                        )
-                        .await
-                    {
-                        Ok(_) => {
-                            if download_aborted(&shared_state_clone) {
-                                break;
-                            }
-
-                            depot_success = true;
-                            successful_depots.push((
-                                selection.depot_id,
-                                selection.manifest_id,
-                                depot_size.load(std::sync::atomic::Ordering::SeqCst),
-                            ));
+                            depot_size,
+                        ));
+                    }
+                    Err(_) => {
+                        if download_aborted(&shared_state_clone) {
+                            success = false;
                             break;
                         }
-                        Err(e) => {
-                            tracing::error!("CDN Error from {}: {}", host, e);
-                        }
-                    }
-                }
 
-                if !depot_success {
-                    if download_aborted(&shared_state_clone) {
+                        let _ = tx
+                            .send(DownloadProgress {
+                                state: DownloadProgressState::Failed,
+                                current_file: format!(
+                                    "Failed to download/verify depot {} from all servers",
+                                    selection.depot_id
+                                ),
+                                ..Default::default()
+                            })
+                            .await;
                         success = false;
                         break;
                     }
-
-                    let _ = tx
-                        .send(DownloadProgress {
-                            state: DownloadProgressState::Failed,
-                            current_file: format!(
-                                "Failed to download/verify depot {} from all servers",
-                                selection.depot_id
-                            ),
-                            ..Default::default()
-                        })
-                        .await;
-                    success = false;
-                    break;
                 }
             }
 
@@ -657,14 +588,4 @@ impl SteamClient {
         Ok(rx)
     }
 
-}
-
-/// Returns whether the user has signalled an abort for the in-progress
-/// download/verify. A poisoned lock is treated as "not aborted" so a transient
-/// lock failure can't spuriously cancel the operation.
-fn download_aborted(state: &Arc<std::sync::RwLock<crate::core::models::DownloadState>>) -> bool {
-    state
-        .read()
-        .map(|s| s.abort_signal.load(std::sync::atomic::Ordering::Relaxed))
-        .unwrap_or(false)
 }

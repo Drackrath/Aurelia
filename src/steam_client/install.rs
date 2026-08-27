@@ -559,6 +559,7 @@ impl SteamClient {
                         grand_total_bytes,
                         &connection,
                         key,
+                        false,
                     )
                     .await
                 {
@@ -570,15 +571,7 @@ impl SteamClient {
                         ));
                     }
                     Err(e) => {
-                        let aborted = shared_state_clone
-                            .read()
-                            .map(|s| {
-                                s.abort_signal
-                                    .load(std::sync::atomic::Ordering::Relaxed)
-                            })
-                            .unwrap_or(false);
-
-                        if aborted {
+                        if download_aborted(&shared_state_clone) {
                             success = false;
                             break;
                         }
@@ -683,6 +676,7 @@ impl SteamClient {
             0,
             &connection,
             key,
+            false,
         )
         .await
     }
@@ -706,6 +700,7 @@ impl SteamClient {
         grand_total_bytes: u64,
         connection: &Connection,
         key: Vec<u8>,
+        verify_mode: bool,
     ) -> anyhow::Result<u64> {
         // A valid depot key is exactly 32 bytes; a short/all-zero key would
         // decrypt chunks to garbage (the chunk path then fails the zip parse
@@ -807,7 +802,7 @@ impl SteamClient {
                     &key,
                     dest,
                     manifest_code,
-                    false, // verify_mode: false
+                    verify_mode,
                     abort_signal,
                     Some(on_progress),
                     Some(on_manifest.clone()),
@@ -815,14 +810,7 @@ impl SteamClient {
                 .await
             {
                 Ok(_) => {
-                    let aborted = shared_state
-                        .read()
-                        .map(|s| {
-                            s.abort_signal
-                                .load(std::sync::atomic::Ordering::Relaxed)
-                        })
-                        .unwrap_or(false);
-                    if aborted {
+                    if download_aborted(&shared_state) {
                         anyhow::bail!("download aborted");
                     }
 
