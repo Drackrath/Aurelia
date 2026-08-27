@@ -5,36 +5,6 @@
 use super::*;
 
 impl SteamClient {
-    /// Request PICS appinfo for a single app and return that app's raw VDF buffer.
-    /// `job_context` is attached to the network call so each caller's error message
-    /// is preserved. Shared by the depot/size/launch-option readers below.
-    async fn request_app_pics_buffer(
-        &self,
-        app_id: u32,
-        job_context: &'static str,
-    ) -> Result<Vec<u8>> {
-        let connection = self.require_connection()?;
-
-        let mut request = CMsgClientPICSProductInfoRequest::new();
-        request
-            .apps
-            .push(cmsg_client_picsproduct_info_request::AppInfo {
-                appid: Some(app_id),
-                ..Default::default()
-            });
-
-        let response: CMsgClientPICSProductInfoResponse =
-            connection.job(request).await.context(job_context)?;
-
-        let app = response
-            .apps
-            .iter()
-            .find(|entry| entry.appid() == app_id)
-            .ok_or_else(|| anyhow!("missing appinfo payload for app {app_id}"))?;
-
-        Ok(app.buffer().to_vec())
-    }
-
     /// Resolve the `depots` object from a parsed PICS VDF, descending past the
     /// numeric/`appinfo` wrapper when the depots aren't already at the root.
     fn locate_depots_value<'a>(
@@ -148,7 +118,7 @@ impl SteamClient {
 
     pub async fn get_depot_list(&self, app_id: u32) -> Result<Vec<DepotInfo>> {
         let buffer = self
-            .request_app_pics_buffer(app_id, "failed requesting appinfo product info for depot list")
+            .pics_buffer(app_id, "failed requesting appinfo product info for depot list")
             .await?;
 
         let mut out = Vec::new();
@@ -207,7 +177,7 @@ impl SteamClient {
     /// install pipeline reads.
     pub async fn list_depot_manifests(&self, app_id: u32) -> Result<Vec<DepotManifestInfo>> {
         let buffer = self
-            .request_app_pics_buffer(app_id, "failed requesting appinfo product info for manifests")
+            .pics_buffer(app_id, "failed requesting appinfo product info for manifests")
             .await?;
 
         // Parse a gid value that may be encoded as a quoted string or a raw u64.
@@ -273,7 +243,7 @@ impl SteamClient {
         platform: DepotPlatform,
     ) -> Result<InstallSizeEstimate> {
         let buffer = self
-            .request_app_pics_buffer(
+            .pics_buffer(
                 app_id,
                 "failed requesting appinfo product info for size estimate",
             )
@@ -348,7 +318,7 @@ impl SteamClient {
     /// text PICS payloads). Entry `"0"` is sorted first (the default).
     pub async fn fetch_launch_options(&self, app_id: u32) -> Result<Vec<LaunchOptionInfo>> {
         let buffer = self
-            .request_app_pics_buffer(
+            .pics_buffer(
                 app_id,
                 "failed requesting appinfo product info for launch options",
             )

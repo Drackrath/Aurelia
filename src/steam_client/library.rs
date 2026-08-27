@@ -207,34 +207,10 @@ impl SteamClient {
         })
     }
 
-    /// Fetch one app's raw PICS product-info buffer (usually *binary* VDF).
-    async fn fetch_pics_buffer(&self, appid: u32, request_context: &'static str) -> Result<Vec<u8>> {
-        let connection = self.require_connection()?;
-
-        let mut request = CMsgClientPICSProductInfoRequest::new();
-        request
-            .apps
-            .push(cmsg_client_picsproduct_info_request::AppInfo {
-                appid: Some(appid),
-                ..Default::default()
-            });
-
-        let response: CMsgClientPICSProductInfoResponse = connection
-            .job(request)
-            .await
-            .context(request_context)?;
-
-        let app = response
-            .apps
-            .iter()
-            .find(|entry| entry.appid() == appid)
-            .ok_or_else(|| anyhow!("missing appinfo payload for app {appid}"))?;
-        Ok(app.buffer().to_vec())
-    }
 
     pub async fn get_extended_app_info(&self, appid: u32) -> Result<ExtendedAppInfo> {
         let buffer = self
-            .fetch_pics_buffer(appid, "failed requesting appinfo product info for extended metadata")
+            .pics_buffer(appid, "failed requesting appinfo product info for extended metadata")
             .await?;
 
         // PICS product-info buffers are usually *binary* VDF (text only for some
@@ -282,7 +258,7 @@ impl SteamClient {
     /// an empty list for apps with no UFS config.
     pub async fn fetch_ufs_save_specs(&self, appid: u32) -> Result<Vec<UfsSaveSpec>> {
         let buffer = self
-            .fetch_pics_buffer(appid, "failed requesting appinfo product info for UFS save specs")
+            .pics_buffer(appid, "failed requesting appinfo product info for UFS save specs")
             .await?;
 
         let vdf = find_vdf_in_pics(&buffer).context("failed to parse product info VDF")?;
@@ -295,7 +271,7 @@ impl SteamClient {
     /// [`category_online_required`]. Requires an active Steam connection.
     pub async fn fetch_online_required(&self, appid: u32) -> Result<bool> {
         let buffer = self
-            .fetch_pics_buffer(appid, "failed requesting appinfo product info for online-required check")
+            .pics_buffer(appid, "failed requesting appinfo product info for online-required check")
             .await?;
 
         // PICS product-info buffers are usually *binary* VDF (text only for some
@@ -369,7 +345,7 @@ impl SteamClient {
 
     pub async fn get_product_info(&mut self, appid: u32) -> Result<Vec<LaunchInfo>> {
         let buffer = match self
-            .fetch_pics_buffer(appid, "failed requesting appinfo product info for launch metadata")
+            .pics_buffer(appid, "failed requesting appinfo product info for launch metadata")
             .await
         {
             Ok(buffer) => buffer,
@@ -386,7 +362,7 @@ impl SteamClient {
                     "the Steam connection dropped (e.g. after a long download) and could not be \
                      re-established for the launch-metadata request",
                 )?;
-                self.fetch_pics_buffer(
+                self.pics_buffer(
                     appid,
                     "failed requesting appinfo product info for launch metadata (after reconnect)",
                 )

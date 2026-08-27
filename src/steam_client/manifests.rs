@@ -82,31 +82,6 @@ impl SteamClient {
         crate::library::probe_install_dir_by_appid(steamapps, appid)
     }
 
-    /// Request the PICS appinfo product-info for a single app and return its raw
-    /// appinfo buffer. The buffer is either text or binary VDF (see
-    /// [`find_vdf_in_pics`] / [`parse_appinfo`]). Shared by every PICS appinfo
-    /// lookup in this module so the request/job/find-app boilerplate lives once.
-    async fn pics_app_buffer(connection: &Connection, appid: u32) -> Result<Vec<u8>> {
-        let mut request = CMsgClientPICSProductInfoRequest::new();
-        request
-            .apps
-            .push(cmsg_client_picsproduct_info_request::AppInfo {
-                appid: Some(appid),
-                ..Default::default()
-            });
-
-        let response: CMsgClientPICSProductInfoResponse = connection
-            .job(request)
-            .await
-            .context("failed requesting appinfo product info for update metadata")?;
-        let app = response
-            .apps
-            .iter()
-            .find(|entry| entry.appid() == appid)
-            .ok_or_else(|| anyhow!("missing appinfo payload for app {appid}"))?;
-        Ok(app.buffer().to_vec())
-    }
-
     /// Locate the `depots` object inside a PICS appinfo VDF, accounting for both
     /// the unwrapped layout (root holds the sections directly) and the wrapped
     /// layout (sections nested under an `appinfo` key).
@@ -132,7 +107,7 @@ impl SteamClient {
         appid: u32,
         branch: &str,
     ) -> Result<HashMap<u64, u64>> {
-        let buffer = Self::pics_app_buffer(connection, appid).await?;
+        let buffer = pics_app_buffer(connection, appid, "failed requesting appinfo product info for update metadata").await?;
 
         let mut manifests = HashMap::new();
         if let Ok(vdf) = find_vdf_in_pics(&buffer) {
@@ -161,7 +136,7 @@ impl SteamClient {
         appid: u32,
         branch: &str,
     ) -> Option<String> {
-        let buffer = Self::pics_app_buffer(connection, appid).await.ok()?;
+        let buffer = pics_app_buffer(connection, appid, "failed requesting appinfo product info for update metadata").await.ok()?;
         let vdf = find_vdf_in_pics(&buffer).ok()?;
         let depots_val = Self::pics_depots_value(&vdf, appid);
 
@@ -212,7 +187,7 @@ impl SteamClient {
     pub(crate) async fn dlc_parent_from_pics(&self, appid: u32) -> Option<u32> {
         let connection = self.connection.as_ref()?;
 
-        let buffer = Self::pics_app_buffer(connection, appid).await.ok()?;
+        let buffer = pics_app_buffer(connection, appid, "failed requesting appinfo product info for update metadata").await.ok()?;
         let vdf = find_vdf_in_pics(&buffer).ok()?;
         let section = pics_app_section(vdf.value());
 
@@ -242,7 +217,7 @@ impl SteamClient {
 
         // PICS is authoritative for both the name and the install directory.
         if let Some(conn) = self.connection.as_ref() {
-            match Self::pics_app_buffer(conn, appid).await {
+            match pics_app_buffer(conn, appid, "failed requesting appinfo product info for update metadata").await {
                 Ok(buffer) => match find_vdf_in_pics(&buffer) {
                     Ok(vdf) => {
                         let section = pics_app_section(vdf.value());
