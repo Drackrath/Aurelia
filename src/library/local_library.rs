@@ -19,6 +19,7 @@
 
 use crate::core::config::detect_steam_path;
 use crate::core::models::OwnedGame;
+use crate::core::utils::extract_quoted_values;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -133,7 +134,7 @@ async fn most_recent_account_id(root: &Path) -> Option<u32> {
     let mut current_id64: Option<u64> = None;
     let mut fallback: Option<u64> = None;
     for line in text.lines() {
-        let parts = quoted_tokens(line.trim());
+        let parts = extract_quoted_values(line.trim());
         match parts.as_slice() {
             [id] if id.chars().all(|c| c.is_ascii_digit()) && id.len() >= 17 => {
                 current_id64 = id.parse::<u64>().ok();
@@ -203,7 +204,7 @@ fn parse_localconfig_apps(text: &str) -> HashMap<u32, u32> {
             continue;
         }
 
-        let tokens = quoted_tokens(line);
+        let tokens = extract_quoted_values(line);
         match tokens.as_slice() {
             [key] => pending_key = Some(key.clone()),
             [key, value] => {
@@ -432,26 +433,6 @@ fn read_cstr(buf: &[u8], pos: &mut usize) -> Option<String> {
     let s = String::from_utf8_lossy(&buf[start..start + rel]).into_owned();
     *pos = start + rel + 1;
     Some(s)
-}
-
-/// Split a VDF line into its double-quoted tokens (handles `"key"  "value"`).
-fn quoted_tokens(line: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut in_quote = false;
-    let mut current = String::new();
-    for ch in line.chars() {
-        if ch == '"' {
-            if in_quote {
-                out.push(std::mem::take(&mut current));
-            }
-            in_quote = !in_quote;
-            continue;
-        }
-        if in_quote {
-            current.push(ch);
-        }
-    }
-    out
 }
 
 #[cfg(test)]
