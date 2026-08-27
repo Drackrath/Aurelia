@@ -60,11 +60,7 @@ where
     on_url(auth_url.as_str());
     tracing::info!("Login method awaited: sign-in on the official Steam page in the browser");
 
-    let http = reqwest::Client::builder()
-        .user_agent("aurelia")
-        .timeout(Duration::from_secs(20))
-        .build()
-        .context("failed to build HTTP client")?;
+    let http = crate::core::net::steam_web_client()?;
 
     tokio::time::timeout(BROWSER_WAIT, async {
         loop {

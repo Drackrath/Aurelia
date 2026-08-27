@@ -3,7 +3,6 @@
 use crate::cli::*;
 use crate::commands::common::*;
 
-use std::path::PathBuf;
 use anyhow::{Context, Result};
 use aurelia::core::config::load_launcher_config;
 use aurelia::core::config::save_launcher_config;
