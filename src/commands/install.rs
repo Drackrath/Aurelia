@@ -46,13 +46,7 @@ pub(crate) async fn cmd_install(
 
     // For a DLC, stop Steam before editing its base appmanifest (Steam overwrites it
     // on exit), then restart it afterward so the running client picks up the change.
-    let manage_steam = restart_steam && is_dlc && SteamClient::steam_is_running();
-    if manage_steam {
-        if !json {
-            cli_println!("Stopping Steam ...");
-        }
-        SteamClient::shutdown_steam()?;
-    }
+    let manage_steam = steam_guard_stop_optional(restart_steam && is_dlc, json)?;
 
     let (platform, cached_vdf) = match platform {
         Some(p) => (p.into(), None),
@@ -103,14 +97,8 @@ pub(crate) async fn cmd_install(
         .with_context(|| format!("failed to start install for app {app_id}"))?;
     drive_progress(rx, json).await?;
 
-    let mut steam_restarted = false;
-    if manage_steam {
-        if !json {
-            cli_println!("Starting Steam ...");
-        }
-        SteamClient::start_steam()?;
-        steam_restarted = true;
-    }
+    steam_guard_restart(manage_steam, json)?;
+    let steam_restarted = manage_steam;
 
     // A newly installed DLC is invisible to an already-running Steam client until it
     // re-reads the appmanifest (which it does at startup).
@@ -399,10 +387,7 @@ pub(crate) async fn cmd_available(app_id: u32, json: bool) -> Result<()> {
             "available": available,
             "install_path": install_path,
             "pinned": pinned,
-            "pinned_manifests": pinned_manifests
-                .iter()
-                .map(|(d, m)| (d.to_string(), *m))
-                .collect::<std::collections::BTreeMap<String, u64>>(),
+            "pinned_manifests": manifests_json(&pinned_manifests),
         }));
     } else {
         cli_println!(
@@ -417,11 +402,16 @@ pub(crate) async fn cmd_available(app_id: u32, json: bool) -> Result<()> {
     Ok(())
 }
 
+/// Depot→manifest map as a JSON object with stringified depot ids (JSON has no
+/// integer keys), ordered so output is stable across runs.
+fn manifests_json(map: &std::collections::HashMap<u32, u64>) -> std::collections::BTreeMap<String, u64> {
+    map.iter().map(|(d, m)| (d.to_string(), *m)).collect()
+}
+
 pub(crate) async fn cmd_verify(app_id: u32, json: bool) -> Result<()> {
     let client = authed_client().await?;
-    let state = Arc::new(RwLock::new(DownloadState::default()));
     // Registered so `install stop`
-    let _install_guard = InstallGuard::register(app_id, Arc::clone(&state))?;
+    let (_install_guard, state) = InstallGuard::begin(app_id)?;
     let rx = client
         .verify_game(app_id, state)
         .await
@@ -439,8 +429,7 @@ pub(crate) async fn cmd_update(app_id: u32, force: bool, json: bool) -> Result<(
     }
 
     let client = authed_client().await?;
-    let state = Arc::new(RwLock::new(DownloadState::default()));
-    let _install_guard = InstallGuard::register(app_id, Arc::clone(&state))?;
+    let (_install_guard, state) = InstallGuard::begin(app_id)?;
     let rx = client
         .update_game(app_id, state)
         .await
@@ -510,11 +499,7 @@ pub(crate) async fn cmd_check_updates(json: bool) -> Result<()> {
     } else {
         cli_println!("{:>9}  NAME", "APPID");
         for g in &updates {
-            let branch = if g.active_branch != "public" {
-                format!(" [{}]", g.active_branch)
-            } else {
-                String::new()
-            };
+            let branch = branch_suffix(g);
             cli_println!("{:>9}  {}{}", g.app_id, g.name, branch);
         }
         cli_println!(
@@ -739,10 +724,7 @@ pub(crate) async fn cmd_downgrade(args: DowngradeArgs, json: bool) -> Result<()>
             "app_id": args.app_id,
             "status": "downgraded",
             "pinned": pinned,
-            "manifests": overrides
-                .iter()
-                .map(|(d, m)| (d.to_string(), *m))
-                .collect::<std::collections::BTreeMap<String, u64>>(),
+            "manifests": manifests_json(&overrides),
         }));
     } else {
         cli_println!(
