@@ -43,6 +43,15 @@ pub struct LaunchSummary {
     pub verification: LaunchVerification,
 }
 
+/// Read back the `summary.json` a [`LaunchSession`] wrote into `log_dir`.
+pub fn load_launch_summary(log_dir: &std::path::Path) -> anyhow::Result<LaunchSummary> {
+    use anyhow::Context;
+    let summary_path = log_dir.join("summary.json");
+    let content = std::fs::read_to_string(&summary_path)
+        .with_context(|| format!("Failed to read summary at {}", summary_path.display()))?;
+    Ok(serde_json::from_str(&content)?)
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct LaunchVerification {
     pub status: String, // "verified", "uncertain", "failed_after_spawn", "not_verified"

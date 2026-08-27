@@ -5,7 +5,7 @@ pub mod relocate;
 pub mod cloud_sync;
 
 use crate::core::config::{detect_steam_path, load_launcher_config};
-use crate::core::models::{GameLibrary, GameModel, LibraryGame, LocalGame, OwnedGame};
+use crate::core::models::{GameLibrary, LibraryGame, OwnedGame};
 use crate::core::utils::extract_quoted_values;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -67,20 +67,6 @@ pub struct InstalledAppInfo {
     pub last_updated: u64,
     /// `buildid` from the appmanifest. Secondary tie-break behind `last_updated`.
     pub build_id: u64,
-}
-
-pub async fn find_local_games() -> Result<Vec<LocalGame>> {
-    let installed_info = scan_installed_app_info().await?;
-    Ok(installed_info
-        .into_iter()
-        .map(|(app_id, info)| LocalGame {
-            app_id,
-            name: info.name.unwrap_or_else(|| format!("App {app_id}")),
-            install_dir: info.install_path,
-            proton_version: None,
-            active_branch: info.active_branch,
-        })
-        .collect())
 }
 
 pub async fn scan_installed_app_info() -> Result<HashMap<u32, InstalledAppInfo>> {
@@ -174,22 +160,6 @@ async fn steam_data_roots() -> Vec<PathBuf> {
     roots.sort();
     roots.dedup();
     roots
-}
-
-pub async fn scan_installed_app_paths() -> Result<HashMap<u32, String>> {
-    let info_map = scan_installed_app_info().await?;
-    Ok(info_map
-        .into_iter()
-        .map(|(appid, info)| (appid, info.install_path.to_string_lossy().to_string()))
-        .collect())
-}
-
-pub async fn scan_installed_app_paths_pathbuf() -> Result<HashMap<u32, PathBuf>> {
-    let info_map = scan_installed_app_info().await?;
-    Ok(info_map
-        .into_iter()
-        .map(|(appid, info)| (appid, info.install_path))
-        .collect())
 }
 
 pub async fn scan_library_info(root_path: &Path) -> Result<HashMap<u32, InstalledAppInfo>> {
@@ -885,48 +855,6 @@ pub fn build_game_library(
 
     games.sort_by(|a, b| a.name.cmp(&b.name));
     GameLibrary { games }
-}
-
-pub fn merge_games(owned: Vec<OwnedGame>, installed: Vec<LocalGame>) -> Vec<GameModel> {
-    let mut merged: HashMap<u32, GameModel> = HashMap::new();
-
-    for game in owned {
-        merged.insert(
-            game.app_id,
-            GameModel {
-                app_id: game.app_id,
-                name: game.name,
-                playtime_forever_minutes: Some(game.playtime_forever_minutes),
-                install_dir: None,
-                proton_version: None,
-                image_cache_path: None,
-            },
-        );
-    }
-
-    for local in installed {
-        merged
-            .entry(local.app_id)
-            .and_modify(|existing| {
-                existing.install_dir = Some(local.install_dir.clone());
-                existing.proton_version = local.proton_version.clone();
-                if existing.name.trim().is_empty() {
-                    existing.name = local.name.clone();
-                }
-            })
-            .or_insert(GameModel {
-                app_id: local.app_id,
-                name: local.name,
-                playtime_forever_minutes: None,
-                install_dir: Some(local.install_dir),
-                proton_version: local.proton_version,
-                image_cache_path: None,
-            });
-    }
-
-    let mut games: Vec<GameModel> = merged.into_values().collect();
-    games.sort_by(|a, b| a.name.cmp(&b.name));
-    games
 }
 
 #[cfg(test)]
