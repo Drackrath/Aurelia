@@ -20,13 +20,10 @@ impl PipelineStage for PreparePrefixStage {
 
         // Post-runner prefix preparation: handle symlinks
         let app_id = runner_ctx.app.app_id;
-        let user_configs = ctx.user_config.iter()
-            .map(|c| (app_id, c.clone()))
-            .collect();
-        let prefix_path = crate::core::utils::steam_wineprefix_for_game(
+        let prefix_path = crate::core::utils::wineprefix_for_game(
             &runner_ctx.launcher_config,
             app_id,
-            &user_configs,
+            ctx.user_config.as_ref(),
         );
 
         if !use_symlinks {
@@ -39,12 +36,10 @@ impl PipelineStage for PreparePrefixStage {
         let deployed = crate::core::utils::deploy_dll_symlinks(&prefix_path, &ctx.dll_resolutions, &ctx.target_architecture)
             .map_err(|e| LaunchError::new(LaunchErrorKind::Permission, format!("failed to deploy symlinks into prefix: {}", e)).with_source(e))?;
 
-        if let Some(logger) = &ctx.logger {
-            let mut metadata = std::collections::HashMap::new();
-            metadata.insert("prefix".into(), prefix_path.to_string_lossy().to_string());
-            metadata.insert("deployed_count".into(), deployed.len().to_string());
-            let _ = logger.info("symlinks_deployed", format!("Deployed {} DLL symlinks into prefix", deployed.len()), Some("PreparePrefix".into()), metadata);
-        }
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("prefix".into(), prefix_path.to_string_lossy().to_string());
+        metadata.insert("deployed_count".into(), deployed.len().to_string());
+        ctx.log_info("symlinks_deployed", format!("Deployed {} DLL symlinks into prefix", deployed.len()), Some("PreparePrefix".into()), metadata);
         Ok(())
     }
 }

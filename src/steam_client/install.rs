@@ -207,13 +207,7 @@ impl SteamClient {
         let pin_updates = manifest_overrides.is_some();
 
         tokio::task::spawn(async move {
-            let _ = tx
-                .send(DownloadProgress {
-                    state: DownloadProgressState::Queued,
-                    current_file: String::new(),
-                    ..Default::default()
-                })
-                .await;
+            emit_queued(&tx, "").await;
 
             let appinfo_vdf_bytes_owned;
             let appinfo_vdf_bytes = if let Some(cached) = cached_vdf {
@@ -374,17 +368,14 @@ impl SteamClient {
                 })
                 .await;
 
-            // Update shared state for the start of the download
+            // Whole-app total for overall progress.
             if let Ok(mut state) = shared_state_clone.write() {
-                state.is_downloading = true;
-                state.is_paused = false;
-                state.app_id = appid;
-                state.app_name = game_name.clone();
-                state.downloaded_bytes = 0;
-                // Whole-app total (all selected depots), so progress is reported against
-                // the full install size rather than just the current depot.
-                state.total_bytes = grand_total_bytes;
-                state.status_text = format!("Initializing download for {}...", game_name);
+                state.begin(
+                    appid,
+                    game_name.clone(),
+                    grand_total_bytes,
+                    format!("Initializing download for {}...", game_name),
+                );
             }
 
             // Register the install start with Steam: write an "update required"
@@ -420,190 +411,64 @@ impl SteamClient {
                 DownloadProgressState::Downloading,
             );
 
-            // 2. Fetch Content Servers via Service (once for all depots, so we hit the
-            //    network only once regardless of how many depots are selected).
-            tracing::info!("Fetching Content Servers for AppID: {}...", appid);
-            let hosts = match client_clone.get_content_servers(connection.cell_id()).await {
-                Ok(h) => h,
-                Err(e) => {
-                    emit_failed(&tx, format!("Failed to fetch content servers: {}", e)).await;
-                    return;
-                }
-            };
-
-            // 3. Download Loop — delegates per-depot work to download_depot_to_with_hosts
-            //    so the same CDN flow can be reused by Workshop downloads.
-            let mut success = true;
-            let mut successful_depots = Vec::new();
-            for selection in selections {
-                tracing::info!(
-                    "Starting download for Depot {} (GID: {})...",
-                    selection.depot_id,
-                    selection.manifest_id
-                );
-                if let Ok(mut state) = shared_state_clone.write() {
-                    state.status_text = format!("Downloading depot {}", selection.depot_id);
-                    // Reset the current-depot counters so per-depot progress restarts.
-                    state.depot_id = selection.depot_id;
-                    state.depot_downloaded_bytes = 0;
-                    state.depot_total_bytes = 0;
-                }
-
-                // A downgrade names this depot's manifest explicitly, so a request
-                // code that comes back 401/empty (typical for very old manifests) is a
-                // hard, clearly-reported failure rather than a silent skip.
-                let is_override = manifest_overrides
-                    .as_ref()
-                    .is_some_and(|m| m.contains_key(&selection.depot_id));
-                if is_override {
-                    let ok = matches!(
-                        client_clone
-                            .get_manifest_request_code(
-                                appid,
-                                selection.depot_id,
-                                selection.manifest_id,
-                            )
-                            .await,
-                        Ok(code) if code != 0
-                    );
-                    if !ok {
-                        emit_failed(
-                            &tx,
-                            format!(
-                                "Steam declined a request code for manifest {} on depot {} — it may be too old, or require owning the game with a non-anonymous login",
-                                selection.manifest_id, selection.depot_id
-                            ),
-                        )
-                        .await;
-                        success = false;
-                        break;
-                    }
-                }
-
-                // Fetch the depot decryption key here so that a missing key
-                // (not owned) silently skips this depot and continues to the
-                // next — preserving the original install_game behavior. For an
-                // overridden (downgrade) depot a missing key is instead a hard
-                // error, since the user asked for that specific depot.
-                let key = match client_clone.get_depot_key(appid, selection.depot_id).await {
-                    Ok(k) => k,
-                    Err(e) => {
-                        if is_override {
-                            emit_failed(
-                                &tx,
-                                format!(
-                                    "No depot key for depot {} — downgrade requires owning the game with a non-anonymous login: {}",
-                                    selection.depot_id, e
-                                ),
-                            )
-                            .await;
-                            success = false;
-                            break;
-                        }
-                        tracing::warn!(
-                            "Skipping Depot {} (No Key/Not Owned): {}",
-                            selection.depot_id,
-                            e
-                        );
-                        continue;
-                    }
-                };
-                // A valid depot key is exactly 32 bytes; a short/all-zero key would
-                // decrypt chunks to garbage (the chunk path then fails the zip parse
-                // with "Could not find EOCD").
-                tracing::debug!(
-                    "Depot {} key: {} bytes, all_zero={}",
-                    selection.depot_id,
-                    key.len(),
-                    key.iter().all(|&b| b == 0)
-                );
-
-                match client_clone
-                    .download_depot_to_with_hosts(
-                        appid,
-                        selection.depot_id,
-                        selection.manifest_id,
-                        &install_dir,
-                        shared_state_clone.clone(),
-                        &hosts,
-                        grand_total_bytes,
+            // 2-3. Shared content-server + depot loop.
+            let outcome = match fetch_content_hosts(&client_clone, &connection, &tx, appid).await {
+                Some(hosts) => {
+                    run_depot_loop(
+                        &client_clone,
                         &connection,
-                        key,
-                        false,
+                        &tx,
+                        &shared_state_clone,
+                        appid,
+                        selections,
+                        &install_dir,
+                        &hosts,
+                        &DepotLoopOpts {
+                            verify_mode: false,
+                            grand_total_bytes,
+                            manifest_overrides,
+                        },
                     )
                     .await
-                {
-                    Ok(depot_size) => {
-                        successful_depots.push((
-                            selection.depot_id,
-                            selection.manifest_id,
-                            depot_size,
-                        ));
-                    }
-                    Err(e) => {
-                        if download_aborted(&shared_state_clone) {
-                            success = false;
-                            break;
-                        }
-
-                        emit_failed(
-                            &tx,
-                            format!(
-                                "Failed to download depot {}: {}",
-                                selection.depot_id, e
-                            ),
-                        )
-                        .await;
-                        success = false;
-                        break;
-                    }
                 }
+                None => None,
+            };
+            let Some(successful_depots) = outcome else {
+                if let Ok(mut state) = shared_state_clone.write() {
+                    state.finish("Download failed");
+                }
+                return;
+            };
+
+            if let Ok(mut state) = shared_state_clone.write() {
+                state.is_downloading = false;
+                state.status_text = "Download complete".to_string();
             }
 
-            if success {
-                if let Ok(mut state) = shared_state_clone.write() {
-                    state.is_downloading = false;
-                    state.status_text = "Download complete".to_string();
-                }
-
-                let manifest_result = if let Some(dlc) = dlc_appid {
-                    // Register the DLC's depots into the base game's manifest (enable it).
-                    SteamClient::enable_dlc_in_appmanifest(&manifest_path, dlc, &successful_depots)
-                } else {
-                    SteamClient::write_appmanifest(
-                        &manifest_path,
-                        appid,
-                        &game_name,
-                        &installdir,
-                        successful_depots,
-                        build_id.as_deref(),
-                        true,
-                        pin_updates,
-                    )
-                };
-                if let Err(err) = manifest_result {
-                    tracing::warn!("failed updating appmanifest for {}: {}", appid, err);
-                } else if dlc_appid.is_none() {
-                    tracing::info!(
-                        "Wrote appmanifest for app {appid}: fully installed, buildid {}",
-                        build_id.as_deref().unwrap_or("0")
-                    );
-                }
-                let _ = tx
-                    .send(DownloadProgress {
-                        state: DownloadProgressState::Completed,
-                        bytes_downloaded: 1,
-                        total_bytes: 1,
-                        current_file: "completed".to_string(),
-                        ..Default::default()
-                    })
-                    .await;
+            let manifest_result = if let Some(dlc) = dlc_appid {
+                // Register the DLC's depots into the base game's manifest (enable it).
+                SteamClient::enable_dlc_in_appmanifest(&manifest_path, dlc, &successful_depots)
             } else {
-                if let Ok(mut state) = shared_state_clone.write() {
-                    state.is_downloading = false;
-                    state.status_text = "Download failed".to_string();
-                }
+                SteamClient::write_appmanifest(
+                    &manifest_path,
+                    appid,
+                    &game_name,
+                    &installdir,
+                    successful_depots,
+                    build_id.as_deref(),
+                    true,
+                    pin_updates,
+                )
+            };
+            if let Err(err) = manifest_result {
+                tracing::warn!("failed updating appmanifest for {}: {}", appid, err);
+            } else if dlc_appid.is_none() {
+                tracing::info!(
+                    "Wrote appmanifest for app {appid}: fully installed, buildid {}",
+                    build_id.as_deref().unwrap_or("0")
+                );
             }
+            emit_completed(&tx, "completed").await;
         });
 
         Ok(rx)

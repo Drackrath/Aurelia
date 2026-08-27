@@ -34,28 +34,27 @@ pub(crate) fn reclassify_after_grace(child: &mut std::process::Child) -> Readine
     }
 }
 
-#[async_trait::async_trait]
-impl Runner for WineTkgRunner {
-    fn name(&self) -> &str { "Wine-TKG" }
-    async fn prepare_prefix(&self, ctx: &LaunchContext) -> std::result::Result<(), LaunchError> {
+/// Steam integration facts, derived per phase.
+struct SteamLayout {
+    library_root: PathBuf,
+    steam_mode: SteamMode,
+    steam_mode_source: &'static str,
+    steam_prefix_mode: crate::core::models::SteamPrefixMode,
+    compat_data_path: PathBuf,
+    game_prefix: PathBuf,
+}
+
+impl SteamLayout {
+    /// Derive the layout from `ctx`.
+    fn derive(ctx: &LaunchContext) -> Self {
         let library_root = PathBuf::from(&ctx.launcher_config.steam_library_path);
-
-        let (steam_mode, runtime_source) = resolve_steam_mode(ctx);
-        let use_steam_runtime = steam_mode == SteamMode::InWineRuntime;
-        let steam_prefix_mode = ctx.user_config.as_ref()
+        let (steam_mode, steam_mode_source) = resolve_steam_mode(ctx);
+        let steam_prefix_mode = ctx
+            .user_config
+            .as_ref()
             .map(|c| c.steam_prefix_mode.clone())
-            .unwrap_or(ctx.launcher_config.steam_prefix_mode.clone());
-
-        let effective_game_prefix = effective_game_prefix(ctx);
-        std::fs::create_dir_all(&effective_game_prefix)
-            .map_err(|e| LaunchError::new(LaunchErrorKind::Permission, format!("failed creating {}", effective_game_prefix.display())).with_source(anyhow!(e)))?;
-
-        // Proton's `setup_prefix` opens its lock at `$STEAM_COMPAT_DATA_PATH/pfx.lock`
-        // with O_CREAT, which fails with ENOENT unless the compatdata directory
-        // already exists (Steam itself pre-creates it). In the default shared-prefix
-        // mode the WINEPREFIX above lives elsewhere, so compatdata is never created
-        // and Proton aborts immediately. Create it here so the path build_env hands
-        // Proton as STEAM_COMPAT_DATA_PATH is guaranteed to exist.
+            .unwrap_or_else(|| ctx.launcher_config.steam_prefix_mode.clone());
+        // Only Shared+InWine consults the master prefix.
         let master_wine_prefix = if steam_mode == SteamMode::InWineRuntime {
             crate::core::utils::get_master_steam_config().wine_prefix
         } else {
@@ -68,6 +67,35 @@ impl Runner for WineTkgRunner {
             steam_prefix_mode.clone(),
             &master_wine_prefix,
         );
+        let game_prefix = effective_game_prefix(ctx);
+        Self {
+            library_root,
+            steam_mode,
+            steam_mode_source,
+            steam_prefix_mode,
+            compat_data_path,
+            game_prefix,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Runner for WineTkgRunner {
+    fn name(&self) -> &str { "Wine-TKG" }
+    async fn prepare_prefix(&self, ctx: &LaunchContext) -> std::result::Result<(), LaunchError> {
+        let SteamLayout {
+            library_root,
+            steam_mode,
+            steam_mode_source: runtime_source,
+            steam_prefix_mode,
+            compat_data_path,
+            game_prefix: effective_game_prefix,
+        } = SteamLayout::derive(ctx);
+        let use_steam_runtime = steam_mode == SteamMode::InWineRuntime;
+        std::fs::create_dir_all(&effective_game_prefix)
+            .map_err(|e| LaunchError::new(LaunchErrorKind::Permission, format!("failed creating {}", effective_game_prefix.display())).with_source(anyhow!(e)))?;
+
+        // Proton's `pfx.lock` needs existing compatdata.
         std::fs::create_dir_all(&compat_data_path)
             .map_err(|e| LaunchError::new(LaunchErrorKind::Permission, format!("failed creating {}", compat_data_path.display())).with_source(anyhow!(e)))?;
 
@@ -392,27 +420,14 @@ impl Runner for WineTkgRunner {
         let mut env = HashMap::new();
         let app_id_str = ctx.app.app_id.to_string();
 
-        let library_root = PathBuf::from(&ctx.launcher_config.steam_library_path);
-
-        let (steam_mode, _steam_mode_source) = resolve_steam_mode(ctx);
-        let steam_prefix_mode = ctx.user_config.as_ref()
-            .map(|c| c.steam_prefix_mode.clone())
-            .unwrap_or_else(|| ctx.launcher_config.steam_prefix_mode.clone());
-        // Only Shared+InWine consults the master prefix.
-        let master_wine_prefix = if steam_mode == SteamMode::InWineRuntime {
-            crate::core::utils::get_master_steam_config().wine_prefix
-        } else {
-            PathBuf::new()
-        };
-        let compat_data_path = game_compat_data_path(
-            &library_root,
-            ctx.app.app_id,
+        let layout = SteamLayout::derive(ctx);
+        let SteamLayout {
+            ref library_root,
             steam_mode,
-            steam_prefix_mode,
-            &master_wine_prefix,
-        );
-
-        let effective_game_prefix = effective_game_prefix(ctx);
+            ref compat_data_path,
+            game_prefix: ref effective_game_prefix,
+            ..
+        } = layout;
 
         env.insert("SteamAppId".to_string(), app_id_str.clone());
         env.insert("SteamGameId".to_string(), app_id_str.clone());
@@ -509,12 +524,6 @@ impl Runner for WineTkgRunner {
             if res.chosen_provider == crate::launch::dll_provider_resolver::DllProvider::GameLocal ||
                (res.chosen_provider == crate::launch::dll_provider_resolver::DllProvider::Custom && !use_symlinks) ||
                (res.chosen_provider == crate::launch::dll_provider_resolver::DllProvider::Runner && res.name.contains("nvapi")) {
-
-                // Do not emit overrides for DLLs that are handled via internal capabilities
-                if res.chosen_provider == crate::launch::dll_provider_resolver::DllProvider::Internal {
-                     tracing::info!("Resolved DLL {} is handled internally (alias), skipping explicit override", res.name);
-                     continue;
-                }
 
                 // Ensure native wins for game-local or non-symlinked custom DLLs
                 if !dll_overrides.contains(&format!("{}=n", res.name)) {
@@ -677,11 +686,7 @@ impl Runner for WineTkgRunner {
             },
             SteamMode::InWineRuntime => {
                 let steam_cfg = crate::core::utils::get_master_steam_config();
-                let steam_prefix_mode = ctx.user_config.as_ref()
-                    .map(|c| c.steam_prefix_mode.clone())
-                    .unwrap_or(ctx.launcher_config.steam_prefix_mode.clone());
-
-                let steam_client_path = match steam_prefix_mode {
+                let steam_client_path = match layout.steam_prefix_mode.clone() {
                     crate::core::models::SteamPrefixMode::Shared => {
                         steam_cfg.steam_exe.as_ref().and_then(|e| e.parent().map(|p| p.to_path_buf()))
                     }
@@ -952,16 +957,10 @@ impl Runner for WineTkgRunner {
 /// Wraps this game's per-app config (if any) in a single-entry `UserConfigStore`
 /// and resolves the prefix the same way the launcher does globally.
 fn effective_game_prefix(ctx: &LaunchContext) -> PathBuf {
-    let user_config_store: crate::core::models::UserConfigStore = ctx.user_config.as_ref().map(|c| {
-        let mut store = HashMap::new();
-        store.insert(ctx.app.app_id, c.clone());
-        store
-    }).unwrap_or_default().into();
-
-    crate::core::utils::steam_wineprefix_for_game(
+    crate::core::utils::wineprefix_for_game(
         &ctx.launcher_config,
         ctx.app.app_id,
-        &user_config_store,
+        ctx.user_config.as_ref(),
     )
 }
 

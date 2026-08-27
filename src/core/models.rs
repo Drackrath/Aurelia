@@ -154,14 +154,6 @@ pub struct OwnedGame {
     pub update_available: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserProfile {
-    pub steam_id: u64,
-    pub account_name: String,
-    pub game_count: usize,
-    pub is_online: bool,
-}
-
 fn default_branch() -> String {
     "public".to_string()
 }
@@ -300,6 +292,37 @@ pub struct DownloadProgress {
     pub depot_total_bytes: u64,
 }
 
+impl DownloadProgress {
+    /// Initial `Queued` message.
+    pub fn queued(msg: impl Into<String>) -> Self {
+        Self {
+            state: DownloadProgressState::Queued,
+            current_file: msg.into(),
+            ..Default::default()
+        }
+    }
+
+    /// Terminal `Completed` message.
+    pub fn completed(msg: impl Into<String>) -> Self {
+        Self {
+            state: DownloadProgressState::Completed,
+            bytes_downloaded: 1,
+            total_bytes: 1,
+            current_file: msg.into(),
+            ..Default::default()
+        }
+    }
+
+    /// Terminal `Failed` message.
+    pub fn failed(msg: impl Into<String>) -> Self {
+        Self {
+            state: DownloadProgressState::Failed,
+            current_file: msg.into(),
+            ..Default::default()
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct DownloadState {
     pub is_downloading: bool,
@@ -318,6 +341,28 @@ pub struct DownloadState {
     /// Bytes downloaded for the current depot.
     pub depot_downloaded_bytes: u64,
     pub abort_signal: Arc<AtomicBool>,
+}
+
+impl DownloadState {
+    /// Reset counters for a new operation.
+    pub fn begin(&mut self, app_id: u32, app_name: String, total_bytes: u64, status_text: String) {
+        self.is_downloading = true;
+        self.is_paused = false;
+        self.app_id = app_id;
+        self.app_name = app_name;
+        self.downloaded_bytes = 0;
+        self.total_bytes = total_bytes;
+        self.depot_id = 0;
+        self.depot_downloaded_bytes = 0;
+        self.depot_total_bytes = 0;
+        self.status_text = status_text;
+    }
+
+    /// Mark the operation finished with `status_text`.
+    pub fn finish(&mut self, status_text: &str) {
+        self.is_downloading = false;
+        self.status_text = status_text.to_string();
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]

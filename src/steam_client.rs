@@ -8,7 +8,7 @@ use crate::core::config::{
 use crate::library::depot_browser::{self, DepotInfo as BrowserDepotInfo, ManifestFileEntry};
 use crate::core::models::{
     DepotPlatform, DlcState, DownloadProgress, DownloadProgressState, LibraryGame,
-    ManifestSelection, OwnedGame, QrEvent, SessionState, SteamGuardReq, UserProfile,
+    ManifestSelection, OwnedGame, QrEvent, SessionState, SteamGuardReq,
 };
 use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
@@ -924,6 +924,40 @@ fn parse_achievement_schema_inner(schema: &[u8]) -> HashMap<String, (u32, u32)> 
     map
 }
 
+/// Platform-matched non-DLC depot rows.
+pub(crate) fn platform_depot_rows<'a, 'text>(
+    depots: &'a steam_vdf_parser::Obj<'text>,
+    platform: DepotPlatform,
+) -> Vec<(u32, &'a steam_vdf_parser::Obj<'text>, Option<&'a steam_vdf_parser::Obj<'text>>)> {
+    let mut rows = Vec::new();
+    for (key, value) in depots.iter() {
+        // Only numeric keys are depots.
+        let Ok(depot_id) = key.parse::<u32>() else {
+            continue;
+        };
+        let Some(obj) = value.as_obj() else { continue };
+        // Exclude DLC content depots.
+        if obj.get("dlcappid").is_some() {
+            continue;
+        }
+        let oslist = obj
+            .get("config")
+            .and_then(|v| v.as_obj())
+            .and_then(|c| c.get("oslist"))
+            .and_then(|v| v.as_str());
+        if !should_keep_depot(oslist, platform) {
+            continue;
+        }
+        let public = obj
+            .get("manifests")
+            .and_then(|v| v.as_obj())
+            .and_then(|m| m.get("public"))
+            .and_then(|v| v.as_obj());
+        rows.push((depot_id, obj, public));
+    }
+    rows
+}
+
 pub fn should_keep_depot(oslist: Option<&str>, target: DepotPlatform) -> bool {
     match target {
         DepotPlatform::Windows => match oslist {
@@ -1148,6 +1182,162 @@ pub(crate) async fn emit_failed(tx: &tokio::sync::mpsc::Sender<DownloadProgress>
             ..Default::default()
         })
         .await;
+}
+
+/// Options for [`run_depot_loop`].
+pub(crate) struct DepotLoopOpts {
+    /// Re-verify existing chunks instead of downloading.
+    pub verify_mode: bool,
+    /// Whole-app total; `0` accumulates per-depot.
+    pub grand_total_bytes: u64,
+    /// Depot-pinned manifests; failures become hard errors.
+    pub manifest_overrides: Option<std::collections::HashMap<u32, u64>>,
+}
+
+/// Depot fetch loop; `None` reports failure.
+/// Content-server hosts; `None` after reporting failure.
+pub(crate) async fn fetch_content_hosts(
+    client: &SteamClient,
+    connection: &Connection,
+    tx: &tokio::sync::mpsc::Sender<DownloadProgress>,
+    appid: u32,
+) -> Option<Vec<String>> {
+    tracing::info!("Fetching Content Servers for AppID: {}...", appid);
+    match client.get_content_servers(connection.cell_id()).await {
+        Ok(h) => Some(h),
+        Err(e) => {
+            emit_failed(tx, format!("Failed to fetch content servers: {}", e)).await;
+            None
+        }
+    }
+}
+
+pub(crate) async fn run_depot_loop(
+    client: &SteamClient,
+    connection: &Connection,
+    tx: &tokio::sync::mpsc::Sender<DownloadProgress>,
+    shared_state: &Arc<std::sync::RwLock<crate::core::models::DownloadState>>,
+    appid: u32,
+    selections: Vec<ManifestSelection>,
+    dest: &Path,
+    hosts: &[String],
+    opts: &DepotLoopOpts,
+) -> Option<Vec<(u32, u64, u64)>> {
+    let verb = if opts.verify_mode { "Verifying" } else { "Downloading" };
+    let fail_verb = if opts.verify_mode { "download/verify" } else { "download" };
+    let mut successful_depots = Vec::new();
+    for selection in selections {
+        tracing::info!(
+            "Starting download for Depot {} (GID: {})...",
+            selection.depot_id,
+            selection.manifest_id
+        );
+        // Reset the current-depot counters so per-depot progress restarts.
+        if let Ok(mut state) = shared_state.write() {
+            state.status_text = format!("{verb} depot {}", selection.depot_id);
+            state.depot_id = selection.depot_id;
+            state.depot_downloaded_bytes = 0;
+            state.depot_total_bytes = 0;
+        }
+
+        // A downgrade names this depot's manifest explicitly, so a request
+        // code that comes back 401/empty (typical for very old manifests) is a
+        // hard, clearly-reported failure rather than a silent skip.
+        let is_override = opts
+            .manifest_overrides
+            .as_ref()
+            .is_some_and(|m| m.contains_key(&selection.depot_id));
+        if is_override {
+            let ok = matches!(
+                client
+                    .get_manifest_request_code(appid, selection.depot_id, selection.manifest_id)
+                    .await,
+                Ok(code) if code != 0
+            );
+            if !ok {
+                emit_failed(
+                    tx,
+                    format!(
+                        "Steam declined a request code for manifest {} on depot {} — it may be too old, or require owning the game with a non-anonymous login",
+                        selection.manifest_id, selection.depot_id
+                    ),
+                )
+                .await;
+                return None;
+            }
+        }
+
+        // Missing key skips; overridden depots hard-fail.
+        let key = match client.get_depot_key(appid, selection.depot_id).await {
+            Ok(k) => k,
+            Err(e) => {
+                if is_override {
+                    emit_failed(
+                        tx,
+                        format!(
+                            "No depot key for depot {} — downgrade requires owning the game with a non-anonymous login: {}",
+                            selection.depot_id, e
+                        ),
+                    )
+                    .await;
+                    return None;
+                }
+                tracing::warn!("Skipping Depot {} (No Key/Not Owned): {}", selection.depot_id, e);
+                continue;
+            }
+        };
+        // A valid depot key is exactly 32 bytes; a short/all-zero key would
+        // decrypt chunks to garbage (the chunk path then fails the zip parse
+        // with "Could not find EOCD").
+        tracing::debug!(
+            "Depot {} key: {} bytes, all_zero={}",
+            selection.depot_id,
+            key.len(),
+            key.iter().all(|&b| b == 0)
+        );
+
+        match client
+            .download_depot_to_with_hosts(
+                appid,
+                selection.depot_id,
+                selection.manifest_id,
+                dest,
+                shared_state.clone(),
+                hosts,
+                opts.grand_total_bytes,
+                connection,
+                key,
+                opts.verify_mode,
+            )
+            .await
+        {
+            Ok(depot_size) => {
+                successful_depots.push((selection.depot_id, selection.manifest_id, depot_size));
+            }
+            Err(e) => {
+                if download_aborted(shared_state) {
+                    return None;
+                }
+                emit_failed(
+                    tx,
+                    format!("Failed to {fail_verb} depot {}: {}", selection.depot_id, e),
+                )
+                .await;
+                return None;
+            }
+        }
+    }
+    Some(successful_depots)
+}
+
+/// Send the initial `Queued` progress message.
+pub(crate) async fn emit_queued(tx: &tokio::sync::mpsc::Sender<DownloadProgress>, msg: impl Into<String>) {
+    let _ = tx.send(DownloadProgress::queued(msg)).await;
+}
+
+/// Send a terminal `Completed` progress message.
+pub(crate) async fn emit_completed(tx: &tokio::sync::mpsc::Sender<DownloadProgress>, msg: impl Into<String>) {
+    let _ = tx.send(DownloadProgress::completed(msg)).await;
 }
 
 /// Forward byte counters every 250ms.
@@ -1475,6 +1665,7 @@ pub(crate) fn parse_name_from_acf(raw: &str) -> Option<String> {
 }
 
 /// Read `LastOwner` (SteamID64) from an appmanifest; `None` when absent or `0`.
+#[cfg(test)]
 pub(crate) fn parse_last_owner_from_acf(raw: &str) -> Option<u64> {
     crate::core::acf::parse_app_manifest(raw).last_owner
 }

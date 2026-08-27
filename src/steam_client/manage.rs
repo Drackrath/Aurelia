@@ -174,11 +174,7 @@ impl SteamClient {
 
         tokio::task::spawn_blocking(move || {
             let result = (|| -> Result<()> {
-                let _ = tx.blocking_send(DownloadProgress {
-                    state: DownloadProgressState::Queued,
-                    current_file: "sizing".to_string(),
-                    ..Default::default()
-                });
+                let _ = tx.blocking_send(DownloadProgress::queued("sizing"));
 
                 let common_bytes = relocate::dir_size(&src_common);
                 let compat_bytes = src_compat.as_ref().map(|p| relocate::dir_size(p)).unwrap_or(0);
@@ -247,17 +243,10 @@ impl SteamClient {
 
             match result {
                 Ok(()) => {
-                    let _ = tx.blocking_send(DownloadProgress {
-                        state: DownloadProgressState::Completed,
-                        ..Default::default()
-                    });
+                    let _ = tx.blocking_send(DownloadProgress::completed(""));
                 }
                 Err(e) => {
-                    let _ = tx.blocking_send(DownloadProgress {
-                        state: DownloadProgressState::Failed,
-                        current_file: format!("{e:#}"),
-                        ..Default::default()
-                    });
+                    let _ = tx.blocking_send(DownloadProgress::failed(format!("{e:#}")));
                 }
             }
         });
@@ -369,30 +358,8 @@ impl SteamClient {
         // Platform-matched, non-DLC depots with a public manifest → InstalledDepots.
         let mut installed_depots: Vec<(u32, u64, u64)> = Vec::new();
         if let Some(depots) = depots_obj {
-            for (key, value) in depots.iter() {
-                let Ok(depot_id) = key.parse::<u32>() else {
-                    continue;
-                };
-                let Some(obj) = value.as_obj() else { continue };
-                if obj.get("dlcappid").is_some() {
-                    continue;
-                }
-                let oslist = obj
-                    .get("config")
-                    .and_then(|v| v.as_obj())
-                    .and_then(|c| c.get("oslist"))
-                    .and_then(|v| v.as_str());
-                if !should_keep_depot(oslist, platform) {
-                    continue;
-                }
-                let Some(public) = obj
-                    .get("manifests")
-                    .and_then(|v| v.as_obj())
-                    .and_then(|m| m.get("public"))
-                    .and_then(|v| v.as_obj())
-                else {
-                    continue;
-                };
+            for (depot_id, _obj, public) in platform_depot_rows(depots, platform) {
+                let Some(public) = public else { continue };
                 if let Some(mid) = public
                     .get("gid")
                     .and_then(|v| v.as_str())

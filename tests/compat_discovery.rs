@@ -92,7 +92,7 @@ fn test_unified_layout_detection() {
 fn test_arch_specific_resolution_excludes_64bit_for_32bit_game() {
     use std::fs;
     use tempfile::tempdir;
-    use aurelia::launch::dll_provider_resolver::{DllProvider, DllProviderResolver};
+    use aurelia::launch::dll_provider_resolver::{DllProvider, DllProviderResolver, DllResolveRequest};
     use aurelia::core::models::{D3D12ProviderPolicy, ExecutableArchitecture};
     use aurelia::core::utils::{ComponentInfo, ComponentSource, RunnerComponents};
 
@@ -123,16 +123,16 @@ fn test_arch_specific_resolution_excludes_64bit_for_32bit_game() {
     let game_dir = root.join("no_such_game_dir");
 
     // 32-bit game: must land on the i386 dir, never x86_64 or lib64.
-    let (res32, _) = resolver.resolve(
-        &game_dir,
-        &root,
-        &components,
-        &D3D12ProviderPolicy::Auto,
-        &ExecutableArchitecture::X86,
-        None,
-        None,
-        None,
-    );
+    let (res32, _) = resolver.resolve(&DllResolveRequest {
+        game_exe_dir: &game_dir,
+        runner_path: &root,
+        runner_components: &components,
+        d3d12_policy: &D3D12ProviderPolicy::Auto,
+        target_arch: &ExecutableArchitecture::X86,
+        custom_dxvk_path: None,
+        custom_vkd3d_path: None,
+        custom_vkd3d_proton_path: None,
+    });
     let d3d11 = res32.iter().find(|r| r.name == "d3d11").unwrap();
     assert_eq!(d3d11.chosen_provider, DllProvider::Runner);
     let chosen = d3d11.chosen_path.as_ref().unwrap().to_string_lossy().replace('\\', "/");
@@ -141,16 +141,16 @@ fn test_arch_specific_resolution_excludes_64bit_for_32bit_game() {
     assert!(!chosen.contains("lib64"), "32-bit game leaked into lib64 dir: {chosen}");
 
     // 64-bit game: must never resolve the i386 dir.
-    let (res64, _) = resolver.resolve(
-        &game_dir,
-        &root,
-        &components,
-        &D3D12ProviderPolicy::Auto,
-        &ExecutableArchitecture::X86_64,
-        None,
-        None,
-        None,
-    );
+    let (res64, _) = resolver.resolve(&DllResolveRequest {
+        game_exe_dir: &game_dir,
+        runner_path: &root,
+        runner_components: &components,
+        d3d12_policy: &D3D12ProviderPolicy::Auto,
+        target_arch: &ExecutableArchitecture::X86_64,
+        custom_dxvk_path: None,
+        custom_vkd3d_path: None,
+        custom_vkd3d_proton_path: None,
+    });
     let d3d11_64 = res64.iter().find(|r| r.name == "d3d11").unwrap();
     assert_eq!(d3d11_64.chosen_provider, DllProvider::Runner);
     let chosen64 = d3d11_64.chosen_path.as_ref().unwrap().to_string_lossy().replace('\\', "/");

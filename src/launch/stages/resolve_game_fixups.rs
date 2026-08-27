@@ -25,18 +25,16 @@ impl PipelineStage for ResolveGameFixupsStage {
                 dll_count = fixups.dll_overrides.len(),
                 "Applying per-game fixups from registry"
             );
-            if let Some(logger) = &ctx.logger {
-                let mut metadata = std::collections::HashMap::new();
-                metadata.insert("app_id".into(), app_id.to_string());
-                metadata.insert("env_count".into(), fixups.env.len().to_string());
-                metadata.insert("dll_override_count".into(), fixups.dll_overrides.len().to_string());
-                let _ = logger.info(
-                    "game_fixups_resolved",
-                    format!("Resolved {} env + {} DLL-override fixups", fixups.env.len(), fixups.dll_overrides.len()),
-                    Some("ResolveGameFixups".into()),
-                    metadata,
-                );
-            }
+            let mut metadata = std::collections::HashMap::new();
+            metadata.insert("app_id".into(), app_id.to_string());
+            metadata.insert("env_count".into(), fixups.env.len().to_string());
+            metadata.insert("dll_override_count".into(), fixups.dll_overrides.len().to_string());
+            ctx.log_info(
+                "game_fixups_resolved",
+                format!("Resolved {} env + {} DLL-override fixups", fixups.env.len(), fixups.dll_overrides.len()),
+                Some("ResolveGameFixups".into()),
+                metadata,
+            );
         }
 
         ctx.game_fixups = fixups;

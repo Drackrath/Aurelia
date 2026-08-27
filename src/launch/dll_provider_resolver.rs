@@ -58,6 +58,18 @@ pub struct DllCandidate {
     pub exists: bool,
 }
 
+/// Inputs for one resolution pass.
+pub struct DllResolveRequest<'a> {
+    pub game_exe_dir: &'a Path,
+    pub runner_path: &'a Path,
+    pub runner_components: &'a crate::core::utils::RunnerComponents,
+    pub d3d12_policy: &'a crate::core::models::D3D12ProviderPolicy,
+    pub target_arch: &'a crate::core::models::ExecutableArchitecture,
+    pub custom_dxvk_path: Option<&'a Path>,
+    pub custom_vkd3d_path: Option<&'a Path>,
+    pub custom_vkd3d_proton_path: Option<&'a Path>,
+}
+
 pub struct DllProviderResolver {
     target_dlls: Vec<String>,
 }
@@ -82,18 +94,13 @@ impl DllProviderResolver {
         }
     }
 
-    pub fn resolve(
-        &self,
-        game_exe_dir: &Path,
-        runner_path: &Path,
-        runner_components: &crate::core::utils::RunnerComponents,
-        d3d12_policy: &crate::core::models::D3D12ProviderPolicy,
-        target_arch: &crate::core::models::ExecutableArchitecture,
-        custom_dxvk_path: Option<&Path>,
-        custom_vkd3d_path: Option<&Path>,
-        custom_vkd3d_proton_path: Option<&Path>,
-    ) -> (Vec<DllResolution>, ComponentScanReport) {
-        tracing::debug!("Resolving DLL providers. ExeDir: {}, Runner: {}", game_exe_dir.display(), runner_path.display());
+    pub fn resolve(&self, req: &DllResolveRequest<'_>) -> (Vec<DllResolution>, ComponentScanReport) {
+        tracing::debug!(
+            "Resolving DLL providers. ExeDir: {}, Runner: {}",
+            req.game_exe_dir.display(),
+            req.runner_path.display()
+        );
+        let runner_path = req.runner_path;
         let runner_root = crate::core::utils::derive_runner_root(runner_path);
 
         let mut report = ComponentScanReport {
@@ -118,17 +125,7 @@ impl DllProviderResolver {
 
         let resolutions: Vec<DllResolution> = self.target_dlls
             .iter()
-            .map(|dll| self.resolve_single(
-                dll,
-                game_exe_dir,
-                runner_path,
-                runner_components,
-                d3d12_policy,
-                target_arch,
-                custom_dxvk_path,
-                custom_vkd3d_path,
-                custom_vkd3d_proton_path,
-            ))
+            .map(|dll| self.resolve_single(dll, req))
             .collect();
 
         let mut record_component = |family: &str, component: &Option<crate::core::utils::ComponentInfo>| {
@@ -141,10 +138,10 @@ impl DllProviderResolver {
                 });
             }
         };
-        record_component("dxvk", &runner_components.dxvk);
-        record_component("nvapi", &runner_components.nvapi);
-        record_component("vkd3d-proton", &runner_components.vkd3d_proton);
-        record_component("vkd3d", &runner_components.vkd3d);
+        record_component("dxvk", &req.runner_components.dxvk);
+        record_component("nvapi", &req.runner_components.nvapi);
+        record_component("vkd3d-proton", &req.runner_components.vkd3d_proton);
+        record_component("vkd3d", &req.runner_components.vkd3d);
 
         for res in &resolutions {
             let game_local_count = res.candidates.iter().filter(|c| c.provider == DllProvider::GameLocal && c.exists).count();
@@ -176,18 +173,15 @@ impl DllProviderResolver {
         (resolutions, report)
     }
 
-    fn resolve_single(
-        &self,
-        dll_name: &str,
-        game_exe_dir: &Path,
-        runner_path: &Path,
-        runner_components: &crate::core::utils::RunnerComponents,
-        d3d12_policy: &crate::core::models::D3D12ProviderPolicy,
-        target_arch: &crate::core::models::ExecutableArchitecture,
-        custom_dxvk_path: Option<&Path>,
-        custom_vkd3d_path: Option<&Path>,
-        custom_vkd3d_proton_path: Option<&Path>,
-    ) -> DllResolution {
+    fn resolve_single(&self, dll_name: &str, req: &DllResolveRequest<'_>) -> DllResolution {
+        let DllResolveRequest {
+            game_exe_dir,
+            runner_path,
+            runner_components,
+            d3d12_policy,
+            target_arch,
+            ..
+        } = *req;
         let mut candidates = Vec::new();
         let dll_filename = format!("{}.dll", dll_name);
 
@@ -208,13 +202,7 @@ impl DllProviderResolver {
         });
 
         // 2. Custom Path Priority
-        if let Some(path) = self.get_custom_dll_path(
-            dll_name,
-            target_arch,
-            custom_dxvk_path,
-            custom_vkd3d_path,
-            custom_vkd3d_proton_path,
-        ) {
+        if let Some(path) = self.get_custom_dll_path(dll_name, req) {
             candidates.push(DllCandidate {
                 provider: DllProvider::Custom,
                 path: path.clone(),
@@ -274,14 +262,14 @@ impl DllProviderResolver {
         }
     }
 
-    fn get_custom_dll_path(
-        &self,
-        dll_name: &str,
-        target_arch: &crate::core::models::ExecutableArchitecture,
-        custom_dxvk_path: Option<&Path>,
-        custom_vkd3d_path: Option<&Path>,
-        custom_vkd3d_proton_path: Option<&Path>,
-    ) -> Option<PathBuf> {
+    fn get_custom_dll_path(&self, dll_name: &str, req: &DllResolveRequest<'_>) -> Option<PathBuf> {
+        let DllResolveRequest {
+            target_arch,
+            custom_dxvk_path,
+            custom_vkd3d_path,
+            custom_vkd3d_proton_path,
+            ..
+        } = *req;
         let dll_filename = format!("{}.dll", dll_name);
         let is_dxvk = matches!(dll_name, "d3d8" | "d3d9" | "d3d10core" | "d3d11" | "dxgi");
         let is_vkd3d_proton = matches!(dll_name, "d3d12" | "d3d12core");

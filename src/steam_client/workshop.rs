@@ -424,22 +424,15 @@ impl SteamClient {
         let client = self.clone();
 
         tokio::spawn(async move {
-            let _ = tx
-                .send(DownloadProgress {
-                    state: DownloadProgressState::Queued,
-                    current_file: String::new(),
-                    ..Default::default()
-                })
-                .await;
+            emit_queued(&tx, "").await;
 
             if let Ok(mut state) = shared_state.write() {
-                state.is_downloading = true;
-                state.is_paused = false;
-                state.app_id = app_id;
-                state.app_name = format!("Workshop item {published_file_id} ({title})");
-                state.downloaded_bytes = 0;
-                state.total_bytes = 0;
-                state.status_text = format!("Downloading Workshop item {published_file_id} ...");
+                state.begin(
+                    app_id,
+                    format!("Workshop item {published_file_id} ({title})"),
+                    0,
+                    format!("Downloading Workshop item {published_file_id} ..."),
+                );
             }
 
             // Forward the live byte counters the download updates into progress
@@ -480,12 +473,7 @@ impl SteamClient {
                         .await;
                         return;
                     }
-                    let _ = tx
-                        .send(DownloadProgress {
-                            state: DownloadProgressState::Completed,
-                            ..Default::default()
-                        })
-                        .await;
+                    emit_completed(&tx, "").await;
                 }
                 Err(e) => {
                     emit_failed(&tx, format!("failed downloading Workshop item {published_file_id}: {e:#}")).await;

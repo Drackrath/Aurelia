@@ -1469,32 +1469,21 @@ fn find_sibling_dll(
     current_arch: &crate::core::models::ExecutableArchitecture,
     target_arch: &crate::core::models::ExecutableArchitecture,
 ) -> Option<PathBuf> {
-    let (current_tag, target_tag) = match (current_arch, target_arch) {
-        (crate::core::models::ExecutableArchitecture::X86_64, crate::core::models::ExecutableArchitecture::X86) => ("x86_64", "i386"),
-        (crate::core::models::ExecutableArchitecture::X86, crate::core::models::ExecutableArchitecture::X86_64) => ("i386", "x86_64"),
+    use crate::core::models::ExecutableArchitecture as Arch;
+    let flip = match (current_arch, target_arch) {
+        (Arch::X86_64, Arch::X86) => false,
+        (Arch::X86, Arch::X86_64) => true,
         _ => return None,
     };
 
     let path_str = path.to_string_lossy();
-    if path_str.contains(current_tag) {
-        let other_str = path_str.replace(current_tag, target_tag);
-        let other_path = PathBuf::from(other_str);
-        if other_path.exists() {
-            return Some(other_path);
-        }
-    }
-
-    // Also check for x64/x32 variant
-    let (current_tag2, target_tag2) = match (current_arch, target_arch) {
-        (crate::core::models::ExecutableArchitecture::X86_64, crate::core::models::ExecutableArchitecture::X86) => ("x64", "x32"),
-        (crate::core::models::ExecutableArchitecture::X86, crate::core::models::ExecutableArchitecture::X86_64) => ("x32", "x64"),
-        _ => return None,
-    };
-    if path_str.contains(current_tag2) {
-        let other_str = path_str.replace(current_tag2, target_tag2);
-        let other_path = PathBuf::from(other_str);
-        if other_path.exists() {
-            return Some(other_path);
+    for (tag64, tag32) in [("x86_64", "i386"), ("x64", "x32")] {
+        let (current_tag, target_tag) = if flip { (tag32, tag64) } else { (tag64, tag32) };
+        if path_str.contains(current_tag) {
+            let other_path = PathBuf::from(path_str.replace(current_tag, target_tag));
+            if other_path.exists() {
+                return Some(other_path);
+            }
         }
     }
 
@@ -1536,13 +1525,20 @@ pub fn cleanup_dll_symlinks(prefix: &Path) -> Result<()> {
     Ok(())
 }
 
+/// [`wineprefix_for_game`] resolved through a full store.
 pub fn steam_wineprefix_for_game(
     config: &crate::core::config::LauncherConfig,
     app_id: u32,
     user_configs: &crate::core::models::UserConfigStore,
 ) -> std::path::PathBuf {
-    let user_config = user_configs.get(&app_id);
+    wineprefix_for_game(config, app_id, user_configs.get(&app_id))
+}
 
+pub fn wineprefix_for_game(
+    config: &crate::core::config::LauncherConfig,
+    app_id: u32,
+    user_config: Option<&crate::core::models::UserAppConfig>,
+) -> std::path::PathBuf {
     let use_steam_runtime = match user_config.map(|c| &c.steam_runtime_policy) {
         Some(crate::core::models::SteamRuntimePolicy::Enabled) => true,
         Some(crate::core::models::SteamRuntimePolicy::Disabled) => false,

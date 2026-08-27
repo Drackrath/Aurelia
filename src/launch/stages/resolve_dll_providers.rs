@@ -48,11 +48,11 @@ impl PipelineStage for ResolveDllProvidersStage {
 
         // Resolve WINEPREFIX for component detection
         let wineprefix = if let (Some(config), Some(app)) = (&ctx.launcher_config, &ctx.app) {
-            let mut store = std::collections::HashMap::new();
-            if let Some(user_config) = &ctx.user_config {
-                store.insert(app.app_id, user_config.clone());
-            }
-            Some(crate::core::utils::steam_wineprefix_for_game(config, app.app_id, &store))
+            Some(crate::core::utils::wineprefix_for_game(
+                config,
+                app.app_id,
+                ctx.user_config.as_ref(),
+            ))
         } else {
             None
         };
@@ -76,25 +76,24 @@ impl PipelineStage for ResolveDllProvidersStage {
             // Pre-populate this so downstream stages can use it
             ctx.resolved_executable_path = Some(exe_path.clone());
 
-            if let Some(logger) = &ctx.logger {
-                let mut metadata = std::collections::HashMap::new();
-                metadata.insert("exe_path".into(), exe_path.to_string_lossy().to_string());
-                metadata.insert("detected_arch".into(), format!("{:?}", ctx.target_architecture).to_lowercase());
-                metadata.insert("detection_method".into(), "PE header".to_string());
-                let _ = logger.info("arch_detected", "Target executable architecture determined".into(), Some("ResolveDllProviders".into()), metadata);
-            }
+            let mut metadata = std::collections::HashMap::new();
+            metadata.insert("exe_path".into(), exe_path.to_string_lossy().to_string());
+            metadata.insert("detected_arch".into(), format!("{:?}", ctx.target_architecture).to_lowercase());
+            metadata.insert("detection_method".into(), "PE header".to_string());
+            ctx.log_info("arch_detected", "Target executable architecture determined".into(), Some("ResolveDllProviders".into()), metadata);
         }
 
-        let (mut resolutions, scan_report) = resolver.resolve(
-            &game_exe_dir,
-            &resolved_runner,
-            &components,
-            &d3d12_policy,
-            &ctx.target_architecture,
-            custom_dxvk,
-            custom_vkd3d,
-            custom_vkd3d_proton,
-        );
+        let (mut resolutions, scan_report) =
+            resolver.resolve(&crate::launch::dll_provider_resolver::DllResolveRequest {
+                game_exe_dir: &game_exe_dir,
+                runner_path: &resolved_runner,
+                runner_components: &components,
+                d3d12_policy: &d3d12_policy,
+                target_arch: &ctx.target_architecture,
+                custom_dxvk_path: custom_dxvk,
+                custom_vkd3d_path: custom_vkd3d,
+                custom_vkd3d_proton_path: custom_vkd3d_proton,
+            });
 
         if !nvapi_enabled {
             for res in &mut resolutions {
@@ -167,30 +166,29 @@ impl PipelineStage for ResolveDllProvidersStage {
             }
         }
 
-        if let Some(logger) = &ctx.logger {
-            if scan_report.warnings.is_empty() && scan_report.scan_roots.is_empty() {
-                let _ = logger.log(crate::infra::logging::LogLevel::Warn, "zero_runner_roots", "Zero Runner roots derived from runner path".into(), Some("ResolveDllProviders".into()), std::collections::HashMap::new());
+        if scan_report.warnings.is_empty() && scan_report.scan_roots.is_empty() {
+            ctx.log_event(crate::infra::logging::LogLevel::Warn, "zero_runner_roots", "Zero Runner roots derived from runner path".into(), Some("ResolveDllProviders".into()), std::collections::HashMap::new());
+        }
+
+        // Build per-DLL metadata only when logging.
+        for res in ctx.dll_resolutions.iter().filter(|_| ctx.logger.is_some()) {
+            let mut metadata = std::collections::HashMap::new();
+            metadata.insert("dll".into(), res.name.clone());
+            metadata.insert("provider".into(), format!("{:?}", res.chosen_provider));
+            if let Some(path) = &res.chosen_path {
+                metadata.insert("path".into(), path.to_string_lossy().to_string());
             }
 
-            for res in &ctx.dll_resolutions {
-                let mut metadata = std::collections::HashMap::new();
-                metadata.insert("dll".into(), res.name.clone());
-                metadata.insert("provider".into(), format!("{:?}", res.chosen_provider));
-                if let Some(path) = &res.chosen_path {
-                    metadata.insert("path".into(), path.to_string_lossy().to_string());
-                }
+            use crate::launch::dll_provider_resolver::DllProvider;
+            let count_existing = |provider: DllProvider| {
+                res.candidates.iter().filter(|c| c.provider == provider && c.exists).count()
+            };
 
-                use crate::launch::dll_provider_resolver::DllProvider;
-                let count_existing = |provider: DllProvider| {
-                    res.candidates.iter().filter(|c| c.provider == provider && c.exists).count()
-                };
+            metadata.insert("count_gamelocal".into(), count_existing(DllProvider::GameLocal).to_string());
+            metadata.insert("count_runner".into(), count_existing(DllProvider::Runner).to_string());
+            metadata.insert("count_system".into(), count_existing(DllProvider::System).to_string());
 
-                metadata.insert("count_gamelocal".into(), count_existing(DllProvider::GameLocal).to_string());
-                metadata.insert("count_runner".into(), count_existing(DllProvider::Runner).to_string());
-                metadata.insert("count_system".into(), count_existing(DllProvider::System).to_string());
-
-                let _ = logger.info("dll_resolved", format!("Resolved {} to {:?}", res.name, res.chosen_provider), Some("ResolveDllProviders".into()), metadata);
-            }
+            ctx.log_info("dll_resolved", format!("Resolved {} to {:?}", res.name, res.chosen_provider), Some("ResolveDllProviders".into()), metadata);
         }
 
         Ok(())

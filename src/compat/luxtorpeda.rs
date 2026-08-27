@@ -23,6 +23,7 @@ static SPEC: PluginSpec = PluginSpec {
     release_api: "https://codeberg.org/api/v1/repos/luxtorpeda/luxtorpeda/releases/latest",
     user_agent: "aurelia-luxtorpeda-plugin",
     root_marker: |p| p.join("toolmanifest.vdf").exists(),
+    entry_point,
     archive_marker_missing: "luxtorpeda archive did not contain a toolmanifest.vdf",
 };
 
@@ -67,19 +68,13 @@ pub fn installed(custom: Option<&Path>) -> Option<InstalledPlugin> {
             root,
         });
     }
-    let (version, root) = plugin::managed_install(&SPEC)?;
-    Some(InstalledPlugin {
-        version,
-        entry: entry_point(&root),
-        root,
-    })
+    plugin::managed_install(&SPEC)
 }
 
 /// Download the latest luxtorpeda release and extract it into the plugin directory,
 /// replacing any previous payload. Returns the resolved entry point.
 pub async fn install(on_progress: &mut (dyn FnMut(u64, u64) + Send)) -> Result<PathBuf> {
-    let root = plugin::install_payload(&SPEC, on_progress).await?;
-    Ok(entry_point(&root))
+    plugin::install(&SPEC, on_progress).await
 }
 
 /// Resolve a usable luxtorpeda entry point for launching.
@@ -97,11 +92,7 @@ pub async fn ensure_installed(custom: Option<&Path>) -> Result<PathBuf> {
         })?;
         return Ok(entry_point(&root));
     }
-    if let Some(inst) = installed(None) {
-        return Ok(inst.entry);
-    }
-    let mut noop = |_, _| {};
-    install(&mut noop).await
+    plugin::ensure_managed(&SPEC).await
 }
 
 /// Remove the luxtorpeda payload from disk. Returns `false` if nothing was installed.

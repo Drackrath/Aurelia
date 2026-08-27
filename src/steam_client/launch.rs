@@ -295,18 +295,6 @@ impl SteamClient {
         Ok(launch_info)
     }
 
-    pub async fn launch_game(
-        &self,
-        app: &LibraryGame,
-        launch_info: &LaunchInfo,
-        proton_path: Option<&str>,
-        user_config: Option<&crate::core::models::UserAppConfig>,
-    ) -> Result<()> {
-        let launcher_config = load_launcher_config().await?;
-        self.spawn_game_process(app, launch_info, proton_path, &launcher_config, user_config, false, false, None, false, false).await?;
-        Ok(())
-    }
-
     pub async fn update_game(
         &self,
         appid: u32,
@@ -354,33 +342,21 @@ impl SteamClient {
             None => self.resolve_install_game_name(appid).await,
         };
         tokio::task::spawn(async move {
+            // `on_manifest` fills the total per-depot.
             if let Ok(mut state) = shared_state_clone.write() {
-                state.is_downloading = true;
-                state.is_paused = false;
-                state.app_id = appid;
-                state.app_name = game_name.clone();
-                state.downloaded_bytes = 0;
-                // Reset the byte counters the progress reporter reads so a previous
-                // operation's totals don't leak in. The whole-app total has no PICS
-                // pre-sum here; `on_manifest` fills it in as each depot is fetched.
-                state.total_bytes = 0;
-                state.depot_id = 0;
-                state.depot_downloaded_bytes = 0;
-                state.depot_total_bytes = 0;
-                state.status_text = format!("Preparing operation for {}...", game_name);
+                state.begin(
+                    appid,
+                    game_name.clone(),
+                    0,
+                    format!("Preparing operation for {}...", game_name),
+                );
             }
 
-            let _ = tx
-                .send(DownloadProgress {
-                    state: DownloadProgressState::Queued,
-                    current_file: if verify_mode {
-                        "verifying installed chunks".to_string()
-                    } else {
-                        "resolving latest manifest".to_string()
-                    },
-                    ..Default::default()
-                })
-                .await;
+            emit_queued(
+                &tx,
+                if verify_mode { "verifying installed chunks" } else { "resolving latest manifest" },
+            )
+            .await;
 
             let remote_manifests = if verify_mode {
                 local_manifests.clone()
@@ -428,16 +404,14 @@ impl SteamClient {
                 return;
             };
 
-            let hosts = match client_clone.get_content_servers(connection.cell_id()).await {
-                Ok(h) => h,
-                Err(e) => {
-                    emit_failed(&tx, format!("Failed to fetch content servers: {}", e)).await;
-                    return;
+            // Hosts first: fail before reporter spawns.
+            let Some(hosts) = fetch_content_hosts(&client_clone, &connection, &tx, appid).await
+            else {
+                if let Ok(mut state) = shared_state_clone.write() {
+                    state.finish("Operation failed or paused");
                 }
+                return;
             };
-
-            let mut success = true;
-            let mut successful_depots = Vec::new();
 
             // Periodically forward the live byte counters over the channel.
             spawn_progress_reporter(
@@ -450,124 +424,63 @@ impl SteamClient {
                 },
             );
 
-            for selection in selections {
-                // Restart the per-depot counters so the current depot's progress is
-                // reported from zero (the whole-app counters keep accumulating).
+            // Zero grand total: per-depot accumulation.
+            let Some(successful_depots) = run_depot_loop(
+                &client_clone,
+                &connection,
+                &tx,
+                &shared_state_clone,
+                appid,
+                selections,
+                &install_root,
+                &hosts,
+                &DepotLoopOpts {
+                    verify_mode,
+                    grand_total_bytes: 0,
+                    manifest_overrides: None,
+                },
+            )
+            .await
+            else {
                 if let Ok(mut state) = shared_state_clone.write() {
-                    state.depot_id = selection.depot_id;
-                    state.depot_downloaded_bytes = 0;
-                    state.depot_total_bytes = 0;
-                    state.status_text = if verify_mode {
-                        format!("Verifying depot {}", selection.depot_id)
-                    } else {
-                        format!("Downloading depot {}", selection.depot_id)
-                    };
+                    state.finish("Operation failed or paused");
                 }
+                return;
+            };
 
-                let key: Vec<u8> = match client_clone.get_depot_key(appid, selection.depot_id).await {
-                    Ok(k) => k,
-                    Err(e) => {
-                        tracing::warn!(
-                            "Skipping Depot {} (No Key/Not Owned): {}",
-                            selection.depot_id,
-                            e
-                        );
-                        continue;
-                    }
-                };
-
-                // Zero grand total: per-depot accumulation.
-                match client_clone
-                    .download_depot_to_with_hosts(
-                        appid,
-                        selection.depot_id,
-                        selection.manifest_id,
-                        &install_root,
-                        shared_state_clone.clone(),
-                        &hosts,
-                        0,
-                        &connection,
-                        key,
-                        verify_mode,
-                    )
-                    .await
-                {
-                    Ok(depot_size) => {
-                        successful_depots.push((
-                            selection.depot_id,
-                            selection.manifest_id,
-                            depot_size,
-                        ));
-                    }
-                    Err(_) => {
-                        if download_aborted(&shared_state_clone) {
-                            success = false;
-                            break;
-                        }
-
-                        emit_failed(
-                            &tx,
-                            format!(
-                                "Failed to download/verify depot {} from all servers",
-                                selection.depot_id
-                            ),
-                        )
-                        .await;
-                        success = false;
-                        break;
-                    }
-                }
-            }
-
-            if success {
-                if let Ok(mut state) = shared_state_clone.write() {
-                    state.is_downloading = false;
-                    state.status_text = "Operation complete".to_string();
-                }
-
-                // The content was written into `install_root`
-                let game_name = match recorded_name {
-                    Some(name) => name,
-                    None => client_clone.resolve_install_game_name(appid).await,
-                };
-                let installdir = install_root
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .filter(|n| !n.is_empty())
-                    .unwrap_or_else(|| sanitize_install_dir(&game_name));
-                // Record the current build so Steam sees the install as up to date.
-                let build_id =
-                    SteamClient::remote_buildid_static(&connection, appid, &active_branch).await;
-
-                if let Err(err) = SteamClient::write_appmanifest(
-                    &manifest_path,
-                    appid,
-                    &game_name,
-                    &installdir,
-                    successful_depots,
-                    build_id.as_deref(),
-                    true,
-                    false,
-                ) {
-                    tracing::warn!("failed writing appmanifest for {}: {}", appid, err);
-                }
-                let _ = tx
-                    .send(DownloadProgress {
-                        state: DownloadProgressState::Completed,
-                        bytes_downloaded: 1,
-                        total_bytes: 1,
-                        current_file: if verify_mode {
-                            "verify completed".to_string()
-                        } else {
-                            "update completed".to_string()
-                        },
-                        ..Default::default()
-                    })
-                    .await;
-            } else if let Ok(mut state) = shared_state_clone.write() {
+            if let Ok(mut state) = shared_state_clone.write() {
                 state.is_downloading = false;
-                state.status_text = "Operation failed or paused".to_string();
+                state.status_text = "Operation complete".to_string();
             }
+
+            // The content was written into `install_root`
+            let game_name = match recorded_name {
+                Some(name) => name,
+                None => client_clone.resolve_install_game_name(appid).await,
+            };
+            let installdir = install_root
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| sanitize_install_dir(&game_name));
+            // Record the current build so Steam sees the install as up to date.
+            let build_id =
+                SteamClient::remote_buildid_static(&connection, appid, &active_branch).await;
+
+            if let Err(err) = SteamClient::write_appmanifest(
+                &manifest_path,
+                appid,
+                &game_name,
+                &installdir,
+                successful_depots,
+                build_id.as_deref(),
+                true,
+                false,
+            ) {
+                tracing::warn!("failed writing appmanifest for {}: {}", appid, err);
+            }
+            emit_completed(&tx, if verify_mode { "verify completed" } else { "update completed" })
+                .await;
         });
 
         Ok(rx)

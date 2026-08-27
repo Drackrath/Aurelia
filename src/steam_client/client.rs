@@ -200,19 +200,6 @@ impl SteamClient {
         &self.pending_confirmations
     }
 
-    pub fn clear_pending_confirmations(&mut self) {
-        self.pending_confirmations.clear();
-    }
-
-    pub fn is_auth_error_text(message: &str) -> bool {
-        let msg = message.to_ascii_lowercase();
-        msg.contains("invalid access token")
-            || msg.contains("not logged on")
-            || msg.contains("apierror(notloggedon)")
-            || msg.contains("expired")
-            || msg.contains("session")
-    }
-
     /// Whether an error indicates the CM connection was dropped/closed rather than a
     /// logical failure. Steam commonly drops a long-idle connection — e.g. while a big
     /// depot download monopolises it — so a request issued afterwards fails with
@@ -286,15 +273,6 @@ impl SteamClient {
         Ok(false)
     }
 
-    pub fn invalidate_session(&mut self) {
-        self.connection = None;
-        self.state = LoginState::Connected;
-    }
-
-    pub fn connected_seconds(&self) -> Option<u64> {
-        self.connected_at.map(|v| v.elapsed().as_secs())
-    }
-
     pub fn active_cm(&self) -> Option<SocketAddr> {
         self.active_cm
     }
@@ -357,6 +335,23 @@ impl SteamClient {
         self.state = LoginState::AwaitingPollResult;
         self.state = LoginState::AwaitingAccessTokenLogon;
 
+        // One login, three guard handlers.
+        async fn login_with<H: AuthConfirmationHandler>(
+            server_list: &ServerList,
+            account_name: &str,
+            password: &str,
+            handler: H,
+        ) -> std::result::Result<Connection, ConnectionError> {
+            Connection::login(
+                server_list,
+                account_name,
+                password,
+                FileGuardDataStore::user_cache(),
+                handler,
+            )
+            .await
+        }
+
         let login_result = if let Some(code) = guard_code.filter(|v| !v.trim().is_empty()) {
             let (mut writer, reader) = duplex(64);
             writer
@@ -368,14 +363,7 @@ impl SteamClient {
             let handler = UserProvidedAuthConfirmationHandler::new(reader, sink())
                 .or(DeviceConfirmationHandler);
 
-            Connection::login(
-                &server_list,
-                &account_name,
-                &password,
-                FileGuardDataStore::user_cache(),
-                handler,
-            )
-            .await
+            login_with(&server_list, &account_name, &password, handler).await
         } else if interactive_pin {
             // Read the Steam Guard code from stdin when Steam asks for it; fall back
             // to mobile-app approval if the account only allows that.
@@ -386,23 +374,9 @@ impl SteamClient {
                 UserProvidedAuthConfirmationHandler::new(tokio::io::stdin(), tokio::io::stderr())
                     .or(DeviceConfirmationHandler);
 
-            Connection::login(
-                &server_list,
-                &account_name,
-                &password,
-                FileGuardDataStore::user_cache(),
-                handler,
-            )
-            .await
+            login_with(&server_list, &account_name, &password, handler).await
         } else {
-            Connection::login(
-                &server_list,
-                &account_name,
-                &password,
-                FileGuardDataStore::user_cache(),
-                DeviceConfirmationHandler,
-            )
-            .await
+            login_with(&server_list, &account_name, &password, DeviceConfirmationHandler).await
         };
 
         let connection = match login_result {

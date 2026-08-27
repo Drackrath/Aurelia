@@ -120,6 +120,42 @@ pub struct PipelineContext {
 }
 
 impl PipelineContext {
+    /// Log to the session event log.
+    pub fn log_event(
+        &self,
+        level: crate::infra::logging::LogLevel,
+        event_type: &str,
+        message: String,
+        stage: Option<String>,
+        metadata: HashMap<String, String>,
+    ) {
+        if let Some(logger) = &self.logger {
+            let _ = logger.log(level, event_type, message, stage, metadata);
+        }
+    }
+
+    /// Info-level [`PipelineContext::log_event`].
+    pub fn log_info(
+        &self,
+        event_type: &str,
+        message: String,
+        stage: Option<String>,
+        metadata: HashMap<String, String>,
+    ) {
+        self.log_event(crate::infra::logging::LogLevel::Info, event_type, message, stage, metadata);
+    }
+
+    /// Error-level [`PipelineContext::log_event`].
+    pub fn log_error(
+        &self,
+        event_type: &str,
+        message: String,
+        stage: Option<String>,
+        metadata: HashMap<String, String>,
+    ) {
+        self.log_event(crate::infra::logging::LogLevel::Error, event_type, message, stage, metadata);
+    }
+
     /// Snapshot pipeline state for a runner.
     pub fn to_runner_context(
         &mut self,
@@ -189,12 +225,10 @@ impl PipelineContext {
             context: HashMap::new(),
         };
 
-        if let Some(logger) = &self.logger {
-            let mut metadata = HashMap::new();
-            metadata.insert("warning_code".to_string(), warning.code.clone());
-            metadata.insert("warning_message".to_string(), warning.message.clone());
-            let _ = logger.log(crate::infra::logging::LogLevel::Warn, "compatibility_warning", warning.message.clone(), None, metadata);
-        }
+        let mut metadata = HashMap::new();
+        metadata.insert("warning_code".to_string(), warning.code.clone());
+        metadata.insert("warning_message".to_string(), warning.message.clone());
+        self.log_event(crate::infra::logging::LogLevel::Warn, "compatibility_warning", warning.message.clone(), None, metadata);
 
         self.warnings.push(warning);
     }
@@ -433,9 +467,7 @@ impl LaunchPipeline {
                 }
                 Err(e) => {
                     ctx.verification.status = "uncertain".to_string();
-                    if let Some(logger) = &ctx.logger {
-                         let _ = logger.error("verification_error", format!("Failed to poll process status: {}", e), None, HashMap::new());
-                    }
+                     ctx.log_error("verification_error", format!("Failed to poll process status: {}", e), None, HashMap::new());
                 }
             }
         } else {
@@ -571,14 +603,12 @@ impl LaunchPipeline {
         let mut stage_durations = HashMap::new();
         let mut failing_stage = None;
 
-        if let Some(logger) = &ctx.logger {
-            let mut metadata = HashMap::new();
-            metadata.insert("app_id".to_string(), ctx.app_id.to_string());
-            if let Some(app) = &ctx.app {
-                metadata.insert("app_name".to_string(), app.name.clone());
-            }
-            let _ = logger.info("launch_start", "Starting launch pipeline".to_string(), None, metadata);
+        let mut metadata = HashMap::new();
+        metadata.insert("app_id".to_string(), ctx.app_id.to_string());
+        if let Some(app) = &ctx.app {
+            metadata.insert("app_name".to_string(), app.name.clone());
         }
+        ctx.log_info("launch_start", "Starting launch pipeline".to_string(), None, metadata);
 
         let mut final_result = LaunchResult::Success;
 
@@ -589,9 +619,7 @@ impl LaunchPipeline {
 
         for stage in &self.stages {
             let stage_name = stage.name().to_string();
-            if let Some(logger) = &ctx.logger {
-                let _ = logger.info("stage_start", format!("Starting stage: {}", stage_name), Some(stage_name.clone()), HashMap::new());
-            }
+            ctx.log_info("stage_start", format!("Starting stage: {}", stage_name), Some(stage_name.clone()), HashMap::new());
 
             let start_time = std::time::Instant::now();
             let res = stage.execute(ctx).await;
@@ -602,18 +630,16 @@ impl LaunchPipeline {
                 failing_stage = Some(stage_name.clone());
                 final_result = LaunchResult::Failure;
 
-                if let Some(logger) = &ctx.logger {
-                    let mut metadata = HashMap::new();
-                    metadata.insert("error_kind".to_string(), e.kind.to_string());
-                    metadata.insert("error_message".to_string(), e.message.clone());
-                    metadata.insert("duration_ms".to_string(), duration.to_string());
-                    for (k, v) in &e.context {
-                        metadata.insert(format!("error_ctx_{}", k), v.clone());
-                    }
-                    let _ = logger.error("stage_failure", format!("Stage failed: {}", stage_name), Some(stage_name.clone()), metadata.clone());
-
-                    let _ = logger.error("launch_end", "Launch failed".to_string(), None, metadata);
+                let mut metadata = HashMap::new();
+                metadata.insert("error_kind".to_string(), e.kind.to_string());
+                metadata.insert("error_message".to_string(), e.message.clone());
+                metadata.insert("duration_ms".to_string(), duration.to_string());
+                for (k, v) in &e.context {
+                    metadata.insert(format!("error_ctx_{}", k), v.clone());
                 }
+                ctx.log_error("stage_failure", format!("Stage failed: {}", stage_name), Some(stage_name.clone()), metadata.clone());
+
+                ctx.log_error("launch_end", "Launch failed".to_string(), None, metadata);
 
                 self.write_summary_if_possible(ctx, final_result, failing_stage, total_start.elapsed().as_millis(), stage_durations.clone());
 
@@ -623,31 +649,25 @@ impl LaunchPipeline {
                 });
             }
 
-            if let Some(logger) = &ctx.logger {
-                let mut metadata = HashMap::new();
-                metadata.insert("duration_ms".to_string(), duration.to_string());
-                let _ = logger.info("stage_success", format!("Stage succeeded: {}", stage_name), Some(stage_name.clone()), metadata);
-            }
+            let mut metadata = HashMap::new();
+            metadata.insert("duration_ms".to_string(), duration.to_string());
+            ctx.log_info("stage_success", format!("Stage succeeded: {}", stage_name), Some(stage_name.clone()), metadata);
         }
 
-        if let Some(logger) = &ctx.logger {
-            let _ = logger.info("launch_end", "Process spawned successfully".to_string(), None, HashMap::new());
-        }
+        ctx.log_info("launch_end", "Process spawned successfully".to_string(), None, HashMap::new());
 
         // Post-spawn verification window
         self.verify_launch_health(ctx).await;
 
-        if let Some(logger) = &ctx.logger {
-            let mut metadata = HashMap::new();
-            metadata.insert("status".to_string(), ctx.verification.status.clone());
-            if let Some(lifetime) = ctx.verification.process_lifetime_ms {
-                metadata.insert("lifetime_ms".to_string(), lifetime.to_string());
-            }
-            if let Some(code) = ctx.verification.exit_code {
-                metadata.insert("exit_code".to_string(), code.to_string());
-            }
-            let _ = logger.info("launch_verification", "Launch health verification complete".to_string(), None, metadata);
+        let mut metadata = HashMap::new();
+        metadata.insert("status".to_string(), ctx.verification.status.clone());
+        if let Some(lifetime) = ctx.verification.process_lifetime_ms {
+            metadata.insert("lifetime_ms".to_string(), lifetime.to_string());
         }
+        if let Some(code) = ctx.verification.exit_code {
+            metadata.insert("exit_code".to_string(), code.to_string());
+        }
+        ctx.log_info("launch_verification", "Launch health verification complete".to_string(), None, metadata);
 
         // After stages are complete (or failed), populate effective stack and scan logs for evidence
         self.record_dll_provider_diagnostics(ctx);
@@ -715,15 +735,13 @@ impl LaunchPipeline {
 
         self.write_summary_if_possible(ctx, final_result, failing_stage, total_start.elapsed().as_millis(), stage_durations);
 
-        if let Some(logger) = &ctx.logger {
-            let msg = match final_result {
-                LaunchResult::Success => "Launch successful".to_string(),
-                LaunchResult::Failure => "Launch failed".to_string(),
-                LaunchResult::Degraded => "Launch successful (degraded)".to_string(),
-                LaunchResult::Uncertain => "Launch uncertain".to_string(),
-            };
-            let _ = logger.info("launch_final_status", msg, None, HashMap::new());
-        }
+        let msg = match final_result {
+            LaunchResult::Success => "Launch successful".to_string(),
+            LaunchResult::Failure => "Launch failed".to_string(),
+            LaunchResult::Degraded => "Launch successful (degraded)".to_string(),
+            LaunchResult::Uncertain => "Launch uncertain".to_string(),
+        };
+        ctx.log_info("launch_final_status", msg, None, HashMap::new());
 
         Ok(())
     }
@@ -1151,9 +1169,7 @@ impl LaunchPipeline {
                 ctx.verification.steam_client_exposed = spec.env.contains_key("STEAM_COMPAT_CLIENT_INSTALL_PATH") ||
                                                        spec.env.get("WINEPATH").map(|wp| wp.contains("Steam")).unwrap_or(false);
 
-                if let Some(logger) = &ctx.logger {
-                    let _ = logger.info("prefix_health_check", "WINEPREFIX sanity check complete".to_string(), None, metadata);
-                }
+                ctx.log_info("prefix_health_check", "WINEPREFIX sanity check complete".to_string(), None, metadata);
             }
         }
     }
@@ -1290,7 +1306,7 @@ impl LaunchPipeline {
             let _ = session.write_summary(&summary);
 
             // Add concise summary block to events log
-            if let Some(logger) = &ctx.logger {
+            if ctx.logger.is_some() {
                  let mut metadata = HashMap::new();
                  if let Some(path) = &ctx.resolved_executable_path {
                      metadata.insert("exe".to_string(), path.to_string_lossy().to_string());
@@ -1360,7 +1376,7 @@ impl LaunchPipeline {
                  metadata.insert("steam_auto_start_attempted".to_string(), ctx.verification.steam_auto_start_attempted.to_string());
                  metadata.insert("steam_auto_start_failed".to_string(), ctx.verification.steam_auto_start_failed.to_string());
 
-                 let _ = logger.info("launch_summary_concise", "Concise launch summary recorded".to_string(), None, metadata);
+                 ctx.log_info("launch_summary_concise", "Concise launch summary recorded".to_string(), None, metadata);
             }
         }
     }

@@ -236,34 +236,7 @@ impl SteamClient {
         let depots_val = pics_depots_value(&vdf);
 
         if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
-            for (key, value) in depots.iter() {
-                // Only numeric keys are depots (skip `branches`, `overflowstorage`, …).
-                if key.parse::<u64>().is_err() {
-                    continue;
-                }
-                let Some(obj) = value.as_obj() else { continue };
-
-                // Exclude DLC content depots (estimate is for the base game).
-                if obj.get("dlcappid").is_some() {
-                    continue;
-                }
-
-                // Platform filter, matching the install pipeline.
-                let oslist = obj
-                    .get("config")
-                    .and_then(|v| v.as_obj())
-                    .and_then(|c| c.get("oslist"))
-                    .and_then(|v| v.as_str());
-                if !should_keep_depot(oslist, platform) {
-                    continue;
-                }
-
-                let public = obj
-                    .get("manifests")
-                    .and_then(|v| v.as_obj())
-                    .and_then(|m| m.get("public"))
-                    .and_then(|v| v.as_obj());
-
+            for (_depot_id, obj, public) in platform_depot_rows(depots, platform) {
                 let disk = public
                     .and_then(|p| p.get("size"))
                     .and_then(|v| v.as_str())

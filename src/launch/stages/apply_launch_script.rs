@@ -94,20 +94,18 @@ impl PipelineStage for ApplyLaunchScriptStage {
         spec.program = script.clone();
         // cwd is intentionally preserved.
 
-        if let Some(logger) = &ctx.logger {
-            let mut metadata = HashMap::new();
-            metadata.insert("launch_script".to_string(), script.to_string_lossy().to_string());
-            metadata.insert(
-                "wrapped_program".to_string(),
-                old_program.to_string_lossy().to_string(),
-            );
-            let _ = logger.info(
-                "launch_script_applied",
-                format!("Wrapping launch through script: {}", script.display()),
-                Some("ApplyLaunchScript".to_string()),
-                metadata,
-            );
-        }
+        let mut metadata = HashMap::new();
+        metadata.insert("launch_script".to_string(), script.to_string_lossy().to_string());
+        metadata.insert(
+            "wrapped_program".to_string(),
+            old_program.to_string_lossy().to_string(),
+        );
+        ctx.log_info(
+            "launch_script_applied",
+            format!("Wrapping launch through script: {}", script.display()),
+            Some("ApplyLaunchScript".to_string()),
+            metadata,
+        );
 
         Ok(())
     }

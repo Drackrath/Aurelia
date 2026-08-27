@@ -176,38 +176,6 @@ impl SteamClient {
         SteamClient::remote_manifest_ids_static(connection, appid, branch).await
     }
 
-    pub async fn get_user_profile(&self, current_library_len: usize) -> Result<UserProfile> {
-        let persisted = load_session().await.unwrap_or_default();
-        let account_name = persisted
-            .account_name
-            .unwrap_or_else(|| "Unknown User".to_string());
-
-        if self.is_offline() {
-            let cached_games = load_library_cache().await.unwrap_or_default();
-            return Ok(UserProfile {
-                steam_id: persisted.steam_id.unwrap_or_default(),
-                account_name,
-                game_count: cached_games.len(),
-                is_online: false,
-            });
-        }
-
-        let steam_id = self
-            .connection
-            .as_ref()
-            .map(|connection| u64::from(connection.steam_id()))
-            .or(persisted.steam_id)
-            .unwrap_or_default();
-
-        Ok(UserProfile {
-            steam_id,
-            account_name,
-            game_count: current_library_len,
-            is_online: true,
-        })
-    }
-
-
     pub async fn get_extended_app_info(&self, appid: u32) -> Result<ExtendedAppInfo> {
         let buffer = self
             .pics_buffer(appid, "failed requesting appinfo product info for extended metadata")
