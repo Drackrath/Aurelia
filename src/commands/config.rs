@@ -386,6 +386,13 @@ pub(crate) async fn cmd_config_protons(json: bool) -> Result<()> {
     Ok(())
 }
 
+/// Which platform payloads are installed: (linux, windows).
+async fn installed_platform_set(app_id: u32) -> Option<(bool, bool)> {
+    let installed = aurelia::library::scan_installed_app_info().await.ok()?;
+    let info = installed.get(&app_id)?;
+    crate::commands::library::detect_installed_platform_set(&info.install_path.to_string_lossy())
+}
+
 /// `config game`: view or set a game's per-game launch settings.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn cmd_config_game(
@@ -482,16 +489,24 @@ pub(crate) async fn cmd_config_game(
 
     let entry = cfg.game_configs.get(&app_id).cloned().unwrap_or_default();
     let ua = user_configs.get(&app_id).cloned().unwrap_or_default();
-    let platform_resolved = match native_linux {
-        Some(true) => "linux",
-        Some(false) => "windows",
+    let platforms = installed_platform_set(app_id).await;
+    let platform_resolved = match platforms {
+        Some((true, true)) => "linux + windows installed",
+        Some((true, false)) => "linux",
+        Some((false, true)) => "windows",
+        Some((false, false)) => "no recognizable payload",
         None => "unknown until installed",
     };
     let runner_label = match entry.runner {
-        GameRunner::Auto => match native_linux {
-            Some(true) => "auto (Native)",
-            Some(false) => "auto (Proton via Wine-TKG)",
-            None => "auto (resolved at launch)",
+        GameRunner::Auto => match (platforms, entry.platform_preference.as_deref()) {
+            (Some((true, true)), Some("linux")) => "auto (Native, by linux preference)",
+            (Some((true, true)), Some("windows")) => {
+                "auto (Proton via Wine-TKG, by windows preference)"
+            }
+            (Some((true, true)), _) => "auto (Native or Proton, no platform preference)",
+            (Some((true, false)), _) => "auto (Native)",
+            (Some((false, true)), _) => "auto (Proton via Wine-TKG)",
+            _ => "auto (resolved at launch)",
         }
         .to_string(),
         GameRunner::Luxtorpeda => "luxtorpeda (native engine)".to_string(),
