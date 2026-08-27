@@ -16,13 +16,7 @@ pub(crate) async fn cmd_set_dlc(app_id: u32, enable: bool, restart_steam: bool, 
 
     // Steam flushes its in-memory app state on exit, so the edit must happen while
     // Steam is stopped to survive. With --restart-steam: stop → edit → start.
-    let manage_steam = restart_steam && SteamClient::steam_is_running();
-    if manage_steam {
-        if !json {
-            cli_println!("Stopping Steam ...");
-        }
-        SteamClient::shutdown_steam()?;
-    }
+    let manage_steam = steam_guard_stop_optional(restart_steam, json)?;
 
     let base = client
         .set_dlc_enabled(app_id, enable)
@@ -34,14 +28,8 @@ pub(crate) async fn cmd_set_dlc(app_id: u32, enable: bool, restart_steam: bool, 
             )
         })?;
 
-    let mut steam_restarted = false;
-    if manage_steam {
-        if !json {
-            cli_println!("Starting Steam ...");
-        }
-        SteamClient::start_steam()?;
-        steam_restarted = true;
-    }
+    steam_guard_restart(manage_steam, json)?;
+    let steam_restarted = manage_steam;
 
     let action = if enable { "enabled" } else { "disabled" };
     let restart_required = !manage_steam && SteamClient::steam_is_running();

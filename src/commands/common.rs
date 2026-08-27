@@ -242,6 +242,13 @@ pub(crate) struct InstallGuard {
 }
 
 impl InstallGuard {
+    /// Allocate a fresh shared [`DownloadState`] and register it for `app_id`.
+    pub(crate) fn begin(app_id: u32) -> Result<(Self, Arc<RwLock<DownloadState>>)> {
+        let state = Arc::new(RwLock::new(DownloadState::default()));
+        let guard = Self::register(app_id, Arc::clone(&state))?;
+        Ok((guard, state))
+    }
+
     /// Register `app_id`'s operation
     pub(crate) fn register(app_id: u32, state: Arc<RwLock<DownloadState>>) -> Result<Self> {
         let mut map = active_installs()
@@ -338,6 +345,21 @@ pub(crate) fn steam_guard_stop(restart_steam: bool, json: bool) -> Result<bool> 
     Ok(false)
 }
 
+/// Stop Steam only when `want` (the caller's `--restart-steam` intent) and
+/// Steam is actually running. Unlike [`steam_guard_stop`] this never refuses —
+/// the edit is tolerated with Steam up (it may just not survive). Returns
+/// whether Steam was stopped (pass to [`steam_guard_restart`]).
+pub(crate) fn steam_guard_stop_optional(want: bool, json: bool) -> Result<bool> {
+    if !(want && SteamClient::steam_is_running()) {
+        return Ok(false);
+    }
+    if !json {
+        cli_println!("Stopping Steam ...");
+    }
+    SteamClient::shutdown_steam()?;
+    Ok(true)
+}
+
 /// Restart Steam if [`steam_guard_stop`] stopped it.
 pub(crate) fn steam_guard_restart(managed: bool, json: bool) -> Result<()> {
     if managed {
@@ -347,6 +369,15 @@ pub(crate) fn steam_guard_restart(managed: bool, json: bool) -> Result<()> {
         SteamClient::start_steam()?;
     }
     Ok(())
+}
+
+/// ` [branch]` suffix for a game on a non-default branch, else empty.
+pub(crate) fn branch_suffix(game: &LibraryGame) -> String {
+    if game.active_branch != "public" {
+        format!(" [{}]", game.active_branch)
+    } else {
+        String::new()
+    }
 }
 
 /// Print the final result of a streaming operation (install/verify/update).

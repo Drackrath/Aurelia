@@ -249,11 +249,7 @@ pub(crate) async fn cmd_list(
         } else {
             "unlicensed"
         };
-        let mut branch = if g.active_branch != "public" {
-            format!(" [{}]", g.active_branch)
-        } else {
-            String::new()
-        };
+        let mut branch = branch_suffix(g);
         // Flag games whose only local copy lives in the in-Wine Steam runtime's own
         // library (installed via the in-Wine Steam, e.g. Family-Shared titles) — they
         // launch through the in-Wine Steam rather than Aurelia's Proton pipeline.
