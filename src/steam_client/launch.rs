@@ -404,7 +404,7 @@ impl SteamClient {
                 return;
             };
 
-            // Hosts first, so a fetch failure emits no trailing frames.
+            // Hosts first: fail before reporter spawns.
             let Some(hosts) = fetch_content_hosts(&client_clone, &connection, &tx, appid).await
             else {
                 if let Ok(mut state) = shared_state_clone.write() {

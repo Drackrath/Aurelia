@@ -17,7 +17,7 @@ impl PipelineStage for SpawnProcessStage {
 
         if let Some(runner) = &ctx.runner {
             if let Some(spec) = &ctx.command_spec {
-                // Stringifying the env is only worth it when logging.
+                // Stringify env only when logging.
                 if ctx.logger.is_some() {
                     let mut metadata = std::collections::HashMap::new();
                     metadata.insert("program".to_string(), spec.program.to_string_lossy().to_string());

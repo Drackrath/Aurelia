@@ -170,7 +170,7 @@ impl PipelineStage for ResolveDllProvidersStage {
             ctx.log_event(crate::infra::logging::LogLevel::Warn, "zero_runner_roots", "Zero Runner roots derived from runner path".into(), Some("ResolveDllProviders".into()), std::collections::HashMap::new());
         }
 
-        // Per-DLL metadata is only worth building when logging.
+        // Build per-DLL metadata only when logging.
         for res in ctx.dll_resolutions.iter().filter(|_| ctx.logger.is_some()) {
             let mut metadata = std::collections::HashMap::new();
             metadata.insert("dll".into(), res.name.clone());
