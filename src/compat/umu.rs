@@ -27,6 +27,7 @@ static SPEC: PluginSpec = PluginSpec {
     release_api: "https://api.github.com/repos/Open-Wine-Components/umu-launcher/releases/latest",
     user_agent: "aurelia-umu-plugin",
     root_marker: |p| p.join(ENTRY_NAME).is_file(),
+    entry_point,
     archive_marker_missing: "umu-launcher archive did not contain a `umu-run` executable",
 };
 
@@ -62,19 +63,13 @@ pub fn installed(custom: Option<&Path>) -> Option<InstalledPlugin> {
             root,
         });
     }
-    let (version, root) = plugin::managed_install(&SPEC)?;
-    Some(InstalledPlugin {
-        version,
-        entry: entry_point(&root),
-        root,
-    })
+    plugin::managed_install(&SPEC)
 }
 
 /// Download the latest umu-launcher release and extract it into the plugin directory,
 /// replacing any previous payload. Returns the resolved `umu-run` path.
 pub async fn install(on_progress: &mut (dyn FnMut(u64, u64) + Send)) -> Result<PathBuf> {
-    let root = plugin::install_payload(&SPEC, on_progress).await?;
-    Ok(entry_point(&root))
+    plugin::install(&SPEC, on_progress).await
 }
 
 /// Resolve a usable `umu-run` path for launching.
@@ -93,11 +88,7 @@ pub async fn ensure_installed(custom: Option<&Path>) -> Result<PathBuf> {
                 )
             });
     }
-    if let Some(inst) = installed(None) {
-        return Ok(inst.entry);
-    }
-    let mut noop = |_, _| {};
-    install(&mut noop).await
+    plugin::ensure_managed(&SPEC).await
 }
 
 /// Remove the umu payload from disk. Returns `false` if nothing was installed.

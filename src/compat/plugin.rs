@@ -30,6 +30,8 @@ pub(crate) struct PluginSpec {
     pub root_marker: fn(&Path) -> bool,
     /// Error when archive lacks the marker.
     pub archive_marker_missing: &'static str,
+    /// Executable to invoke for a root.
+    pub entry_point: fn(&Path) -> PathBuf,
 }
 
 /// A release asset selected for download.
@@ -64,14 +66,36 @@ pub(crate) fn find_root(spec: &PluginSpec, base: &Path) -> Option<PathBuf> {
     None
 }
 
-/// Managed `(version, root)`, if installed.
-pub(crate) fn managed_install(spec: &PluginSpec) -> Option<(String, PathBuf)> {
+/// The managed install, if present.
+pub(crate) fn managed_install(spec: &PluginSpec) -> Option<InstalledPlugin> {
     let base = plugin_dir(spec).ok()?;
     let root = find_root(spec, &base)?;
     let version = std::fs::read_to_string(version_stamp(&base))
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|_| "unknown".to_string());
-    Some((version, root))
+    Some(InstalledPlugin {
+        version,
+        entry: (spec.entry_point)(&root),
+        root,
+    })
+}
+
+/// Install and resolve the entry point.
+pub(crate) async fn install(
+    spec: &PluginSpec,
+    on_progress: &mut (dyn FnMut(u64, u64) + Send),
+) -> Result<PathBuf> {
+    let root = install_payload(spec, on_progress).await?;
+    Ok((spec.entry_point)(&root))
+}
+
+/// Managed entry, installing on first use.
+pub(crate) async fn ensure_managed(spec: &PluginSpec) -> Result<PathBuf> {
+    if let Some(inst) = managed_install(spec) {
+        return Ok(inst.entry);
+    }
+    let mut noop = |_, _| {};
+    install(spec, &mut noop).await
 }
 
 /// Latest release's tarball asset.
