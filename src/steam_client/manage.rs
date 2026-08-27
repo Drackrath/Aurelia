@@ -340,15 +340,9 @@ impl SteamClient {
             .await?;
 
         let vdf = find_vdf_in_pics(&buffer).context("failed to parse product info VDF")?;
-        let root_obj = vdf.as_obj().context("root is not an object")?;
-        let app_obj = if vdf.key() == "appinfo" || vdf.key() == appid.to_string() {
-            root_obj
-        } else {
-            root_obj
-                .get("appinfo")
-                .and_then(|v| v.as_obj())
-                .unwrap_or(root_obj)
-        };
+        let app_obj = pics_app_section(vdf.value())
+            .as_obj()
+            .context("root is not an object")?;
 
         let common = app_obj.get("common").and_then(|v| v.as_obj());
         let name = common

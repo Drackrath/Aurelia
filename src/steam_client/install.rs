@@ -434,57 +434,11 @@ impl SteamClient {
             // Periodically forward the live byte counters over the channel. The
             // download callbacks only mutate the shared state; this reporter is what
             // turns that into the progress the CLI renders.
-            let progress_tx = tx.clone();
-            let progress_state = shared_state_clone.clone();
-            tokio::spawn(async move {
-                let mut ticker = tokio::time::interval(std::time::Duration::from_millis(250));
-                loop {
-                    ticker.tick().await;
-                    let snapshot = match progress_state.read() {
-                        Ok(s) => Some((
-                            s.is_downloading,
-                            s.downloaded_bytes,
-                            s.total_bytes,
-                            s.status_text.clone(),
-                            s.depot_id,
-                            s.depot_downloaded_bytes,
-                            s.depot_total_bytes,
-                        )),
-                        Err(_) => None,
-                    };
-                    let Some((
-                        downloading,
-                        downloaded,
-                        total,
-                        status,
-                        depot_id,
-                        depot_downloaded,
-                        depot_total,
-                    )) = snapshot
-                    else {
-                        break;
-                    };
-                    if !downloading {
-                        break;
-                    }
-                    // Stop if the receiver is gone (terminal message already consumed).
-                    if progress_tx
-                        .send(DownloadProgress {
-                            state: DownloadProgressState::Downloading,
-                            bytes_downloaded: downloaded,
-                            total_bytes: total,
-                            current_file: status,
-                            depot_id,
-                            depot_bytes_downloaded: depot_downloaded,
-                            depot_total_bytes: depot_total,
-                        })
-                        .await
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-            });
+            spawn_progress_reporter(
+                tx.clone(),
+                shared_state_clone.clone(),
+                DownloadProgressState::Downloading,
+            );
 
             // 2. Fetch Content Servers via Service (once for all depots, so we hit the
             //    network only once regardless of how many depots are selected).

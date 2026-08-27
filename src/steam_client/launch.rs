@@ -452,62 +452,15 @@ impl SteamClient {
             let mut successful_depots = Vec::new();
 
             // Periodically forward the live byte counters over the channel.
-            let progress_tx = tx.clone();
-            let progress_state = shared_state_clone.clone();
-            let report_verify_mode = verify_mode;
-            tokio::spawn(async move {
-                let mut ticker =
-                    tokio::time::interval(std::time::Duration::from_millis(250));
-                loop {
-                    ticker.tick().await;
-                    let snapshot = match progress_state.read() {
-                        Ok(s) => Some((
-                            s.is_downloading,
-                            s.downloaded_bytes,
-                            s.total_bytes,
-                            s.status_text.clone(),
-                            s.depot_id,
-                            s.depot_downloaded_bytes,
-                            s.depot_total_bytes,
-                        )),
-                        Err(_) => None,
-                    };
-                    let Some((
-                        downloading,
-                        downloaded,
-                        total,
-                        status,
-                        depot_id,
-                        depot_downloaded,
-                        depot_total,
-                    )) = snapshot
-                    else {
-                        break;
-                    };
-                    if !downloading {
-                        break;
-                    }
-                    if progress_tx
-                        .send(DownloadProgress {
-                            state: if report_verify_mode {
-                                DownloadProgressState::Verifying
-                            } else {
-                                DownloadProgressState::Downloading
-                            },
-                            bytes_downloaded: downloaded,
-                            total_bytes: total,
-                            current_file: status,
-                            depot_id,
-                            depot_bytes_downloaded: depot_downloaded,
-                            depot_total_bytes: depot_total,
-                        })
-                        .await
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-            });
+            spawn_progress_reporter(
+                tx.clone(),
+                shared_state_clone.clone(),
+                if verify_mode {
+                    DownloadProgressState::Verifying
+                } else {
+                    DownloadProgressState::Downloading
+                },
+            );
 
             for selection in selections {
                 // Restart the per-depot counters so the current depot's progress is
