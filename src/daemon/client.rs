@@ -2,11 +2,9 @@
 //! if needed) and relay stdio + exit code. Returns `Ok(None)` to mean "no daemon
 //! available — run the command locally instead".
 
-use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::sync::Mutex;
 
 use super::transport;
 use super::{proto, Header};
@@ -203,17 +201,13 @@ async fn forward<S>(stream: S, argv: Vec<String>) -> Result<Forwarded>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    let (mut reader, writer) = tokio::io::split(stream);
-    let writer = Arc::new(Mutex::new(writer));
+    let (mut reader, writer) = proto::split_shared(stream);
 
     // Header first.
     let header = serde_json::to_vec(&Header { argv })?;
-    {
-        let mut w = writer.lock().await;
-        proto::write_frame(&mut *w, proto::C_HEADER, &header)
-            .await
-            .context("failed sending request to daemon")?;
-    }
+    proto::send_frame(&writer, proto::C_HEADER, &header)
+        .await
+        .context("failed sending request to daemon")?;
 
     // Pump our stdin → daemon. Runs concurrently; aborted once the command exits, so
     // a command that never reads stdin doesn't block on it.
@@ -224,13 +218,11 @@ where
         loop {
             match stdin.read(&mut buf).await {
                 Ok(0) => {
-                    let mut w = writer_in.lock().await;
-                    let _ = proto::write_frame(&mut *w, proto::C_STDIN_EOF, &[]).await;
+                    let _ = proto::send_frame(&writer_in, proto::C_STDIN_EOF, &[]).await;
                     break;
                 }
                 Ok(n) => {
-                    let mut w = writer_in.lock().await;
-                    if proto::write_frame(&mut *w, proto::C_STDIN, &buf[..n])
+                    if proto::send_frame(&writer_in, proto::C_STDIN, &buf[..n])
                         .await
                         .is_err()
                     {
