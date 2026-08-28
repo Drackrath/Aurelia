@@ -1,4 +1,4 @@
-<img src="assets/aurelia_logo_v3.png" alt="Aurelia, the command-line Steam client and launcher written in Rust" title="Aurelia" align="left" height="80" />
+<img src="assets/aurelia_logo_v4_downscaled.png" alt="Aurelia, the command-line Steam client and launcher written in Rust" title="Aurelia" align="left" height="80" />
 
 # Aurelia: a command-line Steam client for Linux and Windows
 
