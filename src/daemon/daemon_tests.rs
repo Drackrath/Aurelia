@@ -7,6 +7,7 @@ fn slot(client: bool, session_mtime: Option<SystemTime>, last_failure: Option<In
         client: client.then(|| SteamClient::new().unwrap()),
         session_mtime,
         last_failure,
+        last_error: None,
     }
 }
 

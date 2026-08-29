@@ -323,6 +323,24 @@ pub async fn load_session() -> Result<SessionState> {
     serde_json::from_str(&raw).with_context(|| format!("failed parsing {}", session_path.display()))
 }
 
+/// Check `password` against the on-disk session.
+///
+/// `Ok(true)`: decrypted the envelope. `Ok(false)`: file is
+/// missing/plaintext, nothing to verify. `Err`: wrong password.
+pub async fn verify_session_password(password: &str) -> Result<bool> {
+    let session_path = session_path()?;
+    let Ok(raw) = fs::read_to_string(&session_path).await else {
+        return Ok(false);
+    };
+    match crate::core::session_crypto::EncryptedSession::from_json(&raw) {
+        Some(envelope) => {
+            crate::core::session_crypto::decrypt(&envelope, password)?;
+            Ok(true)
+        }
+        None => Ok(false),
+    }
+}
+
 /// Whether saves must encrypt the session.
 ///
 /// True when the user opted in (`config session-password`) or the file on disk

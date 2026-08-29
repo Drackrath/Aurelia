@@ -114,8 +114,9 @@ pub fn session_password() -> Result<String> {
         return Ok(p);
     }
     bail!(
-        "session.json is encrypted and no terminal is available for a prompt; \
-         set AURELIA_SESSION_PASSWORD"
+        "session.json is encrypted and no session password is available — run \
+         `aurelia daemon unlock` to hand it to the daemon, or set \
+         AURELIA_SESSION_PASSWORD"
     );
 }
 

@@ -152,15 +152,18 @@ struct Slot {
     /// not retried fast enough to re-create the logon storm. `None` means the last
     /// attempt succeeded or none has been made.
     last_failure: Option<Instant>,
+    /// Why the last restore failed.
+    last_error: Option<String>,
 }
 
 impl Slot {
     /// Record that the restore for the current `mtime` failed: drop any client and
     /// arm the retry backoff. The matching `tracing::warn!` is emitted by the caller
     /// (each failure path has its own message); this only mutates the slot.
-    fn record_failure(&mut self) {
+    fn record_failure(&mut self, reason: String) {
         self.client = None;
         self.last_failure = Some(Instant::now());
+        self.last_error = Some(reason);
     }
 
     /// Whether the slot already reflects `mtime` and needs no restore attempt now:
@@ -189,6 +192,7 @@ fn init_state() -> &'static DaemonState {
             client: None,
             session_mtime: None,
             last_failure: None,
+            last_error: None,
         }),
         roster: Arc::new(StdRwLock::new(Roster::new())),
         watcher: std::sync::Mutex::new(None),
@@ -226,6 +230,7 @@ impl DaemonState {
                     tracing::info!("daemon: shared Steam session established");
                     s.client = Some(client);
                     s.last_failure = None;
+                    s.last_error = None;
                     // Start (or re-confirm) the background friends watcher on the freshly
                     // established connection so the roster cache fills without a request
                     // having to drive it. `spawn_watcher` is idempotent — if one is still
@@ -235,16 +240,16 @@ impl DaemonState {
                 }
                 Ok(_) => {
                     tracing::warn!("daemon: session restore did not authenticate");
-                    s.record_failure();
+                    s.record_failure("session restore did not authenticate".to_string());
                 }
                 Err(e) => {
                     tracing::warn!("daemon: could not restore shared session: {e:#}");
-                    s.record_failure();
+                    s.record_failure(format!("{e:#}"));
                 }
             },
             Err(e) => {
                 tracing::warn!("daemon: could not build Steam client: {e:#}");
-                s.record_failure();
+                s.record_failure(format!("could not build Steam client: {e:#}"));
             }
         }
         s.session_mtime = mtime;
@@ -285,6 +290,7 @@ impl DaemonState {
         let mut s = self.slot.write().await;
         s.client = None;
         s.last_failure = None;
+        s.last_error = None;
         s.session_mtime = None;
         // Abort the watcher bound to the now-dead connection and drop its handle so the
         // next `ensure_session` spawns a fresh one. (A held std lock, but no `.await`
@@ -334,6 +340,25 @@ impl DaemonState {
             None => true,
         }
     }
+}
+
+/// Why the daemon's last restore failed.
+pub async fn last_restore_error() -> Option<String> {
+    let state = DAEMON.get()?;
+    state.slot.read().await.last_error.clone()
+}
+
+/// Adopt a verified session password.
+///
+/// Caches it and retries the restore now; returns the restore error, if
+/// any, so the client can report it. The password itself was already
+/// verified against the on-disk envelope by the caller.
+pub async fn adopt_session_password(password: &str) -> Option<String> {
+    aurelia::core::session_crypto::cache_password(password);
+    let state = init_state();
+    state.invalidate().await;
+    state.ensure_session().await;
+    last_restore_error().await
 }
 
 /// Daemon-side replacement for `restored_client()`: returns a client backed by the

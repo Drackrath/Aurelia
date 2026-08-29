@@ -388,6 +388,9 @@ pub(crate) enum DaemonCommand {
     },
     /// List running aurelia daemon(s) with their PID.
     List,
+    /// Hand the running daemon the session password so it can decrypt the
+    /// encrypted `session.json` (prompts, or reads AURELIA_SESSION_PASSWORD).
+    Unlock,
 }
 
 #[derive(Subcommand)]

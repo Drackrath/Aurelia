@@ -127,18 +127,55 @@ pub async fn run_server() -> Result<()> {
 /// background stdout/stderr pump.
 use proto::SharedWriter;
 
-/// Read the opening frame and parse the argv header. The first frame on a connection
-/// must be the [`proto::C_HEADER`] frame carrying the request's argv.
-async fn read_header<R>(reader: &mut R) -> Result<Vec<String>>
+/// A parsed opening frame.
+enum Request {
+    /// Forwarded command argv.
+    Command(Vec<String>),
+    /// Session-password hand-off.
+    Unlock(String),
+}
+
+/// Read and parse the opening frame.
+async fn read_request<R>(reader: &mut R) -> Result<Request>
 where
     R: AsyncRead + Unpin,
 {
     let (channel, payload) = proto::read_frame(reader)
         .await?
         .context("client closed before sending a request header")?;
-    anyhow::ensure!(channel == proto::C_HEADER, "expected a header frame first");
-    let header: Header = serde_json::from_slice(&payload).context("malformed request header")?;
-    Ok(header.argv)
+    match channel {
+        proto::C_HEADER => {
+            let header: Header =
+                serde_json::from_slice(&payload).context("malformed request header")?;
+            Ok(Request::Command(header.argv))
+        }
+        proto::C_UNLOCK => {
+            let password =
+                String::from_utf8(payload).context("malformed unlock payload")?;
+            Ok(Request::Unlock(password))
+        }
+        _ => anyhow::bail!("expected a header or unlock frame first"),
+    }
+}
+
+/// Serve one unlock request: verify, adopt, report.
+async fn handle_unlock<W>(password: String, writer: &SharedWriter<W>) -> Result<i32>
+where
+    W: AsyncWrite + Unpin,
+{
+    if let Err(e) = aurelia::core::config::verify_session_password(&password).await {
+        let msg = format!("{e:#}\n");
+        let _ = proto::send_frame(writer, proto::C_STDERR, msg.as_bytes()).await;
+        return Ok(1);
+    }
+    // Verified — cache and retry restore.
+    if let Some(e) = super::adopt_session_password(&password).await {
+        let msg = format!("session password accepted, but the restore failed: {e}\n");
+        let _ = proto::send_frame(writer, proto::C_STDERR, msg.as_bytes()).await;
+    } else {
+        tracing::info!("daemon: session password adopted; shared session restored");
+    }
+    Ok(0)
 }
 
 /// Spawn the pump that forwards captured stdout/stderr chunks to the socket. Ends
@@ -211,7 +248,16 @@ where
 
     let (mut reader, writer) = proto::split_shared(stream);
 
-    let argv = read_header(&mut reader).await?;
+    let argv = match read_request(&mut reader).await? {
+        Request::Command(argv) => argv,
+        Request::Unlock(password) => {
+            let code = handle_unlock(password, &writer).await?;
+            let mut w = writer.lock().await;
+            proto::write_frame(&mut *w, proto::C_EXIT, &code.to_be_bytes()).await?;
+            let _ = w.shutdown().await;
+            return Ok(());
+        }
+    };
 
     // Captured stdout/stderr → socket.
     let (out_tx, out_rx) = mpsc::unbounded_channel::<OutChunk>();

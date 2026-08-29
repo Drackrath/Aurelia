@@ -16,6 +16,8 @@ const MAX_FRAME_LEN: u32 = 64 * 1024 * 1024;
 pub const C_HEADER: u8 = 0x01;
 pub const C_STDIN: u8 = 0x02;
 pub const C_STDIN_EOF: u8 = 0x03;
+/// Session-password hand-off frame.
+pub const C_UNLOCK: u8 = 0x04;
 // Daemon → client.
 pub const C_STDOUT: u8 = 0x11;
 pub const C_STDERR: u8 = 0x12;

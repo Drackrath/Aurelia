@@ -53,7 +53,10 @@ pub(crate) async fn restored_client() -> Result<SteamClient> {
         return Ok(daemon::shared_restored_client().await);
     }
     let mut client = SteamClient::new()?;
-    let saved = load_session().await.unwrap_or_default();
+    // Surface decrypt/parse failures, don't mask as logged-out.
+    let saved = load_session()
+        .await
+        .context("could not read the stored session")?;
     if saved.refresh_token.is_some() && saved.account_name.is_some() {
         tracing::info!("Restoring Steam session (connecting to Steam) ...");
         match client.restore_session().await {
@@ -68,6 +71,10 @@ pub(crate) async fn restored_client() -> Result<SteamClient> {
 pub(crate) async fn authed_client() -> Result<SteamClient> {
     let client = restored_client().await?;
     if !client.is_authenticated() {
+        // The daemon's restore failure explains why better than "not logged in".
+        if let Some(e) = daemon::last_restore_error().await {
+            bail!("could not restore the stored session: {e}");
+        }
         bail!("not logged in — run `aurelia login` first");
     }
     Ok(client)

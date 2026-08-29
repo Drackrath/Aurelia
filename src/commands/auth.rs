@@ -51,6 +51,28 @@ async fn encrypt_session_with(password: &str) {
     .await;
     if let Err(e) = result {
         tracing::warn!("could not encrypt session.json: {e:#}");
+        return;
+    }
+    unlock_daemon_with(password).await;
+}
+
+/// Hand the daemon the session password.
+///
+/// A forwarded (in-daemon) login already cached it in-process; a local
+/// login must push it over the socket, or the daemon serving the next
+/// command cannot decrypt the session it just watched change.
+async fn unlock_daemon_with(password: &str) {
+    if daemon::in_daemon() || std::env::var_os("AURELIA_NO_DAEMON").is_some() {
+        return;
+    }
+    use daemon::client::Unlocked;
+    match daemon::client::send_session_password(password).await {
+        Ok(Unlocked::Accepted) => tracing::info!("daemon adopted the session password"),
+        Ok(Unlocked::Rejected(msg)) => {
+            tracing::warn!("daemon rejected the session password: {msg}")
+        }
+        Ok(Unlocked::Unavailable) => {}
+        Err(e) => tracing::warn!("could not hand the session password to the daemon: {e:#}"),
     }
 }
 
@@ -530,6 +552,40 @@ pub(crate) fn report_login_success(account: &str, json: bool) {
         print_json(&serde_json::json!({ "logged_in": true, "account": account }));
     } else {
         cli_println!("Login successful.");
+    }
+}
+
+/// Hand the daemon the session password, prompting if needed.
+///
+/// The escape hatch when the daemon (re)started after login and lost its
+/// in-memory password: verifies the password against `session.json`
+/// locally, then pushes it to the daemon (spawning one if none runs).
+pub(crate) async fn cmd_daemon_unlock(json: bool) -> Result<()> {
+    if !aurelia::core::config::session_path()?.exists() {
+        bail!("no stored session — run `aurelia login` first");
+    }
+    let password = aurelia::core::session_crypto::session_password()?;
+    if !aurelia::core::config::verify_session_password(&password).await? {
+        if json {
+            print_json(&serde_json::json!({ "unlocked": false, "encrypted": false }));
+        } else {
+            cli_println!("session.json is not encrypted — nothing to unlock.");
+        }
+        return Ok(());
+    }
+
+    use daemon::client::Unlocked;
+    match daemon::client::send_session_password(&password).await? {
+        Unlocked::Accepted => {
+            if json {
+                print_json(&serde_json::json!({ "unlocked": true }));
+            } else {
+                cli_println!("Daemon unlocked.");
+            }
+            Ok(())
+        }
+        Unlocked::Rejected(msg) => bail!("daemon rejected the session password: {msg}"),
+        Unlocked::Unavailable => bail!("no daemon reachable and none could be spawned"),
     }
 }
 
