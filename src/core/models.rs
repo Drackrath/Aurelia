@@ -133,6 +133,9 @@ pub type UserConfigStore = HashMap<u32, UserAppConfig>;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionState {
     pub account_name: Option<String>,
+    /// Public display (persona) name, for messages.
+    #[serde(default)]
+    pub persona_name: Option<String>,
     pub steam_id: Option<u64>,
     pub refresh_token: Option<String>,
     pub client_instance_id: Option<u64>,

@@ -363,7 +363,12 @@ pub async fn save_session(session: &SessionState) -> Result<()> {
     if session_encryption_active(&session_path).await {
         let password = crate::core::session_crypto::session_password()?;
         let plain = serde_json::to_vec(session)?;
-        let envelope = crate::core::session_crypto::encrypt(&plain, &password)?;
+        let mut envelope = crate::core::session_crypto::encrypt(&plain, &password)?;
+        // Display hint, readable without the password.
+        envelope.display_name = session
+            .persona_name
+            .clone()
+            .or_else(|| session.account_name.clone());
         write_json_pretty(&session_path, &envelope).await?;
     } else {
         write_json_pretty(&session_path, session).await?;

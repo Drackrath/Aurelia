@@ -34,18 +34,23 @@ async fn require_experimental(what: &str) -> Result<()> {
 ///
 /// Called after a successful login: a credentials login reuses the Steam
 /// account password, a QR login the hash of the scanned challenge. Best-effort
-/// — a failure here must not undo a login that already succeeded.
-async fn encrypt_session_with(password: &str) {
+/// — a failure here must not undo a login that already succeeded. Fetches
+/// and persists the persona (display) name in the same save.
+async fn encrypt_session_with(password: &str, client: &SteamClient) {
     use aurelia::core::config::{load_launcher_config, save_launcher_config};
 
     aurelia::core::session_crypto::cache_password(password);
+    let persona = client.own_persona_name().await;
     let result = async {
         let mut config = load_launcher_config().await?;
         if !config.encrypt_session {
             config.encrypt_session = true;
             save_launcher_config(&config).await?;
         }
-        let session = load_session().await?;
+        let mut session = load_session().await?;
+        if persona.is_some() {
+            session.persona_name = persona;
+        }
         save_session(&session).await
     }
     .await;
@@ -73,6 +78,75 @@ async fn unlock_daemon_with(password: &str) {
         }
         Ok(Unlocked::Unavailable) => {}
         Err(e) => tracing::warn!("could not hand the session password to the daemon: {e:#}"),
+    }
+}
+
+/// The stored session, peeked without prompting.
+enum StoredSession {
+    /// No usable session on disk.
+    None,
+    /// Session exists; account name unknown.
+    Unknown,
+    /// Session exists for this account.
+    Account(String),
+}
+
+/// Peek at the stored session; never prompts.
+///
+/// An encrypted session is only decrypted with an already-known password
+/// (cache/env) — a login must not open with a session-password prompt.
+async fn peek_stored_session() -> StoredSession {
+    use aurelia::core::models::SessionState;
+    use aurelia::core::session_crypto::{decrypt, known_password, EncryptedSession};
+
+    let Ok(path) = aurelia::core::config::session_path() else {
+        return StoredSession::None;
+    };
+    let Ok(raw) = tokio::fs::read_to_string(&path).await else {
+        return StoredSession::None;
+    };
+    let session: SessionState = if let Some(envelope) = EncryptedSession::from_json(&raw) {
+        let plain = known_password().and_then(|p| decrypt(&envelope, &p).ok());
+        match plain.and_then(|p| serde_json::from_slice(&p).ok()) {
+            Some(session) => session,
+            // Locked: fall back to the plaintext hint.
+            None => {
+                return match envelope.display_name.filter(|n| !n.trim().is_empty()) {
+                    Some(name) => StoredSession::Account(name),
+                    None => StoredSession::Unknown,
+                }
+            }
+        }
+    } else {
+        match serde_json::from_str(&raw) {
+            Ok(session) => session,
+            Err(_) => return StoredSession::None,
+        }
+    };
+    // Persona (display) name first, account name second.
+    let name = session
+        .persona_name
+        .filter(|n| !n.trim().is_empty())
+        .or_else(|| session.account_name.filter(|n| !n.trim().is_empty()));
+    if let Some(name) = name {
+        return StoredSession::Account(name);
+    }
+    if session.refresh_token.is_some() || session.web_token.is_some() {
+        return StoredSession::Unknown;
+    }
+    StoredSession::None
+}
+
+/// Warn (on stderr) when a session already exists.
+async fn warn_if_already_logged_in() {
+    match peek_stored_session().await {
+        StoredSession::Account(name) => cli_eprintln!(
+            "Warning: already logged in as {name} — logging in again replaces that session."
+        ),
+        StoredSession::Unknown => cli_eprintln!(
+            "Warning: an existing session is active — logging in again replaces it."
+        ),
+        StoredSession::None => {}
     }
 }
 
@@ -116,7 +190,10 @@ pub(crate) async fn cmd_login(
 
     let username = match username {
         Some(u) => u,
-        None => prompt_line("Steam username: ")?,
+        None => {
+            warn_if_already_logged_in().await;
+            prompt_line("Steam username: ")?
+        }
     };
     let account = username.clone();
     let password = match password.or_else(|| std::env::var("AURELIA_PASSWORD").ok()) {
@@ -135,7 +212,7 @@ pub(crate) async fn cmd_login(
 
     match attempt {
         Ok(_) => {
-            encrypt_session_with(&password).await;
+            encrypt_session_with(&password, &client).await;
             report_login_success(&account, json);
             Ok(())
         }
@@ -154,7 +231,7 @@ pub(crate) async fn cmd_login(
                     .login(username, password.clone(), Some(code), false)
                     .await
                     .context("login failed after providing Steam Guard code")?;
-                encrypt_session_with(&password).await;
+                encrypt_session_with(&password, &client).await;
                 report_login_success(&account, json);
                 Ok(())
             } else if client
@@ -206,7 +283,7 @@ pub(crate) async fn cmd_login_qr(json: bool) -> Result<()> {
     if !last_url.is_empty() {
         use sha1::{Digest, Sha1};
         let qr_password = hex::encode(Sha1::digest(last_url.as_bytes()));
-        encrypt_session_with(&qr_password).await;
+        encrypt_session_with(&qr_password, &client).await;
         if json {
             eprint_json_line(&serde_json::json!({
                 "event": "session_encrypted",
@@ -462,7 +539,7 @@ pub(crate) async fn cmd_login_json(
 
     match login_with_timeout(&mut client, &username, &password, guard.clone()).await {
         Ok(_) => {
-            encrypt_session_with(&password).await;
+            encrypt_session_with(&password, &client).await;
             report_login_success(&account, true);
             Ok(())
         }
@@ -486,7 +563,7 @@ pub(crate) async fn cmd_login_json(
                 login_with_timeout(&mut client, &username, &password, Some(code))
                     .await
                     .context("login failed after providing Steam Guard code")?;
-                encrypt_session_with(&password).await;
+                encrypt_session_with(&password, &client).await;
                 report_login_success(&account, true);
                 Ok(())
             } else if client

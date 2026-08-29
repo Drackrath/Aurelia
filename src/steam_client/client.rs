@@ -300,9 +300,11 @@ impl SteamClient {
         let connection = access_with_retry(&server_list, &account_name, &refresh_token).await?;
 
         self.connection = Some(connection);
-        let session = self
+        let mut session = self
             .session_from_connection(account_name)
             .context("refresh token login succeeded but no token was available for persistence")?;
+        // Keep the persisted persona across restores.
+        session.persona_name = persisted.persona_name.clone();
         save_session(&session).await?;
         self.state = LoginState::Complete;
         self.pending_confirmations.clear();
@@ -530,6 +532,7 @@ impl SteamClient {
 
                     let session = SessionState {
                         account_name: Some(account_name),
+                        persona_name: None,
                         steam_id,
                         refresh_token: Some(refresh_token.to_string()),
                         client_instance_id: None,
@@ -551,6 +554,7 @@ impl SteamClient {
         let steam_id = u64::from(connection.steam_id());
         Some(SessionState {
             account_name: Some(account_name),
+            persona_name: None,
             steam_id: Some(steam_id),
             refresh_token: connection.access_token().map(ToString::to_string),
             client_instance_id: None,

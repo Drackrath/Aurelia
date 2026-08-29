@@ -22,6 +22,12 @@ const FORMAT: &str = "aurelia-session-v1";
 pub struct EncryptedSession {
     /// Format tag; see [`FORMAT`].
     pub format: String,
+    /// Plaintext display-name hint (persona, else account).
+    ///
+    /// Not secret (the refresh token is) and not authenticated —
+    /// never trust it for anything but messages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     /// Hex Argon2id salt.
     pub salt: String,
     /// Hex ChaCha20-Poly1305 nonce.
@@ -62,6 +68,7 @@ pub fn encrypt(plaintext: &[u8], password: &str) -> Result<EncryptedSession> {
 
     Ok(EncryptedSession {
         format: FORMAT.to_string(),
+        display_name: None,
         salt: hex::encode(salt),
         nonce: hex::encode(nonce),
         ciphertext: hex::encode(ciphertext),
@@ -92,20 +99,27 @@ pub fn cache_password(password: &str) {
     *PASSWORD.lock().unwrap() = Some(password.to_string());
 }
 
+/// Cached or env password; never prompts.
+pub fn known_password() -> Option<String> {
+    if let Some(p) = PASSWORD.lock().unwrap().clone() {
+        return Some(p);
+    }
+    let p = std::env::var("AURELIA_SESSION_PASSWORD").ok()?;
+    if p.is_empty() {
+        return None;
+    }
+    cache_password(&p);
+    Some(p)
+}
+
 /// The session password, resolved on first use.
 ///
 /// Order: in-process cache, `AURELIA_SESSION_PASSWORD`, then an interactive
 /// terminal prompt. Errors when no terminal is attached (e.g. the daemon) and
 /// the environment variable is unset.
 pub fn session_password() -> Result<String> {
-    if let Some(p) = PASSWORD.lock().unwrap().clone() {
+    if let Some(p) = known_password() {
         return Ok(p);
-    }
-    if let Ok(p) = std::env::var("AURELIA_SESSION_PASSWORD") {
-        if !p.is_empty() {
-            cache_password(&p);
-            return Ok(p);
-        }
     }
     if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
         let p = rpassword::prompt_password("Session password: ")
