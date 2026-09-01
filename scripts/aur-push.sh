@@ -61,10 +61,13 @@ update_package() {
     echo
     echo "==> $pkg"
 
-    # Clone or refresh AUR checkout
+    # Refresh without clobbering local commits
     if [ -d "$dir/.git" ]; then
         git -C "$dir" fetch -q origin master
-        git -C "$dir" reset -q --hard origin/master
+        [ -z "$(git -C "$dir" status --porcelain)" ] \
+            || die "dirty checkout: $dir"
+        git -C "$dir" merge -q --ff-only origin/master \
+            || die "diverged from AUR: $dir"
     else
         git clone -q "$AUR_HOST/$pkg.git" "$dir"
     fi
