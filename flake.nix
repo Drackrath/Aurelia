@@ -61,6 +61,7 @@
           # deliberately absent.
           buildInputs = [
             pkgs.bzip2
+            pkgs.dbus
             pkgs.xz
             pkgs.zstd
           ];
