@@ -33,58 +33,6 @@ pub async fn try_forward() -> Result<Forwarded> {
     forward(stream, argv).await
 }
 
-/// Outcome of a session-password hand-off.
-pub enum Unlocked {
-    /// Daemon accepted the password.
-    Accepted,
-    /// Daemon rejected it (message relayed).
-    Rejected(String),
-    /// No daemon reachable.
-    Unavailable,
-}
-
-/// Hand the session password to the daemon.
-///
-/// Spawns one if none is running, so the very next forwarded command can
-/// already decrypt the session. Any daemon-side messages are collected
-/// (not printed) so the caller decides how to surface them.
-pub async fn send_session_password(password: &str) -> Result<Unlocked> {
-    let Some(stream) = connect_or_spawn().await else {
-        return Ok(Unlocked::Unavailable);
-    };
-    let (mut reader, writer) = proto::split_shared(stream);
-    proto::send_frame(&writer, proto::C_UNLOCK, password.as_bytes())
-        .await
-        .context("failed sending session password to daemon")?;
-
-    let mut messages = String::new();
-    let mut code = 0;
-    loop {
-        match proto::read_frame(&mut reader).await? {
-            Some((proto::C_STDOUT | proto::C_STDERR, data)) => {
-                messages.push_str(&String::from_utf8_lossy(&data));
-            }
-            Some((proto::C_EXIT, data)) => {
-                code = i32::from_be_bytes(
-                    data.get(..4).and_then(|b| b.try_into().ok()).unwrap_or([0; 4]),
-                );
-                break;
-            }
-            Some(_) => {}
-            None => break,
-        }
-    }
-    let messages = messages.trim().to_string();
-    if code == 0 {
-        if !messages.is_empty() {
-            tracing::warn!("daemon unlock: {messages}");
-        }
-        Ok(Unlocked::Accepted)
-    } else {
-        Ok(Unlocked::Rejected(messages))
-    }
-}
-
 /// Connect to the daemon; if none is listening, spawn one and wait for it.
 ///
 /// A daemon left over from a previous `aurelia` build parses forwarded commands with its

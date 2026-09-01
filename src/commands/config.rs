@@ -109,67 +109,6 @@ pub(crate) async fn cmd_config_experimental(enabled: Option<bool>, json: bool) -
     Ok(())
 }
 
-/// `config session-password [--clear]`: set (or remove) the password that keeps
-/// `session.json` encrypted on disk. Loading first decrypts with the current
-/// password when the file is already encrypted, so changing the password re-wraps
-/// the same session. The password itself is never persisted.
-pub(crate) async fn cmd_config_session_password(clear: bool, json: bool) -> Result<()> {
-    use aurelia::core::config::{delete_session, load_session, save_session};
-    use aurelia::core::session_crypto::cache_password;
-
-    // Prompts for the current password if encrypted.
-    let session = load_session()
-        .await
-        .context("failed loading the current session")?;
-
-    let mut config = load_launcher_config().await?;
-
-    if clear {
-        config.encrypt_session = false;
-        save_launcher_config(&config)
-            .await
-            .context("failed saving session-encryption config")?;
-        // Rewrite plaintext: drop the encrypted file first.
-        delete_session().await?;
-        save_session(&session).await?;
-        if json {
-            print_json(&serde_json::json!({ "encrypt_session": false }));
-        } else {
-            cli_println!("Session encryption disabled; session.json rewritten as plaintext.");
-        }
-        return Ok(());
-    }
-
-    let password = rpassword::prompt_password("New session password: ")
-        .context("failed reading new session password")?;
-    if password.is_empty() {
-        anyhow::bail!("the session password must not be empty (use --clear to disable encryption)");
-    }
-    let confirm = rpassword::prompt_password("Confirm session password: ")
-        .context("failed reading password confirmation")?;
-    if password != confirm {
-        anyhow::bail!("passwords do not match");
-    }
-
-    cache_password(&password);
-    config.encrypt_session = true;
-    save_launcher_config(&config)
-        .await
-        .context("failed saving session-encryption config")?;
-    save_session(&session).await?;
-
-    if json {
-        print_json(&serde_json::json!({ "encrypt_session": true }));
-    } else {
-        cli_println!("Session encryption enabled; session.json is now encrypted.");
-        cli_println!(
-            "Commands will ask for the password once per run; set AURELIA_SESSION_PASSWORD \
-             for non-interactive use (required by the session daemon)."
-        );
-    }
-    Ok(())
-}
-
 /// `config proxy [<url>] [--no-proxy <list>] [--clear]`: view or set the network
 /// proxy used for all HTTP(S) communication (Steam web endpoints, depot downloads, and
 /// Proton/plugin release lookups). With no arguments, prints the current setting.

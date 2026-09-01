@@ -30,16 +30,15 @@ async fn require_experimental(what: &str) -> Result<()> {
     )
 }
 
-/// Re-encrypt the freshly saved session with `password`.
+/// Encrypt the freshly saved session and persist the persona name.
 ///
-/// Called after a successful login: a credentials login reuses the Steam
-/// account password, a QR login the hash of the scanned challenge. Best-effort
-/// — a failure here must not undo a login that already succeeded. Fetches
-/// and persists the persona (display) name in the same save.
-async fn encrypt_session_with(password: &str, client: &SteamClient) {
+/// Called after a successful login. The key comes from the OS keyring
+/// (created on demand) — never from the login credentials, and never via
+/// a prompt. The daemon resolves the same keyring key itself. Best-effort
+/// — a failure here must not undo a login that already succeeded.
+async fn secure_session(client: &SteamClient) {
     use aurelia::core::config::{load_launcher_config, save_launcher_config};
 
-    aurelia::core::session_crypto::cache_password(password);
     let persona = client.own_persona_name().await;
     let result = async {
         let mut config = load_launcher_config().await?;
@@ -56,28 +55,6 @@ async fn encrypt_session_with(password: &str, client: &SteamClient) {
     .await;
     if let Err(e) = result {
         tracing::warn!("could not encrypt session.json: {e:#}");
-        return;
-    }
-    unlock_daemon_with(password).await;
-}
-
-/// Hand the daemon the session password.
-///
-/// A forwarded (in-daemon) login already cached it in-process; a local
-/// login must push it over the socket, or the daemon serving the next
-/// command cannot decrypt the session it just watched change.
-async fn unlock_daemon_with(password: &str) {
-    if daemon::in_daemon() || std::env::var_os("AURELIA_NO_DAEMON").is_some() {
-        return;
-    }
-    use daemon::client::Unlocked;
-    match daemon::client::send_session_password(password).await {
-        Ok(Unlocked::Accepted) => tracing::info!("daemon adopted the session password"),
-        Ok(Unlocked::Rejected(msg)) => {
-            tracing::warn!("daemon rejected the session password: {msg}")
-        }
-        Ok(Unlocked::Unavailable) => {}
-        Err(e) => tracing::warn!("could not hand the session password to the daemon: {e:#}"),
     }
 }
 
@@ -91,13 +68,13 @@ enum StoredSession {
     Account(String),
 }
 
-/// Peek at the stored session; never prompts.
+/// Peek at the stored session; never decrypts.
 ///
-/// An encrypted session is only decrypted with an already-known password
-/// (cache/env) — a login must not open with a session-password prompt.
+/// Encrypted sessions are identified by their plaintext display-name hint,
+/// so this stays cheap and free of keyring round trips.
 async fn peek_stored_session() -> StoredSession {
     use aurelia::core::models::SessionState;
-    use aurelia::core::session_crypto::{decrypt, known_password, EncryptedSession};
+    use aurelia::core::session_crypto::EncryptedSession;
 
     let Ok(path) = aurelia::core::config::session_path() else {
         return StoredSession::None;
@@ -106,17 +83,10 @@ async fn peek_stored_session() -> StoredSession {
         return StoredSession::None;
     };
     let session: SessionState = if let Some(envelope) = EncryptedSession::from_json(&raw) {
-        let plain = known_password().and_then(|p| decrypt(&envelope, &p).ok());
-        match plain.and_then(|p| serde_json::from_slice(&p).ok()) {
-            Some(session) => session,
-            // Locked: fall back to the plaintext hint.
-            None => {
-                return match envelope.display_name.filter(|n| !n.trim().is_empty()) {
-                    Some(name) => StoredSession::Account(name),
-                    None => StoredSession::Unknown,
-                }
-            }
-        }
+        return match envelope.display_name.filter(|n| !n.trim().is_empty()) {
+            Some(name) => StoredSession::Account(name),
+            None => StoredSession::Unknown,
+        };
     } else {
         match serde_json::from_str(&raw) {
             Ok(session) => session,
@@ -212,7 +182,7 @@ pub(crate) async fn cmd_login(
 
     match attempt {
         Ok(_) => {
-            encrypt_session_with(&password, &client).await;
+            secure_session(&client).await;
             report_login_success(&account, json);
             Ok(())
         }
@@ -231,7 +201,7 @@ pub(crate) async fn cmd_login(
                     .login(username, password.clone(), Some(code), false)
                     .await
                     .context("login failed after providing Steam Guard code")?;
-                encrypt_session_with(&password, &client).await;
+                secure_session(&client).await;
                 report_login_success(&account, json);
                 Ok(())
             } else if client
@@ -278,27 +248,9 @@ pub(crate) async fn cmd_login_qr(json: bool) -> Result<()> {
     };
     let session = result.context("QR login failed")?;
     let account = session.account_name.clone().unwrap_or_default();
+    let _ = last_url;
 
-    // QR logins encrypt with the challenge hash.
-    if !last_url.is_empty() {
-        use sha1::{Digest, Sha1};
-        let qr_password = hex::encode(Sha1::digest(last_url.as_bytes()));
-        encrypt_session_with(&qr_password, &client).await;
-        if json {
-            eprint_json_line(&serde_json::json!({
-                "event": "session_encrypted",
-                "password": qr_password,
-            }));
-        } else {
-            cli_println!("session.json is now encrypted. Session password (QR hash):");
-            cli_println!("  {qr_password}");
-            cli_println!(
-                "Save it — later runs need it to decrypt the session (prompt or \
-                 AURELIA_SESSION_PASSWORD)."
-            );
-        }
-    }
-
+    secure_session(&client).await;
     report_login_success(&account, json);
     Ok(())
 }
@@ -539,7 +491,7 @@ pub(crate) async fn cmd_login_json(
 
     match login_with_timeout(&mut client, &username, &password, guard.clone()).await {
         Ok(_) => {
-            encrypt_session_with(&password, &client).await;
+            secure_session(&client).await;
             report_login_success(&account, true);
             Ok(())
         }
@@ -563,7 +515,7 @@ pub(crate) async fn cmd_login_json(
                 login_with_timeout(&mut client, &username, &password, Some(code))
                     .await
                     .context("login failed after providing Steam Guard code")?;
-                encrypt_session_with(&password, &client).await;
+                secure_session(&client).await;
                 report_login_success(&account, true);
                 Ok(())
             } else if client
@@ -629,40 +581,6 @@ pub(crate) fn report_login_success(account: &str, json: bool) {
         print_json(&serde_json::json!({ "logged_in": true, "account": account }));
     } else {
         cli_println!("Login successful.");
-    }
-}
-
-/// Hand the daemon the session password, prompting if needed.
-///
-/// The escape hatch when the daemon (re)started after login and lost its
-/// in-memory password: verifies the password against `session.json`
-/// locally, then pushes it to the daemon (spawning one if none runs).
-pub(crate) async fn cmd_daemon_unlock(json: bool) -> Result<()> {
-    if !aurelia::core::config::session_path()?.exists() {
-        bail!("no stored session — run `aurelia login` first");
-    }
-    let password = aurelia::core::session_crypto::session_password()?;
-    if !aurelia::core::config::verify_session_password(&password).await? {
-        if json {
-            print_json(&serde_json::json!({ "unlocked": false, "encrypted": false }));
-        } else {
-            cli_println!("session.json is not encrypted — nothing to unlock.");
-        }
-        return Ok(());
-    }
-
-    use daemon::client::Unlocked;
-    match daemon::client::send_session_password(&password).await? {
-        Unlocked::Accepted => {
-            if json {
-                print_json(&serde_json::json!({ "unlocked": true }));
-            } else {
-                cli_println!("Daemon unlocked.");
-            }
-            Ok(())
-        }
-        Unlocked::Rejected(msg) => bail!("daemon rejected the session password: {msg}"),
-        Unlocked::Unavailable => bail!("no daemon reachable and none could be spawned"),
     }
 }
 

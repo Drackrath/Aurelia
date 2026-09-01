@@ -12,7 +12,7 @@ fn login(config_dir: &Path) -> Output {
         .arg("login")
         .env("AURELIA_CONFIG_DIR", config_dir)
         .env("AURELIA_NO_DAEMON", "1")
-        .env_remove("AURELIA_SESSION_PASSWORD")
+        .env("AURELIA_DISABLE_KEYRING", "1")
         .env_remove("AURELIA_PASSWORD")
         .stdin(std::process::Stdio::null())
         .output()

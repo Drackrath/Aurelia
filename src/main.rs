@@ -403,9 +403,6 @@ async fn run(cli: Cli) -> Result<()> {
             ConfigCommand::Experimental { enabled } => {
                 cmd_config_experimental(enabled, json).await
             }
-            ConfigCommand::SessionPassword { clear } => {
-                cmd_config_session_password(clear, json).await
-            }
             ConfigCommand::SteamRuntimePolicy { policy } => {
                 cmd_config_steam_runtime_policy(policy, json).await
             }
@@ -509,7 +506,6 @@ async fn run(cli: Cli) -> Result<()> {
         } => match sub {
             DaemonCommand::Stop { pid } => cmd_daemon_stop(pid, json),
             DaemonCommand::List => cmd_daemon_list(json),
-            DaemonCommand::Unlock => cmd_daemon_unlock(json).await,
         },
         // Bare `daemon` is intercepted in `async_main`; it never reaches here.
         Command::Daemon { command: None, .. } => {

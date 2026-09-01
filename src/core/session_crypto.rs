@@ -1,13 +1,13 @@
-//! Password-based encryption for `session.json`.
+//! OS-keyring-based encryption for `session.json`.
 //!
-//! The session file holds a long-lived Steam refresh token. With a session
-//! password set (`aurelia config session-password`), the file is stored as a
-//! ChaCha20-Poly1305 envelope whose key is derived from the password with
-//! Argon2id, and is decrypted transparently ("on the fly") whenever the
-//! session is loaded. The password comes from `AURELIA_SESSION_PASSWORD` or,
-//! interactively, a one-time terminal prompt cached for the process.
+//! The session file holds a long-lived Steam refresh token. It is stored as
+//! a ChaCha20-Poly1305 envelope keyed by a random secret kept in the OS
+//! keyring (Secret Service / Credential Manager / Keychain), created on
+//! first login and read back transparently by both the CLI and the daemon.
+//! No passwords, no prompts; without a reachable keyring the session stays
+//! plaintext with owner-only permissions.
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use argon2::Argon2;
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
@@ -28,6 +28,9 @@ pub struct EncryptedSession {
     /// never trust it for anything but messages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    /// Keyed to the OS keyring, not a password.
+    #[serde(default)]
+    pub keyring: bool,
     /// Hex Argon2id salt.
     pub salt: String,
     /// Hex ChaCha20-Poly1305 nonce.
@@ -69,6 +72,7 @@ pub fn encrypt(plaintext: &[u8], password: &str) -> Result<EncryptedSession> {
     Ok(EncryptedSession {
         format: FORMAT.to_string(),
         display_name: None,
+        keyring: false,
         salt: hex::encode(salt),
         nonce: hex::encode(nonce),
         ciphertext: hex::encode(ciphertext),
@@ -87,51 +91,70 @@ pub fn decrypt(envelope: &EncryptedSession, password: &str) -> Result<Vec<u8>> {
     cipher
         .decrypt(Nonce::from_slice(&nonce), ciphertext.as_slice())
         .map_err(|_| {
-            anyhow!("could not decrypt session.json — wrong session password?")
+            anyhow!("could not decrypt session.json — the key does not match this file")
         })
 }
 
-/// Per-process password cache: prompt at most once.
-static PASSWORD: Mutex<Option<String>> = Mutex::new(None);
+/// Per-process keyring-key cache: one D-Bus round trip.
+static KEYRING_KEY: Mutex<Option<String>> = Mutex::new(None);
 
-/// Seed or replace the cache (e.g. after a password change).
-pub fn cache_password(password: &str) {
-    *PASSWORD.lock().unwrap() = Some(password.to_string());
+/// Whether the OS keyring may be used at all.
+fn keyring_enabled() -> bool {
+    std::env::var_os("AURELIA_DISABLE_KEYRING").is_none_or(|v| v.is_empty())
 }
 
-/// Cached or env password; never prompts.
-pub fn known_password() -> Option<String> {
-    if let Some(p) = PASSWORD.lock().unwrap().clone() {
-        return Some(p);
-    }
-    let p = std::env::var("AURELIA_SESSION_PASSWORD").ok()?;
-    if p.is_empty() {
+/// The keyring entry holding the session key.
+fn keyring_entry() -> keyring::Result<keyring::Entry> {
+    keyring::Entry::new("aurelia", "session-key")
+}
+
+/// The stored keyring session key, if reachable.
+///
+/// Blocking (D-Bus / OS call) — call from sync code or `spawn_blocking`.
+pub fn keyring_secret() -> Option<String> {
+    if !keyring_enabled() {
         return None;
     }
-    cache_password(&p);
-    Some(p)
+    if let Some(k) = KEYRING_KEY.lock().unwrap().clone() {
+        return Some(k);
+    }
+    match keyring_entry().and_then(|e| e.get_password()) {
+        Ok(key) => {
+            *KEYRING_KEY.lock().unwrap() = Some(key.clone());
+            Some(key)
+        }
+        Err(keyring::Error::NoEntry) => None,
+        Err(e) => {
+            tracing::debug!("OS keyring unavailable: {e}");
+            None
+        }
+    }
 }
 
-/// The session password, resolved on first use.
+/// The keyring session key, created on first use.
 ///
-/// Order: in-process cache, `AURELIA_SESSION_PASSWORD`, then an interactive
-/// terminal prompt. Errors when no terminal is attached (e.g. the daemon) and
-/// the environment variable is unset.
-pub fn session_password() -> Result<String> {
-    if let Some(p) = known_password() {
-        return Ok(p);
+/// Blocking (D-Bus / OS call) — call from sync code or `spawn_blocking`.
+pub fn keyring_secret_or_create() -> Option<String> {
+    if !keyring_enabled() {
+        return None;
     }
-    if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-        let p = rpassword::prompt_password("Session password: ")
-            .context("failed reading session password")?;
-        cache_password(&p);
-        return Ok(p);
+    if let Some(key) = keyring_secret() {
+        return Some(key);
     }
-    bail!(
-        "session.json is encrypted and no session password is available — run \
-         `aurelia daemon unlock` to hand it to the daemon, or set \
-         AURELIA_SESSION_PASSWORD"
-    );
+    let mut raw = [0u8; 32];
+    rand::fill(&mut raw[..]);
+    let key = hex::encode(raw);
+    match keyring_entry().and_then(|e| e.set_password(&key)) {
+        Ok(()) => {
+            *KEYRING_KEY.lock().unwrap() = Some(key.clone());
+            tracing::info!("created an OS keyring key for session.json");
+            Some(key)
+        }
+        Err(e) => {
+            tracing::warn!("could not store a session key in the OS keyring: {e}");
+            None
+        }
+    }
 }
 
 #[cfg(test)]

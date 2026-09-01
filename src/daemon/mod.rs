@@ -224,6 +224,15 @@ impl DaemonState {
             return;
         }
 
+        // No session file: logged out, nothing to restore.
+        if mtime.is_none() {
+            s.client = None;
+            s.last_failure = None;
+            s.last_error = None;
+            s.session_mtime = None;
+            return;
+        }
+
         match SteamClient::new() {
             Ok(mut client) => match client.restore_session().await {
                 Ok(_) if client.is_authenticated() => {
@@ -346,19 +355,6 @@ impl DaemonState {
 pub async fn last_restore_error() -> Option<String> {
     let state = DAEMON.get()?;
     state.slot.read().await.last_error.clone()
-}
-
-/// Adopt a verified session password.
-///
-/// Caches it and retries the restore now; returns the restore error, if
-/// any, so the client can report it. The password itself was already
-/// verified against the on-disk envelope by the caller.
-pub async fn adopt_session_password(password: &str) -> Option<String> {
-    aurelia::core::session_crypto::cache_password(password);
-    let state = init_state();
-    state.invalidate().await;
-    state.ensure_session().await;
-    last_restore_error().await
 }
 
 /// Daemon-side replacement for `restored_client()`: returns a client backed by the

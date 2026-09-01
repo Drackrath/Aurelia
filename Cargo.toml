@@ -45,6 +45,7 @@ sysinfo = { version = "0.33", default-features = false, features = ["system", "d
 qrcode = { version = "0.14", default-features = false } # Terminal QR rendering for `login --qr`
 chacha20poly1305 = "0.10"
 argon2 = "0.5"
+keyring = { version = "3", default-features = false, features = ["sync-secret-service", "crypto-rust", "windows-native", "apple-native"] }
 
 [build-dependencies]
 # Pure-Rust protobuf codegen (no protoc) for the CloudConfigStore messages used by

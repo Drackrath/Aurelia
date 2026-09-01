@@ -165,9 +165,8 @@ pub struct LauncherConfig {
     /// Enable with `aurelia config experimental true` or `AURELIA_EXPERIMENTAL=1`.
     #[serde(default)]
     pub experimental: bool,
-    /// Keep `session.json` encrypted with the session password. Set with
-    /// `aurelia config session-password`; the password itself is never stored —
-    /// it comes from `AURELIA_SESSION_PASSWORD` or an interactive prompt.
+    /// Keep `session.json` encrypted with the OS-keyring key.
+    /// Enabled automatically by the first successful login.
     #[serde(default)]
     pub encrypt_session: bool,
 }
@@ -315,36 +314,33 @@ pub async fn load_session() -> Result<SessionState> {
         .with_context(|| format!("failed reading {}", session_path.display()))?;
     // Encrypted sessions decrypt on the fly.
     if let Some(envelope) = crate::core::session_crypto::EncryptedSession::from_json(&raw) {
-        let password = crate::core::session_crypto::session_password()?;
-        let plain = crate::core::session_crypto::decrypt(&envelope, &password)?;
+        if !envelope.keyring {
+            // Passwords are gone; a login re-keys it.
+            anyhow::bail!(
+                "session.json was encrypted with a legacy session password — \
+                 run `aurelia login` again to re-key it to the OS keyring"
+            );
+        }
+        // Keyring-keyed: automatic, never prompts.
+        let key = tokio::task::spawn_blocking(crate::core::session_crypto::keyring_secret)
+            .await
+            .ok()
+            .flatten()
+            .context(
+                "session.json is keyed to the OS keyring, which is unavailable — \
+                 run `aurelia login` again",
+            )?;
+        let plain = crate::core::session_crypto::decrypt(&envelope, &key)?;
         return serde_json::from_slice(&plain)
             .with_context(|| format!("failed parsing decrypted {}", session_path.display()));
     }
     serde_json::from_str(&raw).with_context(|| format!("failed parsing {}", session_path.display()))
 }
 
-/// Check `password` against the on-disk session.
-///
-/// `Ok(true)`: decrypted the envelope. `Ok(false)`: file is
-/// missing/plaintext, nothing to verify. `Err`: wrong password.
-pub async fn verify_session_password(password: &str) -> Result<bool> {
-    let session_path = session_path()?;
-    let Ok(raw) = fs::read_to_string(&session_path).await else {
-        return Ok(false);
-    };
-    match crate::core::session_crypto::EncryptedSession::from_json(&raw) {
-        Some(envelope) => {
-            crate::core::session_crypto::decrypt(&envelope, password)?;
-            Ok(true)
-        }
-        None => Ok(false),
-    }
-}
-
 /// Whether saves must encrypt the session.
 ///
-/// True when the user opted in (`config session-password`) or the file on disk
-/// is already an encrypted envelope — an existing encrypted session is never
+/// True once a login enabled encryption, or when the file on disk is
+/// already an encrypted envelope — an existing encrypted session is never
 /// silently rewritten as plaintext.
 async fn session_encryption_active(session_path: &Path) -> bool {
     if let Ok(config) = load_launcher_config().await {
@@ -361,15 +357,33 @@ async fn session_encryption_active(session_path: &Path) -> bool {
 pub async fn save_session(session: &SessionState) -> Result<()> {
     let session_path = session_path()?;
     if session_encryption_active(&session_path).await {
-        let password = crate::core::session_crypto::session_password()?;
-        let plain = serde_json::to_vec(session)?;
-        let mut envelope = crate::core::session_crypto::encrypt(&plain, &password)?;
-        // Display hint, readable without the password.
-        envelope.display_name = session
-            .persona_name
-            .clone()
-            .or_else(|| session.account_name.clone());
-        write_json_pretty(&session_path, &envelope).await?;
+        // Automatic OS-keyring key; created on demand, never prompts.
+        let key = tokio::task::spawn_blocking(
+            crate::core::session_crypto::keyring_secret_or_create,
+        )
+        .await
+        .ok()
+        .flatten();
+        match key {
+            Some(key) => {
+                let plain = serde_json::to_vec(session)?;
+                let mut envelope = crate::core::session_crypto::encrypt(&plain, &key)?;
+                envelope.keyring = true;
+                // Display hint, readable without the key.
+                envelope.display_name = session
+                    .persona_name
+                    .clone()
+                    .or_else(|| session.account_name.clone());
+                write_json_pretty(&session_path, &envelope).await?;
+            }
+            None => {
+                tracing::warn!(
+                    "no OS keyring available; session.json stays plaintext \
+                     (owner-only permissions)"
+                );
+                write_json_pretty(&session_path, session).await?;
+            }
+        }
     } else {
         write_json_pretty(&session_path, session).await?;
     }
