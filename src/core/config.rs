@@ -147,6 +147,9 @@ pub struct LauncherConfig {
     /// `aurelia achievements` when `--lang` is not given. `None` = use "english".
     #[serde(default)]
     pub language: Option<String>,
+    /// Store country code for prices (`None` = locale/US).
+    #[serde(default)]
+    pub country: Option<String>,
     /// Network proxy for all HTTP(S) communication. Empty by default (a direct
     /// connection). Applied process-wide at startup; see [`crate::core::net`].
     #[serde(default)]
@@ -209,6 +212,7 @@ impl Default for LauncherConfig {
             umu_enabled: false,
             umu_path: None,
             language: None,
+            country: None,
             proxy: ProxyConfig::default(),
             steam_runtime_policy: crate::core::models::SteamRuntimePolicy::default(),
             experimental: false,
@@ -541,12 +545,14 @@ fn info_cache_dir() -> Result<PathBuf> {
 /// than a shared map) so concurrent Aurelia invocations for different apps — or
 /// the same app in different languages — never clobber each other. The language
 /// is sanitized to keep it safe as a filename component.
-fn info_cache_path(app_id: u32, language: &str) -> Result<PathBuf> {
-    let lang: String = language
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
-        .collect();
-    Ok(info_cache_dir()?.join(format!("{app_id}.{lang}.json")))
+fn info_cache_path(app_id: u32, language: &str, country: &str) -> Result<PathBuf> {
+    let sanitize = |s: &str| -> String {
+        s.chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+            .collect()
+    };
+    let (lang, cc) = (sanitize(language), sanitize(country));
+    Ok(info_cache_dir()?.join(format!("{app_id}.{lang}.{cc}.json")))
 }
 
 use crate::core::utils::now_unix;
@@ -557,12 +563,13 @@ use crate::core::utils::now_unix;
 pub async fn load_info_cache(
     app_id: u32,
     language: &str,
+    country: &str,
     ttl: std::time::Duration,
 ) -> Option<CachedAppInfo> {
     if ttl.is_zero() {
         return None;
     }
-    let path = info_cache_path(app_id, language).ok()?;
+    let path = info_cache_path(app_id, language, country).ok()?;
     let raw = fs::read_to_string(&path).await.ok()?;
     let cached: CachedAppInfo = serde_json::from_str(&raw).ok()?;
     let age = now_unix().saturating_sub(cached.fetched_at);
@@ -573,6 +580,7 @@ pub async fn load_info_cache(
 pub async fn save_info_cache(
     app_id: u32,
     language: &str,
+    country: &str,
     details: &crate::steam_client::StoreAppInfo,
     dlc: &[(u32, Option<String>)],
 ) -> Result<()> {
@@ -581,7 +589,7 @@ pub async fn save_info_cache(
         details: details.clone(),
         dlc: dlc.to_vec(),
     };
-    write_json_pretty(&info_cache_path(app_id, language)?, &record).await
+    write_json_pretty(&info_cache_path(app_id, language, country)?, &record).await
 }
 
 /// Load the per-game user config store (`user_apps.json`).

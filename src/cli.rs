@@ -123,6 +123,10 @@ pub(crate) enum Command {
         /// Defaults to the `aurelia config language` setting, or English.
         #[arg(short = 'l', long = "lang")]
         lang: Option<String>,
+        /// Two-letter country code for prices (e.g. `DE`). Defaults to
+        /// `aurelia config country`, then the system locale, then `US`.
+        #[arg(long = "cc")]
+        cc: Option<String>,
     },
     /// Download and install a game.
     Install(InstallArgs),
@@ -408,6 +412,14 @@ pub(crate) enum ConfigCommand {
         /// `schinese`) used by `aurelia achievements` when `--lang` is not
         /// given. Omit the value to print the current setting.
         lang: Option<String>,
+    },
+    /// View or set the store country used for prices.
+    Country {
+        /// Two-letter ISO country code (e.g. `US`, `DE`, `JP`) used by
+        /// `info` and `price` when `--cc` is not given. Unset, Aurelia
+        /// derives it from the system locale, else `US`. Pass an empty
+        /// value to clear it; omit it to print the current setting.
+        cc: Option<String>,
     },
     /// View or set the experimental-features gate.
     ///
