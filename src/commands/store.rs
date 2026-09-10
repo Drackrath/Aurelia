@@ -5,7 +5,7 @@ use crate::commands::common::*;
 use anyhow::Result;
 use aurelia::core::error::{ErrorKind, TypedError};
 use aurelia::core::locale::normalize_country;
-use aurelia::steam_client::{unix_to_ymd, StoreAppInfo};
+use aurelia::steam_client::{unix_to_ymd, StoreAppInfo, StorePurchaseOption};
 use std::time::Duration;
 
 /// Spacing between per-region StoreBrowse calls.
@@ -24,6 +24,7 @@ struct PriceQuote {
     discount_pct: i32,
     discount_end: Option<u64>,
     discount_end_date: Option<String>,
+    purchase_options: Vec<StorePurchaseOption>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
 }
@@ -41,6 +42,7 @@ impl PriceQuote {
             discount_pct: info.discount_pct,
             discount_end: info.discount_end,
             discount_end_date: info.discount_end.map(|t| unix_to_ymd(t as i64)),
+            purchase_options: info.purchase_options.clone(),
             error: None,
         }
     }
@@ -57,6 +59,7 @@ impl PriceQuote {
             discount_pct: 0,
             discount_end: None,
             discount_end_date: None,
+            purchase_options: Vec::new(),
             error,
         }
     }
@@ -153,5 +156,35 @@ pub(crate) async fn cmd_price(
         let ends = q.discount_end_date.clone().unwrap_or_else(|| "-".to_string());
         cli_println!("{:<8} {:<14} {:<9} {:<14} {ends}", q.country, price, discount, original);
     }
+
+    // Packages and bundles, for the first priced region.
+    if let Some(q) = quotes.iter().find(|q| q.available && q.purchase_options.len() > 1) {
+        cli_println!("\nPurchase options [{}]:", q.country);
+        for o in &q.purchase_options {
+            let price = o.price.clone().unwrap_or_else(|| "-".to_string());
+            let mut note = String::new();
+            if o.discount_pct > 0 {
+                note.push_str(&format!("  -{}%", o.discount_pct));
+            }
+            if o.bundle_discount_pct > 0 {
+                note.push_str(&format!(" (bundle -{}%)", o.bundle_discount_pct));
+            }
+            if o.included_games > 1 {
+                note.push_str(&format!("  {} items", o.included_games));
+            }
+            if let Some(end) = o.discount_end {
+                note.push_str(&format!("  until {}", unix_to_ymd(end as i64)));
+            }
+            cli_println!("  {:<8} {:<44} {:<12}{note}", o.kind, truncate(&o.name, 44), price);
+        }
+    }
     Ok(())
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let cut: String = s.chars().take(max.saturating_sub(1)).collect();
+    format!("{cut}…")
 }
