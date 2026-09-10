@@ -9,6 +9,7 @@
 //! Cookies are hand-set on a `Cookie:` header rather than via `reqwest`'s cookie
 //! store, so no extra crate feature is needed for the two values we manage.
 
+use crate::core::error::{ErrorKind, TypedError};
 use anyhow::{bail, Context, Result};
 
 /// CDN base for economy item icons (`icon_url` values are relative to this).
@@ -75,13 +76,8 @@ impl WebSession {
     /// common failure modes (rate limiting, an expired/invalid session) to clear,
     /// actionable errors.
     pub async fn get_text(&self, url: &str) -> Result<String> {
-        let resp = self
-            .http
-            .get(url)
-            .header(reqwest::header::COOKIE, &self.cookie)
-            .send()
-            .await
-            .with_context(|| format!("request to {url} failed"))?;
+        let request = self.http.get(url).header(reqwest::header::COOKIE, &self.cookie);
+        let resp = crate::core::net::send_with_retry(&self.http, request).await?;
         read_checked(resp).await
     }
 }
@@ -90,17 +86,23 @@ impl WebSession {
 async fn read_checked(resp: reqwest::Response) -> Result<String> {
     let status = resp.status();
     if status.as_u16() == 429 {
-        bail!(
+        return Err(TypedError::new(
+            ErrorKind::RateLimited,
             "Steam is rate-limiting market requests (HTTP 429). Wait a few minutes before \
-             trying again — repeated requests during a block extend it."
-        );
+             trying again — repeated requests during a block extend it.",
+        )
+        .into());
     }
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        bail!(
-            "the Steam web session was rejected (HTTP {}). Run `aurelia login --reconnect`, \
-             or `aurelia login` if you are not signed in.",
-            status.as_u16()
-        );
+        return Err(TypedError::new(
+            ErrorKind::AuthRequired,
+            format!(
+                "the Steam web session was rejected (HTTP {}). Run `aurelia login --reconnect`, \
+                 or `aurelia login` if you are not signed in.",
+                status.as_u16()
+            ),
+        )
+        .into());
     }
     if status.is_redirection() {
         let location = resp

@@ -8,6 +8,7 @@
 //! The default `info` path is protocol-native via
 //! [`crate::steam_client::SteamClient::fetch_store_apps`].
 
+use crate::core::error::{ErrorKind, TypedError};
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -131,16 +132,16 @@ pub async fn fetch_app_details(
     let url = format!(
         "https://store.steampowered.com/api/appdetails?appids={app_id}&l={language}&cc=us"
     );
-    let resp = client
-        .get(&url)
-        .send()
+    let resp = crate::core::net::send_with_retry(client, client.get(&url))
         .await
         .with_context(|| format!("failed requesting store details for app {app_id}"))?;
 
-    let map: HashMap<String, Envelope> = resp
-        .json()
-        .await
-        .with_context(|| format!("failed parsing store details for app {app_id}"))?;
+    let map: HashMap<String, Envelope> = resp.json().await.map_err(|e| {
+        TypedError::new(
+            ErrorKind::SourceChanged,
+            format!("failed parsing store details for app {app_id}: {e}"),
+        )
+    })?;
 
     let Some(env) = map.get(&app_id.to_string()) else {
         return Ok(None);
@@ -241,7 +242,7 @@ fn requirements_lines(html: &str) -> Vec<String> {
 /// Best-effort: returns an empty list on any error or if no tags are available.
 pub async fn fetch_tags(client: &reqwest::Client, app_id: u32) -> Vec<String> {
     let url = format!("https://steamspy.com/api.php?request=appdetails&appid={app_id}");
-    let Ok(resp) = client.get(&url).send().await else {
+    let Ok(resp) = crate::core::net::send_with_retry(client, client.get(&url)).await else {
         return Vec::new();
     };
     let Ok(value) = resp.json::<serde_json::Value>().await else {

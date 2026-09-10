@@ -358,9 +358,8 @@ async fn fetch_github_releases(src: &GithubSource, per_page: usize) -> Result<Ve
         "https://api.github.com/repos/{}/releases?per_page={per_page}",
         src.repo
     );
-    let releases: Vec<GhRelease> = github_client()?
-        .get(&url)
-        .send()
+    let client = github_client()?;
+    let releases: Vec<GhRelease> = crate::core::net::send_with_retry(&client, client.get(&url))
         .await
         .with_context(|| format!("failed requesting {url}"))?
         .error_for_status()
@@ -380,9 +379,8 @@ async fn fetch_github_release_by_tag(
     tag: &str,
 ) -> Result<Option<ProtonPackage>> {
     let url = format!("https://api.github.com/repos/{}/releases/tags/{tag}", src.repo);
-    let resp = github_client()?
-        .get(&url)
-        .send()
+    let client = github_client()?;
+    let resp = crate::core::net::send_with_retry(&client, client.get(&url))
         .await
         .with_context(|| format!("failed requesting {url}"))?;
     if resp.status() == reqwest::StatusCode::NOT_FOUND {
