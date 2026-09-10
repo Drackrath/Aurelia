@@ -128,6 +128,20 @@ pub(crate) enum Command {
         #[arg(long = "cc")]
         cc: Option<String>,
     },
+    /// Show a game's price, optionally compared across regions.
+    Price {
+        app_id: u32,
+        /// Comma-separated country codes to compare (e.g. `US,DE,JP`).
+        /// Each region is one StoreBrowse call, paced 150 ms apart.
+        #[arg(long, value_delimiter = ',')]
+        compare: Vec<String>,
+        /// Country code for the single-region lookup (see `info --cc`).
+        #[arg(long = "cc")]
+        cc: Option<String>,
+        /// Steam API language name for the game's name.
+        #[arg(short = 'l', long = "lang")]
+        lang: Option<String>,
+    },
     /// Download and install a game.
     Install(InstallArgs),
     /// List the Steam library folders games can be installed into (one per

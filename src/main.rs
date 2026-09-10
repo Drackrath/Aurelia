@@ -398,6 +398,12 @@ async fn run(cli: Cli) -> Result<()> {
             lang,
             cc,
         } => cmd_info(app_ids, extended, no_cache, lang, cc, json).await,
+        Command::Price {
+            app_id,
+            compare,
+            cc,
+            lang,
+        } => cmd_price(app_id, compare, cc, lang, json).await,
         Command::Dlc { app_id } => cmd_dlc(app_id, json).await,
         Command::Achievements { app_id, lang } => cmd_achievements(app_id, lang, json).await,
         Command::Depots { app_id } => cmd_depots(app_id, json).await,
