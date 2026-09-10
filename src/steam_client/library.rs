@@ -265,8 +265,8 @@ impl SteamClient {
     /// `StoreBrowse.GetItems` service method (over the CM connection — no HTTPS
     /// storefront API). Returns one [`StoreAppInfo`] per app the store knows
     /// about; unknown/region-locked ids are simply omitted. Requires a connection.
-    /// `language` is a Steam API language name (e.g. "english", "german");
-    /// `country` an ISO code that selects the price region.
+    /// `language` is a Steam API language name (e.g. "english", "german").
+    /// `country` selects the price region.
     pub async fn fetch_store_apps(
         &self,
         app_ids: &[u32],

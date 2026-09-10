@@ -237,7 +237,7 @@ pub struct StoreAppInfo {
     pub purchase_options: Vec<StorePurchaseOption>,
 }
 
-/// One way to buy an app: a package or bundle.
+/// A package or bundle for an app.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct StorePurchaseOption {
     /// `package` or `bundle`.

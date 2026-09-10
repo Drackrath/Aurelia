@@ -123,19 +123,17 @@ pub(crate) enum Command {
         /// Defaults to the `aurelia config language` setting, or English.
         #[arg(short = 'l', long = "lang")]
         lang: Option<String>,
-        /// Two-letter country code for prices (e.g. `DE`). Defaults to
-        /// `aurelia config country`, then the system locale, then `US`.
+        /// Price country code; defaults to config, locale, US.
         #[arg(long = "cc")]
         cc: Option<String>,
     },
-    /// Show a game's price, optionally compared across regions.
+    /// Show a game's price, optionally across regions.
     Price {
         app_id: u32,
-        /// Comma-separated country codes to compare (e.g. `US,DE,JP`).
-        /// Each region is one StoreBrowse call, paced 150 ms apart.
+        /// Country codes to compare, comma-separated.
         #[arg(long, value_delimiter = ',')]
         compare: Vec<String>,
-        /// Country code for the single-region lookup (see `info --cc`).
+        /// Country code for a single-region lookup.
         #[arg(long = "cc")]
         cc: Option<String>,
         /// Steam API language name for the game's name.
@@ -427,12 +425,9 @@ pub(crate) enum ConfigCommand {
         /// given. Omit the value to print the current setting.
         lang: Option<String>,
     },
-    /// View or set the store country used for prices.
+    /// View or set the price country.
     Country {
-        /// Two-letter ISO country code (e.g. `US`, `DE`, `JP`) used by
-        /// `info` and `price` when `--cc` is not given. Unset, Aurelia
-        /// derives it from the system locale, else `US`. Pass an empty
-        /// value to clear it; omit it to print the current setting.
+        /// Two-letter ISO code; empty clears, omitted prints.
         cc: Option<String>,
     },
     /// View or set the experimental-features gate.
