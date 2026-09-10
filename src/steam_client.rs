@@ -1813,7 +1813,13 @@ pub(crate) async fn pics_app_buffer(
 impl SteamClient {
     /// Borrow the live CM connection.
     pub(crate) fn require_connection(&self) -> Result<&Connection> {
-        self.connection.as_ref().context("steam connection not initialized")
+        self.connection.as_ref().ok_or_else(|| {
+            crate::core::error::TypedError::new(
+                crate::core::error::ErrorKind::AuthRequired,
+                "not logged in — run `aurelia login` first",
+            )
+            .into()
+        })
     }
 
     /// Cloned connection for spawned tasks.

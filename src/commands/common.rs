@@ -10,6 +10,7 @@ use anyhow::{bail, Context, Result};
 use aurelia::core::config::load_launcher_config;
 use aurelia::core::config::load_library_cache;
 use aurelia::core::config::load_session;
+use aurelia::core::error::{ErrorKind, TypedError};
 use aurelia::library::{build_game_library, scan_installed_app_info};
 use aurelia::core::models::{DownloadProgress, DownloadProgressState, DownloadState, LibraryGame};
 use aurelia::steam_client::{SharedApp, SteamClient};
@@ -75,7 +76,11 @@ pub(crate) async fn authed_client() -> Result<SteamClient> {
         if let Some(e) = daemon::last_restore_error().await {
             bail!("could not restore the stored session: {e}");
         }
-        bail!("not logged in — run `aurelia login` first");
+        return Err(TypedError::new(
+            ErrorKind::AuthRequired,
+            "not logged in — run `aurelia login` first",
+        )
+        .into());
     }
     Ok(client)
 }
@@ -179,7 +184,9 @@ pub(crate) async fn find_game(client: &mut SteamClient, app_id: u32) -> Result<L
         .await
         .into_iter()
         .find(|g| g.app_id == app_id)
-        .with_context(|| format!("app {app_id} is not in your library"))
+        .ok_or_else(|| {
+            TypedError::new(ErrorKind::NotFound, format!("app {app_id} is not in your library")).into()
+        })
 }
 
 /// Confirm action; honors `--yes`/`--json`.
