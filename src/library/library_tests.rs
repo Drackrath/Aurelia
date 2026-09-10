@@ -219,6 +219,7 @@ fn a_single_copy_is_returned_unchanged() {
     assert!(pick_live_copy(vec![]).is_none());
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn symlinked_steam_roots_collapse_to_one_library() {
     // A standard install has ~/.steam/root and ~/.steam/steam both symlinked to
