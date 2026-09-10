@@ -26,6 +26,7 @@ use std::time::{Duration, Instant, SystemTime};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
+use aurelia::core::error::ErrorKind;
 use aurelia::steam_client::{Friend, Roster, SteamClient};
 
 pub use server::run_server;
@@ -153,17 +154,29 @@ struct Slot {
     /// attempt succeeded or none has been made.
     last_failure: Option<Instant>,
     /// Why the last restore failed.
-    last_error: Option<String>,
+    last_error: Option<RestoreFailure>,
+}
+
+/// A classified restore failure.
+#[derive(Clone)]
+struct RestoreFailure {
+    kind: ErrorKind,
+    retry_after: Option<Duration>,
+    reason: String,
 }
 
 impl Slot {
     /// Record that the restore for the current `mtime` failed: drop any client and
     /// arm the retry backoff. The matching `tracing::warn!` is emitted by the caller
     /// (each failure path has its own message); this only mutates the slot.
-    fn record_failure(&mut self, reason: String) {
+    fn record_failure(&mut self, kind: ErrorKind, retry_after: Option<Duration>, reason: String) {
         self.client = None;
         self.last_failure = Some(Instant::now());
-        self.last_error = Some(reason);
+        self.last_error = Some(RestoreFailure {
+            kind,
+            retry_after,
+            reason,
+        });
     }
 
     /// Whether the slot already reflects `mtime` and needs no restore attempt now:
@@ -249,16 +262,25 @@ impl DaemonState {
                 }
                 Ok(_) => {
                     tracing::warn!("daemon: session restore did not authenticate");
-                    s.record_failure("session restore did not authenticate".to_string());
+                    s.record_failure(
+                        ErrorKind::AuthRequired,
+                        None,
+                        "session restore did not authenticate".to_string(),
+                    );
                 }
                 Err(e) => {
                     tracing::warn!("daemon: could not restore shared session: {e:#}");
-                    s.record_failure(format!("{e:#}"));
+                    let c = aurelia::core::error::classify(&e);
+                    s.record_failure(c.kind, c.retry_after, format!("{e:#}"));
                 }
             },
             Err(e) => {
                 tracing::warn!("daemon: could not build Steam client: {e:#}");
-                s.record_failure(format!("could not build Steam client: {e:#}"));
+                s.record_failure(
+                    ErrorKind::Unknown,
+                    None,
+                    format!("could not build Steam client: {e:#}"),
+                );
             }
         }
         s.session_mtime = mtime;
@@ -352,9 +374,10 @@ impl DaemonState {
 }
 
 /// Why the daemon's last restore failed.
-pub async fn last_restore_error() -> Option<String> {
+pub async fn last_restore_error() -> Option<(ErrorKind, Option<Duration>, String)> {
     let state = DAEMON.get()?;
-    state.slot.read().await.last_error.clone()
+    let failure = state.slot.read().await.last_error.clone()?;
+    Some((failure.kind, failure.retry_after, failure.reason))
 }
 
 /// Daemon-side replacement for `restored_client()`: returns a client backed by the

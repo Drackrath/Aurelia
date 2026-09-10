@@ -62,10 +62,21 @@ pub(crate) async fn restored_client() -> Result<SteamClient> {
         tracing::info!("Restoring Steam session (connecting to Steam) ...");
         match client.restore_session().await {
             Ok(_) => tracing::info!("Restored Steam session from refresh token"),
-            Err(e) => tracing::warn!("Stored refresh token failed ({e:#}); run `aurelia login`"),
+            Err(e) => {
+                tracing::warn!("Stored refresh token failed ({e:#}); run `aurelia login`");
+                client.set_restore_error(e);
+            }
         }
     }
     Ok(client)
+}
+
+/// Typed "could not restore" error; unknown kinds mean re-login.
+fn restore_failed(kind: ErrorKind, retry_after: Option<std::time::Duration>, reason: &str) -> anyhow::Error {
+    let kind = if kind == ErrorKind::Unknown { ErrorKind::AuthRequired } else { kind };
+    TypedError::new(kind, format!("could not restore the stored session: {reason}"))
+        .with_retry_after(retry_after)
+        .into()
 }
 
 /// Require an authenticated client, erroring out with a helpful message otherwise.
@@ -73,8 +84,12 @@ pub(crate) async fn authed_client() -> Result<SteamClient> {
     let client = restored_client().await?;
     if !client.is_authenticated() {
         // The daemon's restore failure explains why better than "not logged in".
-        if let Some(e) = daemon::last_restore_error().await {
-            bail!("could not restore the stored session: {e}");
+        if let Some((kind, retry_after, reason)) = daemon::last_restore_error().await {
+            return Err(restore_failed(kind, retry_after, &reason));
+        }
+        if let Some(e) = client.restore_error() {
+            let c = aurelia::core::error::classify(e);
+            return Err(restore_failed(c.kind, c.retry_after, &format!("{e:#}")));
         }
         return Err(TypedError::new(
             ErrorKind::AuthRequired,

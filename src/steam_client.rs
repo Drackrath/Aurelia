@@ -59,7 +59,7 @@ use steam_vent_proto::steammessages_storebrowse_steamclient::{
     StoreBrowseContext, StoreBrowseItemDataRequest, StoreItem, StoreItemID,
 };
 use protobuf::{Message, MessageField};
-use steam_vent::{ConnectionError, ConnectionTrait, ServerList};
+use steam_vent::{ConnectionError, ConnectionTrait, LoginError, ServerList};
 use tokio::io::{duplex, sink, AsyncWriteExt};
 use tokio::sync::mpsc::Receiver;
 
@@ -106,6 +106,16 @@ async fn access_with_retry(
             Ok(Ok(connection)) => {
                 tracing::debug!("Refresh-token authentication succeeded");
                 return Ok(connection);
+            }
+            // Retrying these only deepens a lockout.
+            Ok(Err(err @ ConnectionError::LoginError(
+                LoginError::RateLimited
+                | LoginError::InvalidCredentials
+                | LoginError::UnavailableAccount
+                | LoginError::InvalidSteamId,
+            ))) => {
+                tracing::warn!("CM logon rejected: {err}; not retrying");
+                return Err(anyhow::Error::new(err).context("refresh token login failed"));
             }
             Ok(Err(err)) => {
                 tracing::warn!(
@@ -348,6 +358,8 @@ pub struct SteamClient {
     active_cm: Option<SocketAddr>,
     server_list: Option<ServerList>,
     pending_confirmations: Vec<ConfirmationPrompt>,
+    /// Why the last session restore failed.
+    restore_error: Option<Arc<anyhow::Error>>,
 }
 
 // SteamClient methods are implemented across these submodules.

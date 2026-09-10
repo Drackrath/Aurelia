@@ -15,6 +15,7 @@ impl SteamClient {
             active_cm: None,
             server_list: None,
             pending_confirmations: Vec::new(),
+            restore_error: None,
         })
     }
 
@@ -31,11 +32,21 @@ impl SteamClient {
             active_cm: None,
             server_list: None,
             pending_confirmations: Vec::new(),
+            restore_error: None,
         }
     }
 
     pub fn is_authenticated(&self) -> bool {
         self.connection.is_some()
+    }
+
+    /// Remember why a restore failed, for typed reporting.
+    pub fn set_restore_error(&mut self, err: anyhow::Error) {
+        self.restore_error = Some(Arc::new(err));
+    }
+
+    pub fn restore_error(&self) -> Option<&anyhow::Error> {
+        self.restore_error.as_deref()
     }
 
     pub fn is_offline(&self) -> bool {
