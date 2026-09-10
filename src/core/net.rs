@@ -156,8 +156,7 @@ fn rate_limited(host: &str, status: reqwest::StatusCode, retry_after: Option<Dur
 
 /// Send a request, retrying transient failures.
 ///
-/// A 429 is retried only for a short `Retry-After`;
-/// otherwise it becomes a typed `RateLimited` error.
+/// Bare 429s fail fast as `RateLimited`.
 pub async fn send_with_retry(
     client: &reqwest::Client,
     request: reqwest::RequestBuilder,

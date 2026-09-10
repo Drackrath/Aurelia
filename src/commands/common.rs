@@ -71,7 +71,7 @@ pub(crate) async fn restored_client() -> Result<SteamClient> {
     Ok(client)
 }
 
-/// Typed "could not restore" error; unknown kinds mean re-login.
+/// Typed restore failure; unknown kinds mean re-login.
 fn restore_failed(kind: ErrorKind, retry_after: Option<std::time::Duration>, reason: &str) -> anyhow::Error {
     let kind = if kind == ErrorKind::Unknown { ErrorKind::AuthRequired } else { kind };
     TypedError::new(kind, format!("could not restore the stored session: {reason}"))
