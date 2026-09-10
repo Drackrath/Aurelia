@@ -75,7 +75,7 @@ pub(crate) async fn cmd_config_language(lang: Option<String>, json: bool) -> Res
     Ok(())
 }
 
-/// `config country [CC]`: view or set the store price region.
+/// View or set the price country.
 pub(crate) async fn cmd_config_country(cc: Option<String>, json: bool) -> Result<()> {
     use aurelia::core::error::{ErrorKind, TypedError};
     use aurelia::core::locale::normalize_country;
