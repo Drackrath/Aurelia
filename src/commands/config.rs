@@ -75,6 +75,36 @@ pub(crate) async fn cmd_config_language(lang: Option<String>, json: bool) -> Res
     Ok(())
 }
 
+/// `config country [CC]`: view or set the store price region.
+pub(crate) async fn cmd_config_country(cc: Option<String>, json: bool) -> Result<()> {
+    use aurelia::core::error::{ErrorKind, TypedError};
+    use aurelia::core::locale::normalize_country;
+    let value = match cc {
+        None => None,
+        Some(raw) if raw.trim().is_empty() => Some(None),
+        Some(raw) => Some(Some(normalize_country(&raw).ok_or_else(|| {
+            TypedError::new(
+                ErrorKind::InvalidInput,
+                format!("invalid country code `{raw}` — use a two-letter ISO code like US or DE"),
+            )
+        })?)),
+    };
+    let (config, changed) = view_or_set(value, |c, cc| c.country = cc).await?;
+    let current = config.country.as_deref();
+    if json {
+        print_json(&serde_json::json!({ "country": current }));
+    } else {
+        match current {
+            Some(cc) => cli_println!("Country: {cc}"),
+            None => cli_println!("Country: auto (system locale, else US)"),
+        }
+        if changed {
+            cli_println!("Saved.");
+        }
+    }
+    Ok(())
+}
+
 /// `config experimental [true|false]`: view or set the experimental-features gate
 /// that unlocks `login --openid` and `login --web-token`. See [`ConfigCommand::Experimental`].
 pub(crate) async fn cmd_config_experimental(enabled: Option<bool>, json: bool) -> Result<()> {
