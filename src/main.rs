@@ -217,13 +217,24 @@ async fn run_and_report(cli: Cli) -> i32 {
     match run(cli).await {
         Ok(()) => 0,
         Err(err) => {
+            let classified = aurelia::core::error::classify(&err);
             if json {
                 // Single line so it stays valid in the NDJSON streams (e.g. `install`).
-                print_json_line(&serde_json::json!({ "error": format!("{err:#}") }));
+                let mut value = serde_json::json!({
+                    "error": format!("{err:#}"),
+                    "type": classified.kind,
+                });
+                if let Some(hint) = classified.kind.hint() {
+                    value["hint"] = hint.into();
+                }
+                if let Some(retry_after) = classified.retry_after {
+                    value["retry_after_seconds"] = retry_after.as_secs().into();
+                }
+                print_json_line(&value);
             } else {
                 cli_eprintln!("Error: {err:#}");
             }
-            1
+            classified.kind.exit_code()
         }
     }
 }

@@ -146,7 +146,11 @@ pub(crate) async fn cmd_info(
                 // batch we skip it (with a warning) so one delisted id doesn't sink
                 // the rest.
                 if single {
-                    bail!("no store information available for app {id}");
+                    return Err(aurelia::core::error::TypedError::new(
+                        aurelia::core::error::ErrorKind::NotFound,
+                        format!("no store information available for app {id}"),
+                    )
+                    .into());
                 }
                 tracing::warn!("no store information available for app {id}; skipping");
                 continue;

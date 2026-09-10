@@ -118,9 +118,7 @@ fn nonempty(s: &str) -> Option<String> {
 /// API key) with a short timeout.
 async fn fetch_community_xml(url: &str) -> Result<String> {
     let client = crate::core::net::http_client(std::time::Duration::from_secs(10))?;
-    client
-        .get(url)
-        .send()
+    crate::core::net::send_with_retry(&client, client.get(url))
         .await
         .context("request to Steam Community failed")?
         .text()
@@ -184,7 +182,10 @@ pub async fn resolve_steam_id(query: &str) -> Result<ResolvedUser> {
         .captures(&xml)
         .and_then(|c| c[1].parse::<u64>().ok())
         .ok_or_else(|| {
-            anyhow!("could not resolve '{slug}' to a Steam account (no such profile or custom URL)")
+            anyhow::Error::new(crate::core::error::TypedError::new(
+                crate::core::error::ErrorKind::NotFound,
+                format!("could not resolve '{slug}' to a Steam account (no such profile or custom URL)"),
+            ))
         })?;
     Ok(ResolvedUser {
         steam_id,
