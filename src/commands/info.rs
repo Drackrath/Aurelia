@@ -269,6 +269,7 @@ pub(crate) fn info_json_value(
         "discount_end": details.discount_end,
         "discount_end_date": details.discount_end.map(|t| aurelia::steam_client::unix_to_ymd(t as i64)),
         "region_locked": details.region_locked,
+        "purchase_options": details.purchase_options,
         "platforms": details.platforms,
         "reviews": details.review_summary,
         "store_url": steam_urls::store_url(details.app_id),

@@ -232,6 +232,56 @@ pub struct StoreAppInfo {
     /// Store refuses sale in this country.
     #[serde(default)]
     pub region_locked: bool,
+    /// Every package and bundle the store offers.
+    #[serde(default)]
+    pub purchase_options: Vec<StorePurchaseOption>,
+}
+
+/// One way to buy an app: a package or bundle.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct StorePurchaseOption {
+    /// `package` or `bundle`.
+    pub kind: String,
+    pub id: u32,
+    pub name: String,
+    pub price: Option<String>,
+    pub price_cents: Option<i64>,
+    pub original_price: Option<String>,
+    pub discount_pct: i32,
+    /// Extra saving from bundling, if a bundle.
+    pub bundle_discount_pct: i32,
+    pub included_games: u32,
+    pub discount_end: Option<u64>,
+}
+
+fn purchase_option_summary(
+    p: &steam_vent_proto::steammessages_storebrowse_steamclient::store_item::PurchaseOption,
+) -> StorePurchaseOption {
+    let (kind, id) = if p.bundleid() > 0 {
+        ("bundle", p.bundleid())
+    } else {
+        ("package", p.packageid())
+    };
+    let nonempty = |s: &str| (!s.is_empty()).then(|| s.to_string());
+    StorePurchaseOption {
+        kind: kind.to_string(),
+        id: id.max(0) as u32,
+        name: p.purchase_option_name().to_string(),
+        price: nonempty(p.formatted_final_price()),
+        price_cents: (p.final_price_in_cents() > 0).then(|| p.final_price_in_cents()),
+        original_price: nonempty(p.formatted_original_price())
+            .filter(|_| p.original_price_in_cents() > p.final_price_in_cents()),
+        discount_pct: p.discount_pct(),
+        bundle_discount_pct: p.bundle_discount_pct(),
+        included_games: p.included_game_count().max(0) as u32,
+        discount_end: p
+            .active_discounts
+            .iter()
+            .map(|d| d.discount_end_date())
+            .max()
+            .filter(|&t| t > 0)
+            .map(u64::from),
+    }
 }
 
 /// Artwork URLs for a store app. Built from the StoreBrowse `assets` block when
@@ -731,6 +781,7 @@ fn store_item_to_app_info(item: &StoreItem, country: &str) -> StoreAppInfo {
         original_price_cents,
         discount_end,
         region_locked: item.unvailable_for_country_restriction(),
+        purchase_options: item.purchase_options.iter().map(purchase_option_summary).collect(),
     }
 }
 
