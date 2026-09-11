@@ -446,6 +446,8 @@ mod workshop;
 mod workshop_manifest;
 mod cloudconfig;
 mod collections;
+mod tags;
+pub mod tags_table;
 
 pub use collections::RemoteNamespace;
 pub use friends::{resolve_steam_id, AddedFriend, Friend, ResolvedUser, Roster};

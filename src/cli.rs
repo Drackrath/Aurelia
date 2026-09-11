@@ -257,6 +257,13 @@ pub(crate) enum Command {
         #[arg(short, long)]
         force: bool,
     },
+    /// Dump the store tag vocabulary (maintainer tool).
+    #[command(hide = true)]
+    Tags {
+        /// Print Rust source for `tags_table.rs`.
+        #[arg(long)]
+        dump: bool,
+    },
     /// Move an installed game to a different Steam library folder
     Move {
         app_id: u32,

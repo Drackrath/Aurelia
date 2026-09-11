@@ -17,7 +17,7 @@ use aurelia::steam_client::SteamClient;
 /// library/install/launch need — so they are kept out of the core feature set to
 /// avoid confusion. Opt in per-run with `AURELIA_EXPERIMENTAL=1` or persistently
 /// with `aurelia config experimental true`.
-async fn require_experimental(what: &str) -> Result<()> {
+pub(crate) async fn require_experimental(what: &str) -> Result<()> {
     if experimental_enabled().await {
         return Ok(());
     }
