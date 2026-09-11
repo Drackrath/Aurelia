@@ -90,8 +90,7 @@ pub(crate) async fn cmd_set_branch(app_id: u32, branch: String, json: bool) -> R
     Ok(())
 }
 
-/// Storefront-only `--extended` data for one app: the HTTPS `AppDetails` plus the
-/// SteamSpy user tags.
+/// Storefront-only `--extended` data for one app.
 pub(crate) type ExtendedInfo = aurelia::web::store::AppDetails;
 
 pub(crate) async fn cmd_info(

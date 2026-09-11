@@ -181,6 +181,122 @@ pub(crate) async fn cmd_price(
     Ok(())
 }
 
+/// Store record, refetched when cached pre-S3 (no media).
+async fn store_info_with_media(app_id: u32) -> Result<StoreAppInfo> {
+    use aurelia::core::config::{info_cache_ttl, load_info_cache};
+    let lang = resolve_steam_language(None).await;
+    let cc = resolve_country(None).await?;
+    if let Some(cached) = load_info_cache(app_id, &lang, &cc, info_cache_ttl()).await {
+        if !cached.details.screenshots.is_empty() || !cached.details.tags.is_empty() {
+            return Ok(cached.details);
+        }
+    }
+    let client = authed_client().await?;
+    client
+        .fetch_store_apps(&[app_id], &lang, &cc)
+        .await?
+        .into_iter()
+        .find(|a| a.app_id == app_id)
+        .ok_or_else(|| {
+            TypedError::new(
+                ErrorKind::NotFound,
+                format!("no store information available for app {app_id}"),
+            )
+            .into()
+        })
+}
+
+/// HEAD each URL, eight at a time.
+async fn probe_urls(urls: &[String]) -> Vec<Option<u16>> {
+    let Ok(client) = aurelia::core::net::http_client(Duration::from_secs(15)) else {
+        return vec![None; urls.len()];
+    };
+    let mut statuses = vec![None; urls.len()];
+    let indices: Vec<usize> = (0..urls.len()).collect();
+    for chunk in indices.chunks(8) {
+        let mut set = tokio::task::JoinSet::new();
+        for &i in chunk {
+            let client = client.clone();
+            let url = urls[i].clone();
+            set.spawn(async move {
+                let status = aurelia::core::net::send_with_retry(&client, client.head(&url))
+                    .await
+                    .ok()
+                    .map(|r| r.status().as_u16());
+                (i, status)
+            });
+        }
+        while let Some(Ok((i, status))) = set.join_next().await {
+            statuses[i] = status;
+        }
+    }
+    statuses
+}
+
+/// `aurelia image APPID --list [--probe]`: every asset URL.
+pub(crate) async fn cmd_image_list(app_id: u32, probe: bool, json: bool) -> Result<()> {
+    let info = store_info_with_media(app_id).await?;
+    let mut entries: Vec<(&str, String)> = Vec::new();
+    let a = &info.assets;
+    for (kind, url) in [
+        ("header", &a.header),
+        ("capsule", &a.capsule),
+        ("hero", &a.hero),
+        ("background", &a.background),
+        ("logo", &a.logo),
+    ] {
+        if let Some(u) = url {
+            entries.push((kind, u.clone()));
+        }
+    }
+    entries.extend(info.screenshots.iter().map(|u| ("screenshot", u.clone())));
+    for t in &info.trailers {
+        if let Some(u) = &t.thumbnail {
+            entries.push(("trailer_thumb", u.clone()));
+        }
+        if let Some(u) = &t.url {
+            entries.push(("trailer", u.clone()));
+        }
+    }
+
+    let urls: Vec<String> = entries.iter().map(|(_, u)| u.clone()).collect();
+    let statuses = if probe {
+        probe_urls(&urls).await
+    } else {
+        vec![None; entries.len()]
+    };
+
+    if json {
+        let items: Vec<serde_json::Value> = entries
+            .iter()
+            .zip(&statuses)
+            .map(|((kind, url), status)| serde_json::json!({"kind": kind, "url": url, "status": status}))
+            .collect();
+        print_json(&serde_json::json!({
+            "app_id": app_id,
+            "name": info.name,
+            "probed": probe,
+            "assets": items,
+        }));
+        return Ok(());
+    }
+
+    cli_println!("{}  (app {app_id}): {} assets", info.name, entries.len());
+    for ((kind, url), status) in entries.iter().zip(&statuses) {
+        let status = match status {
+            Some(s) => s.to_string(),
+            None if probe => "ERR".to_string(),
+            None => "-".to_string(),
+        };
+        cli_println!("{kind:<14} {status:<4} {url}");
+    }
+    if probe {
+        let bad = statuses.iter().filter(|s| !matches!(s, Some(200..=299))).count();
+        cli_println!("\n{} of {} URLs failed the probe", bad, entries.len());
+    }
+    Ok(())
+}
+
 /// `aurelia tags [--dump]`: the store tag vocabulary.
 pub(crate) async fn cmd_tags(dump: bool, json: bool) -> Result<()> {
     crate::commands::auth::require_experimental("tags").await?;
