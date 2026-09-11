@@ -57,7 +57,7 @@ impl RpcMethod for CStoreQuery_MoreLikeThis_Request {
     type Response = CStoreQuery_MoreLikeThis_Response;
 }
 
-/// Result page of a store query: app ids plus totals.
+/// Query result page: app ids plus totals.
 #[derive(Debug, Clone, Default)]
 pub struct QueryPage {
     pub app_ids: Vec<u32>,
@@ -65,7 +65,7 @@ pub struct QueryPage {
     pub suggestions: Vec<String>,
 }
 
-/// Which slice of the store a `deals` query covers.
+/// Store slice a `deals` query covers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DealsScope {
     /// Discounted items among the regional top sellers.
@@ -124,7 +124,7 @@ impl SteamClient {
         Ok(page_from(&response.ids, response.metadata.as_ref()))
     }
 
-    /// Top sellers / specials for a region; app ids only.
+    /// Regional top sellers or specials; ids only.
     pub async fn query_deals(
         &self,
         scope: DealsScope,
