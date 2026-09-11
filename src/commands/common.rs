@@ -71,6 +71,29 @@ pub(crate) async fn restored_client() -> Result<SteamClient> {
     Ok(client)
 }
 
+/// User argument to SteamID64, CM only.
+pub(crate) async fn resolve_user_ident(client: &SteamClient, input: &str) -> Result<u64> {
+    use aurelia::steam_client::ident::{match_friend_name, parse_ident, Ident};
+    match parse_ident(input)? {
+        Ident::SteamId(id) => Ok(id),
+        Ident::Me => client.steam_id().ok_or_else(|| {
+            TypedError::new(ErrorKind::AuthRequired, "`me` needs a logged-in session").into()
+        }),
+        Ident::Name(name) => {
+            let friends = if daemon::in_daemon() {
+                daemon::shared_roster().await
+            } else {
+                let mut all = client
+                    .collect_friends(std::time::Duration::from_secs(3))
+                    .await?;
+                all.retain(|f| f.relationship == 3);
+                all
+            };
+            Ok(match_friend_name(&name, &friends)?.steam_id)
+        }
+    }
+}
+
 /// Typed restore failure; unknown kinds mean re-login.
 fn restore_failed(kind: ErrorKind, retry_after: Option<std::time::Duration>, reason: &str) -> anyhow::Error {
     let kind = if kind == ErrorKind::Unknown { ErrorKind::AuthRequired } else { kind };
