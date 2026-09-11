@@ -490,7 +490,10 @@ pub(crate) async fn resolve_dlc_store_info(
     client
         .fetch_store_apps(dlc_ids, language, country)
         .await
-        .unwrap_or_default()
+        .unwrap_or_else(|e| {
+            tracing::warn!("could not fetch DLC store records: {e:#}");
+            Vec::new()
+        })
         .into_iter()
         .map(|i| (i.app_id, i))
         .collect()
