@@ -186,7 +186,7 @@ impl SteamClient {
         // `parse_appinfo` — otherwise binary appinfo silently yields no DLC/depots.
         // Extract everything in a block so the borrowed VDF tree is dropped before
         // the later `.await`.
-        let (name, dlcs, depots, launch_options) = {
+        let (name, dlcs, depots, launch_options, store_meta) = {
             let vdf = find_vdf_in_pics(&buffer)
                 .context("failed to parse product info VDF")?;
             let section = pics_app_section(vdf.value());
@@ -199,8 +199,9 @@ impl SteamClient {
 
             let depots = depots_from_section(section);
             let launch_options = launch_options_from_section(section);
+            let store_meta = store_meta_from_section(section);
 
-            (name, dlcs, depots, launch_options)
+            (name, dlcs, depots, launch_options, store_meta)
         };
 
         let manifest_path = self.appmanifest_path(appid).await?;
@@ -217,7 +218,26 @@ impl SteamClient {
             depots,
             launch_options,
             active_branch,
+            metacritic_score: store_meta.metacritic_score,
+            metacritic_url: store_meta.metacritic_url,
+            homepage: store_meta.homepage,
+            genre_ids: store_meta.genre_ids,
+            category_ids: store_meta.category_ids,
         })
+    }
+
+    /// Raw `common`/`extended` appinfo sections (maintainer tool).
+    pub async fn appinfo_debug(&self, appid: u32) -> Result<String> {
+        let buffer = self
+            .pics_buffer(appid, "failed requesting appinfo for the raw dump")
+            .await?;
+        let vdf = find_vdf_in_pics(&buffer).context("failed to parse product info VDF")?;
+        let section = pics_app_section(vdf.value());
+        let mut out = String::new();
+        for key in ["common", "extended"] {
+            out.push_str(&format!("[{key}]\n{:#?}\n", section.get(key)));
+        }
+        Ok(out)
     }
 
     /// Fetch the app's Steam Auto-Cloud `savefiles` rules from PICS appinfo. These
@@ -367,6 +387,52 @@ impl SteamClient {
             .context("failed to parse launch metadata from PICS appinfo")
     }
 
+}
+
+/// Storefront-ish fields PICS carries.
+#[derive(Default)]
+struct PicsStoreMeta {
+    metacritic_score: Option<i64>,
+    metacritic_url: Option<String>,
+    homepage: Option<String>,
+    genre_ids: Vec<u32>,
+    category_ids: Vec<u32>,
+}
+
+fn store_meta_from_section(section: &steam_vdf_parser::Value) -> PicsStoreMeta {
+    let mut meta = PicsStoreMeta {
+        metacritic_score: section
+            .get_str(&["common", "metacritic_score"])
+            .and_then(|s| s.trim().parse::<i64>().ok())
+            .filter(|&s| s > 0),
+        metacritic_url: section
+            .get_str(&["common", "metacritic_fullurl"])
+            .map(str::to_string)
+            .filter(|s| !s.is_empty()),
+        homepage: section
+            .get_str(&["extended", "homepage"])
+            .map(str::to_string)
+            .filter(|s| !s.is_empty()),
+        ..Default::default()
+    };
+    // `genres` values are ids.
+    if let Some(genres) = section.get_obj(&["common", "genres"]) {
+        for (_, v) in genres.iter() {
+            if let Some(id) = v.as_str().and_then(|s| s.parse::<u32>().ok()) {
+                meta.genre_ids.push(id);
+            }
+        }
+    }
+    // `category_N` keys carry the id.
+    if let Some(categories) = section.get_obj(&["common", "category"]) {
+        for (k, _) in categories.iter() {
+            if let Some(id) = k.strip_prefix("category_").and_then(|s| s.parse::<u32>().ok()) {
+                meta.category_ids.push(id);
+            }
+        }
+    }
+    meta.category_ids.sort_unstable();
+    meta
 }
 
 /// Depot `(id, name)` pairs from an app's PICS section. The `depots` object holds

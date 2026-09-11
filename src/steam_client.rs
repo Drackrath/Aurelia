@@ -183,6 +183,16 @@ pub struct ExtendedAppInfo {
     pub depots: Vec<(u32, String)>,
     pub launch_options: Vec<RawLaunchOption>,
     pub active_branch: String,
+    /// `common/metacritic_score`.
+    pub metacritic_score: Option<i64>,
+    /// `common/metacritic_fullurl`.
+    pub metacritic_url: Option<String>,
+    /// `extended/homepage`.
+    pub homepage: Option<String>,
+    /// `common/genres` values (store genre ids).
+    pub genre_ids: Vec<u32>,
+    /// `common/category` keys (`category_N`).
+    pub category_ids: Vec<u32>,
 }
 
 /// Human-facing store metadata for an app, sourced from the `StoreBrowse.GetItems`
@@ -506,6 +516,8 @@ pub use wishlist::WishlistEntry;
 pub mod ident;
 mod profile;
 pub use profile::UserProfile;
+mod categories;
+pub mod genres_table;
 
 pub use collections::RemoteNamespace;
 pub use friends::{AddedFriend, Friend, Roster};

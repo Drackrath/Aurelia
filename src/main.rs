@@ -471,6 +471,7 @@ async fn run(cli: Cli) -> Result<()> {
             }
         }
         Command::Tags { dump } => cmd_tags(dump, json).await,
+        Command::Appinfo { app_id } => cmd_appinfo(app_id).await,
         Command::Config { command } => match command {
             ConfigCommand::Show => cmd_config_show(json).await,
             ConfigCommand::Protons => cmd_config_protons(json).await,
