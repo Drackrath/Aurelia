@@ -592,6 +592,30 @@ pub async fn save_info_cache(
     write_json_pretty(&info_cache_path(app_id, language, country)?, &record).await
 }
 
+fn tag_name_cache_path(language: &str) -> Result<PathBuf> {
+    let lang: String = language
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+        .collect();
+    Ok(data_dir()?.join(format!("tag_names.{lang}.json")))
+}
+
+/// Cached tag names for `language`; empty on miss.
+pub async fn load_tag_name_cache(language: &str) -> std::collections::HashMap<u32, String> {
+    let Ok(path) = tag_name_cache_path(language) else {
+        return Default::default();
+    };
+    read_json(&path).await.unwrap_or_default()
+}
+
+/// Persist tag names for `language`.
+pub async fn save_tag_name_cache(
+    language: &str,
+    names: &std::collections::HashMap<u32, String>,
+) -> Result<()> {
+    write_json_pretty(&tag_name_cache_path(language)?, names).await
+}
+
 /// Load the per-game user config store (`user_apps.json`).
 ///
 /// A *missing* file is not an error — it yields an empty store. So an `Err` here always
