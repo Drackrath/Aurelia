@@ -270,6 +270,11 @@ pub(crate) fn info_json_value(
         "discount_end_date": details.discount_end.map(|t| aurelia::steam_client::unix_to_ymd(t as i64)),
         "region_locked": details.region_locked,
         "purchase_options": details.purchase_options,
+        "tags": details.tags,
+        "rating": details.rating,
+        "links": details.links,
+        "screenshots": details.screenshots,
+        "trailers": details.trailers,
         "platforms": details.platforms,
         "reviews": details.review_summary,
         "store_url": steam_urls::store_url(details.app_id),
@@ -352,6 +357,27 @@ pub(crate) fn print_info_human(
     }
     if let Some(reviews) = &details.review_summary {
         cli_println!("Reviews    : {reviews}");
+    }
+    let tag_names: Vec<&str> = details
+        .tags
+        .iter()
+        .filter_map(|t| t.name.as_deref())
+        .take(20)
+        .collect();
+    if !tag_names.is_empty() {
+        cli_println!("Tags       : {}", tag_names.join(", "));
+    }
+    if let Some(rating) = &details.rating {
+        let descriptors = if rating.descriptors.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", rating.descriptors.join(", "))
+        };
+        cli_println!(
+            "Rating     : {} {}{descriptors}",
+            rating.system.to_uppercase(),
+            rating.rating.to_uppercase()
+        );
     }
     if let Some((web, _)) = extended_info {
         if let Some(score) = web.metacritic {
