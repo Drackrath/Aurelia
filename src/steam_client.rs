@@ -498,6 +498,9 @@ mod tags;
 pub mod tags_table;
 mod storequery;
 pub use storequery::{DealsScope, QueryPage};
+mod events;
+pub use events::StoreEvent;
+mod players;
 
 pub use collections::RemoteNamespace;
 pub use friends::{resolve_steam_id, AddedFriend, Friend, ResolvedUser, Roster};

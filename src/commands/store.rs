@@ -455,6 +455,135 @@ pub(crate) async fn cmd_similar(
     Ok(())
 }
 
+/// `aurelia players APPID`: current in-game count.
+pub(crate) async fn cmd_players(app_id: u32, json: bool) -> Result<()> {
+    let client = authed_client().await?;
+    let players = client.current_players(app_id).await?;
+    if json {
+        print_json(&serde_json::json!({ "app_id": app_id, "players": players }));
+    } else {
+        cli_println!("{players} players in-game (app {app_id})");
+    }
+    Ok(())
+}
+
+/// `aurelia events`: active store sales and events.
+pub(crate) async fn cmd_events(country: Option<String>, json: bool) -> Result<()> {
+    let country = resolve_steam_country(country).await?;
+    let client = authed_client().await?;
+    let events = client.active_store_events(&country).await?;
+    if json {
+        print_json(&serde_json::json!({ "country": country, "events": events }));
+        return Ok(());
+    }
+    if events.is_empty() {
+        cli_println!("No active store events for {country}.");
+        return Ok(());
+    }
+    cli_println!("{:<12} {:<11} {:<11} TITLE", "TYPE", "START", "END");
+    for e in &events {
+        let start = if e.start > 0 { unix_to_ymd(e.start as i64) } else { "-".to_string() };
+        let end = if e.end > 0 { unix_to_ymd(e.end as i64) } else { "-".to_string() };
+        let assoc = if e.associated_name.is_empty() {
+            String::new()
+        } else {
+            format!("  ({})", e.associated_name)
+        };
+        cli_println!("{:<12} {start:<11} {end:<11} {}{assoc}", e.kind, e.title);
+    }
+    Ok(())
+}
+
+/// `aurelia news APPID`: announcements from the storefront feed.
+pub(crate) async fn cmd_news(app_id: u32, count: u32, max_length: u32, json: bool) -> Result<()> {
+    let http = aurelia::core::net::steam_web_client()?;
+    let items = aurelia::web::discovery::fetch_news(&http, app_id, count, max_length).await?;
+    if json {
+        print_json(&serde_json::json!({ "app_id": app_id, "news": items }));
+        return Ok(());
+    }
+    if items.is_empty() {
+        cli_println!("No news for app {app_id}.");
+        return Ok(());
+    }
+    for n in &items {
+        cli_println!("{}  {}  [{}]", unix_to_ymd(n.date as i64), n.title, n.feed);
+        cli_println!("  {}", n.url);
+        if !n.contents.is_empty() {
+            cli_println!("  {}", n.contents.replace('\n', " "));
+        }
+        cli_println!();
+    }
+    Ok(())
+}
+
+/// `aurelia reviews APPID`: one page of user reviews.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn cmd_reviews(
+    app_id: u32,
+    filter: String,
+    review_type: String,
+    purchase: String,
+    count: u32,
+    cursor: Option<String>,
+    lang: Option<String>,
+    json: bool,
+) -> Result<()> {
+    use aurelia::web::discovery::{fetch_reviews, ReviewQuery};
+    let language = match lang {
+        Some(l) => l,
+        None => resolve_steam_language(None).await,
+    };
+    let query = ReviewQuery {
+        filter,
+        review_type,
+        purchase_type: purchase,
+        language,
+        count,
+        cursor,
+    };
+    let http = aurelia::core::net::steam_web_client()?;
+    let page = fetch_reviews(&http, app_id, &query).await?;
+    if json {
+        print_json(&serde_json::json!({
+            "app_id": app_id,
+            "summary": page.summary,
+            "reviews": page.reviews,
+            "next_cursor": page.next_cursor,
+        }));
+        return Ok(());
+    }
+    // Steam omits totals unless `--filter all`.
+    let s = &page.summary;
+    if s.total_reviews > 0 {
+        cli_println!(
+            "{} ({}% positive, {} reviews: {} up / {} down)",
+            s.label,
+            s.total_positive * 100 / s.total_reviews,
+            s.total_reviews,
+            s.total_positive,
+            s.total_negative
+        );
+    }
+    for r in &page.reviews {
+        let verdict = if r.voted_up { "👍" } else { "👎" };
+        cli_println!(
+            "\n{verdict} {}  {}  {:.1}h played  {} helpful",
+            unix_to_ymd(r.created as i64),
+            r.author,
+            r.playtime_hours,
+            r.votes_up
+        );
+        for line in r.text.lines().take(6) {
+            cli_println!("   {}", truncate(line, 110));
+        }
+    }
+    if let Some(c) = &page.next_cursor {
+        cli_println!("\nNext page: --cursor '{c}'");
+    }
+    Ok(())
+}
+
 /// `aurelia tags [--dump]`: the store tag vocabulary.
 pub(crate) async fn cmd_tags(dump: bool, json: bool) -> Result<()> {
     crate::commands::auth::require_experimental("tags").await?;
