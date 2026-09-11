@@ -477,7 +477,7 @@ pub(crate) async fn resolve_dlc_names_via_store(
     dlc
 }
 
-/// Full store records for DLC ids, keyed by id.
+/// DLC store records keyed by id.
 pub(crate) async fn resolve_dlc_store_info(
     client: &SteamClient,
     dlc_ids: &[u32],

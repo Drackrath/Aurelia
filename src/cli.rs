@@ -111,7 +111,7 @@ pub(crate) enum Command {
         app_ids: Vec<u32>,
         /// Also show storefront-only fields that have no CM-protocol source:
         /// system requirements, Metacritic, website and store genres/categories.
-        /// This makes one additional HTTPS storefront request per app.
+        /// One extra HTTPS request per app.
         #[arg(long)]
         extended: bool,
         /// Bypass the local metadata cache and fetch fresh data from Steam.
