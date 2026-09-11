@@ -92,7 +92,7 @@ pub(crate) async fn cmd_set_branch(app_id: u32, branch: String, json: bool) -> R
 
 /// Storefront-only `--extended` data for one app: the HTTPS `AppDetails` plus the
 /// SteamSpy user tags.
-pub(crate) type ExtendedInfo = (aurelia::web::store::AppDetails, Vec<String>);
+pub(crate) type ExtendedInfo = aurelia::web::store::AppDetails;
 
 pub(crate) async fn cmd_info(
     app_ids: Vec<u32>,
@@ -178,7 +178,7 @@ pub(crate) async fn cmd_info(
     }
 
     // Storefront-only fields (system requirements, Metacritic, website, store
-    // genres/categories, SteamSpy user tags). These have no CM-protocol source, so
+    // genres/categories). These have no CM-protocol source, so
     // `--extended` fetches them from the public HTTPS storefront, reusing one HTTP
     // client across ids. Best-effort: any failure leaves them absent.
     let mut extended_by_id: std::collections::HashMap<u32, ExtendedInfo> =
@@ -194,9 +194,8 @@ pub(crate) async fn cmd_info(
                         .await
                         .ok()
                         .flatten();
-                    let tags = aurelia::web::store::fetch_tags(&http, id).await;
                     if let Some(d) = web {
-                        extended_by_id.insert(id, (d, tags));
+                        extended_by_id.insert(id, d);
                     }
                 }
             }
@@ -287,11 +286,13 @@ pub(crate) fn info_json_value(
         },
         "dlc": dlc.iter().map(|(id, name)| serde_json::json!({"app_id": id, "name": name})).collect::<Vec<_>>(),
     });
-    if let Some((web, tags)) = extended_info {
+    if let Some(web) = extended_info {
+        // `tags` kept for older consumers; now CM-sourced.
+        let tag_names: Vec<&str> = details.tags.iter().filter_map(|t| t.name.as_deref()).collect();
         value["extended"] = serde_json::json!({
             "genres": web.genres,
             "categories": web.categories,
-            "tags": tags,
+            "tags": tag_names,
             "metacritic": web.metacritic,
             "website": web.website,
             "requirements": {
@@ -379,7 +380,7 @@ pub(crate) fn print_info_human(
             rating.rating.to_uppercase()
         );
     }
-    if let Some((web, _)) = extended_info {
+    if let Some(web) = extended_info {
         if let Some(score) = web.metacritic {
             cli_println!("Metacritic : {score}");
         }
@@ -396,14 +397,8 @@ pub(crate) fn print_info_human(
         }
     }
 
-    // --- Extended: tags / genres / categories / requirements ---
-    if let Some((web, tags)) = extended_info {
-        if !tags.is_empty() {
-            cli_println!(
-                "\nTags      : {}",
-                tags.iter().take(20).cloned().collect::<Vec<_>>().join(", ")
-            );
-        }
+    // --- Extended: genres / categories / requirements ---
+    if let Some(web) = extended_info {
         if !web.genres.is_empty() {
             cli_println!("Genres    : {}", web.genres.join(", "));
         }
