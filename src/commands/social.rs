@@ -5,7 +5,7 @@ use crate::output;
 
 use crate::commands::common::*;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 /// `aurelia friends`: list the logged-in user's friends with status and game.
 ///
@@ -58,34 +58,73 @@ pub(crate) async fn cmd_friends(json: bool) -> Result<()> {
     Ok(())
 }
 
-/// `aurelia friends search <query>`: resolve a SteamID from a SteamID64, profile
-/// URL, or custom (vanity) URL/name. No Steam session required (uses the public
-/// Steam Community profile data).
-pub(crate) async fn cmd_friends_search(query: String, json: bool) -> Result<()> {
-    let user = aurelia::steam_client::resolve_steam_id(&query).await?;
+/// `aurelia user IDENT`: profile over the CM.
+pub(crate) async fn cmd_user(user: String, json: bool) -> Result<()> {
+    let client = authed_client().await?;
+    let steam_id = resolve_user_ident(&client, &user).await?;
+    let profile = client.user_profile(steam_id).await?;
     if json {
-        print_json(&serde_json::json!({
-            "steam_id": user.steam_id,
-            "persona_name": user.persona_name,
-            "profile_url": user.profile_url,
-        }));
-    } else {
-        cli_println!("SteamID : {}", user.steam_id);
-        cli_println!("Name    : {}", user.persona_name.as_deref().unwrap_or("(unknown)"));
-        cli_println!("Profile : {}", user.profile_url);
+        print_json(&profile);
+        return Ok(());
+    }
+    cli_println!(
+        "{}  ({})",
+        profile.persona_name.as_deref().unwrap_or("(no persona name)"),
+        profile.steam_id
+    );
+    cli_println!("Profile  : {}", profile.profile_url);
+    if let Some(url) = &profile.avatar_url {
+        cli_println!("Avatar   : {url}");
+    }
+    let visibility = match profile.visibility {
+        3 => "public",
+        2 => "friends-only",
+        1 => "private",
+        _ => "unknown",
+    };
+    let limited = if profile.is_limited { ", limited account" } else { "" };
+    cli_println!("Privacy  : {visibility}{limited}");
+    if let Some(name) = &profile.real_name {
+        cli_println!("Name     : {name}");
+    }
+    if let Some(place) = &profile.location {
+        cli_println!("Location : {place}");
+    }
+    if let Some(t) = profile.created {
+        cli_println!("Created  : {}", aurelia::steam_client::unix_to_ymd(t as i64));
+    }
+    cli_println!("Status   : {}", persona_state_label(profile.persona_state));
+    match (&profile.game_name, profile.game_app_id) {
+        (Some(g), _) => cli_println!("Playing  : {g}"),
+        (None, Some(id)) => cli_println!("Playing  : app {id}"),
+        _ => {}
+    }
+    if let Some(t) = profile.last_logoff {
+        cli_println!("Last seen: {}", aurelia::steam_client::unix_to_ymd(t as i64));
+    }
+    if let Some(h) = &profile.headline {
+        cli_println!("Headline : {h}");
+    }
+    if let Some(s) = &profile.summary {
+        cli_println!("\n{}", aurelia::web::store::strip_html(s));
+    }
+    if let Some(t) = profile.ban_expires {
+        cli_println!("\nCommunity ban until {}", aurelia::steam_client::unix_to_ymd(t as i64));
     }
     Ok(())
 }
 
-/// `aurelia friends add <query>`: send a friend request. The query is resolved to
-/// a SteamID (accepts a SteamID64, profile URL, or custom URL/name) first.
+/// `aurelia friends search IDENT`: same as `user`.
+pub(crate) async fn cmd_friends_search(query: String, json: bool) -> Result<()> {
+    cmd_user(query, json).await
+}
+
+/// `aurelia friends add IDENT`: send a friend request.
 pub(crate) async fn cmd_friends_add(query: String, json: bool) -> Result<()> {
     let client = authed_client().await?;
-    let target = aurelia::steam_client::resolve_steam_id(&query)
-        .await
-        .with_context(|| format!("could not resolve '{query}' to a Steam account"))?;
-    let added = client.add_friend(target.steam_id).await?;
-    let name = added.persona_name.or(target.persona_name);
+    let steam_id = resolve_user_ident(&client, &query).await?;
+    let added = client.add_friend(steam_id).await?;
+    let name = added.persona_name;
 
     if json {
         print_json(&serde_json::json!({
