@@ -215,7 +215,7 @@ aurelia list --online                # add an ONLINE column (needs-connection he
 aurelia info 690830                  # game details (description, release, reviews, DLC)
 aurelia info 690830 --extended       # + requirements, Metacritic, tags, genres, categories
 aurelia info 690830 --lang german    # localize store text (falls back to config, then English)
-aurelia info 690830 --cc DE          # quote the price for a region (falls back to config, locale, US)
+aurelia info 690830 --country DE     # quote the price for a region (falls back to config, locale, US)
 aurelia price 690830 --compare US,DE,JP   # compare a game's price and discount end across regions
 aurelia dlc 690830                   # list a game's DLC with ownership and install status
 aurelia drm 690830                   # verify DRM/ownership tickets headlessly (no Steam client)

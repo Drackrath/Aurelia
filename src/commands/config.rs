@@ -76,10 +76,10 @@ pub(crate) async fn cmd_config_language(lang: Option<String>, json: bool) -> Res
 }
 
 /// View or set the price country.
-pub(crate) async fn cmd_config_country(cc: Option<String>, json: bool) -> Result<()> {
+pub(crate) async fn cmd_config_country(country: Option<String>, json: bool) -> Result<()> {
     use aurelia::core::error::{ErrorKind, TypedError};
     use aurelia::core::locale::normalize_country;
-    let value = match cc {
+    let value = match country {
         None => None,
         Some(raw) if raw.trim().is_empty() => Some(None),
         Some(raw) => Some(Some(normalize_country(&raw).ok_or_else(|| {

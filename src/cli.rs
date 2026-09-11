@@ -124,8 +124,8 @@ pub(crate) enum Command {
         #[arg(short = 'l', long = "lang")]
         lang: Option<String>,
         /// Price country code; defaults to config, locale, US.
-        #[arg(long = "cc")]
-        cc: Option<String>,
+        #[arg(long)]
+        country: Option<String>,
     },
     /// Show a game's price, optionally across regions.
     Price {
@@ -134,8 +134,8 @@ pub(crate) enum Command {
         #[arg(long, value_delimiter = ',')]
         compare: Vec<String>,
         /// Country code for a single-region lookup.
-        #[arg(long = "cc")]
-        cc: Option<String>,
+        #[arg(long)]
+        country: Option<String>,
         /// Steam API language name for the game's name.
         #[arg(short = 'l', long = "lang")]
         lang: Option<String>,
@@ -428,7 +428,7 @@ pub(crate) enum ConfigCommand {
     /// View or set the price country.
     Country {
         /// Two-letter ISO code; empty clears, omitted prints.
-        cc: Option<String>,
+        country: Option<String>,
     },
     /// View or set the experimental-features gate.
     ///

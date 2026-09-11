@@ -89,14 +89,14 @@ fn parse_regions(compare: &[String]) -> Result<Vec<String>> {
 pub(crate) async fn cmd_price(
     app_id: u32,
     compare: Vec<String>,
-    cc: Option<String>,
+    country: Option<String>,
     lang: Option<String>,
     json: bool,
 ) -> Result<()> {
     let lang = resolve_steam_language(lang).await;
     let mut regions = parse_regions(&compare)?;
     if regions.is_empty() {
-        regions.push(resolve_country(cc).await?);
+        regions.push(resolve_steam_country(country).await?);
     }
 
     let client = authed_client().await?;
