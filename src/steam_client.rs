@@ -496,6 +496,8 @@ mod cloudconfig;
 mod collections;
 mod tags;
 pub mod tags_table;
+mod storequery;
+pub use storequery::{DealsScope, QueryPage};
 
 pub use collections::RemoteNamespace;
 pub use friends::{resolve_steam_id, AddedFriend, Friend, ResolvedUser, Roster};
