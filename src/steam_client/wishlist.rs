@@ -107,7 +107,7 @@ impl SteamClient {
         Ok(response.count())
     }
 
-    /// Add `app_id` to the own wishlist; returns the new count.
+    /// Add to own wishlist; returns new count.
     pub async fn wishlist_add(&self, app_id: u32) -> Result<u32> {
         let connection = self.require_connection()?;
         let mut request = CWishlist_AddToWishlist_Request::new();
@@ -119,7 +119,7 @@ impl SteamClient {
         Ok(response.wishlist_count())
     }
 
-    /// Remove `app_id` from the own wishlist; returns the new count.
+    /// Remove from own wishlist; returns new count.
     pub async fn wishlist_remove(&self, app_id: u32) -> Result<u32> {
         let connection = self.require_connection()?;
         let mut request = CWishlist_RemoveFromWishlist_Request::new();
