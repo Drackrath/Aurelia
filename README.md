@@ -212,8 +212,8 @@ aurelia list                         # list your library
 aurelia list --installed             # only installed games
 aurelia list --search elden          # filter by name
 aurelia list --online                # add an ONLINE column (needs-connection heuristic)
-aurelia info 690830                  # game details (description, release, reviews, DLC)
-aurelia info 690830 --extended       # + requirements, Metacritic, tags, genres, categories
+aurelia info 690830                  # game details (description, release, reviews, tags, rating, DLC)
+aurelia info 690830 --extended       # + requirements, Metacritic, genres, categories
 aurelia info 690830 --lang german    # localize store text (falls back to config, then English)
 aurelia info 690830 --country DE     # quote the price for a region (falls back to config, locale, US)
 aurelia price 690830 --compare US,DE,JP   # compare a game's price and discount end across regions
@@ -223,6 +223,7 @@ aurelia achievements 620             # your achievements for a game (unlock stat
 aurelia achievements 620 --lang german  # localize achievement names and descriptions
 aurelia image 1245620                # fetch cover art to the cache (prints the path)
 aurelia image 1245620 -o cover.jpg   # save artwork to a specific file
+aurelia image 1245620 --list --probe # every store asset URL (art, screenshots, trailers), HEAD-checked
 
 # Install & maintain
 aurelia install 1245620              # download & install a game by app id
