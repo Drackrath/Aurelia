@@ -276,7 +276,7 @@ pub struct StoreLink {
     pub url: String,
 }
 
-/// A store trailer; video URL only when Steam publishes one.
+/// A store trailer; video URL rarely present.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct StoreTrailer {
     pub name: String,
@@ -861,7 +861,7 @@ fn store_rating(item: &StoreItem) -> Option<StoreRating> {
     if r.rating().is_empty() && r.type_().is_empty() {
         return None;
     }
-    // `type` is often empty; the image path names the board.
+    // Board name parsed from the image path.
     let system = if r.type_().is_empty() {
         r.image_url()
             .split("game_ratings/")

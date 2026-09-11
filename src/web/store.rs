@@ -1,9 +1,8 @@
-//! Steam Storefront lookups for the storefront-only fields shown by
-//! `aurelia info --extended`: system requirements, Metacritic, website, and
-//! store genres/categories. These have no equivalent in the `StoreBrowse` CM
-//! protocol, so they are fetched from the public HTTPS storefront — the one
-//! part of the metadata path that still uses the web API, and only when
-//! `--extended` is set. Tags come from StoreBrowse (see `steam_client::tags`).
+//! Storefront lookups for `info --extended`.
+//!
+//! Requirements, Metacritic, website, genres, categories.
+//! No CM equivalent; HTTPS, only with `--extended`.
+//! Tags come from StoreBrowse (`steam_client::tags`).
 //!
 //! The default `info` path is protocol-native via
 //! [`crate::steam_client::SteamClient::fetch_store_apps`].
