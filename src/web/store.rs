@@ -1,9 +1,9 @@
-//! Steam Storefront / SteamSpy lookups for the storefront-only fields shown by
-//! `aurelia info --extended`: system requirements, Metacritic, website, store
-//! genres/categories, and SteamSpy user tags. These have no equivalent in the
-//! `StoreBrowse` CM protocol (which returns only numeric tag/category ids), so
-//! they are fetched from the public HTTPS storefront — the one part of the
-//! metadata path that still uses the web API, and only when `--extended` is set.
+//! Steam Storefront lookups for the storefront-only fields shown by
+//! `aurelia info --extended`: system requirements, Metacritic, website, and
+//! store genres/categories. These have no equivalent in the `StoreBrowse` CM
+//! protocol, so they are fetched from the public HTTPS storefront — the one
+//! part of the metadata path that still uses the web API, and only when
+//! `--extended` is set. Tags come from StoreBrowse (see `steam_client::tags`).
 //!
 //! The default `info` path is protocol-native via
 //! [`crate::steam_client::SteamClient::fetch_store_apps`].
@@ -238,30 +238,6 @@ fn requirements_lines(html: &str) -> Vec<String> {
         .filter(|line| !line.eq_ignore_ascii_case("Minimum:") && !line.eq_ignore_ascii_case("Recommended:"))
         .map(String::from)
         .collect()
-}
-
-/// Fetch community/user tags for an app from SteamSpy, ordered by popularity.
-/// Best-effort: returns an empty list on any error or if no tags are available.
-pub async fn fetch_tags(client: &reqwest::Client, app_id: u32) -> Vec<String> {
-    let url = format!("https://steamspy.com/api.php?request=appdetails&appid={app_id}");
-    let Ok(resp) = crate::core::net::send_with_retry(client, client.get(&url)).await else {
-        return Vec::new();
-    };
-    let Ok(value) = resp.json::<serde_json::Value>().await else {
-        return Vec::new();
-    };
-
-    // `tags` is either an object {name: votes} or an empty array when absent.
-    let Some(obj) = value.get("tags").and_then(|t| t.as_object()) else {
-        return Vec::new();
-    };
-
-    let mut tags: Vec<(String, i64)> = obj
-        .iter()
-        .map(|(name, votes)| (name.clone(), votes.as_i64().unwrap_or(0)))
-        .collect();
-    tags.sort_by(|a, b| b.1.cmp(&a.1));
-    tags.into_iter().map(|(name, _)| name).collect()
 }
 
 /// Strip HTML tags and decode the handful of entities Steam descriptions use,
