@@ -428,7 +428,7 @@ pub(crate) async fn resolve_steam_language(flag: Option<String>) -> String {
 }
 
 /// Country: flag, config, locale, then US.
-pub(crate) async fn resolve_country(flag: Option<String>) -> Result<String> {
+pub(crate) async fn resolve_steam_country(flag: Option<String>) -> Result<String> {
     use aurelia::core::locale::{detect_env_locale, normalize_country, steam_country};
     if let Some(raw) = flag {
         return normalize_country(&raw).ok_or_else(|| {
