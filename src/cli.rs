@@ -792,7 +792,7 @@ pub(crate) enum CollectionsCommand {
 pub(crate) enum FriendsCommand {
     /// List your friends (the default when no subcommand is given).
     List,
-    /// Show a user by SteamID64, /profiles/ URL or friend name.
+    /// Show a user by id, URL, name.
     Search { query: String },
     /// Send a friend request (same identifiers as search).
     Add { query: String },
