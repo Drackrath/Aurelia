@@ -90,9 +90,8 @@ pub(crate) async fn cmd_set_branch(app_id: u32, branch: String, json: bool) -> R
     Ok(())
 }
 
-/// Storefront-only `--extended` data for one app: the HTTPS `AppDetails` plus the
-/// SteamSpy user tags.
-pub(crate) type ExtendedInfo = (aurelia::web::store::AppDetails, Vec<String>);
+/// Storefront-only `--extended` data for one app.
+pub(crate) type ExtendedInfo = aurelia::web::store::AppDetails;
 
 pub(crate) async fn cmd_info(
     app_ids: Vec<u32>,
@@ -178,7 +177,7 @@ pub(crate) async fn cmd_info(
     }
 
     // Storefront-only fields (system requirements, Metacritic, website, store
-    // genres/categories, SteamSpy user tags). These have no CM-protocol source, so
+    // genres/categories). These have no CM-protocol source, so
     // `--extended` fetches them from the public HTTPS storefront, reusing one HTTP
     // client across ids. Best-effort: any failure leaves them absent.
     let mut extended_by_id: std::collections::HashMap<u32, ExtendedInfo> =
@@ -194,9 +193,8 @@ pub(crate) async fn cmd_info(
                         .await
                         .ok()
                         .flatten();
-                    let tags = aurelia::web::store::fetch_tags(&http, id).await;
                     if let Some(d) = web {
-                        extended_by_id.insert(id, (d, tags));
+                        extended_by_id.insert(id, d);
                     }
                 }
             }
@@ -270,6 +268,11 @@ pub(crate) fn info_json_value(
         "discount_end_date": details.discount_end.map(|t| aurelia::steam_client::unix_to_ymd(t as i64)),
         "region_locked": details.region_locked,
         "purchase_options": details.purchase_options,
+        "tags": details.tags,
+        "rating": details.rating,
+        "links": details.links,
+        "screenshots": details.screenshots,
+        "trailers": details.trailers,
         "platforms": details.platforms,
         "reviews": details.review_summary,
         "store_url": steam_urls::store_url(details.app_id),
@@ -282,11 +285,13 @@ pub(crate) fn info_json_value(
         },
         "dlc": dlc.iter().map(|(id, name)| serde_json::json!({"app_id": id, "name": name})).collect::<Vec<_>>(),
     });
-    if let Some((web, tags)) = extended_info {
+    if let Some(web) = extended_info {
+        // `tags` kept for older consumers; now CM-sourced.
+        let tag_names: Vec<&str> = details.tags.iter().filter_map(|t| t.name.as_deref()).collect();
         value["extended"] = serde_json::json!({
             "genres": web.genres,
             "categories": web.categories,
-            "tags": tags,
+            "tags": tag_names,
             "metacritic": web.metacritic,
             "website": web.website,
             "requirements": {
@@ -353,7 +358,28 @@ pub(crate) fn print_info_human(
     if let Some(reviews) = &details.review_summary {
         cli_println!("Reviews    : {reviews}");
     }
-    if let Some((web, _)) = extended_info {
+    let tag_names: Vec<&str> = details
+        .tags
+        .iter()
+        .filter_map(|t| t.name.as_deref())
+        .take(20)
+        .collect();
+    if !tag_names.is_empty() {
+        cli_println!("Tags       : {}", tag_names.join(", "));
+    }
+    if let Some(rating) = &details.rating {
+        let descriptors = if rating.descriptors.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", rating.descriptors.join(", "))
+        };
+        cli_println!(
+            "Rating     : {} {}{descriptors}",
+            rating.system.to_uppercase(),
+            rating.rating.to_uppercase()
+        );
+    }
+    if let Some(web) = extended_info {
         if let Some(score) = web.metacritic {
             cli_println!("Metacritic : {score}");
         }
@@ -370,14 +396,8 @@ pub(crate) fn print_info_human(
         }
     }
 
-    // --- Extended: tags / genres / categories / requirements ---
-    if let Some((web, tags)) = extended_info {
-        if !tags.is_empty() {
-            cli_println!(
-                "\nTags      : {}",
-                tags.iter().take(20).cloned().collect::<Vec<_>>().join(", ")
-            );
-        }
+    // --- Extended: genres / categories / requirements ---
+    if let Some(web) = extended_info {
         if !web.genres.is_empty() {
             cli_println!("Genres    : {}", web.genres.join(", "));
         }
@@ -457,6 +477,28 @@ pub(crate) async fn resolve_dlc_names_via_store(
     dlc
 }
 
+/// DLC store records keyed by id.
+pub(crate) async fn resolve_dlc_store_info(
+    client: &SteamClient,
+    dlc_ids: &[u32],
+    language: &str,
+    country: &str,
+) -> std::collections::HashMap<u32, StoreAppInfo> {
+    if dlc_ids.is_empty() {
+        return Default::default();
+    }
+    client
+        .fetch_store_apps(dlc_ids, language, country)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("could not fetch DLC store records: {e:#}");
+            Vec::new()
+        })
+        .into_iter()
+        .map(|i| (i.app_id, i))
+        .collect()
+}
+
 pub(crate) async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
     // Ownership status requires an authenticated connection; installed/disabled status
     // is read from the local appmanifest.
@@ -470,7 +512,13 @@ pub(crate) async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
         .map(|e| e.dlcs)
         .unwrap_or_default();
     let country = resolve_steam_country(None).await?;
-    let dlc = resolve_dlc_names_via_store(&steam, &dlc_ids, "english", &country).await;
+    let lang = resolve_steam_language(None).await;
+    let store = resolve_dlc_store_info(&steam, &dlc_ids, &lang, &country).await;
+    let mut dlc: Vec<(u32, Option<String>)> = dlc_ids
+        .iter()
+        .map(|&id| (id, store.get(&id).map(|i| i.name.clone()).filter(|s| !s.is_empty())))
+        .collect();
+    dlc.sort_by_key(|(id, _)| *id);
     let states = steam
         .dlc_states(app_id, &dlc_ids)
         .await
@@ -489,6 +537,14 @@ pub(crate) async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
                     "owned": s.map(|s| s.owned),
                     "installed": s.map(|s| s.installed),
                     "disabled": s.map(|s| s.disabled),
+                    "price": store.get(id).and_then(|i| i.price.clone()),
+                    "discount_pct": store.get(id).map(|i| i.discount_pct),
+                    "discount_end_date": store
+                        .get(id)
+                        .and_then(|i| i.discount_end)
+                        .map(|t| aurelia::steam_client::unix_to_ymd(t as i64)),
+                    "release_date": store.get(id).and_then(|i| i.release_date.clone()),
+                    "reviews": store.get(id).and_then(|i| i.review_summary.clone()),
                     "image_url": steam_urls::header_url(*id),
                     "image_fallback_url": steam_urls::small_capsule_url(*id),
                     "store_url": steam_urls::store_url(*id),
@@ -503,9 +559,23 @@ pub(crate) async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
         cli_println!("No DLC for app {app_id}.");
         return Ok(());
     }
-    cli_println!("{:>9}  {:<5}  {:<13}  NAME", "APPID", "OWNED", "STATUS");
+    cli_println!(
+        "{:>9}  {:<5}  {:<13}  {:<16}  NAME",
+        "APPID", "OWNED", "STATUS", "PRICE"
+    );
     for (id, name) in &dlc {
         let name = name.clone().unwrap_or_else(|| "(name unavailable)".to_string());
+        let price = store
+            .get(id)
+            .map(|i| {
+                let p = i.price.clone().unwrap_or_else(|| "-".to_string());
+                if i.discount_pct > 0 {
+                    format!("{p} (-{}%)", i.discount_pct)
+                } else {
+                    p
+                }
+            })
+            .unwrap_or_else(|| "-".to_string());
         let s = state_by_id.get(id);
         let owned = match s.map(|s| s.owned) {
             Some(true) => "yes",
@@ -519,7 +589,7 @@ pub(crate) async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
             Some(_) => "enabled",
             None => "?",
         };
-        cli_println!("{id:>9}  {owned:<5}  {status:<13}  {name}");
+        cli_println!("{id:>9}  {owned:<5}  {status:<13}  {price:<16}  {name}");
     }
     Ok(())
 }

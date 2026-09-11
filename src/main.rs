@@ -412,7 +412,16 @@ async fn run(cli: Cli) -> Result<()> {
             app_id,
             output,
             force,
-        } => cmd_image(app_id, output, force, json).await,
+            list,
+            probe,
+        } => {
+            if list {
+                cmd_image_list(app_id, probe, json).await
+            } else {
+                cmd_image(app_id, output, force, json).await
+            }
+        }
+        Command::Tags { dump } => cmd_tags(dump, json).await,
         Command::Config { command } => match command {
             ConfigCommand::Show => cmd_config_show(json).await,
             ConfigCommand::Protons => cmd_config_protons(json).await,
