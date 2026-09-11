@@ -256,6 +256,12 @@ pub(crate) enum Command {
         /// Re-download even if a cached copy already exists.
         #[arg(short, long)]
         force: bool,
+        /// List every store asset URL instead of downloading.
+        #[arg(long)]
+        list: bool,
+        /// With `--list`: HEAD-check each URL.
+        #[arg(long, requires = "list")]
+        probe: bool,
     },
     /// Dump the store tag vocabulary (maintainer tool).
     #[command(hide = true)]
