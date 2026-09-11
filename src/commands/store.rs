@@ -185,15 +185,15 @@ pub(crate) async fn cmd_price(
 async fn store_info_with_media(app_id: u32) -> Result<StoreAppInfo> {
     use aurelia::core::config::{info_cache_ttl, load_info_cache};
     let lang = resolve_steam_language(None).await;
-    let cc = resolve_country(None).await?;
-    if let Some(cached) = load_info_cache(app_id, &lang, &cc, info_cache_ttl()).await {
+    let country = resolve_steam_country(None).await?;
+    if let Some(cached) = load_info_cache(app_id, &lang, &country, info_cache_ttl()).await {
         if !cached.details.screenshots.is_empty() || !cached.details.tags.is_empty() {
             return Ok(cached.details);
         }
     }
     let client = authed_client().await?;
     client
-        .fetch_store_apps(&[app_id], &lang, &cc)
+        .fetch_store_apps(&[app_id], &lang, &country)
         .await?
         .into_iter()
         .find(|a| a.app_id == app_id)
