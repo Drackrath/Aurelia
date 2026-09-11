@@ -20,7 +20,7 @@ pub(crate) struct Cli {
     #[command(subcommand)]
     pub(crate) command: Command,
     /// Emit output (and errors) as JSON. Works with every command.
-    #[arg(long, global = true)]
+    #[arg(short = 'j', long, global = true)]
     pub(crate) json: bool,
     /// Increase log verbosity (repeatable: -v, -vv, -vvv). Unmutes the Steam
     /// networking stack so a stalled command shows where it is stuck.
@@ -44,11 +44,11 @@ pub(crate) enum Command {
         guard: Option<String>,
         /// Log in by scanning a QR code with the Steam Mobile app (no
         /// username/password needed). Renders the QR in the terminal.
-        #[arg(long, conflicts_with_all = ["username", "password", "guard", "code"])]
+        #[arg(short = 'q', long, conflicts_with_all = ["username", "password", "guard", "code"])]
         qr: bool,
         /// Enter the Steam Guard code interactively when prompted, instead of
         /// approving the login in the Steam Mobile app. (Alias: --pin)
-        #[arg(long, visible_alias = "pin", conflicts_with = "guard")]
+        #[arg(short = 'c', long, visible_alias = "pin", conflicts_with = "guard")]
         code: bool,
         /// [EXPERIMENTAL] Verify your identity in the browser on the official Steam
         /// sign-in page (OpenID) — the password is only ever typed on
@@ -56,7 +56,7 @@ pub(crate) enum Command {
         /// OpenID, so commands that need a session still require one of the other
         /// login methods. Gated behind `aurelia config experimental true` (or
         /// AURELIA_EXPERIMENTAL=1); hidden from the core help.
-        #[arg(long, hide = true, conflicts_with_all = ["username", "password", "guard", "qr", "code"])]
+        #[arg(short = 'o', long, hide = true, conflicts_with_all = ["username", "password", "guard", "qr", "code"])]
         openid: bool,
         /// [EXPERIMENTAL] Store a browser web token to enable the web-surface
         /// commands (inventory, wallet, market listings) without a client login:
@@ -66,15 +66,15 @@ pub(crate) enum Command {
         /// omitted. Web-only and short-lived (~24h); it cannot replace a full login.
         /// Gated behind `aurelia config experimental true` (or AURELIA_EXPERIMENTAL=1);
         /// hidden from the core help.
-        #[arg(long, hide = true, num_args = 0..=1, conflicts_with_all = ["username", "password", "guard", "qr", "code", "openid"])]
+        #[arg(short = 'w', long, hide = true, num_args = 0..=1, conflicts_with_all = ["username", "password", "guard", "qr", "code", "openid"])]
         web_token: Option<Option<String>>,
         /// Report the current session health (authenticated? which account?) without
         /// logging in. Reflects the daemon's shared session when one is in use.
-        #[arg(long, conflicts_with_all = ["username", "password", "guard", "qr", "code", "openid", "web_token", "reconnect"])]
+        #[arg(short = 'H', long, conflicts_with_all = ["username", "password", "guard", "qr", "code", "openid", "web_token", "reconnect"])]
         health: bool,
         /// Tear down and re-establish the daemon's shared session from the stored
         /// token — use after the live connection dropped. Requires a running daemon.
-        #[arg(long, conflicts_with_all = ["username", "password", "guard", "qr", "code", "openid", "web_token", "health"])]
+        #[arg(short = 'r', long, conflicts_with_all = ["username", "password", "guard", "qr", "code", "openid", "web_token", "health"])]
         reconnect: bool,
     },
     /// List games in your library.
@@ -87,18 +87,18 @@ pub(crate) enum Command {
         search: Option<String>,
         /// Only show games in the named collection (by name or id). Static
         /// collections only — dynamic (filter-based) ones can't be resolved offline.
-        #[arg(long)]
+        #[arg(short = 'c', long)]
         collection: Option<String>,
         /// Show an ONLINE column indicating whether each game appears to require
         /// an online connection (inferred from Steam store categories). This
         /// fetches PICS appinfo per game, so it is slower than a plain listing.
-        #[arg(long)]
+        #[arg(short = 'o', long)]
         online: bool,
         /// Compute `update_available` for installed games by comparing local and
         /// remote depot manifests (applies to owned *and* Family-Shared games).
         /// Requires a connection and a manifest fetch per game, so it is slower
         /// than a plain listing; off by default.
-        #[arg(long)]
+        #[arg(short = 'u', long)]
         check_updates: bool,
     },
     /// Show detailed information about a game.
@@ -112,32 +112,32 @@ pub(crate) enum Command {
         /// Also show storefront-only fields that have no CM-protocol source:
         /// system requirements, Metacritic, website and store genres/categories.
         /// One extra HTTPS request per app.
-        #[arg(long)]
+        #[arg(short = 'e', long)]
         extended: bool,
         /// Bypass the local metadata cache and fetch fresh data from Steam.
         /// By default `info` serves cached store metadata (TTL via
         /// `AURELIA_INFO_CACHE_TTL`, default 6h) to avoid a Steam logon per call.
-        #[arg(long)]
+        #[arg(short = 'n', long)]
         no_cache: bool,
         /// Steam API language name for store text (descriptions, requirements).
         /// Defaults to the `aurelia config language` setting, or English.
-        #[arg(short = 'l', long = "lang")]
+        #[arg(short = 'l', long = "lang", alias = "language")]
         lang: Option<String>,
         /// Price country code; defaults to config, locale, US.
-        #[arg(long)]
+        #[arg(short = 'c', long, alias = "cc")]
         country: Option<String>,
     },
     /// Show a game's price, optionally across regions.
     Price {
         app_id: u32,
         /// Country codes to compare, comma-separated.
-        #[arg(long, value_delimiter = ',')]
+        #[arg(short = 'r', long, value_delimiter = ',')]
         compare: Vec<String>,
         /// Country code for a single-region lookup.
-        #[arg(long)]
+        #[arg(short = 'c', long, alias = "cc")]
         country: Option<String>,
         /// Steam API language name for the game's name.
-        #[arg(short = 'l', long = "lang")]
+        #[arg(short = 'l', long = "lang", alias = "language")]
         lang: Option<String>,
     },
     /// Download and install a game.
@@ -150,7 +150,7 @@ pub(crate) enum Command {
         /// Game to update. Omit to list every installed game that needs an update.
         app_id: Option<u32>,
         /// Update even if the game is pinned (see `aurelia pin`), overriding the lock.
-        #[arg(long)]
+        #[arg(short = 'f', long)]
         force: bool,
     },
     /// Launch a game and wait for it to exit.
@@ -165,30 +165,30 @@ pub(crate) enum Command {
         windows: bool,
         /// Route this launch through the luxtorpeda native-engine plugin (Linux only).
         /// Installs the plugin on first use; see `aurelia luxtorpeda`.
-        #[arg(long, conflicts_with_all = ["proton", "windows"])]
+        #[arg(short = 'n', long, conflicts_with_all = ["proton", "windows"])]
         native_engine: bool,
         /// Wrap this launch through the umu-launcher plugin (Proton via `umu-run`,
         /// Linux only). Installs the plugin on first use; see `aurelia umu`.
         /// Combine with `--proton` to pick the Proton build umu runs.
-        #[arg(long, conflicts_with_all = ["windows", "native_engine"])]
+        #[arg(short = 'u', long, conflicts_with_all = ["windows", "native_engine"])]
         umu: bool,
         /// Wrap this launch with a specific launch script, overriding the per-game
         /// config and the auto-detected `<script_dir>/<app_id>.sh`. The script runs
         /// with the resolved launch command as its arguments. See `aurelia scripts`.
-        #[arg(long, value_name = "PATH")]
+        #[arg(short = 'x', long, value_name = "PATH")]
         script: Option<PathBuf>,
         /// Bypass all launch scripts for this launch (ignore the per-game config and
         /// any auto-detected script).
-        #[arg(long, conflicts_with = "script")]
+        #[arg(short = 'X', long, conflicts_with = "script")]
         no_script: bool,
         /// Run with real Steam integration instead of standalone mode: bridge to the
         /// host Steam client (started silently if not running) so Steamworks online
         /// features work. Implied for Family-Shared games, which require it.
-        #[arg(long)]
+        #[arg(short = 's', long)]
         steam: bool,
         /// Skip the automatic update check and install before launching.
-        #[arg(long)]
-        noupdate: bool,
+        #[arg(short = 'N', long = "no-update", alias = "noupdate")]
+        no_update: bool,
     },
     /// Stop a running game previously launched with `aurelia play`.
     Stop {
@@ -196,7 +196,7 @@ pub(crate) enum Command {
         app_id: Option<u32>,
         /// Force-kill the game immediately (SIGKILL) instead of asking it to exit
         /// gracefully first. Use when a game is hung and ignores a normal stop.
-        #[arg(long)]
+        #[arg(short = 'f', long)]
         force: bool,
     },
     /// List the games Aurelia is currently running.
@@ -205,7 +205,7 @@ pub(crate) enum Command {
     Uninstall {
         app_id: u32,
         /// Also delete the game's Wine prefix / compat data.
-        #[arg(long)]
+        #[arg(short = 'd', long)]
         delete_prefix: bool,
     },
     /// Verify the integrity of an installed game.
@@ -229,14 +229,14 @@ pub(crate) enum Command {
         app_id: u32,
         /// Stop Steam while applying the change, then restart it, so the running
         /// client picks it up (Windows). Steam reads DLC state only at startup.
-        #[arg(long)]
+        #[arg(short = 'r', long)]
         restart_steam: bool,
     },
     /// Disable a DLC for its base game.
     Disable {
         app_id: u32,
         /// Stop Steam while applying the change, then restart it (Windows).
-        #[arg(long)]
+        #[arg(short = 'r', long)]
         restart_steam: bool,
     },
     /// Show the logged-in user's achievements for a game.
@@ -244,7 +244,7 @@ pub(crate) enum Command {
         app_id: u32,
         /// Steam API language name. Defaults to the `aurelia config language`
         /// setting, or English.
-        #[arg(short, long)]
+        #[arg(short, long, alias = "language")]
         lang: Option<String>,
     },
     /// Download a game's cover/header artwork to the local image cache.
@@ -257,17 +257,17 @@ pub(crate) enum Command {
         #[arg(short, long)]
         force: bool,
         /// List every store asset URL instead of downloading.
-        #[arg(long)]
+        #[arg(short = 'l', long)]
         list: bool,
         /// With `--list`: HEAD-check each URL.
-        #[arg(long, requires = "list")]
+        #[arg(short = 'p', long, requires = "list")]
         probe: bool,
     },
     /// Dump the store tag vocabulary (maintainer tool).
     #[command(hide = true)]
     Tags {
         /// Print Rust source for `tags_table.rs`.
-        #[arg(long)]
+        #[arg(short = 'd', long)]
         dump: bool,
     },
     /// Move an installed game to a different Steam library folder
@@ -279,7 +279,7 @@ pub(crate) enum Command {
         /// Stop Steam for the duration of the move and restart it afterward.
         /// Steam overwrites its data files on exit, so moving while it runs is
         /// unsafe; without this, the move refuses to run while Steam is open.
-        #[arg(long)]
+        #[arg(short = 'r', long)]
         restart_steam: bool,
     },
     /// Relink an install to a different Steam library.
@@ -288,7 +288,7 @@ pub(crate) enum Command {
         /// Destination Steam library root (containing `steamapps/`).
         library: PathBuf,
         /// Stop Steam for the duration and restart it afterward.
-        #[arg(long)]
+        #[arg(short = 'r', long)]
         restart_steam: bool,
     },
     /// Register an existing on-disk install with Steam.
@@ -300,7 +300,7 @@ pub(crate) enum Command {
         #[arg(short, long)]
         platform: Option<PlatformArg>,
         /// Stop Steam for the duration and restart it afterward.
-        #[arg(long)]
+        #[arg(short = 'r', long)]
         restart_steam: bool,
     },
     /// List available beta branches for a game.
@@ -314,7 +314,7 @@ pub(crate) enum Command {
     Manifests {
         app_id: u32,
         /// Only show this depot.
-        #[arg(long)]
+        #[arg(short = 'd', long)]
         depot: Option<u32>,
     },
     /// Install a specific (usually older) depot manifest and pin it — a downgrade.
@@ -379,7 +379,7 @@ pub(crate) enum Command {
     Inventory {
         app_id: u32,
         /// Inventory context id (default 2; Steam community items use 6).
-        #[arg(long, default_value_t = 2)]
+        #[arg(short = 'c', long, default_value_t = 2)]
         context: u32,
     },
     /// Show your Steam Wallet balance.
@@ -399,7 +399,7 @@ pub(crate) enum Command {
     /// Run the background session daemon serving other commands over a local socket.
     Daemon {
         /// Override the socket/pipe path (also settable via `AURELIA_DAEMON_SOCKET`).
-        #[arg(long)]
+        #[arg(short = 's', long)]
         socket: Option<String>,
         #[command(subcommand)]
         command: Option<DaemonCommand>,
@@ -432,6 +432,7 @@ pub(crate) enum ConfigCommand {
         mode: Option<ChatPresenceArg>,
     },
     /// View or set the default Steam API language.
+    #[command(alias = "lang")]
     Language {
         /// The default Steam API language name (e.g. `german`, `french`,
         /// `schinese`) used by `aurelia achievements` when `--lang` is not
@@ -439,6 +440,7 @@ pub(crate) enum ConfigCommand {
         lang: Option<String>,
     },
     /// View or set the price country.
+    #[command(alias = "cc")]
     Country {
         /// Two-letter ISO code; empty clears, omitted prints.
         country: Option<String>,
@@ -490,10 +492,10 @@ pub(crate) enum ConfigCommand {
         url: Option<String>,
         /// Comma-separated hosts/domains that bypass the proxy (`NO_PROXY`), e.g.
         /// `localhost,127.0.0.1,.internal`.
-        #[arg(long, value_name = "LIST")]
+        #[arg(short = 'n', long, value_name = "LIST")]
         no_proxy: Option<String>,
         /// Clear the configured proxy (revert to a direct connection).
-        #[arg(long, conflicts_with_all = ["url", "no_proxy"])]
+        #[arg(short = 'c', long, conflicts_with_all = ["url", "no_proxy"])]
         clear: bool,
     },
     /// View or set per-game launch settings (Proton version, platform).
@@ -504,7 +506,7 @@ pub(crate) enum ConfigCommand {
     /// Reset the per-game settings of ALL games to defaults (both stores).
     ClearGames {
         /// Skip the confirmation prompt.
-        #[arg(long)]
+        #[arg(short = 'y', long)]
         yes: bool,
     },
 }
@@ -514,7 +516,7 @@ pub(crate) enum ProtonCommand {
     /// List installable runtimes (Valve + GE) and what's already installed.
     List {
         /// Only show what's installed on disk (skips the GitHub/Valve lookup).
-        #[arg(long)]
+        #[arg(short = 'i', long)]
         installed: bool,
     },
     /// Download and install a runtime by name (from `proton list`).
@@ -536,7 +538,7 @@ pub(crate) enum SteamRuntimeCommand {
         /// Remove the existing master Steam prefix first, then install a fresh copy.
         /// Use when Steam reports a corrupted install ("please reinstall"). Unlike
         /// `repair` (which keeps a `.bak`), this deletes the old prefix outright.
-        #[arg(long)]
+        #[arg(short = 'r', long)]
         reinstall: bool,
     },
     /// Stop Steam, back up the master prefix (keeping one `.bak`), then reinstall.
@@ -580,7 +582,7 @@ pub(crate) enum LuxtorpedaCommand {
         /// Directory of an existing luxtorpeda install (contains `toolmanifest.vdf`).
         path: Option<String>,
         /// Clear the custom path and use Aurelia's managed download instead.
-        #[arg(long, conflicts_with = "path")]
+        #[arg(short = 'c', long, conflicts_with = "path")]
         clear: bool,
     },
     /// Remove the downloaded luxtorpeda payload from disk.
@@ -606,7 +608,7 @@ pub(crate) enum UmuCommand {
         /// Directory of an existing umu install (contains `umu-run`), or the `umu-run` binary.
         path: Option<String>,
         /// Clear the custom path and use Aurelia's managed download instead.
-        #[arg(long, conflicts_with = "path")]
+        #[arg(short = 'c', long, conflicts_with = "path")]
         clear: bool,
     },
     /// Remove the downloaded umu-launcher payload from disk.
@@ -626,7 +628,7 @@ pub(crate) enum ScriptsCommand {
     New {
         app_id: u32,
         /// Overwrite an existing script.
-        #[arg(long)]
+        #[arg(short = 'f', long)]
         force: bool,
     },
     /// Print the resolved launch-script path for a game and its contents.
@@ -698,7 +700,7 @@ pub(crate) enum MarketCommand {
         /// Exact market hash name (case-sensitive), e.g. "Mann Co. Supply Crate Key".
         name: String,
         /// Steam currency id (1=USD, 2=GBP, 3=EUR, …).
-        #[arg(long, default_value_t = 1)]
+        #[arg(short = 'c', long, default_value_t = 1)]
         currency: u32,
     },
     /// Search the Community Market (no login required).
@@ -706,10 +708,10 @@ pub(crate) enum MarketCommand {
         /// Free-text query (optional).
         query: Option<String>,
         /// Restrict to one game by app id.
-        #[arg(long)]
+        #[arg(short = 'a', long)]
         app_id: Option<u32>,
         /// Maximum results to return.
-        #[arg(long, default_value_t = 20)]
+        #[arg(short = 'n', long, default_value_t = 20)]
         count: u32,
     },
     /// Show your active market listings and open buy orders.
@@ -729,7 +731,7 @@ pub(crate) enum ChatCommand {
     History {
         steamid: u64,
         /// How many recent messages to fetch.
-        #[arg(long, default_value_t = 20)]
+        #[arg(short = 'n', long, default_value_t = 20)]
         count: u32,
     },
     /// Open an interactive live chat with a friend: type lines to send, incoming
@@ -745,17 +747,17 @@ pub(crate) enum CloudCommand {
     Sync {
         app_id: u32,
         /// Only upload local saves to Steam.
-        #[arg(long, conflicts_with = "down")]
+        #[arg(short = 'u', long, conflicts_with = "down")]
         up: bool,
         /// Only download saves from Steam.
-        #[arg(long, conflicts_with = "up")]
+        #[arg(short = 'd', long, conflicts_with = "up")]
         down: bool,
         /// Local save directory. Defaults to Aurelia's managed cloud root.
-        #[arg(long)]
+        #[arg(short = 'p', long)]
         path: Option<PathBuf>,
         /// Resolve diverged saves by taking this side (`cloud` or `local`) instead
         /// of reporting them. Omit to only detect conflicts and leave both copies.
-        #[arg(long, value_enum)]
+        #[arg(short = 'r', long, value_enum)]
         resolve: Option<CloudResolve>,
     },
     /// List a game's Steam Cloud files (name, size, modified time).
@@ -771,16 +773,16 @@ pub(crate) enum WorkshopCommand {
         #[arg(short, long)]
         search: Option<String>,
         /// Sort order.
-        #[arg(long, value_enum, default_value_t = WorkshopSort::Trend)]
+        #[arg(short = 'o', long, value_enum, default_value_t = WorkshopSort::Trend)]
         sort: WorkshopSort,
         /// Number of results per page (1–100).
-        #[arg(long, default_value_t = 20)]
+        #[arg(short = 'n', long, default_value_t = 20)]
         count: u32,
         /// Pagination cursor; use a previous page's `next_cursor` (`*` = first page).
-        #[arg(long, default_value = "*")]
+        #[arg(short = 'c', long, default_value = "*")]
         cursor: String,
         /// Only items carrying this tag (repeatable).
-        #[arg(long = "tag")]
+        #[arg(short = 't', long = "tag")]
         tags: Vec<String>,
     },
     /// Show metadata for one or more Workshop items (or collections).
@@ -796,7 +798,7 @@ pub(crate) enum WorkshopCommand {
         #[arg(required = true)]
         ids: Vec<u64>,
         /// Install only the given ids; do not expand collections to their members.
-        #[arg(long)]
+        #[arg(short = 'R', long)]
         no_recurse: bool,
     },
     /// Remove one or more installed Workshop items (or collections).
@@ -804,7 +806,7 @@ pub(crate) enum WorkshopCommand {
         #[arg(required = true)]
         ids: Vec<u64>,
         /// Uninstall only the given ids; do not expand collections to their members.
-        #[arg(long)]
+        #[arg(short = 'R', long)]
         no_recurse: bool,
     },
     /// Subscribe to one or more Workshop items (or collections).
@@ -812,10 +814,10 @@ pub(crate) enum WorkshopCommand {
         #[arg(required = true)]
         ids: Vec<u64>,
         /// Also download the content after subscribing.
-        #[arg(long)]
+        #[arg(short = 'i', long)]
         install: bool,
         /// Subscribe only to the given ids; do not expand collections to their members.
-        #[arg(long)]
+        #[arg(short = 'R', long)]
         no_recurse: bool,
     },
     /// Unsubscribe from one or more Workshop items (or collections).
@@ -823,7 +825,7 @@ pub(crate) enum WorkshopCommand {
         #[arg(required = true)]
         ids: Vec<u64>,
         /// Unsubscribe only from the given ids; do not expand collections.
-        #[arg(long)]
+        #[arg(short = 'R', long)]
         no_recurse: bool,
     },
     /// Show installed vs subscribed Workshop items for a game.
@@ -840,10 +842,10 @@ pub(crate) enum WorkshopCommand {
         /// The Workshop published-file id.
         id: u64,
         /// How many comments to fetch (1–100).
-        #[arg(long, default_value_t = 20)]
+        #[arg(short = 'n', long, default_value_t = 20)]
         count: i32,
         /// Index of the first comment to fetch (for paging).
-        #[arg(long, default_value_t = 0)]
+        #[arg(short = 's', long, default_value_t = 0)]
         start: i32,
     },
     /// Post a comment to a Workshop item.
@@ -870,16 +872,16 @@ pub(crate) struct InstallArgs {
     pub(crate) platform: Option<PlatformArg>,
     /// When installing a DLC, restart the Steam client afterward so the running
     /// client picks up the change (Windows). Without this it only warns.
-    #[arg(long)]
+    #[arg(short = 'r', long)]
     pub(crate) restart_steam: bool,
     /// Don't install — just report the estimated download and on-disk size
     /// (from PICS, no files fetched). Pair with `--json` for tooling.
-    #[arg(long)]
+    #[arg(short = 'd', long)]
     pub(crate) dry_run: bool,
     /// Steam library folder (drive/location) to install into. A library root
     /// containing a `steamapps` directory, as listed by `aurelia libraries`.
     /// Defaults to the configured `steam_library_path`.
-    #[arg(long)]
+    #[arg(short = 'l', long)]
     pub(crate) library: Option<String>,
 }
 
@@ -899,26 +901,26 @@ pub(crate) struct DowngradeArgs {
     /// App id to downgrade.
     pub(crate) app_id: u32,
     /// Target depot id (repeatable). Paired by position with a bare `--manifest`.
-    #[arg(long = "depot", value_name = "DEPOT_ID")]
+    #[arg(short = 'd', long = "depot", value_name = "DEPOT_ID")]
     pub(crate) depots: Vec<u32>,
     /// Target manifest id (repeatable). Either a bare id (paired by position with
     /// `--depot`) or the combined `<depot>:<manifest>` form.
-    #[arg(long = "manifest", value_name = "MANIFEST_ID")]
+    #[arg(short = 'm', long = "manifest", value_name = "MANIFEST_ID")]
     pub(crate) manifests: Vec<String>,
     /// Branch whose build id to record in the appmanifest (default: public).
-    #[arg(long)]
+    #[arg(short = 'b', long)]
     pub(crate) branch: Option<String>,
     /// Password for a protected branch (recorded only; see the downgrade docs).
-    #[arg(long)]
+    #[arg(short = 'w', long)]
     pub(crate) branch_password: Option<String>,
     /// Steam library folder (drive/location) to install into.
-    #[arg(long)]
+    #[arg(short = 'l', long)]
     pub(crate) library: Option<String>,
     /// Verify the install after downloading (integrity pass).
-    #[arg(long)]
+    #[arg(short = 'V', long)]
     pub(crate) verify: bool,
     /// Don't pin after downgrading (Aurelia's update commands may re-upgrade it).
-    #[arg(long)]
+    #[arg(short = 'N', long)]
     pub(crate) no_pin: bool,
 }
 
@@ -1055,16 +1057,16 @@ pub(crate) struct GameConfigArgs {
     pub(crate) app_id: u32,
     /// Set the Proton/Wine version this game launches with. Use a name from
     /// `aurelia proton list` (installed). Overrides the global default.
-    #[arg(long)]
+    #[arg(short = 'p', long)]
     pub(crate) proton: Option<String>,
     /// Clear the per-game Proton version (fall back to the global default).
-    #[arg(long, conflicts_with = "proton")]
+    #[arg(short = 'P', long, conflicts_with = "proton")]
     pub(crate) clear_proton: bool,
     /// Force the game's platform target (`windows` runs through Proton on Linux).
-    #[arg(long)]
+    #[arg(short = 't', long)]
     pub(crate) platform: Option<PlatformArg>,
     /// Clear the platform preference (back to auto-detection).
-    #[arg(long, conflicts_with = "platform")]
+    #[arg(short = 'T', long, conflicts_with = "platform")]
     pub(crate) no_platform: bool,
     /// Reset ALL of this game's per-game settings to defaults (both stores).
     #[arg(long, conflicts_with_all = ["proton", "clear_proton", "platform", "no_platform",
@@ -1073,33 +1075,33 @@ pub(crate) struct GameConfigArgs {
     pub(crate) clear: bool,
     /// Route this game through the luxtorpeda native-engine plugin (Linux only;
     /// requires `aurelia luxtorpeda enable`).
-    #[arg(long)]
+    #[arg(short = 'n', long)]
     pub(crate) native_engine: bool,
     /// Clear the luxtorpeda routing (back to Aurelia's normal native/Proton selection).
-    #[arg(long, conflicts_with = "native_engine")]
+    #[arg(short = 'N', long, conflicts_with = "native_engine")]
     pub(crate) no_native_engine: bool,
     /// Route this game through the umu-launcher plugin (Proton via umu; Linux only;
     /// requires `aurelia umu enable`).
-    #[arg(long, conflicts_with_all = ["native_engine", "no_native_engine"])]
+    #[arg(short = 'u', long, conflicts_with_all = ["native_engine", "no_native_engine"])]
     pub(crate) umu: bool,
     /// Clear the umu routing (back to Aurelia's normal native/Proton selection).
-    #[arg(long, conflicts_with = "umu")]
+    #[arg(short = 'U', long, conflicts_with = "umu")]
     pub(crate) no_umu: bool,
     /// Set a per-game launch script that wraps the resolved launch command. See
     /// `aurelia scripts`. Overrides the auto-detected `<script_dir>/<app_id>.sh`.
-    #[arg(long, value_name = "PATH")]
+    #[arg(short = 's', long, value_name = "PATH")]
     pub(crate) launch_script: Option<PathBuf>,
     /// Clear the per-game launch script (falls back to the auto-detected script).
-    #[arg(long, conflicts_with = "launch_script")]
+    #[arg(short = 'S', long, conflicts_with = "launch_script")]
     pub(crate) no_launch_script: bool,
     /// Use the self-contained Windows Steam runtime for this game: `on` starts the
     /// master Steam client in Wine to satisfy Steamworks/DRM handshakes without the
     /// host Steam client. Requires `aurelia config steam-runtime-runner` and
     /// `aurelia steam-runtime install`. `auto` is the default (off).
-    #[arg(long, value_name = "auto|on|off")]
+    #[arg(short = 'r', long, value_name = "auto|on|off")]
     pub(crate) steam_runtime: Option<SteamRuntimeArg>,
     /// How the master Steam prefix backs this game: `shared` runs it in the master
     /// prefix directly; `per-game` copies Steam into the game's own prefix.
-    #[arg(long, value_name = "shared|per-game")]
+    #[arg(short = 'm', long, value_name = "shared|per-game")]
     pub(crate) steam_prefix_mode: Option<SteamPrefixModeArg>,
 }

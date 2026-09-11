@@ -21,7 +21,7 @@ pub(crate) async fn cmd_play(
     script: Option<PathBuf>,
     no_script: bool,
     steam: bool,
-    noupdate: bool,
+    no_update: bool,
     json: bool,
 ) -> Result<()> {
     if native_engine && !cfg!(target_os = "linux") {
@@ -85,13 +85,13 @@ pub(crate) async fn cmd_play(
     // Family-Shared games are pinned to the owner's current build — a stale
     // install simply won't launch — so for them the pre-launch update is
     // *required*, not best-effort: any failure aborts the launch (running the old
-    // build would just fail cryptically) and `--noupdate` is ignored.
+    // build would just fail cryptically) and `--no-update` is ignored.
     let update_required = game.is_installed && game.is_family_shared;
 
     // Pull the latest build before launching. For owned games this is best-effort
     // (a failed check/download must not stop the user playing what's installed);
     // for Family-Shared games it is mandatory (see above).
-    if game.is_installed && (!noupdate || update_required) {
+    if game.is_installed && (!no_update || update_required) {
         if let Err(e) = client.check_for_updates(std::slice::from_mut(&mut game)).await {
             if update_required {
                 bail!(
