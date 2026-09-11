@@ -235,6 +235,54 @@ pub struct StoreAppInfo {
     /// Every package and bundle the store offers.
     #[serde(default)]
     pub purchase_options: Vec<StorePurchaseOption>,
+    /// Store tags, heaviest first.
+    #[serde(default)]
+    pub tags: Vec<StoreTag>,
+    /// Age rating from the store, if any.
+    #[serde(default)]
+    pub rating: Option<StoreRating>,
+    /// Official social links.
+    #[serde(default)]
+    pub links: Vec<StoreLink>,
+    /// Screenshot URLs, all-ages first.
+    #[serde(default)]
+    pub screenshots: Vec<String>,
+    /// Trailers, highlights first.
+    #[serde(default)]
+    pub trailers: Vec<StoreTrailer>,
+}
+
+/// A store tag with its per-app weight.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct StoreTag {
+    pub id: u32,
+    pub name: Option<String>,
+    pub weight: u32,
+}
+
+/// Age rating (e.g. PEGI, ESRB).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct StoreRating {
+    pub system: String,
+    pub rating: String,
+    pub descriptors: Vec<String>,
+    pub required_age: i32,
+}
+
+/// An official link (youtube, discord, …).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct StoreLink {
+    pub kind: String,
+    pub url: String,
+}
+
+/// A store trailer; video URL only when Steam publishes one.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct StoreTrailer {
+    pub name: String,
+    pub movie_id: Option<u64>,
+    pub url: Option<String>,
+    pub thumbnail: Option<String>,
 }
 
 /// A package or bundle for an app.
@@ -784,7 +832,143 @@ fn store_item_to_app_info(item: &StoreItem, country: &str) -> StoreAppInfo {
         discount_end,
         region_locked: item.unvailable_for_country_restriction(),
         purchase_options: item.purchase_options.iter().map(purchase_option_summary).collect(),
+        tags: store_tags(item),
+        rating: store_rating(item),
+        links: store_links(item),
+        screenshots: store_screenshots(item),
+        trailers: store_trailers(item),
     }
+}
+
+/// Tags sorted by weight, names unresolved.
+fn store_tags(item: &StoreItem) -> Vec<StoreTag> {
+    let mut tags: Vec<StoreTag> = item
+        .tags
+        .iter()
+        .filter(|t| t.tagid() != 0)
+        .map(|t| StoreTag {
+            id: t.tagid(),
+            name: None,
+            weight: t.weight(),
+        })
+        .collect();
+    tags.sort_by(|a, b| b.weight.cmp(&a.weight).then(a.id.cmp(&b.id)));
+    tags
+}
+
+fn store_rating(item: &StoreItem) -> Option<StoreRating> {
+    let r = item.game_rating.as_ref()?;
+    if r.rating().is_empty() && r.type_().is_empty() {
+        return None;
+    }
+    // `type` is often empty; the image path names the board.
+    let system = if r.type_().is_empty() {
+        r.image_url()
+            .split("game_ratings/")
+            .nth(1)
+            .and_then(|rest| rest.split('/').next())
+            .unwrap_or("")
+            .to_string()
+    } else {
+        r.type_().to_string()
+    };
+    Some(StoreRating {
+        system,
+        rating: r.rating().to_string(),
+        descriptors: r.descriptors.clone(),
+        required_age: r.required_age(),
+    })
+}
+
+fn store_links(item: &StoreItem) -> Vec<StoreLink> {
+    use steam_vent_proto::steammessages_storebrowse_steamclient::EStoreLinkType as L;
+    item.links
+        .iter()
+        .filter(|l| !l.url().is_empty())
+        .map(|l| {
+            let kind = match l.link_type.and_then(|t| t.enum_value().ok()) {
+                Some(L::k_EStoreLinkType_YouTube) => "youtube",
+                Some(L::k_EStoreLinkType_Facebook) => "facebook",
+                Some(L::k_EStoreLinkType_Twitter) => "twitter",
+                Some(L::k_EStoreLinkType_Twitch) => "twitch",
+                Some(L::k_EStoreLinkType_Discord) => "discord",
+                _ => "other",
+            };
+            StoreLink {
+                kind: kind.to_string(),
+                url: l.url().to_string(),
+            }
+        })
+        .collect()
+}
+
+/// Expand `${FILENAME}` in a StoreBrowse URL template.
+fn asset_url(fmt: &str, filename: &str) -> Option<String> {
+    if fmt.is_empty() || filename.is_empty() {
+        return None;
+    }
+    let path = fmt.replace("${FILENAME}", filename);
+    Some(if path.starts_with("http") {
+        path
+    } else {
+        format!("https://shared.cloudflare.steamstatic.com/store_item_assets/{path}")
+    })
+}
+
+fn store_screenshots(item: &StoreItem) -> Vec<String> {
+    let fmt = item.assets.as_ref().map(|a| a.asset_url_format()).unwrap_or("");
+    let Some(shots) = item.screenshots.as_ref() else {
+        return Vec::new();
+    };
+    shots
+        .all_ages_screenshots
+        .iter()
+        .chain(shots.mature_content_screenshots.iter())
+        .filter_map(|s| screenshot_url(fmt, s.filename()))
+        .collect()
+}
+
+/// Screenshot filenames may already be full paths.
+fn screenshot_url(fmt: &str, filename: &str) -> Option<String> {
+    if filename.starts_with("steam/") {
+        return Some(format!(
+            "https://shared.cloudflare.steamstatic.com/store_item_assets/{filename}"
+        ));
+    }
+    asset_url(fmt, filename)
+}
+
+fn store_trailers(item: &StoreItem) -> Vec<StoreTrailer> {
+    let Some(trailers) = item.trailers.as_ref() else {
+        return Vec::new();
+    };
+    trailers
+        .highlights
+        .iter()
+        .chain(trailers.other_trailers.iter())
+        .map(|t| {
+            // Prefer the mp4 rendition at max quality.
+            let source = t
+                .trailer_max
+                .iter()
+                .chain(t.trailer_480p.iter())
+                .find(|s| s.type_().contains("mp4"))
+                .or_else(|| t.trailer_max.first())
+                .or_else(|| t.trailer_480p.first());
+            // Thumbnail path is `<movie id>/<hash>/movie_600x337.jpg`.
+            let movie_id = t
+                .screenshot_medium()
+                .split('/')
+                .next()
+                .and_then(|s| s.parse::<u64>().ok());
+            StoreTrailer {
+                name: t.trailer_name().to_string(),
+                movie_id,
+                url: source.and_then(|s| asset_url(t.trailer_url_format(), s.filename())),
+                thumbnail: asset_url(t.trailer_url_format(), t.screenshot_medium()),
+            }
+        })
+        .collect()
 }
 
 /// Resolve a `StoreItem`'s artwork URLs. Each is built from the StoreBrowse
