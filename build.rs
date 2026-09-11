@@ -5,6 +5,7 @@ fn main() {
     for (proto, out) in [
         ("proto/service_cloudconfigstore.proto", "cloudconfig"),
         ("proto/service_storequery.proto", "storequery"),
+        ("proto/service_wishlist.proto", "wishlist"),
     ] {
         println!("cargo:rerun-if-changed={proto}");
         protobuf_codegen::Codegen::new()
