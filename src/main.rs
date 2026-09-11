@@ -396,7 +396,14 @@ async fn run(cli: Cli) -> Result<()> {
             extended,
             no_cache,
             lang,
-        } => cmd_info(app_ids, extended, no_cache, lang, json).await,
+            country,
+        } => cmd_info(app_ids, extended, no_cache, lang, country, json).await,
+        Command::Price {
+            app_id,
+            compare,
+            country,
+            lang,
+        } => cmd_price(app_id, compare, country, lang, json).await,
         Command::Dlc { app_id } => cmd_dlc(app_id, json).await,
         Command::Achievements { app_id, lang } => cmd_achievements(app_id, lang, json).await,
         Command::Depots { app_id } => cmd_depots(app_id, json).await,
@@ -411,6 +418,7 @@ async fn run(cli: Cli) -> Result<()> {
             ConfigCommand::Protons => cmd_config_protons(json).await,
             ConfigCommand::Presence { mode } => cmd_config_presence(mode, json).await,
             ConfigCommand::Language { lang } => cmd_config_language(lang, json).await,
+            ConfigCommand::Country { country } => cmd_config_country(country, json).await,
             ConfigCommand::Experimental { enabled } => {
                 cmd_config_experimental(enabled, json).await
             }

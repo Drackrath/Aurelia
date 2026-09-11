@@ -128,9 +128,11 @@ pub async fn fetch_app_details(
     client: &reqwest::Client,
     app_id: u32,
     language: &str,
+    country: &str,
 ) -> Result<Option<AppDetails>> {
+    let cc = country.to_ascii_lowercase();
     let url = format!(
-        "https://store.steampowered.com/api/appdetails?appids={app_id}&l={language}&cc=us"
+        "https://store.steampowered.com/api/appdetails?appids={app_id}&l={language}&cc={cc}"
     );
     let resp = crate::core::net::send_with_retry(client, client.get(&url))
         .await

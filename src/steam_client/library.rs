@@ -266,10 +266,12 @@ impl SteamClient {
     /// storefront API). Returns one [`StoreAppInfo`] per app the store knows
     /// about; unknown/region-locked ids are simply omitted. Requires a connection.
     /// `language` is a Steam API language name (e.g. "english", "german").
+    /// `country` selects the price region.
     pub async fn fetch_store_apps(
         &self,
         app_ids: &[u32],
         language: &str,
+        country: &str,
     ) -> Result<Vec<StoreAppInfo>> {
         if app_ids.is_empty() {
             return Ok(Vec::new());
@@ -287,7 +289,7 @@ impl SteamClient {
 
         let mut context = StoreBrowseContext::new();
         context.set_language(language.to_string());
-        context.set_country_code("US".to_string());
+        context.set_country_code(country.to_string());
 
         let mut request = CStoreBrowse_GetItems_Request::new();
         request.context = MessageField::some(context);
@@ -307,7 +309,7 @@ impl SteamClient {
             .store_items
             .iter()
             .filter(|item| item.appid() != 0)
-            .map(store_item_to_app_info)
+            .map(|item| store_item_to_app_info(item, country))
             .collect())
     }
 
