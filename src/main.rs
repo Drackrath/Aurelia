@@ -425,6 +425,19 @@ async fn run(cli: Cli) -> Result<()> {
             lang,
         } => cmd_similar(app_id, count, country, lang, json).await,
         Command::Players { app_id } => cmd_players(app_id, json).await,
+        Command::User { user } => cmd_user(user, json).await,
+        Command::Wishlist {
+            user,
+            count,
+            offset,
+            country,
+            lang,
+            command,
+        } => match command {
+            Some(WishlistCommand::Add { app_id }) => cmd_wishlist_add(app_id, json).await,
+            Some(WishlistCommand::Remove { app_id }) => cmd_wishlist_remove(app_id, json).await,
+            None => cmd_wishlist(user, count, offset, country, lang, json).await,
+        },
         Command::Events { country } => cmd_events(country, json).await,
         Command::News {
             app_id,
