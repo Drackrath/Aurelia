@@ -477,6 +477,25 @@ pub(crate) async fn resolve_dlc_names_via_store(
     dlc
 }
 
+/// Full store records for DLC ids, keyed by id.
+pub(crate) async fn resolve_dlc_store_info(
+    client: &SteamClient,
+    dlc_ids: &[u32],
+    language: &str,
+    country: &str,
+) -> std::collections::HashMap<u32, StoreAppInfo> {
+    if dlc_ids.is_empty() {
+        return Default::default();
+    }
+    client
+        .fetch_store_apps(dlc_ids, language, country)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|i| (i.app_id, i))
+        .collect()
+}
+
 pub(crate) async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
     // Ownership status requires an authenticated connection; installed/disabled status
     // is read from the local appmanifest.
@@ -490,7 +509,13 @@ pub(crate) async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
         .map(|e| e.dlcs)
         .unwrap_or_default();
     let country = resolve_steam_country(None).await?;
-    let dlc = resolve_dlc_names_via_store(&steam, &dlc_ids, "english", &country).await;
+    let lang = resolve_steam_language(None).await;
+    let store = resolve_dlc_store_info(&steam, &dlc_ids, &lang, &country).await;
+    let mut dlc: Vec<(u32, Option<String>)> = dlc_ids
+        .iter()
+        .map(|&id| (id, store.get(&id).map(|i| i.name.clone()).filter(|s| !s.is_empty())))
+        .collect();
+    dlc.sort_by_key(|(id, _)| *id);
     let states = steam
         .dlc_states(app_id, &dlc_ids)
         .await
@@ -509,6 +534,14 @@ pub(crate) async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
                     "owned": s.map(|s| s.owned),
                     "installed": s.map(|s| s.installed),
                     "disabled": s.map(|s| s.disabled),
+                    "price": store.get(id).and_then(|i| i.price.clone()),
+                    "discount_pct": store.get(id).map(|i| i.discount_pct),
+                    "discount_end_date": store
+                        .get(id)
+                        .and_then(|i| i.discount_end)
+                        .map(|t| aurelia::steam_client::unix_to_ymd(t as i64)),
+                    "release_date": store.get(id).and_then(|i| i.release_date.clone()),
+                    "reviews": store.get(id).and_then(|i| i.review_summary.clone()),
                     "image_url": steam_urls::header_url(*id),
                     "image_fallback_url": steam_urls::small_capsule_url(*id),
                     "store_url": steam_urls::store_url(*id),
@@ -523,9 +556,23 @@ pub(crate) async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
         cli_println!("No DLC for app {app_id}.");
         return Ok(());
     }
-    cli_println!("{:>9}  {:<5}  {:<13}  NAME", "APPID", "OWNED", "STATUS");
+    cli_println!(
+        "{:>9}  {:<5}  {:<13}  {:<16}  NAME",
+        "APPID", "OWNED", "STATUS", "PRICE"
+    );
     for (id, name) in &dlc {
         let name = name.clone().unwrap_or_else(|| "(name unavailable)".to_string());
+        let price = store
+            .get(id)
+            .map(|i| {
+                let p = i.price.clone().unwrap_or_else(|| "-".to_string());
+                if i.discount_pct > 0 {
+                    format!("{p} (-{}%)", i.discount_pct)
+                } else {
+                    p
+                }
+            })
+            .unwrap_or_else(|| "-".to_string());
         let s = state_by_id.get(id);
         let owned = match s.map(|s| s.owned) {
             Some(true) => "yes",
@@ -539,7 +586,7 @@ pub(crate) async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
             Some(_) => "enabled",
             None => "?",
         };
-        cli_println!("{id:>9}  {owned:<5}  {status:<13}  {name}");
+        cli_println!("{id:>9}  {owned:<5}  {status:<13}  {price:<16}  {name}");
     }
     Ok(())
 }
