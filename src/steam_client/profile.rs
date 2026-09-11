@@ -1,4 +1,4 @@
-//! User profiles over the CM: link details, profile info, persona.
+//! User profiles over the CM.
 use super::*;
 use steam_vent_proto::steammessages_clientserver_friends::{
     CMsgClientFriendProfileInfo, CMsgClientFriendProfileInfoResponse, CMsgClientPersonaState,

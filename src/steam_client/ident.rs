@@ -61,7 +61,7 @@ fn vanity_unsupported(slug: &str) -> TypedError {
     )
 }
 
-/// Match a persona name or nickname against known friends.
+/// Match a persona name against friends.
 pub fn match_friend_name<'a>(
     name: &str,
     friends: &'a [super::Friend],
