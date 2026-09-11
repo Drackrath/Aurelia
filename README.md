@@ -217,6 +217,13 @@ aurelia info 690830 --extended       # + requirements, Metacritic, genres, categ
 aurelia info 690830 --lang german    # localize store text (falls back to config, then English)
 aurelia info 690830 --country DE     # quote the price for a region (falls back to config, locale, US)
 aurelia price 690830 --compare US,DE,JP   # compare a game's price and discount end across regions
+aurelia search "no man's sky"        # find app ids by title (store search over the Steam connection)
+aurelia deals                        # discounted top sellers in your region (--scope top-sellers|specials)
+aurelia similar 275850               # games Steam considers similar
+aurelia players 730                  # current in-game player count
+aurelia events                       # store-wide sales and events currently running
+aurelia news 275850                  # recent announcements
+aurelia reviews 275850 -t negative   # user reviews, paged via --cursor
 aurelia dlc 690830                   # list a game's DLC with ownership and install status
 aurelia drm 690830                   # verify DRM/ownership tickets headlessly (no Steam client)
 aurelia achievements 620             # your achievements for a game (unlock state + rarity)
