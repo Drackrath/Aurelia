@@ -182,7 +182,7 @@ pub(crate) enum Command {
         #[arg(short = 'c', long, alias = "cc")]
         country: Option<String>,
     },
-    /// Recent news and announcements for an app.
+    /// Recent news (storefront web; no CM equivalent).
     News {
         app_id: u32,
         /// Maximum items.
@@ -192,7 +192,7 @@ pub(crate) enum Command {
         #[arg(short = 'm', long, default_value_t = 300)]
         max_length: u32,
     },
-    /// User reviews for an app, with paging.
+    /// User reviews, paged (storefront web, no CM equivalent).
     Reviews {
         app_id: u32,
         /// `recent`, `updated` or `all` (score-weighted).
@@ -372,6 +372,9 @@ pub(crate) enum Command {
         #[arg(short = 'p', long, requires = "list")]
         probe: bool,
     },
+    /// Dump raw PICS appinfo sections (maintainer tool).
+    #[command(hide = true)]
+    Appinfo { app_id: u32 },
     /// Dump the store tag vocabulary (maintainer tool).
     #[command(hide = true)]
     Tags {
@@ -802,7 +805,7 @@ pub(crate) enum FriendsCommand {
 
 #[derive(Subcommand)]
 pub(crate) enum MarketCommand {
-    /// Look up an item's market price (no login required).
+    /// Item price (community web; no CM equivalent).
     Price {
         app_id: u32,
         /// Exact market hash name (case-sensitive), e.g. "Mann Co. Supply Crate Key".
@@ -811,7 +814,7 @@ pub(crate) enum MarketCommand {
         #[arg(short = 'c', long, default_value_t = 1)]
         currency: u32,
     },
-    /// Search the Community Market (no login required).
+    /// Search the market (community web; no CM equivalent).
     Search {
         /// Free-text query (optional).
         query: Option<String>,
