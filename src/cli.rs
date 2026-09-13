@@ -140,6 +140,93 @@ pub(crate) enum Command {
         #[arg(short = 'l', long = "lang", alias = "language")]
         lang: Option<String>,
     },
+    /// Search the store by title.
+    Search {
+        term: String,
+        /// Maximum results.
+        #[arg(short = 'n', long, default_value_t = 20)]
+        count: u32,
+        /// Country code for prices.
+        #[arg(short = 'c', long, alias = "cc")]
+        country: Option<String>,
+        /// Steam API language name for names.
+        #[arg(short = 'l', long = "lang", alias = "language")]
+        lang: Option<String>,
+    },
+    /// Discounted and top-selling games in a region.
+    Deals {
+        /// Which slice of the store to list.
+        #[arg(short = 's', long, value_enum, default_value_t = DealsScopeArg::DiscountedTopSellers)]
+        scope: DealsScopeArg,
+        /// Minimum discount percent for specials.
+        #[arg(short = 'm', long, default_value_t = 1)]
+        min_discount: i32,
+        /// Maximum results.
+        #[arg(short = 'n', long, default_value_t = 20)]
+        count: i32,
+        /// Result offset for paging.
+        #[arg(short = 'o', long, default_value_t = 0)]
+        start: i32,
+        /// Country code for prices.
+        #[arg(short = 'c', long, alias = "cc")]
+        country: Option<String>,
+        /// Steam API language name for names.
+        #[arg(short = 'l', long = "lang", alias = "language")]
+        lang: Option<String>,
+    },
+    /// Current player count for an app.
+    Players { app_id: u32 },
+    /// Store-wide sales and events currently running.
+    Events {
+        /// Country code the events apply to.
+        #[arg(short = 'c', long, alias = "cc")]
+        country: Option<String>,
+    },
+    /// Recent news and announcements for an app.
+    News {
+        app_id: u32,
+        /// Maximum items.
+        #[arg(short = 'n', long, default_value_t = 10)]
+        count: u32,
+        /// Characters of body text to keep.
+        #[arg(short = 'm', long, default_value_t = 300)]
+        max_length: u32,
+    },
+    /// User reviews for an app, with paging.
+    Reviews {
+        app_id: u32,
+        /// `recent`, `updated` or `all` (score-weighted).
+        #[arg(short = 'f', long, default_value = "recent")]
+        filter: String,
+        /// `all`, `positive` or `negative`.
+        #[arg(short = 't', long = "type", default_value = "all")]
+        review_type: String,
+        /// `all`, `steam` or `non_steam_purchase`.
+        #[arg(short = 'p', long, default_value = "all")]
+        purchase: String,
+        /// Maximum reviews per page (up to 100).
+        #[arg(short = 'n', long, default_value_t = 10)]
+        count: u32,
+        /// Cursor from a previous page's JSON.
+        #[arg(short = 'u', long)]
+        cursor: Option<String>,
+        /// Steam API language name, or `all`.
+        #[arg(short = 'l', long = "lang", alias = "language")]
+        lang: Option<String>,
+    },
+    /// Games similar to a given app.
+    Similar {
+        app_id: u32,
+        /// Maximum results.
+        #[arg(short = 'n', long, default_value_t = 10)]
+        count: i32,
+        /// Country code for prices.
+        #[arg(short = 'c', long, alias = "cc")]
+        country: Option<String>,
+        /// Steam API language name for names.
+        #[arg(short = 'l', long = "lang", alias = "language")]
+        lang: Option<String>,
+    },
     /// Download and install a game.
     Install(InstallArgs),
     /// List the Steam library folders games can be installed into (one per
@@ -1049,6 +1136,17 @@ impl From<PlatformArg> for DepotPlatform {
             PlatformArg::Linux => DepotPlatform::Linux,
         }
     }
+}
+
+/// `deals --scope` choices.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub(crate) enum DealsScopeArg {
+    /// Discounted items among regional top sellers.
+    DiscountedTopSellers,
+    /// Regional top sellers, discounted or not.
+    TopSellers,
+    /// Anything discounted at least `--min-discount`.
+    Specials,
 }
 
 /// Grouped `config game` flags.

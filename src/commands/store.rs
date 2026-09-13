@@ -297,6 +297,293 @@ pub(crate) async fn cmd_image_list(app_id: u32, probe: bool, json: bool) -> Resu
     Ok(())
 }
 
+/// Fetch full records for query ids, preserving order.
+async fn store_records(
+    client: &aurelia::steam_client::SteamClient,
+    ids: &[u32],
+    lang: &str,
+    country: &str,
+) -> Result<Vec<StoreAppInfo>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut records = client.fetch_store_apps(ids, lang, country).await?;
+    let position = |id: u32| ids.iter().position(|&x| x == id).unwrap_or(usize::MAX);
+    records.sort_by_key(|r| position(r.app_id));
+    Ok(records)
+}
+
+/// Compact JSON row for listings.
+fn store_row_json(a: &StoreAppInfo) -> serde_json::Value {
+    serde_json::json!({
+        "app_id": a.app_id,
+        "name": a.name,
+        "type": a.app_type,
+        "is_free": a.is_free,
+        "price": a.price,
+        "price_cents": a.price_cents,
+        "original_price": a.original_price,
+        "discount_pct": a.discount_pct,
+        "discount_end_date": a.discount_end.map(|t| unix_to_ymd(t as i64)),
+        "release_date": a.release_date,
+        "platforms": a.platforms,
+        "reviews": a.review_summary,
+        "country": a.country,
+    })
+}
+
+/// Human table for listings.
+fn print_store_table(records: &[StoreAppInfo]) {
+    cli_println!("{:>9}  {:<14} {:<9} {:<11} NAME", "APPID", "PRICE", "DISCOUNT", "ENDS");
+    for a in records {
+        let price = a.price.clone().unwrap_or_else(|| "-".to_string());
+        let discount = if a.discount_pct > 0 {
+            format!("-{}%", a.discount_pct)
+        } else {
+            "-".to_string()
+        };
+        let ends = a.discount_end.map(|t| unix_to_ymd(t as i64)).unwrap_or_else(|| "-".to_string());
+        let kind = if a.app_type.is_empty() || a.app_type == "Game" {
+            String::new()
+        } else {
+            format!("  [{}]", a.app_type)
+        };
+        cli_println!("{:>9}  {:<14} {:<9} {:<11} {}{kind}", a.app_id, price, discount, ends, a.name);
+    }
+}
+
+/// `aurelia search TERM`: find app ids by title.
+pub(crate) async fn cmd_search(
+    term: String,
+    count: u32,
+    country: Option<String>,
+    lang: Option<String>,
+    json: bool,
+) -> Result<()> {
+    let lang = resolve_steam_language(lang).await;
+    let country = resolve_steam_country(country).await?;
+    let client = authed_client().await?;
+    let page = client.search_store(&term, count, &lang, &country).await?;
+    let records = store_records(&client, &page.app_ids, &lang, &country).await?;
+    if json {
+        print_json(&serde_json::json!({
+            "term": term,
+            "total": page.total,
+            "suggestions": page.suggestions,
+            "results": records.iter().map(store_row_json).collect::<Vec<_>>(),
+        }));
+        return Ok(());
+    }
+    if records.is_empty() {
+        cli_println!("No store results for \"{term}\".");
+        if !page.suggestions.is_empty() {
+            cli_println!("Did you mean: {}", page.suggestions.join(", "));
+        }
+        return Ok(());
+    }
+    print_store_table(&records);
+    Ok(())
+}
+
+/// `aurelia deals`: discounted and top-selling games.
+pub(crate) async fn cmd_deals(
+    scope: crate::cli::DealsScopeArg,
+    min_discount: i32,
+    count: i32,
+    start: i32,
+    country: Option<String>,
+    lang: Option<String>,
+    json: bool,
+) -> Result<()> {
+    use aurelia::steam_client::DealsScope;
+    let lang = resolve_steam_language(lang).await;
+    let country = resolve_steam_country(country).await?;
+    let scope = match scope {
+        crate::cli::DealsScopeArg::DiscountedTopSellers => DealsScope::DiscountedTopSellers,
+        crate::cli::DealsScopeArg::TopSellers => DealsScope::TopSellers,
+        crate::cli::DealsScopeArg::Specials => DealsScope::Specials,
+    };
+    let client = authed_client().await?;
+    let page = client
+        .query_deals(scope, min_discount, start, count, &lang, &country)
+        .await?;
+    let records = store_records(&client, &page.app_ids, &lang, &country).await?;
+    if json {
+        print_json(&serde_json::json!({
+            "country": country,
+            "scope": format!("{scope:?}"),
+            "start": start,
+            "total": page.total,
+            "results": records.iter().map(store_row_json).collect::<Vec<_>>(),
+        }));
+        return Ok(());
+    }
+    if records.is_empty() {
+        cli_println!("No deals matched in {country}.");
+        return Ok(());
+    }
+    cli_println!("{scope:?} in {country} ({} matching, showing from {start}):", page.total);
+    print_store_table(&records);
+    Ok(())
+}
+
+/// `aurelia similar APPID`: related games.
+pub(crate) async fn cmd_similar(
+    app_id: u32,
+    count: i32,
+    country: Option<String>,
+    lang: Option<String>,
+    json: bool,
+) -> Result<()> {
+    let lang = resolve_steam_language(lang).await;
+    let country = resolve_steam_country(country).await?;
+    let client = authed_client().await?;
+    let page = client.similar_apps(app_id, count, &lang, &country).await?;
+    let records = store_records(&client, &page.app_ids, &lang, &country).await?;
+    if json {
+        print_json(&serde_json::json!({
+            "app_id": app_id,
+            "results": records.iter().map(store_row_json).collect::<Vec<_>>(),
+        }));
+        return Ok(());
+    }
+    if records.is_empty() {
+        cli_println!("No similar games reported for app {app_id}.");
+        return Ok(());
+    }
+    print_store_table(&records);
+    Ok(())
+}
+
+/// `aurelia players APPID`: current in-game count.
+pub(crate) async fn cmd_players(app_id: u32, json: bool) -> Result<()> {
+    let client = authed_client().await?;
+    let players = client.current_players(app_id).await?;
+    if json {
+        print_json(&serde_json::json!({ "app_id": app_id, "players": players }));
+    } else {
+        cli_println!("{players} players in-game (app {app_id})");
+    }
+    Ok(())
+}
+
+/// `aurelia events`: active store sales and events.
+pub(crate) async fn cmd_events(country: Option<String>, json: bool) -> Result<()> {
+    let country = resolve_steam_country(country).await?;
+    let client = authed_client().await?;
+    let events = client.active_store_events(&country).await?;
+    if json {
+        print_json(&serde_json::json!({ "country": country, "events": events }));
+        return Ok(());
+    }
+    if events.is_empty() {
+        cli_println!("No active store events for {country}.");
+        return Ok(());
+    }
+    cli_println!("{:<12} {:<11} {:<11} TITLE", "TYPE", "START", "END");
+    for e in &events {
+        let start = if e.start > 0 { unix_to_ymd(e.start as i64) } else { "-".to_string() };
+        let end = if e.end > 0 { unix_to_ymd(e.end as i64) } else { "-".to_string() };
+        let assoc = if e.associated_name.is_empty() {
+            String::new()
+        } else {
+            format!("  ({})", e.associated_name)
+        };
+        cli_println!("{:<12} {start:<11} {end:<11} {}{assoc}", e.kind, e.title);
+    }
+    Ok(())
+}
+
+/// `aurelia news APPID`: announcements from the storefront feed.
+pub(crate) async fn cmd_news(app_id: u32, count: u32, max_length: u32, json: bool) -> Result<()> {
+    let http = aurelia::core::net::steam_web_client()?;
+    let items = aurelia::web::discovery::fetch_news(&http, app_id, count, max_length).await?;
+    if json {
+        print_json(&serde_json::json!({ "app_id": app_id, "news": items }));
+        return Ok(());
+    }
+    if items.is_empty() {
+        cli_println!("No news for app {app_id}.");
+        return Ok(());
+    }
+    for n in &items {
+        cli_println!("{}  {}  [{}]", unix_to_ymd(n.date as i64), n.title, n.feed);
+        cli_println!("  {}", n.url);
+        if !n.contents.is_empty() {
+            cli_println!("  {}", n.contents.replace('\n', " "));
+        }
+        cli_println!();
+    }
+    Ok(())
+}
+
+/// `aurelia reviews APPID`: one page of user reviews.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn cmd_reviews(
+    app_id: u32,
+    filter: String,
+    review_type: String,
+    purchase: String,
+    count: u32,
+    cursor: Option<String>,
+    lang: Option<String>,
+    json: bool,
+) -> Result<()> {
+    use aurelia::web::discovery::{fetch_reviews, ReviewQuery};
+    let language = match lang {
+        Some(l) => l,
+        None => resolve_steam_language(None).await,
+    };
+    let query = ReviewQuery {
+        filter,
+        review_type,
+        purchase_type: purchase,
+        language,
+        count,
+        cursor,
+    };
+    let http = aurelia::core::net::steam_web_client()?;
+    let page = fetch_reviews(&http, app_id, &query).await?;
+    if json {
+        print_json(&serde_json::json!({
+            "app_id": app_id,
+            "summary": page.summary,
+            "reviews": page.reviews,
+            "next_cursor": page.next_cursor,
+        }));
+        return Ok(());
+    }
+    // Steam omits totals unless `--filter all`.
+    let s = &page.summary;
+    if s.total_reviews > 0 {
+        cli_println!(
+            "{} ({}% positive, {} reviews: {} up / {} down)",
+            s.label,
+            s.total_positive * 100 / s.total_reviews,
+            s.total_reviews,
+            s.total_positive,
+            s.total_negative
+        );
+    }
+    for r in &page.reviews {
+        let verdict = if r.voted_up { "👍" } else { "👎" };
+        cli_println!(
+            "\n{verdict} {}  {}  {:.1}h played  {} helpful",
+            unix_to_ymd(r.created as i64),
+            r.author,
+            r.playtime_hours,
+            r.votes_up
+        );
+        for line in r.text.lines().take(6) {
+            cli_println!("   {}", truncate(line, 110));
+        }
+    }
+    if let Some(c) = &page.next_cursor {
+        cli_println!("\nNext page: --cursor '{c}'");
+    }
+    Ok(())
+}
+
 /// `aurelia tags [--dump]`: the store tag vocabulary.
 pub(crate) async fn cmd_tags(dump: bool, json: bool) -> Result<()> {
     crate::commands::auth::require_experimental("tags").await?;
