@@ -214,6 +214,28 @@ pub(crate) enum Command {
         #[arg(short = 'l', long = "lang", alias = "language")]
         lang: Option<String>,
     },
+    /// Profile by SteamID64, /profiles/ URL, friend name, `me`.
+    User { user: String },
+    /// Your wishlist, or a friend's.
+    #[command(args_conflicts_with_subcommands = true)]
+    Wishlist {
+        /// Whose wishlist; defaults to yours.
+        user: Option<String>,
+        /// Maximum items.
+        #[arg(short = 'n', long, default_value_t = 50)]
+        count: usize,
+        /// Skip this many items first.
+        #[arg(short = 'o', long, default_value_t = 0)]
+        offset: usize,
+        /// Country code for prices.
+        #[arg(short = 'c', long, alias = "cc")]
+        country: Option<String>,
+        /// Steam API language name for names.
+        #[arg(short = 'l', long = "lang", alias = "language")]
+        lang: Option<String>,
+        #[command(subcommand)]
+        command: Option<WishlistCommand>,
+    },
     /// Games similar to a given app.
     Similar {
         app_id: u32,
@@ -770,10 +792,9 @@ pub(crate) enum CollectionsCommand {
 pub(crate) enum FriendsCommand {
     /// List your friends (the default when no subcommand is given).
     List,
-    /// Resolve a SteamID from a SteamID64, profile URL, or custom (vanity) URL/name.
-    /// Read-only; no login required.
+    /// Show a user by id, URL, name.
     Search { query: String },
-    /// Send a friend request. Accepts a SteamID64, profile URL, or custom URL/name.
+    /// Send a friend request (same identifiers as search).
     Add { query: String },
     /// Remove a friend, or cancel/decline a pending request (by SteamID64).
     Remove { steamid: u64 },
@@ -1136,6 +1157,15 @@ impl From<PlatformArg> for DepotPlatform {
             PlatformArg::Linux => DepotPlatform::Linux,
         }
     }
+}
+
+/// `wishlist add|remove`.
+#[derive(Subcommand)]
+pub(crate) enum WishlistCommand {
+    /// Add an app to your wishlist.
+    Add { app_id: u32 },
+    /// Remove an app from your wishlist.
+    Remove { app_id: u32 },
 }
 
 /// `deals --scope` choices.
