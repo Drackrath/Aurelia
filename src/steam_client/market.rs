@@ -181,19 +181,17 @@ pub async fn market_price(
     market_hash_name: &str,
     currency: u32,
 ) -> Result<MarketPrice> {
-    let resp = public_client()?
+    let client = public_client()?;
+    let request = client
         .get("https://steamcommunity.com/market/priceoverview/")
         .query(&[
             ("appid", app_id.to_string()),
             ("currency", currency.to_string()),
             ("market_hash_name", market_hash_name.to_string()),
-        ])
-        .send()
+        ]);
+    let resp = crate::core::net::send_with_retry(&client, request)
         .await
         .context("market price request failed")?;
-    if resp.status().as_u16() == 429 {
-        bail!("Steam is rate-limiting price lookups (HTTP 429); try again in a few minutes");
-    }
     let v: Value = resp.json().await.context("invalid price-overview response")?;
     if v.get("success").and_then(Value::as_bool) != Some(true) {
         bail!(
@@ -228,15 +226,13 @@ pub async fn market_search(
         params.push(("appid", a.to_string()));
     }
 
-    let resp = public_client()?
+    let client = public_client()?;
+    let request = client
         .get("https://steamcommunity.com/market/search/render/")
-        .query(&params)
-        .send()
+        .query(&params);
+    let resp = crate::core::net::send_with_retry(&client, request)
         .await
         .context("market search request failed")?;
-    if resp.status().as_u16() == 429 {
-        bail!("Steam is rate-limiting market search (HTTP 429); try again in a few minutes");
-    }
     let v: Value = resp.json().await.context("invalid market-search response")?;
     let total = v.get("total_count").and_then(Value::as_u64).unwrap_or(0) as u32;
     let results = parse_json_array(&v, "results", parse_search_result);
