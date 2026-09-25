@@ -501,9 +501,14 @@ pub use storequery::{DealsScope, QueryPage};
 mod events;
 pub use events::StoreEvent;
 mod players;
+mod wishlist;
+pub use wishlist::WishlistEntry;
+pub mod ident;
+mod profile;
+pub use profile::UserProfile;
 
 pub use collections::RemoteNamespace;
-pub use friends::{resolve_steam_id, AddedFriend, Friend, ResolvedUser, Roster};
+pub use friends::{AddedFriend, Friend, Roster};
 pub use market::{
     inventory_via, market_price, market_search, my_listings_via, wallet_via, InventoryItem,
     MarketPrice, MarketSearchResult, MyMarketState, WalletBalance,

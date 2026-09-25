@@ -8,8 +8,7 @@
 //! helper. As with the other `SteamClient` submodules, the struct and shared
 //! imports live in the parent module and are pulled in via `use super::*`.
 use super::*;
-use regex::Regex;
-use std::sync::{LazyLock, RwLock};
+use std::sync::RwLock;
 use steam_vent::NetMessage;
 use steam_vent_proto::steammessages_clientserver_friends::{
     CMsgClientAddFriend, CMsgClientAddFriendResponse, CMsgClientChangeStatus, CMsgClientFriendsList,
@@ -76,17 +75,6 @@ impl Friend {
 /// The friends roster, keyed by SteamID64.
 pub type Roster = HashMap<u64, Friend>;
 
-/// A user resolved from a search query (see [`resolve_steam_id`]).
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ResolvedUser {
-    /// SteamID64.
-    pub steam_id: u64,
-    /// Display (persona) name, if the profile exposed one.
-    pub persona_name: Option<String>,
-    /// Canonical Steam Community profile URL.
-    pub profile_url: String,
-}
-
 /// The result of sending a friend request (see [`SteamClient::add_friend`]).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AddedFriend {
@@ -96,102 +84,9 @@ pub struct AddedFriend {
     pub persona_name: Option<String>,
 }
 
-/// SteamID64 base for an individual account (`0x0110000100000000`). Any 64-bit id
-/// at or above this is treated as a ready-to-use SteamID rather than a vanity name.
-const STEAMID64_INDIVIDUAL_BASE: u64 = 76_561_197_960_265_728;
-
-static RE_PROFILE_ID: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"steamcommunity\.com/profiles/(\d{17})").unwrap());
-static RE_VANITY: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"steamcommunity\.com/id/([^/?#\s]+)").unwrap());
-static RE_STEAMID64: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"<steamID64>(\d+)</steamID64>").unwrap());
-static RE_STEAM_NAME: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?s)<steamID>(.*?)</steamID>").unwrap());
-
 fn nonempty(s: &str) -> Option<String> {
     let s = s.trim();
     (!s.is_empty()).then(|| s.to_string())
-}
-
-/// Fetch a Steam Community profile XML document (the `?xml=1` view, which needs no
-/// API key) with a short timeout.
-async fn fetch_community_xml(url: &str) -> Result<String> {
-    let client = crate::core::net::http_client(std::time::Duration::from_secs(10))?;
-    crate::core::net::send_with_retry(&client, client.get(url))
-        .await
-        .context("request to Steam Community failed")?
-        .text()
-        .await
-        .context("failed reading the Steam Community response")
-}
-
-/// Pull the persona name out of a profile XML (`<steamID>` element, possibly
-/// CDATA-wrapped).
-fn parse_community_name(xml: &str) -> Option<String> {
-    let raw = RE_STEAM_NAME.captures(xml)?.get(1)?.as_str().trim();
-    let inner = raw
-        .strip_prefix("<![CDATA[")
-        .and_then(|s| s.strip_suffix("]]>"))
-        .unwrap_or(raw);
-    nonempty(inner)
-}
-
-/// Resolve a free-form `query` to a Steam account, **without** a Steam session.
-///
-/// Steam exposes no people-search over the CM connection, so this resolves an
-/// *identifier* via the public Steam Community `?xml=1` endpoint. Accepts:
-/// - a 17-digit **SteamID64** (returned as-is, name looked up best-effort),
-/// - a **profile URL** (`steamcommunity.com/profiles/<id>`),
-/// - a **custom/vanity URL** (`steamcommunity.com/id/<name>`), or
-/// - a bare **vanity name** (the custom-URL slug).
-pub async fn resolve_steam_id(query: &str) -> Result<ResolvedUser> {
-    let q = query.trim();
-    if q.is_empty() {
-        bail!("empty search query");
-    }
-
-    // A profile URL, or a bare SteamID64.
-    let direct_id = RE_PROFILE_ID
-        .captures(q)
-        .and_then(|c| c[1].parse::<u64>().ok())
-        .or_else(|| match q.parse::<u64>() {
-            Ok(v) if v >= STEAMID64_INDIVIDUAL_BASE => Some(v),
-            _ => None,
-        });
-    if let Some(steam_id) = direct_id {
-        let xml = fetch_community_xml(&format!(
-            "https://steamcommunity.com/profiles/{steam_id}/?xml=1"
-        ))
-        .await
-        .unwrap_or_default();
-        return Ok(ResolvedUser {
-            steam_id,
-            persona_name: parse_community_name(&xml),
-            profile_url: format!("https://steamcommunity.com/profiles/{steam_id}"),
-        });
-    }
-
-    // Otherwise treat it as a vanity (custom-URL) name, whether a full URL or bare slug.
-    let slug = RE_VANITY
-        .captures(q)
-        .map(|c| c[1].to_string())
-        .unwrap_or_else(|| q.trim_matches('/').to_string());
-    let xml = fetch_community_xml(&format!("https://steamcommunity.com/id/{slug}/?xml=1")).await?;
-    let steam_id = RE_STEAMID64
-        .captures(&xml)
-        .and_then(|c| c[1].parse::<u64>().ok())
-        .ok_or_else(|| {
-            anyhow::Error::new(crate::core::error::TypedError::new(
-                crate::core::error::ErrorKind::NotFound,
-                format!("could not resolve '{slug}' to a Steam account (no such profile or custom URL)"),
-            ))
-        })?;
-    Ok(ResolvedUser {
-        steam_id,
-        persona_name: parse_community_name(&xml),
-        profile_url: format!("https://steamcommunity.com/id/{slug}"),
-    })
 }
 
 /// A friendlier message for a non-OK `EResult` from a friend request.

@@ -584,6 +584,126 @@ pub(crate) async fn cmd_reviews(
     Ok(())
 }
 
+/// `aurelia wishlist [USER]`: a wishlist with store records.
+pub(crate) async fn cmd_wishlist(
+    user: Option<String>,
+    count: usize,
+    offset: usize,
+    country: Option<String>,
+    lang: Option<String>,
+    json: bool,
+) -> Result<()> {
+    let lang = resolve_steam_language(lang).await;
+    let country = resolve_steam_country(country).await?;
+    let client = authed_client().await?;
+    let own_id = client.steam_id();
+    let steam_id = match &user {
+        Some(u) => resolve_user_ident(&client, u).await?,
+        None => own_id.ok_or_else(|| {
+            TypedError::new(ErrorKind::AuthRequired, "not logged in — run `aurelia login` first")
+        })?,
+    };
+    let is_own = own_id == Some(steam_id);
+    // Steam only serves friends' wishlists over the CM.
+    let entries = client.wishlist(steam_id).await.map_err(|e| {
+        if aurelia::core::error::classify(&e).kind == ErrorKind::AccessDenied {
+            TypedError::new(
+                ErrorKind::PrivacyRestricted,
+                format!("Steam does not expose the wishlist of {steam_id} to you (only friends' wishlists are readable)"),
+            )
+            .into()
+        } else {
+            e
+        }
+    })?;
+    if entries.is_empty() && !is_own {
+        return Err(TypedError::new(
+            ErrorKind::PrivacyRestricted,
+            format!("no wishlist items for {steam_id}: the wishlist may be private, friends-only, or empty"),
+        )
+        .into());
+    }
+    let total = entries.len();
+    let page: Vec<_> = entries.into_iter().skip(offset).take(count).collect();
+    let ids: Vec<u32> = page.iter().map(|e| e.app_id).collect();
+    let records = store_records(&client, &ids, &lang, &country).await?;
+    let record_for = |id: u32| records.iter().find(|r| r.app_id == id);
+
+    if json {
+        let items: Vec<serde_json::Value> = page
+            .iter()
+            .map(|e| {
+                let mut v = record_for(e.app_id).map(store_row_json).unwrap_or_else(|| {
+                    serde_json::json!({ "app_id": e.app_id, "name": null })
+                });
+                v["priority"] = e.priority.into();
+                v["date_added"] = e.date_added.into();
+                v["date_added_date"] = unix_to_ymd(e.date_added as i64).into();
+                v
+            })
+            .collect();
+        print_json(&serde_json::json!({
+            "steam_id": steam_id,
+            "total": total,
+            "offset": offset,
+            "items": items,
+        }));
+        return Ok(());
+    }
+
+    if total == 0 {
+        cli_println!("Your wishlist is empty.");
+        return Ok(());
+    }
+    cli_println!(
+        "Wishlist of {steam_id}: {total} item(s), showing {}–{}",
+        offset + 1,
+        offset + page.len()
+    );
+    cli_println!("{:>4}  {:>9}  {:<14} {:<9} {:<11} NAME", "#", "APPID", "PRICE", "DISCOUNT", "ADDED");
+    for e in &page {
+        let rank = if e.priority > 0 { e.priority.to_string() } else { "-".to_string() };
+        let (name, price, discount) = match record_for(e.app_id) {
+            Some(r) => (
+                r.name.clone(),
+                r.price.clone().unwrap_or_else(|| "-".to_string()),
+                if r.discount_pct > 0 { format!("-{}%", r.discount_pct) } else { "-".to_string() },
+            ),
+            None => ("(not on the store)".to_string(), "-".to_string(), "-".to_string()),
+        };
+        cli_println!(
+            "{rank:>4}  {:>9}  {price:<14} {discount:<9} {:<11} {name}",
+            e.app_id,
+            unix_to_ymd(e.date_added as i64)
+        );
+    }
+    Ok(())
+}
+
+/// `aurelia wishlist add APPID`.
+pub(crate) async fn cmd_wishlist_add(app_id: u32, json: bool) -> Result<()> {
+    let client = authed_client().await?;
+    let count = client.wishlist_add(app_id).await?;
+    if json {
+        print_json(&serde_json::json!({ "app_id": app_id, "status": "added", "wishlist_count": count }));
+    } else {
+        cli_println!("Added app {app_id} to your wishlist ({count} items).");
+    }
+    Ok(())
+}
+
+/// `aurelia wishlist remove APPID`.
+pub(crate) async fn cmd_wishlist_remove(app_id: u32, json: bool) -> Result<()> {
+    let client = authed_client().await?;
+    let count = client.wishlist_remove(app_id).await?;
+    if json {
+        print_json(&serde_json::json!({ "app_id": app_id, "status": "removed", "wishlist_count": count }));
+    } else {
+        cli_println!("Removed app {app_id} from your wishlist ({count} items).");
+    }
+    Ok(())
+}
+
 /// `aurelia tags [--dump]`: the store tag vocabulary.
 pub(crate) async fn cmd_tags(dump: bool, json: bool) -> Result<()> {
     crate::commands::auth::require_experimental("tags").await?;
