@@ -215,6 +215,8 @@ aurelia list --online                # add an ONLINE column (needs-connection he
 aurelia info 690830                  # game details (description, release, reviews, DLC)
 aurelia info 690830 --extended       # + requirements, Metacritic, tags, genres, categories
 aurelia info 690830 --lang german    # localize store text (falls back to config, then English)
+aurelia info 690830 --country DE     # quote the price for a region (falls back to config, locale, US)
+aurelia price 690830 --compare US,DE,JP   # compare a game's price and discount end across regions
 aurelia dlc 690830                   # list a game's DLC with ownership and install status
 aurelia drm 690830                   # verify DRM/ownership tickets headlessly (no Steam client)
 aurelia achievements 620             # your achievements for a game (unlock state + rarity)
@@ -299,6 +301,7 @@ aurelia config show                  # print launcher configuration
 aurelia config protons               # list detected Proton and Wine runtimes
 aurelia config presence online       # appear online for chat (default: invisible)
 aurelia config language german       # default language for info and achievements text
+aurelia config country DE            # default store region for prices (unset: system locale, else US)
 aurelia config game 1245620 --proton GE-Proton9-20  # pin a Proton version for one game
 
 # Proton and Wine runtimes (download manager)

@@ -214,6 +214,74 @@ pub struct StoreAppInfo {
     pub review_summary: Option<String>,
     /// Artwork URLs (header/cover/hero/background/logo).
     pub assets: StoreAppAssets,
+    /// Country the prices were quoted for.
+    #[serde(default)]
+    pub country: String,
+    /// Final price in minor units.
+    #[serde(default)]
+    pub price_cents: Option<i64>,
+    /// Pre-discount price, formatted.
+    #[serde(default)]
+    pub original_price: Option<String>,
+    /// Pre-discount price in minor units.
+    #[serde(default)]
+    pub original_price_cents: Option<i64>,
+    /// Unix time the active discount ends.
+    #[serde(default)]
+    pub discount_end: Option<u64>,
+    /// Store refuses sale in this country.
+    #[serde(default)]
+    pub region_locked: bool,
+    /// Every package and bundle the store offers.
+    #[serde(default)]
+    pub purchase_options: Vec<StorePurchaseOption>,
+}
+
+/// A package or bundle for an app.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct StorePurchaseOption {
+    /// `package` or `bundle`.
+    pub kind: String,
+    pub id: u32,
+    pub name: String,
+    pub price: Option<String>,
+    pub price_cents: Option<i64>,
+    pub original_price: Option<String>,
+    pub discount_pct: i32,
+    /// Extra saving from bundling, if a bundle.
+    pub bundle_discount_pct: i32,
+    pub included_games: u32,
+    pub discount_end: Option<u64>,
+}
+
+fn purchase_option_summary(
+    p: &steam_vent_proto::steammessages_storebrowse_steamclient::store_item::PurchaseOption,
+) -> StorePurchaseOption {
+    let (kind, id) = if p.bundleid() > 0 {
+        ("bundle", p.bundleid())
+    } else {
+        ("package", p.packageid())
+    };
+    let nonempty = |s: &str| (!s.is_empty()).then(|| s.to_string());
+    StorePurchaseOption {
+        kind: kind.to_string(),
+        id: id.max(0) as u32,
+        name: p.purchase_option_name().to_string(),
+        price: nonempty(p.formatted_final_price()),
+        price_cents: (p.final_price_in_cents() > 0).then(|| p.final_price_in_cents()),
+        original_price: nonempty(p.formatted_original_price())
+            .filter(|_| p.original_price_in_cents() > p.final_price_in_cents()),
+        discount_pct: p.discount_pct(),
+        bundle_discount_pct: p.bundle_discount_pct(),
+        included_games: p.included_game_count().max(0) as u32,
+        discount_end: p
+            .active_discounts
+            .iter()
+            .map(|d| d.discount_end_date())
+            .max()
+            .filter(|&t| t > 0)
+            .map(u64::from),
+    }
 }
 
 /// Artwork URLs for a store app. Built from the StoreBrowse `assets` block when
@@ -611,7 +679,7 @@ fn creator_names(
 /// Map a `StoreBrowse` `StoreItem` protobuf into our display-oriented
 /// [`StoreAppInfo`]. Defensive throughout: every nested message is optional, so
 /// missing data yields empty fields rather than failing.
-fn store_item_to_app_info(item: &StoreItem) -> StoreAppInfo {
+fn store_item_to_app_info(item: &StoreItem, country: &str) -> StoreAppInfo {
     let basic = item.basic_info.as_ref();
 
     let release = item.release.as_ref();
@@ -644,13 +712,26 @@ fn store_item_to_app_info(item: &StoreItem) -> StoreAppInfo {
         })
         .unwrap_or_default();
 
-    let (price, discount_pct) = match item.best_purchase_option.as_ref() {
+    let option = item.best_purchase_option.as_ref();
+    let (price, discount_pct) = match option {
         _ if item.is_free() => (Some("Free".to_string()), 0),
         Some(p) if !p.formatted_final_price().is_empty() => {
             (Some(p.formatted_final_price().to_string()), p.discount_pct())
         }
         _ => (None, 0),
     };
+    let priced = option.filter(|_| !item.is_free() && price.is_some());
+    let price_cents = priced.map(|p| p.final_price_in_cents());
+    let original_price_cents = priced
+        .map(|p| p.original_price_in_cents())
+        .filter(|&c| c > 0 && Some(c) != price_cents);
+    let original_price = priced
+        .map(|p| p.formatted_original_price().to_string())
+        .filter(|s| !s.is_empty() && original_price_cents.is_some());
+    let discount_end = priced
+        .and_then(|p| p.active_discounts.iter().map(|d| d.discount_end_date()).max())
+        .filter(|&t| t > 0)
+        .map(u64::from);
 
     let review_summary = item
         .reviews
@@ -694,6 +775,13 @@ fn store_item_to_app_info(item: &StoreItem) -> StoreAppInfo {
         platforms,
         review_summary,
         assets: store_assets(item),
+        country: country.to_string(),
+        price_cents,
+        original_price,
+        original_price_cents,
+        discount_end,
+        region_locked: item.unvailable_for_country_restriction(),
+        purchase_options: item.purchase_options.iter().map(purchase_option_summary).collect(),
     }
 }
 

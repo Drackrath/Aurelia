@@ -416,14 +416,35 @@ pub(crate) fn report_operation(app_id: u32, status: &str, json: bool) {
 /// user-facing store text: an explicit `--lang` flag wins, else the
 /// `aurelia config language` setting, else "english".
 pub(crate) async fn resolve_steam_language(flag: Option<String>) -> String {
-    match flag {
-        Some(l) => l,
-        None => load_launcher_config()
-            .await
-            .ok()
-            .and_then(|c| c.language)
-            .unwrap_or_else(|| "english".to_string()),
+    if let Some(l) = flag {
+        return l;
     }
+    if let Some(l) = load_launcher_config().await.ok().and_then(|c| c.language) {
+        return l;
+    }
+    aurelia::core::locale::detect_env_locale()
+        .map(|l| aurelia::core::locale::steam_language(&l).to_string())
+        .unwrap_or_else(|| "english".to_string())
+}
+
+/// Country: flag, config, locale, then US.
+pub(crate) async fn resolve_steam_country(flag: Option<String>) -> Result<String> {
+    use aurelia::core::locale::{detect_env_locale, normalize_country, steam_country};
+    if let Some(raw) = flag {
+        return normalize_country(&raw).ok_or_else(|| {
+            TypedError::new(
+                ErrorKind::InvalidInput,
+                format!("invalid country code `{raw}` — use a two-letter ISO code like US or DE"),
+            )
+            .into()
+        });
+    }
+    if let Some(cc) = load_launcher_config().await.ok().and_then(|c| c.country) {
+        return Ok(cc);
+    }
+    Ok(detect_env_locale()
+        .map(|l| steam_country(&l))
+        .unwrap_or_else(|| "US".to_string()))
 }
 
 /// Best-effort game-name lookup from the offline library cache, for pretty-printing
