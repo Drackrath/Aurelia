@@ -704,6 +704,14 @@ pub(crate) async fn cmd_wishlist_remove(app_id: u32, json: bool) -> Result<()> {
     Ok(())
 }
 
+/// `aurelia appinfo APPID`: raw PICS `common`/`extended` sections.
+pub(crate) async fn cmd_appinfo(app_id: u32) -> Result<()> {
+    crate::commands::auth::require_experimental("appinfo").await?;
+    let client = authed_client().await?;
+    cli_println!("{}", client.appinfo_debug(app_id).await?);
+    Ok(())
+}
+
 /// `aurelia tags [--dump]`: the store tag vocabulary.
 pub(crate) async fn cmd_tags(dump: bool, json: bool) -> Result<()> {
     crate::commands::auth::require_experimental("tags").await?;
