@@ -286,6 +286,11 @@ impl SteamClient {
         data.set_include_all_purchase_options(true);
         data.set_include_full_description(true);
         data.set_include_assets(true);
+        data.set_include_tag_count(20);
+        data.set_include_ratings(true);
+        data.set_include_links(true);
+        data.set_include_screenshots(true);
+        data.set_include_trailers(true);
 
         let mut context = StoreBrowseContext::new();
         context.set_language(language.to_string());
@@ -305,12 +310,24 @@ impl SteamClient {
             .await
             .context("failed calling StoreBrowse.GetItems")?;
 
-        Ok(response
+        let mut apps: Vec<StoreAppInfo> = response
             .store_items
             .iter()
             .filter(|item| item.appid() != 0)
             .map(|item| store_item_to_app_info(item, country))
-            .collect())
+            .collect();
+
+        // Resolve tag names once for the whole batch.
+        let mut ids: Vec<u32> = apps.iter().flat_map(|a| a.tags.iter().map(|t| t.id)).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        if !ids.is_empty() {
+            let names = self.resolve_tag_names(&ids, language).await;
+            for tag in apps.iter_mut().flat_map(|a| a.tags.iter_mut()) {
+                tag.name = names.get(&tag.id).cloned();
+            }
+        }
+        Ok(apps)
     }
 
     pub async fn get_product_info(&mut self, appid: u32) -> Result<Vec<LaunchInfo>> {

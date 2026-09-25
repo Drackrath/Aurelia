@@ -110,8 +110,8 @@ pub(crate) enum Command {
         #[arg(required = true)]
         app_ids: Vec<u32>,
         /// Also show storefront-only fields that have no CM-protocol source:
-        /// system requirements, Metacritic, website, store genres/categories and
-        /// SteamSpy user tags. This makes additional HTTPS storefront requests.
+        /// system requirements, Metacritic, website and store genres/categories.
+        /// One extra HTTPS request per app.
         #[arg(long)]
         extended: bool,
         /// Bypass the local metadata cache and fetch fresh data from Steam.
@@ -256,6 +256,19 @@ pub(crate) enum Command {
         /// Re-download even if a cached copy already exists.
         #[arg(short, long)]
         force: bool,
+        /// List every store asset URL instead of downloading.
+        #[arg(long)]
+        list: bool,
+        /// With `--list`: HEAD-check each URL.
+        #[arg(long, requires = "list")]
+        probe: bool,
+    },
+    /// Dump the store tag vocabulary (maintainer tool).
+    #[command(hide = true)]
+    Tags {
+        /// Print Rust source for `tags_table.rs`.
+        #[arg(long)]
+        dump: bool,
     },
     /// Move an installed game to a different Steam library folder
     Move {
