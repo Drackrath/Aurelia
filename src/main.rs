@@ -377,8 +377,8 @@ async fn run(cli: Cli) -> Result<()> {
             script,
             no_script,
             steam,
-            noupdate,
-        } => cmd_play(app_id, proton, windows, native_engine, umu, script, no_script, steam, noupdate, json).await,
+            no_update,
+        } => cmd_play(app_id, proton, windows, native_engine, umu, script, no_script, steam, no_update, json).await,
         Command::Running => cmd_running(json),
         Command::Stop { app_id, force } => cmd_stop(app_id, force, json).await,
         Command::Enable {

@@ -99,3 +99,9 @@ fn ordinary_commands_forward_but_local_managers_do_not() {
     // forward gate, so it is not flagged local here.
     assert!(!must_run_locally(&parse(&["aurelia", "daemon"])));
 }
+
+#[test]
+fn cli_has_no_conflicting_flags() {
+    use clap::CommandFactory;
+    crate::cli::Cli::command().debug_assert();
+}
