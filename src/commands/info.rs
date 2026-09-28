@@ -90,8 +90,17 @@ pub(crate) async fn cmd_set_branch(app_id: u32, branch: String, json: bool) -> R
     Ok(())
 }
 
-/// Storefront-only `--extended` data for one app.
-pub(crate) type ExtendedInfo = aurelia::web::store::AppDetails;
+/// `--extended` data: CM fields plus web requirements.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ExtendedInfo {
+    pub genres: Vec<String>,
+    pub categories: Vec<String>,
+    pub metacritic: Option<i64>,
+    pub metacritic_url: Option<String>,
+    pub website: Option<String>,
+    pub requirements_minimum: Vec<String>,
+    pub requirements_recommended: Vec<String>,
+}
 
 pub(crate) async fn cmd_info(
     app_ids: Vec<u32>,
@@ -134,10 +143,17 @@ pub(crate) async fn cmd_info(
         }
     }
 
+    // One logon for misses and --extended alike.
+    let session = if !misses.is_empty() || extended {
+        Some(authed_client().await?)
+    } else {
+        None
+    };
+
     if !misses.is_empty() {
         // Metadata comes from the StoreBrowse service over the Steam CM connection
         // (no HTTPS storefront API), so a session is needed here.
-        let client = authed_client().await?;
+        let client = session.as_ref().expect("session created for misses");
         let store = client
             .fetch_store_apps(&misses, &lang, &country)
             .await
@@ -176,29 +192,54 @@ pub(crate) async fn cmd_info(
         }
     }
 
-    // Storefront-only fields (system requirements, Metacritic, website, store
-    // genres/categories). These have no CM-protocol source, so
-    // `--extended` fetches them from the public HTTPS storefront, reusing one HTTP
-    // client across ids. Best-effort: any failure leaves them absent.
+    // Extended: PICS + CM, requirements from web.
     let mut extended_by_id: std::collections::HashMap<u32, ExtendedInfo> =
         std::collections::HashMap::new();
     if extended {
-        match aurelia::core::net::steam_web_client() {
-            Ok(http) => {
-                for &id in &app_ids {
-                    if !base.contains_key(&id) {
-                        continue;
+        let client = session.as_ref().expect("session created for --extended");
+        let category_names = client
+            .store_category_names(&lang)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("category names unavailable: {e:#}");
+                Default::default()
+            });
+        let http = aurelia::core::net::steam_web_client().ok();
+        for &id in &app_ids {
+            if !base.contains_key(&id) {
+                continue;
+            }
+            let mut ext = ExtendedInfo::default();
+            match client.get_extended_app_info(id).await {
+                Ok(pics) => {
+                    ext.metacritic = pics.metacritic_score;
+                    ext.metacritic_url = pics.metacritic_url;
+                    ext.website = pics.homepage;
+                    ext.genres = pics
+                        .genre_ids
+                        .iter()
+                        .filter_map(|&g| aurelia::steam_client::genres_table::genre_name(g))
+                        .map(String::from)
+                        .collect();
+                    ext.categories = pics
+                        .category_ids
+                        .iter()
+                        .filter_map(|c| category_names.get(c).cloned())
+                        .collect();
+                }
+                Err(e) => tracing::warn!("appinfo unavailable for app {id}: {e:#}"),
+            }
+            if let Some(http) = &http {
+                match aurelia::web::store::fetch_requirements(http, id, &lang, &country).await {
+                    Ok(Some(req)) => {
+                        ext.requirements_minimum = req.minimum;
+                        ext.requirements_recommended = req.recommended;
                     }
-                    let web = aurelia::web::store::fetch_app_details(&http, id, &lang, &country)
-                        .await
-                        .ok()
-                        .flatten();
-                    if let Some(d) = web {
-                        extended_by_id.insert(id, d);
-                    }
+                    Ok(None) => {}
+                    Err(e) => tracing::warn!("requirements unavailable for app {id}: {e:#}"),
                 }
             }
-            Err(e) => tracing::warn!("could not build HTTP client for --extended: {e:#}"),
+            extended_by_id.insert(id, ext);
         }
     }
 
@@ -293,6 +334,7 @@ pub(crate) fn info_json_value(
             "categories": web.categories,
             "tags": tag_names,
             "metacritic": web.metacritic,
+            "metacritic_url": web.metacritic_url,
             "website": web.website,
             "requirements": {
                 "minimum": web.requirements_minimum,
