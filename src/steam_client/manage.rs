@@ -70,6 +70,10 @@ impl SteamClient {
         } else {
             None
         };
+        // Never delete outside steamapps/common/<dir>.
+        if let Some(dir) = installdir.as_deref().filter(|d| !crate::core::utils::is_safe_dir_name(d)) {
+            bail!("refusing to uninstall app {appid}: unsafe installdir {dir:?}");
+        }
         let install_dir = steamapps
             .join("common")
             .join(installdir.unwrap_or_else(|| appid.to_string()));
