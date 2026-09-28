@@ -147,7 +147,7 @@ impl SteamClient {
             let parsed = crate::core::acf::parse_app_manifest(&raw);
             if let Some(dir) = parsed.install_dir.clone() {
                 let existing_dir = Path::new(&library_root).join("steamapps").join("common").join(&dir);
-                if existing_dir.is_dir() && !dir.trim().is_empty() {
+                if existing_dir.is_dir() && crate::core::utils::is_safe_dir_name(&dir) {
                     installdir = dir;
                 }
             }

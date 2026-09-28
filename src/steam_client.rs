@@ -593,7 +593,9 @@ pub fn sanitize_install_dir(name: &str) -> String {
             _ => c,
         })
         .collect();
-    sanitized.trim().to_string()
+    let sanitized = sanitized.trim().to_string();
+    // Dot-only or empty names escape common/.
+    if crate::core::utils::is_safe_dir_name(&sanitized) { sanitized } else { "_".to_string() }
 }
 
 /// Steam wraps the entire VDF in a top-level key that is the numeric app ID.

@@ -211,7 +211,7 @@ impl SteamClient {
                         installdir = section
                             .get_str(&["config", "installdir"])
                             .map(str::trim)
-                            .filter(|d| !d.is_empty())
+                            .filter(|d| crate::core::utils::is_safe_dir_name(d))
                             .map(str::to_string);
                     }
                     Err(e) => tracing::warn!("could not parse PICS appinfo for app {appid}: {e:#}"),

@@ -468,3 +468,12 @@ fn encrypted_ticket_ok_without_ticket_errors() {
     response.encrypted_app_ticket = protobuf::MessageField::some(EncryptedAppTicket::new());
     assert!(client::extract_encrypted_ticket(&response, 400).is_err());
 }
+
+#[test]
+fn sanitize_install_dir_never_escapes_common() {
+    assert_eq!(sanitize_install_dir("Half-Life 2"), "Half-Life 2");
+    for name in ["", " ", ".", ".."] {
+        assert_eq!(sanitize_install_dir(name), "_", "{name:?}");
+    }
+    assert_eq!(sanitize_install_dir("../x"), ".._x");
+}
