@@ -248,7 +248,7 @@ fn apply_install_diagnostics(cmd: &mut Command, base_dir: &Path) {
 }
 
 /// Repair the master Windows-Steam prefix: stop anything holding it, snapshot the
-/// current prefix (retaining a single `.bak`), then re-run the installer into a
+/// current prefix to a timestamped `.bak-<unix>`, then re-run the installer into a
 /// fresh prefix.
 ///
 /// Like [`install_master_steam`], this needs a configured `steam_runtime_runner`
@@ -274,15 +274,13 @@ pub async fn repair_master_steam(config: &LauncherConfig) -> Result<()> {
     );
     stop_prefix_processes(&steam_cfg.wine_prefix);
 
-    // 2. Snapshot the current prefix, retaining only ONE backup. Only if present.
+    // 2. Snapshot; never delete older backups.
     if steam_cfg.wine_prefix.exists() {
         let mut bak = steam_cfg.wine_prefix.clone().into_os_string();
-        bak.push(".bak");
+        bak.push(format!(".bak-{}", crate::core::utils::now_unix()));
         let bak = PathBuf::from(bak);
         if bak.exists() {
-            tracing::info!("Repair: removing previous backup {}", bak.display());
-            std::fs::remove_dir_all(&bak)
-                .with_context(|| format!("failed removing previous backup {}", bak.display()))?;
+            return Err(anyhow!("backup {} already exists; retry shortly", bak.display()));
         }
         tracing::info!(
             "Repair: backing up {} -> {}",
@@ -316,7 +314,7 @@ pub fn stop_master_steam() -> bool {
 /// Remove the master Windows Steam prefix entirely — the opposite of
 /// [`install_master_steam`]. Stops any Steam still running in the prefix first (so no
 /// files are held open), then deletes the whole master Steam root (the prefix **and**
-/// any `.bak` a previous [`repair_master_steam`] left). A no-op if nothing is
+/// every `.bak-*` a previous [`repair_master_steam`] left). A no-op if nothing is
 /// installed. Unlike `repair`, this keeps no backup — it's the clean-slate path for a
 /// corrupted install.
 pub async fn uninstall_master_steam() -> Result<()> {

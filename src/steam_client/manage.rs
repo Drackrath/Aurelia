@@ -31,6 +31,9 @@ impl SteamClient {
             .with_context(|| format!("failed reading {}", src_manifest.display()))?;
         let installdir = parse_installdir_from_acf(&raw)
             .ok_or_else(|| anyhow!("appmanifest for {appid} has no installdir"))?;
+        if !crate::core::utils::is_safe_dir_name(&installdir) {
+            bail!("app {appid} has unsafe installdir {installdir:?}");
+        }
 
         Ok((src_manifest, src_steamapps, src_lib_root, installdir))
     }
@@ -70,6 +73,10 @@ impl SteamClient {
         } else {
             None
         };
+        // Never delete outside steamapps/common/<dir>.
+        if let Some(dir) = installdir.as_deref().filter(|d| !crate::core::utils::is_safe_dir_name(d)) {
+            bail!("refusing to uninstall app {appid}: unsafe installdir {dir:?}");
+        }
         let install_dir = steamapps
             .join("common")
             .join(installdir.unwrap_or_else(|| appid.to_string()));

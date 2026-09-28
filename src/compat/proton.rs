@@ -510,6 +510,9 @@ fn unpack_guarded<R: std::io::Read>(reader: R, dest_parent: &Path) -> Result<()>
 /// Refuses to touch Steam-managed Proton under `steamapps/common` (uninstall those
 /// through Steam). Errors if the named runtime isn't an installed custom tool.
 pub fn remove(name: &str) -> Result<()> {
+    if !crate::core::utils::is_safe_dir_name(name) {
+        bail!("invalid runtime name {name:?}");
+    }
     let base = compat_tools_dir()?;
     let dir = base.join(name);
     if !dir.exists() {
