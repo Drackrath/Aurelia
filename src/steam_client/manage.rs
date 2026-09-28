@@ -31,6 +31,9 @@ impl SteamClient {
             .with_context(|| format!("failed reading {}", src_manifest.display()))?;
         let installdir = parse_installdir_from_acf(&raw)
             .ok_or_else(|| anyhow!("appmanifest for {appid} has no installdir"))?;
+        if !crate::core::utils::is_safe_dir_name(&installdir) {
+            bail!("app {appid} has unsafe installdir {installdir:?}");
+        }
 
         Ok((src_manifest, src_steamapps, src_lib_root, installdir))
     }
