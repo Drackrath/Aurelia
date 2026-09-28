@@ -1,12 +1,17 @@
-// Generate the CloudConfigStore protobuf messages (used by library collections) with
-// pure-Rust rust-protobuf codegen — no protoc required. The generated code lands in
-// `$OUT_DIR/cloudconfig/` and is `include!`d from src/steam_client/cloudconfig.rs.
+// Generate protobuf messages that steam-vent-proto does not ship, with pure-Rust
+// rust-protobuf codegen — no protoc required. Each proto lands in its own
+// `$OUT_DIR/<name>/` and is `include!`d from the matching src/steam_client module.
 fn main() {
-    println!("cargo:rerun-if-changed=proto/service_cloudconfigstore.proto");
-    protobuf_codegen::Codegen::new()
-        .pure()
-        .include("proto")
-        .input("proto/service_cloudconfigstore.proto")
-        .cargo_out_dir("cloudconfig")
-        .run_from_script();
+    for (proto, out) in [
+        ("proto/service_cloudconfigstore.proto", "cloudconfig"),
+        ("proto/service_storequery.proto", "storequery"),
+    ] {
+        println!("cargo:rerun-if-changed={proto}");
+        protobuf_codegen::Codegen::new()
+            .pure()
+            .include("proto")
+            .input(proto)
+            .cargo_out_dir(out)
+            .run_from_script();
+    }
 }
