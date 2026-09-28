@@ -26,6 +26,17 @@ pub fn extract_quoted_values(line: &str) -> Vec<String> {
     out
 }
 
+/// True only for one plain directory name.
+pub fn is_safe_dir_name(name: &str) -> bool {
+    let mut parts = Path::new(name).components();
+    !name.trim().is_empty()
+        && !name.contains(['/', '\\'])
+        && matches!(
+            (parts.next(), parts.next()),
+            (Some(std::path::Component::Normal(_)), None)
+        )
+}
+
 /// Current Unix time in seconds.
 pub fn now_unix() -> u64 {
     std::time::SystemTime::now()
@@ -1616,6 +1627,10 @@ mod resolve_runner_tests;
 #[cfg(test)]
 #[path = "utils_runner_classification_tests.rs"]
 mod runner_classification_tests;
+
+#[cfg(test)]
+#[path = "utils_safe_dir_name_tests.rs"]
+mod safe_dir_name_tests;
 
 #[cfg(all(test, target_os = "linux"))]
 #[path = "utils_steam_logon_tests.rs"]
