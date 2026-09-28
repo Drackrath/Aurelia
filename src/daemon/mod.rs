@@ -283,7 +283,8 @@ impl DaemonState {
                 );
             }
         }
-        s.session_mtime = mtime;
+        // Restore rewrites session.json; stamp afterwards.
+        s.session_mtime = session_mtime().await.or(mtime);
     }
 
     /// Spawn the background friends watcher on `client`, unless one is already running.

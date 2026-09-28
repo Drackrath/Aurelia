@@ -122,7 +122,7 @@ sync, and Proton or Wine launching all work today.
 | **Steam integration (opt-in)** | ✅ | Launch with real Steam integration (`play --steam`): the host Steam client bridged in, started silently if needed, or the in-Wine Steam runtime when no host Steam exists, for Steamworks and DRM. Auto-enabled on Family-Shared games |
 | **Depot browser** | ✅ | List depots, inspect manifest trees, download single files |
 | **Workshop** | ✅ | Browse and search, install and uninstall, subscribe, collections, rate, and read or post comments |
-| **Friends & chat** | ✅ | Friends roster with live persona status and current game, resolve a SteamID from a profile or vanity URL, send or cancel friend requests, plus direct messaging (send, history, and an interactive live session). Presence is configurable, defaulting to invisible |
+| **Friends & chat** | ✅ | Friends roster with live persona status and current game, user profiles and wishlists over the Steam connection (by SteamID64, profile URL or friend name), send or cancel friend requests, plus direct messaging (send, history, and an interactive live session). Presence is configurable, defaulting to invisible |
 | **Inventory & market** | ✅ Read-only | View your inventory, look up item prices, search the Community Market, and see your wallet and listings. Buying & selling are planned |
 | **Collections and categorization** | ✅ | Create, rename and delete library collections, add and remove games, a `list` COLLECTIONS column and `--collection` filter, and on-demand pull, push and sync with Steam's cloud collections |
 
@@ -290,8 +290,11 @@ aurelia workshop comment 1234567890 "Nice mod!"  # post a comment
 
 # Friends & chat
 aurelia friends                              # list friends (name, status, current game)
-aurelia friends search gabelogannewell       # resolve a SteamID (id, profile URL or vanity)
-aurelia friends add 76561197960287930        # send a friend request (accepts a URL too)
+aurelia friends search "AI Jungle Wulf"      # show a user: SteamID64, /profiles/ URL, friend name or `me`
+aurelia friends add 76561197960287930        # send a friend request (same identifiers)
+aurelia user me                              # your profile as Steam sees it (no web requests)
+aurelia wishlist                             # your wishlist with prices; `wishlist "<friend>"` for a friend's
+aurelia wishlist add 1245620                 # add / remove items (`wishlist remove 1245620`)
 aurelia friends remove 76561197960287930     # remove a friend or cancel a request
 aurelia chat send 76561198042323314 "hi!"    # send a direct message to a friend
 aurelia chat history 76561198042323314       # show recent messages with a friend

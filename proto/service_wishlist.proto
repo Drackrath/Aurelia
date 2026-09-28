@@ -1,0 +1,43 @@
+syntax = "proto2";
+
+// Minimal subset of Steam's webui/service_wishlist.proto: read a wishlist by
+// SteamID64, count it, and add/remove the caller's own items. Field numbers match
+// Valve's definitions exactly; `navdata` on AddToWishlist is optional and omitted.
+
+message CWishlist_GetWishlist_Request {
+    optional fixed64 steamid = 1;
+}
+
+message CWishlist_GetWishlist_Response_WishlistItem {
+    optional uint32 appid = 1;
+    optional uint32 priority = 2;
+    optional uint32 date_added = 3;
+}
+
+message CWishlist_GetWishlist_Response {
+    repeated CWishlist_GetWishlist_Response_WishlistItem items = 1;
+}
+
+message CWishlist_GetWishlistItemCount_Request {
+    optional fixed64 steamid = 1;
+}
+
+message CWishlist_GetWishlistItemCount_Response {
+    optional uint32 count = 1;
+}
+
+message CWishlist_AddToWishlist_Request {
+    optional uint32 appid = 1;
+}
+
+message CWishlist_AddToWishlist_Response {
+    optional uint32 wishlist_count = 1;
+}
+
+message CWishlist_RemoveFromWishlist_Request {
+    optional uint32 appid = 1;
+}
+
+message CWishlist_RemoveFromWishlist_Response {
+    optional uint32 wishlist_count = 1;
+}
