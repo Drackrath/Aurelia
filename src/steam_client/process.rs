@@ -75,19 +75,28 @@ impl SteamClient {
     }
 
     /// Stop a game previously launched by `aurelia play`. Looks up the launch
-    /// record Aurelia wrote (PID, and for a per-game Proton/Wine launch the
-    /// WINEPREFIX) and terminates the process tree, then clears the record.
+    /// record Aurelia wrote (PID + start time, and for a per-game Proton/Wine
+    /// launch the WINEPREFIX) and terminates the process tree, then clears the
+    /// record. With `force`, processes are killed immediately (SIGKILL /
+    /// `taskkill /F`); otherwise they are first asked to exit (SIGTERM) so the
+    /// game can shut down and save cleanly.
     ///
-    /// Returns the resolved record on success. Fails if Aurelia has no record of
-    /// the game running — e.g. it was started directly through Steam rather than
-    /// `aurelia play`.
-    /// Stop a game previously launched by `aurelia play`. With `force`, processes
-    /// are killed immediately (SIGKILL / `taskkill /F`); otherwise they are first
-    /// asked to exit (SIGTERM) so the game can shut down and save cleanly.
+    /// The record is reconciled first (see the recovery contract in
+    /// `compat::running`): a recorded PID that now belongs to a different process
+    /// is never signalled. Fails if Aurelia has no record of the game running —
+    /// e.g. it was started directly through Steam rather than `aurelia play` — or
+    /// if the record is stale, in which case it is removed.
     pub fn stop_game(app_id: u32, force: bool) -> Result<crate::compat::running::RunningGame> {
         let record = crate::compat::running::load(app_id).ok_or_else(|| {
             anyhow!("app {app_id} is not running (no launch was recorded by Aurelia)")
         })?;
+        // Drops the record (and returns None) when neither the recorded PID nor
+        // any process carrying the app id is still alive.
+        let record = crate::compat::running::reconcile(record).ok_or_else(|| {
+            anyhow!("app {app_id} is not running (cleared a stale launch record)")
+        })?;
+        // Decided before any sweep, which could itself end the recorded process.
+        let owns_pid = record.owns_pid();
 
         // A Proton/Wine game runs as wine processes inside its WINEPREFIX; killing
         // the recorded runner PID alone can leave them behind. Sweep the per-game
@@ -106,7 +115,9 @@ impl SteamClient {
         #[cfg(unix)]
         Self::kill_processes_for_app(app_id, force);
 
-        kill_process_tree(record.pid, force);
+        if owns_pid {
+            kill_process_tree(record.pid, force);
+        }
         crate::compat::running::clear(app_id);
         Ok(record)
     }
