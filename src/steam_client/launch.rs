@@ -250,12 +250,12 @@ impl SteamClient {
             // master prefix on stop would also kill the Steam client inside it.
             pfx.to_string_lossy().contains("compatdata").then_some(pfx)
         };
-        let record = crate::compat::running::RunningGame {
-            app_id: app.app_id,
-            name: app.name.clone(),
-            pid: child.id(),
+        let record = crate::compat::running::RunningGame::new(
+            app.app_id,
+            app.name.clone(),
+            child.id(),
             wineprefix,
-        };
+        );
         if let Err(e) = crate::compat::running::record_launch(&record) {
             tracing::warn!(appid = app.app_id, "could not record running game: {e:#}");
         }
@@ -266,7 +266,7 @@ impl SteamClient {
             let survivors = crate::compat::running::processes_for_app(app.app_id);
             let Some(&pid) = survivors.first() else { break };
             let mut record = record.clone();
-            record.pid = pid;
+            record.set_pid(pid);
             let _ = crate::compat::running::record_launch(&record);
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
