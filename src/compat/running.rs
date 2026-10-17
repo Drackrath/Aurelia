@@ -7,6 +7,24 @@
 //! `~/.config/Aurelia/running/<app_id>.json` holding the child PID (and, for a
 //! per-game Proton/Wine launch, the WINEPREFIX the game runs in). The launching
 //! process removes the file when the game exits.
+//!
+//! # Recovery contract
+//!
+//! A record can outlive its launch: `aurelia play` may be killed or crash, the
+//! machine may reboot, and PIDs are recycled. A record is therefore never trusted
+//! on its PID alone:
+//!
+//! - Each record pairs the PID with that process's start time. The recorded PID
+//!   is only treated as the game (listed as running, or signalled by `stop`)
+//!   while a process with *both* the same PID and the same start time exists.
+//! - A record whose PID no longer matches is reconciled against the processes
+//!   carrying the app id in their environment (see [`processes_for_app`]). If
+//!   one survives, the record is re-pointed at it; otherwise the record is stale
+//!   and is removed without signalling anything.
+//! - Records written before start times were tracked carry none and are
+//!   reconciled the same way, never acted on by PID.
+//! - Records are replaced atomically (write to a temp file, then rename), so a
+//!   crash mid-write leaves the previous record rather than a truncated one.
 
 use crate::core::config::config_dir;
 use anyhow::{Context, Result};
@@ -20,12 +38,60 @@ pub struct RunningGame {
     /// PID of the process Aurelia spawned for this game. On Windows this is the
     /// game executable; for a Proton/Wine launch it is the runner process.
     pub pid: u32,
+    /// Start time of `pid` as the OS reports it (seconds since the Unix epoch).
+    /// Together with `pid` this identifies the process, since PIDs are recycled.
+    /// `None` when it could not be read, or on records written before it existed;
+    /// such a record never authorises signalling `pid`.
+    #[serde(default)]
+    pub pid_start_time: Option<u64>,
     /// The per-game WINEPREFIX the game runs in, when launched through
     /// Proton/Wine. Present only for per-game (compatdata) prefixes — never the
     /// shared master prefix, which also hosts the Steam client. Lets `stop`
     /// sweep leftover wine processes inside the prefix (Linux).
     #[serde(default)]
     pub wineprefix: Option<PathBuf>,
+}
+
+impl RunningGame {
+    /// A record for a just-spawned process, capturing its start time.
+    pub fn new(app_id: u32, name: String, pid: u32, wineprefix: Option<PathBuf>) -> Self {
+        Self {
+            app_id,
+            name,
+            pid,
+            pid_start_time: process_start_time(pid),
+            wineprefix,
+        }
+    }
+
+    /// Re-point the record at `pid` (a surviving game process), refreshing the
+    /// start time to match.
+    pub fn set_pid(&mut self, pid: u32) {
+        self.pid = pid;
+        self.pid_start_time = process_start_time(pid);
+    }
+
+    /// Whether the recorded PID still names the process this record was written
+    /// for: same PID *and* same start time. False for a record without a start
+    /// time, so a recycled PID is never mistaken for the game.
+    pub fn owns_pid(&self) -> bool {
+        self.pid_start_time
+            .is_some_and(|t| process_start_time(self.pid) == Some(t))
+    }
+}
+
+/// Start time of `pid` (seconds since the Unix epoch), or `None` if no such
+/// process exists.
+pub fn process_start_time(pid: u32) -> Option<u64> {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+    let pid = Pid::from_u32(pid);
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::nothing(),
+    );
+    sys.process(pid).map(|p| p.start_time())
 }
 
 fn running_dir() -> Result<PathBuf> {
@@ -43,7 +109,12 @@ pub fn record_launch(game: &RunningGame) -> Result<()> {
         .with_context(|| format!("failed creating {}", dir.display()))?;
     let path = record_path(game.app_id)?;
     let body = serde_json::to_string_pretty(game)?;
-    std::fs::write(&path, body).with_context(|| format!("failed writing {}", path.display()))?;
+    // Write-then-rename so a reader (or a crash) never sees a half-written
+    // record. The `.tmp` extension keeps it out of `list()`.
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, body).with_context(|| format!("failed writing {}", tmp.display()))?;
+    std::fs::rename(&tmp, &path)
+        .with_context(|| format!("failed replacing {}", path.display()))?;
     Ok(())
 }
 
@@ -61,7 +132,8 @@ pub fn clear(app_id: u32) {
     }
 }
 
-/// Every game Aurelia currently believes is running.
+/// Every game Aurelia currently has a record for, live or stale. Use
+/// [`list_active`] for the ones still running.
 pub fn list() -> Vec<RunningGame> {
     let Ok(dir) = running_dir() else {
         return Vec::new();
@@ -78,24 +150,6 @@ pub fn list() -> Vec<RunningGame> {
         .collect();
     games.sort_by(|a, b| a.name.cmp(&b.name));
     games
-}
-
-/// Whether the process behind a recorded launch is still alive. A launch that was
-/// interrupted (e.g. `aurelia play` killed with Ctrl-C) can leave its record
-/// behind after the process is gone, so liveness is checked against the OS.
-pub fn is_alive(pid: u32) -> bool {
-    #[cfg(unix)]
-    {
-        // `/proc/<pid>` exists for every live process and is cheaper (and needs no
-        // libc/unsafe) than a signal-0 probe.
-        std::path::Path::new(&format!("/proc/{pid}")).exists()
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = pid;
-        // No cheap cross-process liveness check here; treat the record as live.
-        true
-    }
 }
 
 /// Every live process belonging to `app_id`, identified by
@@ -143,28 +197,36 @@ pub fn processes_for_app(app_id: u32) -> Vec<u32> {
 
 /// The games Aurelia is running whose process is still alive. Records whose
 /// process has already exited are pruned as a side effect, so stale launches
-/// (e.g. an interrupted `aurelia play`) don't linger in the listing.
+/// (an interrupted `aurelia play`, a reboot) don't linger in the listing.
 ///
-/// A dead *recorded* PID does not mean the game is gone — the record holds the
-/// directly spawned process, which wrappers and script launchers outlive — so a
-/// record is only pruned once no process carries the app id either. When the
-/// game survives its wrapper, the record's PID is refreshed to a live process
-/// so `stop` still has a target.
+/// A record that no longer owns its PID does not mean the game is gone — the
+/// record holds the directly spawned process, which wrappers and script launchers
+/// outlive — so it is only pruned once no process carries the app id either.
+/// When the game survives its wrapper, the record is re-pointed at a live
+/// process so `stop` still has a target.
 pub fn list_active() -> Vec<RunningGame> {
-    let mut alive = Vec::new();
-    for mut game in list() {
-        if is_alive(game.pid) {
-            alive.push(game);
-            continue;
+    list().into_iter().filter_map(reconcile).collect()
+}
+
+/// Apply the recovery contract to one record: keep it while it owns its PID,
+/// re-point it at a surviving app process, or remove it as stale (`None`).
+pub fn reconcile(mut game: RunningGame) -> Option<RunningGame> {
+    if game.owns_pid() {
+        return Some(game);
+    }
+    match processes_for_app(game.app_id).first() {
+        Some(&pid) => {
+            game.set_pid(pid);
+            let _ = record_launch(&game);
+            Some(game)
         }
-        match processes_for_app(game.app_id).first() {
-            Some(&pid) => {
-                game.pid = pid;
-                let _ = record_launch(&game);
-                alive.push(game);
-            }
-            None => clear(game.app_id),
+        None => {
+            clear(game.app_id);
+            None
         }
     }
-    alive
 }
+
+#[cfg(test)]
+#[path = "running_tests.rs"]
+mod tests;
