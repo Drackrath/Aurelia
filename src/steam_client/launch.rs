@@ -18,22 +18,136 @@ use super::*;
 /// Proton runner), the Windows entry wins whenever its executable is installed —
 /// but a Proton request can't override which depot is actually on disk, so a
 /// native-Linux-only install still runs its native build.
-pub(crate) fn select_launch_entry(
+pub fn select_launch_entry(
     launch_options: &[LaunchInfo],
     app: &LibraryGame,
     prefer_windows_target: bool,
     prefer_native_target: bool,
 ) -> Option<LaunchInfo> {
-    let exe_exists = |o: &LaunchInfo| -> bool {
-        match app.install_path.as_deref() {
-            Some(dir) if !o.executable.is_empty() => {
-                std::path::Path::new(dir)
-                    .join(o.executable.replace('\\', "/"))
-                    .exists()
+    let on_disk = |rel: &str| on_disk_path(app, rel);
+    pick_launch_entry(launch_options, app, prefer_windows_target, prefer_native_target, &on_disk).map(
+        |mut entry| {
+            if let Some(exe) = on_disk(&entry.executable) {
+                entry.executable = exe;
             }
-            _ => false,
+            if let Some(wd) = entry.workingdir.as_deref().filter(|wd| !wd.is_empty()).and_then(on_disk) {
+                entry.workingdir = Some(wd);
+            }
+            entry
+        },
+    )
+}
+
+/// On-disk spelling of `rel`, ignoring case.
+///
+/// Windows manifests ignore path case.
+fn on_disk_path(app: &LibraryGame, rel: &str) -> Option<String> {
+    let dir = std::path::Path::new(app.install_path.as_deref()?);
+    let found = crate::core::utils::resolve_path_ignore_case(dir, rel)?;
+    let found = found.strip_prefix(dir).map(|p| p.to_path_buf()).unwrap_or(found);
+    Some(found.to_string_lossy().into_owned())
+}
+
+/// Is `target`'s executable installed?
+fn target_installed(launch_options: &[LaunchInfo], app: &LibraryGame, target: LaunchTarget) -> bool {
+    launch_options
+        .iter()
+        .any(|o| o.target == target && !o.executable.is_empty() && on_disk_path(app, &o.executable).is_some())
+}
+
+/// One build plus Steam mode.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchTargetChoice {
+    /// Stable id, e.g. `windows-host`.
+    pub id: &'static str,
+    /// `linux` or `windows`.
+    pub platform: &'static str,
+    /// `runtime`, `host` or `none`.
+    pub steam_mode: Option<&'static str>,
+    /// `aurelia play` flags selecting it.
+    pub flags: Vec<String>,
+    /// Launchable right now.
+    pub available: bool,
+    /// `build`, `steam-runtime` or `host-steam`.
+    pub missing: Option<&'static str>,
+    /// What plain `play` picks.
+    pub default: bool,
+}
+
+/// List every build/Steam combination the game offers.
+///
+/// `default_entry` and `default_mode` mirror `play`.
+pub fn launch_targets(
+    launch_options: &[LaunchInfo],
+    app: &LibraryGame,
+    runtime_installed: bool,
+    host_installed: bool,
+    steam_flag: bool,
+    default_entry: Option<LaunchTarget>,
+    default_mode: crate::infra::runners::SteamMode,
+) -> Vec<LaunchTargetChoice> {
+    use crate::infra::runners::SteamMode;
+    let flags = |extra: &[&str]| extra.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let offers = |target: LaunchTarget| launch_options.iter().any(|o| o.target == target);
+    let mut targets = Vec::new();
+
+    if offers(LaunchTarget::NativeLinux) {
+        let installed = target_installed(launch_options, app, LaunchTarget::NativeLinux);
+        let mut f = flags(&["--platform", "linux"]);
+        if steam_flag {
+            f.push("--steam".to_string());
         }
-    };
+        targets.push(LaunchTargetChoice {
+            id: "linux",
+            platform: "linux",
+            steam_mode: None,
+            flags: f,
+            available: installed,
+            missing: (!installed).then_some("build"),
+            default: installed && default_entry == Some(LaunchTarget::NativeLinux),
+        });
+    }
+
+    if offers(LaunchTarget::WindowsProton) {
+        let installed = target_installed(launch_options, app, LaunchTarget::WindowsProton);
+        let default_windows = installed && default_entry == Some(LaunchTarget::WindowsProton);
+        let modes = [
+            ("windows-runtime", "runtime", SteamMode::InWineRuntime, (!runtime_installed).then_some("steam-runtime")),
+            ("windows-host", "host", SteamMode::HostBridge, (!host_installed).then_some("host-steam")),
+            ("windows-standalone", "none", SteamMode::Standalone, None),
+        ];
+        for (id, mode, steam_mode, steam_missing) in modes {
+            // Missing build outranks missing Steam.
+            let missing = if installed { steam_missing } else { Some("build") };
+            targets.push(LaunchTargetChoice {
+                id,
+                platform: "windows",
+                steam_mode: Some(mode),
+                flags: flags(&["--platform", "windows", "--steam-mode", mode]),
+                available: missing.is_none(),
+                missing,
+                default: default_windows && missing.is_none() && default_mode == steam_mode,
+            });
+        }
+    }
+
+    // Fallback default: first available.
+    if !targets.iter().any(|t| t.default) {
+        if let Some(first) = targets.iter_mut().find(|t| t.available) {
+            first.default = true;
+        }
+    }
+    targets
+}
+
+fn pick_launch_entry(
+    launch_options: &[LaunchInfo],
+    app: &LibraryGame,
+    prefer_windows_target: bool,
+    prefer_native_target: bool,
+    on_disk: &dyn Fn(&str) -> Option<String>,
+) -> Option<LaunchInfo> {
+    let exe_exists = |o: &LaunchInfo| -> bool { !o.executable.is_empty() && on_disk(&o.executable).is_some() };
     let installed_target = app.platform.as_deref().and_then(|p| match p {
         "linux" => Some(LaunchTarget::NativeLinux),
         "windows" => Some(LaunchTarget::WindowsProton),

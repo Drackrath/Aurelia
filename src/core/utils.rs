@@ -1616,6 +1616,34 @@ pub fn game_save_prefix(
     steam_wineprefix_for_game(config, app_id, user_configs)
 }
 
+/// Resolve `rel` under `base`, ignoring case.
+///
+/// Exact component matches win; `None` if missing.
+pub fn resolve_path_ignore_case(base: &Path, rel: &str) -> Option<PathBuf> {
+    let mut current = if rel.starts_with('/') { PathBuf::from("/") } else { base.to_path_buf() };
+    for part in rel.split(['/', '\\']).filter(|p| !p.is_empty() && *p != ".") {
+        let exact = current.join(part);
+        if exact.exists() {
+            current = exact;
+            continue;
+        }
+        let mut matches: Vec<PathBuf> = std::fs::read_dir(&current)
+            .ok()?
+            .flatten()
+            .filter(|e| e.file_name().to_str().is_some_and(|n| n.eq_ignore_ascii_case(part)))
+            .map(|e| e.path())
+            .collect();
+        // Stable pick among case variants.
+        matches.sort();
+        current = matches.into_iter().next()?;
+    }
+    current.exists().then_some(current)
+}
+
+#[cfg(test)]
+#[path = "utils_path_ignore_case_tests.rs"]
+mod path_ignore_case_tests;
+
 #[cfg(test)]
 #[path = "utils_save_prefix_tests.rs"]
 mod save_prefix_tests;
