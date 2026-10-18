@@ -6,7 +6,7 @@ use crate::output;
 use crate::commands::common::*;
 
 use anyhow::{bail, Context, Result};
-use aurelia::core::config::{experimental_enabled, load_session, save_session};
+use aurelia::core::config::{delete_session, experimental_enabled, load_session, save_session};
 use aurelia::core::models::QrEvent;
 use aurelia::steam_client::SteamClient;
 
@@ -585,12 +585,45 @@ pub(crate) fn report_login_success(account: &str, json: bool) {
 }
 
 pub(crate) async fn cmd_logout(json: bool) -> Result<()> {
-    let mut client = restored_client().await?;
-    client.logout().await?;
+    use aurelia::steam_client::TokenRevocation;
+    let revocation = match restored_client().await {
+        Ok(mut client) => client.logout().await?,
+        Err(e) => {
+            // Unreadable session still gets cleared.
+            tracing::warn!("could not read the stored session ({e:#}); removing it");
+            delete_session().await?;
+            TokenRevocation::NotConnected
+        }
+    };
+
+    let warning = match &revocation {
+        TokenRevocation::Revoked => None,
+        TokenRevocation::NotConnected => Some(
+            "no live Steam session, so the token was only removed locally \
+             (it may already be invalid; revoke devices on the Steam website to be sure)"
+                .to_string(),
+        ),
+        TokenRevocation::Failed(e) => Some(format!(
+            "Steam did not revoke the token ({e:#}); it was only removed locally"
+        )),
+    };
+    let revoked = matches!(revocation, TokenRevocation::Revoked);
+
     if json {
-        print_json(&serde_json::json!({ "logged_out": true }));
+        print_json(&serde_json::json!({
+            "logged_out": true,
+            "token_revoked": revoked,
+            "warning": warning,
+        }));
     } else {
-        cli_println!("Logged out.");
+        if let Some(warning) = &warning {
+            cli_eprintln!("⚠ {warning}");
+        }
+        if revoked {
+            cli_println!("Logged out. The session token was revoked on Steam.");
+        } else {
+            cli_println!("Logged out.");
+        }
     }
     Ok(())
 }

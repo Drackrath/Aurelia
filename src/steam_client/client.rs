@@ -6,6 +6,17 @@ use super::*;
 use steam_vent_proto::steammessages_clientserver_friends::CMsgClientPersonaState;
 use tokio_stream::StreamExt;
 
+/// What `logout` did with the refresh token.
+#[derive(Debug)]
+pub enum TokenRevocation {
+    /// Steam invalidated it.
+    Revoked,
+    /// No live session to revoke with.
+    NotConnected,
+    /// Steam call failed; token may live.
+    Failed(anyhow::Error),
+}
+
 impl SteamClient {
     pub fn new() -> Result<Self> {
         Ok(Self {
@@ -89,11 +100,41 @@ impl SteamClient {
             .map(|connection| u64::from(connection.steam_id()))
     }
 
-    pub async fn logout(&mut self) -> Result<()> {
+    /// Revoke the refresh token, then forget it.
+    ///
+    /// Revocation is best-effort; local state always clears.
+    pub async fn logout(&mut self) -> Result<TokenRevocation> {
+        let revocation = self.revoke_refresh_token().await;
         self.connection = None;
         self.state = LoginState::Connected;
         delete_session().await?;
-        Ok(())
+        Ok(revocation)
+    }
+
+    /// Invalidate the session's refresh token on Steam.
+    async fn revoke_refresh_token(&self) -> TokenRevocation {
+        use steam_vent_proto::steammessages_auth_steamclient::{
+            CAuthentication_Token_Revoke_Request, EAuthTokenRevokeAction,
+        };
+        // Live connection holds the token.
+        let Some(connection) = self.connection.as_ref() else {
+            return TokenRevocation::NotConnected;
+        };
+        let Some(token) = connection.access_token() else {
+            return TokenRevocation::NotConnected;
+        };
+
+        let mut req = CAuthentication_Token_Revoke_Request::new();
+        req.set_token(token.to_string());
+        // Permanent: the token never works again.
+        req.set_revoke_action(EAuthTokenRevokeAction::k_EAuthTokenRevokePermanent);
+
+        let call = connection.service_method(req);
+        match tokio::time::timeout(std::time::Duration::from_secs(10), call).await {
+            Ok(Ok(_)) => TokenRevocation::Revoked,
+            Ok(Err(e)) => TokenRevocation::Failed(anyhow!("Authentication.RevokeToken failed: {e}")),
+            Err(_) => TokenRevocation::Failed(anyhow!("Authentication.RevokeToken timed out")),
+        }
     }
 
     pub async fn get_app_ticket(&self, appid: u32) -> Result<Vec<u8>> {

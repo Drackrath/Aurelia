@@ -490,6 +490,7 @@ pub struct SteamClient {
 
 // SteamClient methods are implemented across these submodules.
 mod client;
+pub use client::TokenRevocation;
 mod chat;
 mod friends;
 mod market;
