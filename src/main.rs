@@ -377,8 +377,14 @@ async fn run(cli: Cli) -> Result<()> {
             script,
             no_script,
             steam,
+            platform,
+            steam_mode,
             no_update,
-        } => cmd_play(app_id, proton, windows, native_engine, umu, script, no_script, steam, no_update, json).await,
+        } => {
+            let target = PlayTarget { platform, steam_mode };
+            cmd_play(app_id, proton, windows, native_engine, umu, script, no_script, steam, target, no_update, json).await
+        }
+        Command::LaunchTargets { app_id, steam } => cmd_launch_targets(app_id, steam, json).await,
         Command::Running => cmd_running(json),
         Command::Stop { app_id, force } => cmd_stop(app_id, force, json).await,
         Command::Enable {

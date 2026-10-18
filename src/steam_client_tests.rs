@@ -402,6 +402,54 @@ fn select_launch_entry_prefers_installed_platform() {
 }
 
 #[test]
+fn select_launch_entry_matches_executable_case_insensitively() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("bin/x64")).unwrap();
+    std::fs::write(tmp.path().join("bin/x64/factorio.exe"), "x").unwrap();
+    std::fs::write(tmp.path().join("bin/x64/factorio"), "x").unwrap();
+
+    let entry = |id: &str, exe: &str, wd: Option<&str>, target: LaunchTarget| LaunchInfo {
+        app_id: 427520,
+        id: id.to_string(),
+        description: String::new(),
+        executable: exe.to_string(),
+        arguments: String::new(),
+        workingdir: wd.map(str::to_string),
+        target,
+    };
+    let options = vec![
+        entry("1", "bin\\x64\\Factorio.exe", Some("BIN/X64"), LaunchTarget::WindowsProton),
+        entry("3", "bin/x64/factorio", None, LaunchTarget::NativeLinux),
+    ];
+    let app = LibraryGame {
+        app_id: 427520,
+        name: "Factorio".to_string(),
+        install_path: Some(tmp.path().to_string_lossy().to_string()),
+        is_installed: true,
+        playtime_forever_minutes: None,
+        active_branch: "public".to_string(),
+        update_available: false,
+        update_queued: false,
+        local_manifest_ids: HashMap::new(),
+        is_owned: true,
+        is_family_shared: false,
+        online_required: None,
+        platform: Some("linux".to_string()),
+        from_windows_steam: false,
+    };
+
+    // Proton request finds the lowercase exe.
+    let picked = launch::select_launch_entry(&options, &app, true, false).unwrap();
+    assert_eq!(picked.id, "1");
+    assert_eq!(picked.executable, "bin/x64/factorio.exe");
+    assert_eq!(picked.workingdir.as_deref(), Some("bin/x64"));
+
+    // Native default is unaffected.
+    let picked = launch::select_launch_entry(&options, &app, false, false).unwrap();
+    assert_eq!(picked.id, "3");
+}
+
+#[test]
 fn encrypted_ticket_refusal_maps_eresult() {
     use steam_vent_proto::steammessages_clientserver::CMsgClientRequestEncryptedAppTicketResponse;
 
@@ -476,4 +524,75 @@ fn sanitize_install_dir_never_escapes_common() {
         assert_eq!(sanitize_install_dir(name), "_", "{name:?}");
     }
     assert_eq!(sanitize_install_dir("../x"), ".._x");
+}
+
+#[test]
+fn launch_targets_lists_installed_builds_and_steam_modes() {
+    use crate::infra::runners::SteamMode;
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("bin/x64")).unwrap();
+    std::fs::write(tmp.path().join("bin/x64/factorio.exe"), "x").unwrap();
+    std::fs::write(tmp.path().join("bin/x64/factorio"), "x").unwrap();
+
+    let entry = |exe: &str, target: LaunchTarget| LaunchInfo {
+        app_id: 427520,
+        id: exe.to_string(),
+        description: String::new(),
+        executable: exe.to_string(),
+        arguments: String::new(),
+        workingdir: None,
+        target,
+    };
+    let options = vec![
+        entry("bin/x64/Factorio.exe", LaunchTarget::WindowsProton),
+        entry("bin/Win32/Factorio.exe", LaunchTarget::WindowsProton),
+        entry("bin/x64/factorio", LaunchTarget::NativeLinux),
+    ];
+    let app = LibraryGame {
+        app_id: 427520,
+        name: "Factorio".to_string(),
+        install_path: Some(tmp.path().to_string_lossy().to_string()),
+        is_installed: true,
+        playtime_forever_minutes: None,
+        active_branch: "public".to_string(),
+        update_available: false,
+        update_queued: false,
+        local_manifest_ids: HashMap::new(),
+        is_owned: true,
+        is_family_shared: false,
+        online_required: None,
+        platform: Some("linux".to_string()),
+        from_windows_steam: false,
+    };
+
+    let ids = |targets: &[LaunchTargetChoice]| targets.iter().map(|t| t.id).collect::<Vec<_>>();
+    let default_id = |targets: &[LaunchTargetChoice]| targets.iter().find(|t| t.default).map(|t| t.id);
+    let missing = |targets: &[LaunchTargetChoice]| targets.iter().map(|t| t.missing).collect::<Vec<_>>();
+
+    // Everything available, native default.
+    let targets = launch_targets(&options, &app, true, true, false, Some(LaunchTarget::NativeLinux), SteamMode::Standalone);
+    assert_eq!(ids(&targets), ["linux", "windows-runtime", "windows-host", "windows-standalone"]);
+    assert!(targets.iter().all(|t| t.available));
+    assert_eq!(default_id(&targets), Some("linux"));
+    assert_eq!(targets[2].flags, ["--platform", "windows", "--steam-mode", "host"]);
+
+    // Missing Steam installs are flagged.
+    let targets = launch_targets(&options, &app, false, false, true, Some(LaunchTarget::WindowsProton), SteamMode::Standalone);
+    assert_eq!(missing(&targets), [None, Some("steam-runtime"), Some("host-steam"), None]);
+    assert_eq!(default_id(&targets), Some("windows-standalone"));
+    assert_eq!(targets[0].flags, ["--platform", "linux", "--steam"]);
+
+    // Windows default follows Steam mode.
+    let targets = launch_targets(&options, &app, true, true, false, Some(LaunchTarget::WindowsProton), SteamMode::InWineRuntime);
+    assert_eq!(default_id(&targets), Some("windows-runtime"));
+
+    // Missing build flags every target.
+    std::fs::remove_file(tmp.path().join("bin/x64/factorio")).unwrap();
+    let targets = launch_targets(&options, &app, false, true, false, None, SteamMode::Standalone);
+    assert_eq!(missing(&targets), [Some("build"), Some("steam-runtime"), None, None]);
+    assert_eq!(default_id(&targets), Some("windows-host"));
+
+    // Unoffered platforms aren't listed.
+    let targets = launch_targets(&options[..2], &app, true, true, false, None, SteamMode::Standalone);
+    assert_eq!(ids(&targets), ["windows-runtime", "windows-host", "windows-standalone"]);
 }

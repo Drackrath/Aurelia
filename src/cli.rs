@@ -295,9 +295,27 @@ pub(crate) enum Command {
         /// features work. Implied for Family-Shared games, which require it.
         #[arg(short = 's', long)]
         steam: bool,
+        /// Run this installed build (`linux` native or `windows` via Proton),
+        /// overriding auto-detection for this launch. See `aurelia launch-targets`.
+        #[arg(short = 't', long, conflicts_with = "native_engine")]
+        platform: Option<PlatformArg>,
+        /// Steam integration for a Windows build, for this launch only: `runtime`
+        /// (in-Wine Steam), `host` (bridge to host Steam) or `none` (standalone).
+        /// Overrides the configured Steam-runtime policy.
+        #[arg(short = 'm', long)]
+        steam_mode: Option<SteamModeArg>,
         /// Skip the automatic update check and install before launching.
         #[arg(short = 'N', long = "no-update", alias = "noupdate")]
         no_update: bool,
+    },
+    /// List the ways an installed game can be launched: each installed build
+    /// (native Linux / Windows) and, for Windows, each available Steam mode, with
+    /// the `play` flags selecting it and which one plain `play` would pick.
+    LaunchTargets {
+        app_id: u32,
+        /// Compute the default as for `play --steam`.
+        #[arg(short = 's', long)]
+        steam: bool,
     },
     /// Stop a running game previously launched with `aurelia play`.
     Stop {
@@ -1039,6 +1057,17 @@ pub(crate) struct DowngradeArgs {
 pub(crate) enum PlatformArg {
     Windows,
     Linux,
+}
+
+/// `play --steam-mode` choices.
+#[derive(Clone, Copy, ValueEnum)]
+pub(crate) enum SteamModeArg {
+    /// The in-Wine Steam runtime.
+    Runtime,
+    /// Bridge to the host Steam client.
+    Host,
+    /// Standalone, no Steam client.
+    None,
 }
 
 /// `--steam-runtime auto|on|off`: per-game policy for the self-contained Windows Steam

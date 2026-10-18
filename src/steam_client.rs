@@ -498,6 +498,7 @@ mod manage;
 mod content;
 mod library;
 mod launch;
+pub use launch::{launch_targets, select_launch_entry, LaunchTargetChoice};
 mod manifests;
 mod process;
 mod workshop;

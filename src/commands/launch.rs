@@ -11,6 +11,93 @@ use aurelia::core::config::load_launcher_config;
 use aurelia::core::config::load_user_configs;
 use aurelia::core::models::DownloadState;
 use aurelia::steam_client::SteamClient;
+use crate::cli::{PlatformArg, SteamModeArg};
+
+/// One-off `play` target overrides.
+pub(crate) struct PlayTarget {
+    pub(crate) platform: Option<PlatformArg>,
+    pub(crate) steam_mode: Option<SteamModeArg>,
+}
+
+/// Force a Steam mode via policy.
+fn apply_steam_mode(cfg: &mut aurelia::core::models::UserAppConfig, mode: SteamModeArg) {
+    use aurelia::core::models::SteamRuntimePolicy;
+    cfg.use_steam_runtime = false;
+    cfg.steam_runtime_policy = match mode {
+        SteamModeArg::Runtime => SteamRuntimePolicy::Enabled,
+        SteamModeArg::Host | SteamModeArg::None => SteamRuntimePolicy::Disabled,
+    };
+}
+
+pub(crate) async fn cmd_launch_targets(app_id: u32, steam: bool, json: bool) -> Result<()> {
+    let mut client = authed_client().await?;
+    let game = find_game(&mut client, app_id).await?;
+    if !game.is_installed {
+        bail!("{} is not installed", game.name);
+    }
+    let options = client
+        .get_product_info(app_id)
+        .await
+        .with_context(|| format!("failed to load launch options for app {app_id}"))?;
+
+    // Mirror `cmd_play` default resolution.
+    let launcher_config = load_launcher_config().await?;
+    let game_cfg = launcher_config.game_configs.get(&app_id);
+    let platform_preference = game_cfg.and_then(|c| c.platform_preference.as_deref());
+    let prefer_windows = cfg!(target_os = "windows")
+        || platform_preference == Some("windows")
+        || game_cfg.is_some_and(|c| c.forced_proton_version.is_some());
+    let prefer_native = platform_preference == Some("linux") && !cfg!(target_os = "windows");
+    let default_entry =
+        aurelia::steam_client::select_launch_entry(&options, &game, prefer_windows, prefer_native).map(|e| e.target);
+
+    let user_configs = load_user_configs().await?;
+    let steam = steam || !game.is_owned;
+    let (default_mode, _) =
+        aurelia::infra::runners::resolve_steam_mode_for(user_configs.get(&app_id), &launcher_config, steam);
+    let targets = aurelia::steam_client::launch_targets(
+        &options,
+        &game,
+        aurelia::core::utils::get_master_steam_config().steam_exe.is_some(),
+        aurelia::core::utils::host_steam_client_path().is_some(),
+        steam,
+        default_entry,
+        default_mode,
+    );
+
+    if json {
+        let arr: Vec<_> = targets
+            .iter()
+            .map(|t| {
+                serde_json::json!({
+                    "id": t.id,
+                    "platform": t.platform,
+                    "steam_mode": t.steam_mode,
+                    "flags": t.flags,
+                    "available": t.available,
+                    "missing": t.missing,
+                    "default": t.default,
+                })
+            })
+            .collect();
+        print_json(&serde_json::json!({ "app_id": app_id, "targets": arr }));
+        return Ok(());
+    }
+
+    if targets.is_empty() {
+        cli_println!("{} has no Linux or Windows launch entries.", game.name);
+        return Ok(());
+    }
+    cli_println!("Launch targets for {} (* = default):", game.name);
+    for t in &targets {
+        let mark = if t.default { "*" } else { " " };
+        match t.missing {
+            None => cli_println!(" {mark} {:<20} aurelia play {app_id} {}", t.id, t.flags.join(" ")),
+            Some(missing) => cli_println!(" {mark} {:<20} (needs {missing})", t.id),
+        }
+    }
+    Ok(())
+}
 
 pub(crate) async fn cmd_play(
     app_id: u32,
@@ -21,9 +108,20 @@ pub(crate) async fn cmd_play(
     script: Option<PathBuf>,
     no_script: bool,
     steam: bool,
+    target: PlayTarget,
     no_update: bool,
     json: bool,
 ) -> Result<()> {
+    let linux_target = matches!(target.platform, Some(PlatformArg::Linux));
+    if linux_target && proton.is_some() {
+        bail!("--platform linux runs the native build; it can't be combined with --proton");
+    }
+    // Steam mode decides --steam.
+    let steam = match target.steam_mode {
+        Some(SteamModeArg::Host) => true,
+        Some(SteamModeArg::None) => false,
+        _ => steam,
+    };
     if native_engine && !cfg!(target_os = "linux") {
         anyhow::bail!("--native-engine (luxtorpeda) is only available on Linux");
     }
@@ -163,8 +261,14 @@ pub(crate) async fn cmd_play(
 
     let launcher_config = load_launcher_config().await?;
     let game_cfg = launcher_config.game_configs.get(&app_id);
-    let forced_proton = game_cfg.and_then(|c| c.forced_proton_version.clone());
-    let platform_preference = game_cfg.and_then(|c| c.platform_preference.as_deref());
+    let forced_proton = game_cfg
+        .and_then(|c| c.forced_proton_version.clone())
+        .filter(|_| !linux_target);
+    let platform_preference = match target.platform {
+        Some(PlatformArg::Linux) => Some("linux"),
+        Some(PlatformArg::Windows) => Some("windows"),
+        None => game_cfg.and_then(|c| c.platform_preference.as_deref()),
+    };
     let prefers_windows = platform_preference == Some("windows");
     let prefers_linux = platform_preference == Some("linux") && !force_windows;
 
@@ -175,7 +279,11 @@ pub(crate) async fn cmd_play(
         .or_else(|| prefers_windows.then(|| launcher_config.proton_version.clone()));
 
     let user_configs = load_user_configs().await?;
-    let user_config = user_configs.get(&app_id);
+    let mut user_config = user_configs.get(&app_id).cloned();
+    if let Some(mode) = target.steam_mode {
+        apply_steam_mode(user_config.get_or_insert_with(Default::default), mode);
+    }
+    let user_config = user_config.as_ref();
 
     if !json {
         cli_println!("Launching {} ...", game.name);

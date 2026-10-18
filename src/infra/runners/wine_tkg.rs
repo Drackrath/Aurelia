@@ -994,7 +994,7 @@ fn game_compat_data_path(
 
 /// Which Steam-integration mode a launch runs in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SteamMode {
+pub enum SteamMode {
     /// Bridge to the **host** Steam client via Proton's `lsteamclient` (full online
     /// Steamworks, Family-Shared licences). Chosen for `--steam` when a host Steam
     /// install is present. DLL overrides stay at Proton's defaults so `lsteamclient`
@@ -1025,19 +1025,24 @@ enum SteamMode {
 ///
 /// Returns the mode and a short source label recorded in launch diagnostics.
 fn resolve_steam_mode(ctx: &LaunchContext) -> (SteamMode, &'static str) {
+    resolve_steam_mode_for(ctx.user_config.as_ref(), &ctx.launcher_config, ctx.steam_enabled)
+}
+
+/// [`resolve_steam_mode`] without a launch context.
+pub fn resolve_steam_mode_for(
+    user_config: Option<&crate::core::models::UserAppConfig>,
+    launcher_config: &crate::core::config::LauncherConfig,
+    steam_enabled: bool,
+) -> (SteamMode, &'static str) {
     use crate::core::models::SteamRuntimePolicy;
 
     // Per-game policy wins; `Auto` inherits the global default. The deprecated
     // per-game `use_steam_runtime` boolean still forces the runtime on.
-    let per_game = ctx
-        .user_config
-        .as_ref()
-        .map(|c| c.steam_runtime_policy)
-        .unwrap_or_default();
-    let legacy_forced = ctx.user_config.as_ref().map(|c| c.use_steam_runtime).unwrap_or(false);
+    let per_game = user_config.map(|c| c.steam_runtime_policy).unwrap_or_default();
+    let legacy_forced = user_config.map(|c| c.use_steam_runtime).unwrap_or(false);
     let effective = match per_game {
         SteamRuntimePolicy::Auto if legacy_forced => SteamRuntimePolicy::Enabled,
-        SteamRuntimePolicy::Auto => ctx.launcher_config.steam_runtime_policy,
+        SteamRuntimePolicy::Auto => launcher_config.steam_runtime_policy,
         explicit => explicit,
     };
 
@@ -1050,7 +1055,7 @@ fn resolve_steam_mode(ctx: &LaunchContext) -> (SteamMode, &'static str) {
         SteamRuntimePolicy::Enabled => {
             if master_installed() {
                 (SteamMode::InWineRuntime, "policy_enabled")
-            } else if ctx.steam_enabled && host_installed() {
+            } else if steam_enabled && host_installed() {
                 // Configured for the runtime but it isn't installed — honour --steam
                 // by bridging to host Steam rather than silently disabling DRM.
                 (SteamMode::HostBridge, "policy_enabled_host_fallback")
@@ -1060,9 +1065,9 @@ fn resolve_steam_mode(ctx: &LaunchContext) -> (SteamMode, &'static str) {
         }
         // In-Wine runtime forbidden: --steam uses host Steam (or standalone).
         SteamRuntimePolicy::Disabled => {
-            if ctx.steam_enabled && host_installed() {
+            if steam_enabled && host_installed() {
                 (SteamMode::HostBridge, "host")
-            } else if ctx.steam_enabled {
+            } else if steam_enabled {
                 (SteamMode::Standalone, "steam_flag_no_host")
             } else {
                 (SteamMode::Standalone, "policy_disabled")
@@ -1070,7 +1075,7 @@ fn resolve_steam_mode(ctx: &LaunchContext) -> (SteamMode, &'static str) {
         }
         // Auto: --steam prefers host, else the in-Wine runtime, else standalone.
         SteamRuntimePolicy::Auto => {
-            if !ctx.steam_enabled {
+            if !steam_enabled {
                 // Opportunistically bridge a running host Steam.
                 if host_installed() && crate::core::utils::is_steam_running() {
                     tracing::info!("host Steam detected; bridging Steamworks");
