@@ -310,6 +310,21 @@ pub fn steam_runtime_unsupported_msg() -> String {
     )
 }
 
+/// Whether Proton/Wine runners, and the plugins built on them (umu, luxtorpeda),
+/// can run on this platform. Same reason as [`STEAM_RUNTIME_SUPPORTED`].
+pub const PROTON_SUPPORTED: bool = cfg!(target_os = "linux");
+
+/// "`what` only runs on Linux" with what to do instead, for errors and notes.
+pub fn linux_only_msg(what: &str) -> String {
+    let os = std::env::consts::OS;
+    let instead = if cfg!(target_os = "windows") {
+        " On Windows Aurelia runs Windows games natively, without Proton/Wine."
+    } else {
+        ""
+    };
+    format!("{what} only runs on Linux, not on {os}.{instead}")
+}
+
 /// Fail early, before downloading or touching a prefix, when the Windows Steam
 /// runtime can't run on this platform.
 pub fn ensure_steam_runtime_supported() -> Result<()> {

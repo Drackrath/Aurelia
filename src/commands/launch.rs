@@ -55,7 +55,7 @@ pub(crate) async fn cmd_launch_targets(app_id: u32, steam: bool, json: bool) -> 
     let steam = steam || !game.is_owned;
     let (default_mode, _) =
         aurelia::infra::runners::resolve_steam_mode_for(user_configs.get(&app_id), &launcher_config, steam);
-    let targets = aurelia::steam_client::launch_targets(
+    let mut targets = aurelia::steam_client::launch_targets(
         &options,
         &game,
         aurelia::core::utils::get_master_steam_config().steam_exe.is_some(),
@@ -64,6 +64,15 @@ pub(crate) async fn cmd_launch_targets(app_id: u32, steam: bool, json: bool) -> 
         default_entry,
         default_mode,
     );
+    // Off Linux neither the native Linux build nor the in-Wine runtime can run.
+    if !aurelia::core::utils::PROTON_SUPPORTED {
+        targets.retain(|t| t.id != "linux" && t.id != "windows-runtime");
+        if !targets.iter().any(|t| t.default) {
+            if let Some(first) = targets.iter_mut().find(|t| t.available) {
+                first.default = true;
+            }
+        }
+    }
 
     if json {
         let arr: Vec<_> = targets
@@ -127,6 +136,15 @@ pub(crate) async fn cmd_play(
     }
     if umu && !cfg!(target_os = "linux") {
         anyhow::bail!("--umu (umu-launcher) is only available on Linux");
+    }
+    if proton.is_some() && !cfg!(target_os = "linux") {
+        bail!("--proton is only available on Linux; on Windows games run natively, so omit it");
+    }
+    if linux_target && !cfg!(target_os = "linux") {
+        bail!("--platform linux runs the native Linux build, which only runs on Linux");
+    }
+    if matches!(target.steam_mode, Some(SteamModeArg::Runtime)) && !aurelia::core::utils::STEAM_RUNTIME_SUPPORTED {
+        bail!("--steam-mode runtime: {}", aurelia::core::utils::steam_runtime_unsupported_msg());
     }
     // `--windows` runs the executable directly with no Proton/Wine layer, which
     // can only work on a Windows host. On Linux a Windows PE can't be exec'd
@@ -291,6 +309,7 @@ pub(crate) async fn cmd_play(
     let announce_target: &(dyn Fn(Option<&str>) + Send + Sync) = &|proton: Option<&str>| {
         match proton {
             Some(p) => cli_println!("Platform: Windows via Proton ({p})"),
+            None if cfg!(target_os = "windows") => cli_println!("Platform: Windows (native)"),
             None => cli_println!("Platform: native Linux"),
         }
     };

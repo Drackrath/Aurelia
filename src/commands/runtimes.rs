@@ -15,6 +15,9 @@ pub(crate) async fn cmd_proton_list(installed_only: bool, json: bool) -> Result<
         aurelia::compat::proton::list_installed(std::path::Path::new(&cfg.steam_library_path));
     let default = cfg.proton_version;
     let is_installed = |name: &str| installed.iter().any(|i| i.name.eq_ignore_ascii_case(name));
+    if !json && !aurelia::core::utils::PROTON_SUPPORTED {
+        cli_eprintln!("Note: {}", aurelia::core::utils::linux_only_msg("Proton/Wine"));
+    }
 
     if installed_only {
         if json {
@@ -69,6 +72,13 @@ pub(crate) async fn cmd_proton_list(installed_only: bool, json: bool) -> Result<
 
 /// `proton install`: download/install a runtime and make it the global default.
 pub(crate) async fn cmd_proton_install(version: String, json: bool) -> Result<()> {
+    // Before resolving: no download is useful where the runtime can't run.
+    if !aurelia::core::utils::PROTON_SUPPORTED {
+        bail!(
+            "{} Nothing to install.",
+            aurelia::core::utils::linux_only_msg("Proton/Wine")
+        );
+    }
     let pkg = aurelia::compat::proton::resolve_package(&version).await?;
 
     match &pkg.source {
@@ -158,7 +168,9 @@ pub(crate) async fn cmd_proton_default(version: String, json: bool) -> Result<()
         }));
     } else {
         cli_println!("Global default Proton set to {version}.");
-        if !present {
+        if !aurelia::core::utils::PROTON_SUPPORTED {
+            cli_eprintln!("Note: {}", aurelia::core::utils::linux_only_msg("Proton/Wine"));
+        } else if !present {
             cli_eprintln!(
                 "Note: '{version}' is not installed — run `aurelia proton install {version}`."
             );

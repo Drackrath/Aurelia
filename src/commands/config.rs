@@ -298,6 +298,11 @@ pub(crate) async fn cmd_config_steam_runtime_policy(
         if changed {
             cli_println!("Saved. Applies to games whose own policy is `auto`.");
         }
+        if config.steam_runtime_policy == SteamRuntimePolicy::Enabled
+            && !aurelia::core::utils::STEAM_RUNTIME_SUPPORTED
+        {
+            cli_eprintln!("Note: {}", aurelia::core::utils::steam_runtime_unsupported_msg());
+        }
     }
     Ok(())
 }
@@ -415,6 +420,28 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
     } = args;
     use aurelia::core::config::GameRunner;
     use aurelia::core::models::{SteamPrefixMode, SteamRuntimePolicy};
+
+    // Saved anyway (a shared config may also be used on Linux), but say so.
+    if !json && !aurelia::core::utils::PROTON_SUPPORTED {
+        let linux_only: Vec<&str> = [
+            (proton.is_some(), "--proton"),
+            (matches!(platform, Some(PlatformArg::Linux)), "--platform linux"),
+            (native_engine, "--native-engine"),
+            (umu, "--umu"),
+            (matches!(steam_runtime, Some(SteamRuntimeArg::On)), "--steam-runtime on"),
+            (steam_prefix_mode.is_some(), "--steam-prefix-mode"),
+        ]
+        .into_iter()
+        .filter_map(|(used, flag)| used.then_some(flag))
+        .collect();
+        if !linux_only.is_empty() {
+            cli_eprintln!(
+                "Note: saved {}, but these only take effect on Linux, not on {}.",
+                linux_only.join(", "),
+                std::env::consts::OS
+            );
+        }
+    }
 
     // The Steam-runtime knobs live in a separate per-game store (user_apps.json) from the
     // GameConfig fields above (config.json). Update whichever store each flag targets.
