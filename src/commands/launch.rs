@@ -198,6 +198,11 @@ pub(crate) async fn cmd_play(
         return Ok(());
     }
 
+    // Otherwise the spawn fails on the missing directory with a raw OS error.
+    if !game.is_installed {
+        bail!("{} is not installed — install it with `aurelia install {app_id}`", game.name);
+    }
+
     // Family-Shared games are pinned to the owner's current build — a stale
     // install simply won't launch — so for them the pre-launch update is
     // *required*, not best-effort: any failure aborts the launch (running the old
