@@ -498,14 +498,17 @@ pub(crate) async fn download_to(
     Ok(())
 }
 
-/// Extract a `.tar.gz` or `.tar.xz` tarball into `dest_parent` (the tarball's own
-/// top-level directory becomes the runtime folder).
+/// Extract a `.tar.gz`, `.tar.xz` or uncompressed `.tar` into `dest_parent` (the
+/// tarball's own top-level directory becomes the runtime folder).
 pub(crate) fn extract_tarball(archive: &Path, ext: &str, dest_parent: &Path) -> Result<()> {
+    std::fs::create_dir_all(dest_parent)
+        .with_context(|| format!("failed creating {}", dest_parent.display()))?;
     let file = std::fs::File::open(archive)
         .with_context(|| format!("failed opening {}", archive.display()))?;
     match ext {
         ".tar.gz" => unpack_guarded(flate2::read::GzDecoder::new(file), dest_parent),
         ".tar.xz" => unpack_guarded(xz2::read::XzDecoder::new(file), dest_parent),
+        ".tar" => unpack_guarded(file, dest_parent),
         other => bail!("unsupported runtime archive type '{other}'"),
     }
 }

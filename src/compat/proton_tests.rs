@@ -174,3 +174,21 @@ fn x86_64_host_with_only_arm64_build_gets_nothing() {
     }];
     assert!(choose_asset_for_host(only_arm, ".tar.gz", None, false).is_none());
 }
+
+#[test]
+fn plain_tar_is_extracted() {
+    // umu-launcher ships its zipapp as an uncompressed `.tar`.
+    let tmp = tempfile::tempdir().unwrap();
+    let archive = tmp.path().join("umu.tar");
+    let mut builder = tar::Builder::new(std::fs::File::create(&archive).unwrap());
+    let mut header = tar::Header::new_gnu();
+    header.set_size(1);
+    header.set_mode(0o755);
+    header.set_cksum();
+    builder.append_data(&mut header, "umu/umu-run", &b"x"[..]).unwrap();
+    builder.finish().unwrap();
+    drop(builder);
+    let out = tmp.path().join("out");
+    extract_tarball(&archive, ".tar", &out).unwrap();
+    assert!(out.join("umu/umu-run").is_file());
+}
