@@ -494,6 +494,7 @@ mod chat;
 mod friends;
 mod market;
 mod install;
+pub use install::InstallOptions;
 mod manage;
 mod content;
 mod library;

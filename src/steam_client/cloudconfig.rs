@@ -9,8 +9,7 @@ use std::io::{Read, Write};
 use steam_vent_proto_common::{RpcMessage, RpcMethod};
 
 // Pull in the generated code via its `mod.rs` (`pub mod service_cloudconfigstore;`). Including
-// the mod.rs (rather than the .rs directly) loads the generated file as a proper module file,
-// so its leading inner attributes (`#![allow(...)]`) stay valid.
+// the mod.rs (rather than the .rs directly) loads the generated file as a proper module file.
 include!(concat!(env!("OUT_DIR"), "/cloudconfig/mod.rs"));
 
 pub use service_cloudconfigstore::{

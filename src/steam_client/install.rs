@@ -4,6 +4,21 @@
 //! and free helpers live in the parent module (in scope via `use super::*`).
 use super::*;
 
+/// Optional knobs for `SteamClient::install_game`.
+#[derive(Default)]
+pub struct InstallOptions {
+    /// Pre-fetched appinfo VDF bytes.
+    pub cached_vdf: Option<Vec<u8>>,
+    /// Only install these depot ids.
+    pub filter_depots: Option<Vec<u64>>,
+    /// Library root instead of default.
+    pub library_override: Option<String>,
+    /// Depot → manifest pins (downgrade).
+    pub manifest_overrides: Option<std::collections::HashMap<u32, u64>>,
+    /// Branch for the recorded build id.
+    pub branch: Option<String>,
+}
+
 impl SteamClient {
     pub async fn fetch_branches(&self, appid: u32) -> Result<Vec<String>> {
         // PICS returns the appinfo as *binary* VDF; parse that first and only fall
@@ -117,18 +132,20 @@ impl SteamClient {
     ///
     /// `branch`, when given, is used to resolve the build id recorded in the
     /// appmanifest (via PICS); `None` keeps the appinfo-derived (public) build id.
-    #[allow(clippy::too_many_arguments)]
     pub async fn install_game(
         &self,
         appid: u32,
         platform: DepotPlatform,
-        cached_vdf: Option<Vec<u8>>,
-        filter_depots: Option<Vec<u64>>,
-        library_override: Option<String>,
-        manifest_overrides: Option<std::collections::HashMap<u32, u64>>,
-        branch: Option<String>,
+        opts: InstallOptions,
         shared_state: Arc<std::sync::RwLock<crate::core::models::DownloadState>>,
     ) -> Result<Receiver<DownloadProgress>> {
+        let InstallOptions {
+            cached_vdf,
+            filter_depots,
+            library_override,
+            manifest_overrides,
+            branch,
+        } = opts;
         let connection = self.require_connection_owned()?;
 
         let cfg = load_launcher_config().await?;

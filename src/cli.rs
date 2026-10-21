@@ -32,51 +32,7 @@ pub(crate) struct Cli {
 #[derive(Subcommand)]
 pub(crate) enum Command {
     /// Authenticate with Steam and persist the session.
-    Login {
-        /// Steam account name. Prompted if omitted.
-        #[arg(short, long)]
-        username: Option<String>,
-        /// Account password. Prompted securely if omitted (or set AURELIA_PASSWORD).
-        #[arg(short, long)]
-        password: Option<String>,
-        /// Steam Guard code (email or mobile authenticator), if known up front.
-        #[arg(short, long)]
-        guard: Option<String>,
-        /// Log in by scanning a QR code with the Steam Mobile app (no
-        /// username/password needed). Renders the QR in the terminal.
-        #[arg(short = 'q', long, conflicts_with_all = ["username", "password", "guard", "code"])]
-        qr: bool,
-        /// Enter the Steam Guard code interactively when prompted, instead of
-        /// approving the login in the Steam Mobile app. (Alias: --pin)
-        #[arg(short = 'c', long, visible_alias = "pin", conflicts_with = "guard")]
-        code: bool,
-        /// [EXPERIMENTAL] Verify your identity in the browser on the official Steam
-        /// sign-in page (OpenID) — the password is only ever typed on
-        /// steamcommunity.com. Identity-only: Steam issues no session token over
-        /// OpenID, so commands that need a session still require one of the other
-        /// login methods. Gated behind `aurelia config experimental true` (or
-        /// AURELIA_EXPERIMENTAL=1); hidden from the core help.
-        #[arg(short = 'o', long, hide = true, conflicts_with_all = ["username", "password", "guard", "qr", "code"])]
-        openid: bool,
-        /// [EXPERIMENTAL] Store a browser web token to enable the web-surface
-        /// commands (inventory, wallet, market listings) without a client login:
-        /// open https://steamcommunity.com/chat/clientjstoken in a signed-in browser
-        /// (e.g. right after `login --openid`) and paste the JSON shown — as this
-        /// flag's value, via AURELIA_WEB_TOKEN, or when prompted if both are
-        /// omitted. Web-only and short-lived (~24h); it cannot replace a full login.
-        /// Gated behind `aurelia config experimental true` (or AURELIA_EXPERIMENTAL=1);
-        /// hidden from the core help.
-        #[arg(short = 'w', long, hide = true, num_args = 0..=1, conflicts_with_all = ["username", "password", "guard", "qr", "code", "openid"])]
-        web_token: Option<Option<String>>,
-        /// Report the current session health (authenticated? which account?) without
-        /// logging in. Reflects the daemon's shared session when one is in use.
-        #[arg(short = 'H', long, conflicts_with_all = ["username", "password", "guard", "qr", "code", "openid", "web_token", "reconnect"])]
-        health: bool,
-        /// Tear down and re-establish the daemon's shared session from the stored
-        /// token — use after the live connection dropped. Requires a running daemon.
-        #[arg(short = 'r', long, conflicts_with_all = ["username", "password", "guard", "qr", "code", "openid", "web_token", "health"])]
-        reconnect: bool,
-    },
+    Login(LoginArgs),
     /// List games in your library.
     List {
         /// Only show installed games.
@@ -193,27 +149,7 @@ pub(crate) enum Command {
         max_length: u32,
     },
     /// User reviews, paged (storefront web, no CM equivalent).
-    Reviews {
-        app_id: u32,
-        /// `recent`, `updated` or `all` (score-weighted).
-        #[arg(short = 'f', long, default_value = "recent")]
-        filter: String,
-        /// `all`, `positive` or `negative`.
-        #[arg(short = 't', long = "type", default_value = "all")]
-        review_type: String,
-        /// `all`, `steam` or `non_steam_purchase`.
-        #[arg(short = 'p', long, default_value = "all")]
-        purchase: String,
-        /// Maximum reviews per page (up to 100).
-        #[arg(short = 'n', long, default_value_t = 10)]
-        count: u32,
-        /// Cursor from a previous page's JSON.
-        #[arg(short = 'u', long)]
-        cursor: Option<String>,
-        /// Steam API language name, or `all`.
-        #[arg(short = 'l', long = "lang", alias = "language")]
-        lang: Option<String>,
-    },
+    Reviews(ReviewsArgs),
     /// Profile by SteamID64, /profiles/ URL, friend name, `me`.
     User { user: String },
     /// Your wishlist, or a friend's.
@@ -1051,6 +987,63 @@ pub(crate) struct DowngradeArgs {
     /// Don't pin after downgrading (Aurelia's update commands may re-upgrade it).
     #[arg(short = 'N', long)]
     pub(crate) no_pin: bool,
+}
+
+/// `aurelia login` flags.
+#[derive(clap::Args)]
+pub(crate) struct LoginArgs {
+    /// Steam account name (prompted if omitted).
+    #[arg(short, long)]
+    pub(crate) username: Option<String>,
+    /// Password (prompted, or AURELIA_PASSWORD).
+    #[arg(short, long)]
+    pub(crate) password: Option<String>,
+    /// Steam Guard code, if known.
+    #[arg(short, long)]
+    pub(crate) guard: Option<String>,
+    /// Log in via Steam Mobile QR code.
+    #[arg(short = 'q', long, conflicts_with_all = ["username", "password", "guard", "code"])]
+    pub(crate) qr: bool,
+    /// Type the Guard code instead of app approval.
+    #[arg(short = 'c', long, visible_alias = "pin", conflicts_with = "guard")]
+    pub(crate) code: bool,
+    /// [EXPERIMENTAL] Browser OpenID identity check (no session token).
+    #[arg(short = 'o', long, hide = true, conflicts_with_all = ["username", "password", "guard", "qr", "code"])]
+    pub(crate) openid: bool,
+    /// [EXPERIMENTAL] Store a web token from steamcommunity.com/chat/clientjstoken
+    /// (or AURELIA_WEB_TOKEN) for web-only commands; expires in ~24h.
+    #[arg(short = 'w', long, hide = true, num_args = 0..=1, conflicts_with_all = ["username", "password", "guard", "qr", "code", "openid"])]
+    pub(crate) web_token: Option<Option<String>>,
+    /// Report session health without logging in.
+    #[arg(short = 'H', long, conflicts_with_all = ["username", "password", "guard", "qr", "code", "openid", "web_token", "reconnect"])]
+    pub(crate) health: bool,
+    /// Re-establish the daemon session (daemon required).
+    #[arg(short = 'r', long, conflicts_with_all = ["username", "password", "guard", "qr", "code", "openid", "web_token", "health"])]
+    pub(crate) reconnect: bool,
+}
+
+/// `aurelia reviews` flags.
+#[derive(clap::Args)]
+pub(crate) struct ReviewsArgs {
+    pub(crate) app_id: u32,
+    /// `recent`, `updated` or `all` (score-weighted).
+    #[arg(short = 'f', long, default_value = "recent")]
+    pub(crate) filter: String,
+    /// `all`, `positive` or `negative`.
+    #[arg(short = 't', long = "type", default_value = "all")]
+    pub(crate) review_type: String,
+    /// `all`, `steam` or `non_steam_purchase`.
+    #[arg(short = 'p', long, default_value = "all")]
+    pub(crate) purchase: String,
+    /// Maximum reviews per page (up to 100).
+    #[arg(short = 'n', long, default_value_t = 10)]
+    pub(crate) count: u32,
+    /// Cursor from a previous page's JSON.
+    #[arg(short = 'u', long)]
+    pub(crate) cursor: Option<String>,
+    /// Steam API language name, or `all`.
+    #[arg(short = 'l', long = "lang", alias = "language")]
+    pub(crate) lang: Option<String>,
 }
 
 #[derive(Clone, Copy, ValueEnum)]

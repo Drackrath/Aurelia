@@ -9,7 +9,7 @@ use std::sync::{Arc, RwLock};
 use anyhow::{bail, Context, Result};
 use aurelia::core::config::load_launcher_config;
 use aurelia::core::models::{DepotPlatform, DownloadState, LibraryGame};
-use aurelia::steam_client::SteamClient;
+use aurelia::steam_client::{InstallOptions, SteamClient};
 
 /// Prefer the Windows depot; Proton runs it on Linux.
 ///
@@ -92,7 +92,16 @@ pub(crate) async fn cmd_install(
     let state = Arc::new(RwLock::new(DownloadState::default()));
     let _install_guard = InstallGuard::register(app_id, Arc::clone(&state))?;
     let rx = client
-        .install_game(app_id, platform, cached_vdf, None, library, None, None, state)
+        .install_game(
+            app_id,
+            platform,
+            InstallOptions {
+                cached_vdf,
+                library_override: library,
+                ..Default::default()
+            },
+            state,
+        )
         .await
         .with_context(|| format!("failed to start install for app {app_id}"))?;
     drive_progress(rx, json).await?;
@@ -689,11 +698,13 @@ pub(crate) async fn cmd_downgrade(args: DowngradeArgs, json: bool) -> Result<()>
         .install_game(
             args.app_id,
             platform,
-            Some(cached_vdf),
-            None,
-            args.library.clone(),
-            Some(overrides.clone()),
-            args.branch.clone(),
+            InstallOptions {
+                cached_vdf: Some(cached_vdf),
+                library_override: args.library.clone(),
+                manifest_overrides: Some(overrides.clone()),
+                branch: args.branch.clone(),
+                ..Default::default()
+            },
             Arc::clone(&state),
         )
         .await

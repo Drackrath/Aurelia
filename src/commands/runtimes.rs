@@ -6,6 +6,7 @@ use std::sync::{Arc, RwLock};
 use anyhow::{bail, Context, Result};
 use aurelia::core::config::load_launcher_config;
 use aurelia::core::models::{DepotPlatform, DownloadState};
+use aurelia::steam_client::InstallOptions;
 
 /// `proton list`: show installable runtimes and what's installed.
 pub(crate) async fn cmd_proton_list(installed_only: bool, json: bool) -> Result<()> {
@@ -79,7 +80,7 @@ pub(crate) async fn cmd_proton_install(version: String, json: bool) -> Result<()
             let client = authed_client().await?;
             let state = Arc::new(RwLock::new(DownloadState::default()));
             let rx = client
-                .install_game(app_id, DepotPlatform::Linux, None, None, None, None, None, state)
+                .install_game(app_id, DepotPlatform::Linux, InstallOptions::default(), state)
                 .await
                 .with_context(|| format!("failed to start installing {}", pkg.name))?;
             drive_progress(rx, json).await?;

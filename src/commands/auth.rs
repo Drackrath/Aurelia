@@ -120,19 +120,18 @@ async fn warn_if_already_logged_in() {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn cmd_login(
-    username: Option<String>,
-    password: Option<String>,
-    guard: Option<String>,
-    qr: bool,
-    code: bool,
-    openid: bool,
-    web_token: Option<Option<String>>,
-    health: bool,
-    reconnect: bool,
-    json: bool,
-) -> Result<()> {
+pub(crate) async fn cmd_login(args: crate::cli::LoginArgs, json: bool) -> Result<()> {
+    let crate::cli::LoginArgs {
+        username,
+        password,
+        guard,
+        qr,
+        code,
+        openid,
+        web_token,
+        health,
+        reconnect,
+    } = args;
     if health {
         return cmd_login_health(json).await;
     }

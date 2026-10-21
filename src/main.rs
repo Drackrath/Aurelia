@@ -72,11 +72,11 @@ fn must_run_locally(cli: &Cli) -> bool {
     let interactive_login = !cli.json
         && matches!(
             cli.command,
-            Command::Login {
+            Command::Login(LoginArgs {
                 health: false,
                 reconnect: false,
                 ..
-            }
+            })
         );
 
     // `login --web-token` only writes the session file — no CM connection — and
@@ -84,10 +84,10 @@ fn must_run_locally(cli: &Cli) -> bool {
     // argv-quoting pitfalls), which a pre-existing daemon process would not see.
     let web_token_login = matches!(
         cli.command,
-        Command::Login {
+        Command::Login(LoginArgs {
             web_token: Some(_),
             ..
-        }
+        })
     );
 
     // The Steam-runtime install/repair/login flows spawn the Windows Steam installer
@@ -244,22 +244,7 @@ async fn run(cli: Cli) -> Result<()> {
 
     let json = cli.json;
     match cli.command {
-        Command::Login {
-            username,
-            password,
-            guard,
-            qr,
-            code,
-            openid,
-            web_token,
-            health,
-            reconnect,
-        } => {
-            cmd_login(
-                username, password, guard, qr, code, openid, web_token, health, reconnect, json,
-            )
-            .await
-        }
+        Command::Login(args) => cmd_login(args, json).await,
         Command::Logout => cmd_logout(json).await,
         Command::List {
             installed,
@@ -450,15 +435,7 @@ async fn run(cli: Cli) -> Result<()> {
             count,
             max_length,
         } => cmd_news(app_id, count, max_length, json).await,
-        Command::Reviews {
-            app_id,
-            filter,
-            review_type,
-            purchase,
-            count,
-            cursor,
-            lang,
-        } => cmd_reviews(app_id, filter, review_type, purchase, count, cursor, lang, json).await,
+        Command::Reviews(args) => cmd_reviews(args, json).await,
         Command::Dlc { app_id } => cmd_dlc(app_id, json).await,
         Command::Achievements { app_id, lang } => cmd_achievements(app_id, lang, json).await,
         Command::Depots { app_id } => cmd_depots(app_id, json).await,

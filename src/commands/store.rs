@@ -518,17 +518,16 @@ pub(crate) async fn cmd_news(app_id: u32, count: u32, max_length: u32, json: boo
 }
 
 /// `aurelia reviews APPID`: one page of user reviews.
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn cmd_reviews(
-    app_id: u32,
-    filter: String,
-    review_type: String,
-    purchase: String,
-    count: u32,
-    cursor: Option<String>,
-    lang: Option<String>,
-    json: bool,
-) -> Result<()> {
+pub(crate) async fn cmd_reviews(args: crate::cli::ReviewsArgs, json: bool) -> Result<()> {
+    let crate::cli::ReviewsArgs {
+        app_id,
+        filter,
+        review_type,
+        purchase,
+        count,
+        cursor,
+        lang,
+    } = args;
     use aurelia::web::discovery::{fetch_reviews, ReviewQuery};
     let language = match lang {
         Some(l) => l,
