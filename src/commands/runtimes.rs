@@ -167,9 +167,12 @@ pub(crate) async fn cmd_proton_default(version: String, json: bool) -> Result<()
     Ok(())
 }
 
-/// Config, refusing when runner unset.
+/// Config, refusing when the platform can't host the runtime or the runner is unset.
 async fn steam_runtime_config(gerund: &str) -> Result<aurelia::core::config::LauncherConfig> {
+    // A corrupt config is reported first; then the platform, since no runner
+    // choice makes this work off Linux.
     let config = load_launcher_config().await?;
+    aurelia::core::utils::ensure_steam_runtime_supported()?;
     if config.steam_runtime_runner.as_os_str().is_empty() {
         bail!("{}", aurelia::core::utils::steam_runtime_runner_unset_msg(gerund));
     }
@@ -294,8 +297,12 @@ pub(crate) async fn cmd_steam_runtime_status(json: bool) -> Result<()> {
             "steam_exe_present": steam_exe_present,
             "steam_runtime_runner": runner_configured.then_some(runner.clone()),
             "steam_runtime_runner_configured": runner_configured,
+            "supported": aurelia::core::utils::STEAM_RUNTIME_SUPPORTED,
         }));
     } else {
+        if !aurelia::core::utils::STEAM_RUNTIME_SUPPORTED {
+            cli_println!("Supported here    : no — {}", aurelia::core::utils::steam_runtime_unsupported_msg());
+        }
         cli_println!("Master Steam root : {}", steam_cfg.root_dir.display());
         cli_println!("Wine prefix       : {}", steam_cfg.wine_prefix.display());
         cli_println!("Layout kind       : {}", steam_cfg.layout_kind);

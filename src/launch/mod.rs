@@ -22,8 +22,9 @@ fn stop_prefix_processes(wine_prefix: &Path) {
     SteamClient::kill_wine_processes_in_prefix(wine_prefix, true);
 }
 
-/// Resolve the runner's wine binary.
+/// Resolve the runner's wine binary, failing on platforms that can't run it.
 fn resolve_runtime_wine(config: &LauncherConfig) -> Result<PathBuf> {
+    crate::core::utils::ensure_steam_runtime_supported()?;
     let runner_name = config.steam_runtime_runner.to_string_lossy();
     let library_root = PathBuf::from(&config.steam_library_path);
     crate::core::utils::resolve_steam_runtime_wine(&runner_name, &library_root)
@@ -255,6 +256,8 @@ fn apply_install_diagnostics(cmd: &mut Command, base_dir: &Path) {
 /// to drive the installer under a bare wine. The runner is validated up front so
 /// the destructive backup step never runs when the reinstall would fail anyway.
 pub async fn repair_master_steam(config: &LauncherConfig) -> Result<()> {
+    // Before the backup: the reinstall can't run here, so don't move the prefix.
+    crate::core::utils::ensure_steam_runtime_supported()?;
     if config.steam_runtime_runner.as_os_str().is_empty() {
         return Err(anyhow!(
             "{}",

@@ -140,3 +140,37 @@ fn non_microarch_source_keeps_plain_label() {
     };
     assert_eq!(release_to_package(src, rel).unwrap().label, "Proton-GE");
 }
+
+/// GE-Proton 11 ships an ARM64 tarball beside the x86_64 one, and it sorts first.
+fn ge_arm_and_x86_assets() -> Vec<GhAsset> {
+    ["GE-Proton11-11-aarch64.tar.gz", "GE-Proton11-11.tar.gz", "GE-Proton11-11.sha512sum"]
+        .iter()
+        .map(|name| GhAsset {
+            name: name.to_string(),
+            browser_download_url: format!("http://x/{name}"),
+            size: 1,
+        })
+        .collect()
+}
+
+#[test]
+fn x86_64_host_never_gets_the_arm64_build() {
+    let a = choose_asset_for_host(ge_arm_and_x86_assets(), ".tar.gz", None, false).unwrap();
+    assert_eq!(a.name, "GE-Proton11-11.tar.gz");
+}
+
+#[test]
+fn arm64_host_prefers_the_arm64_build() {
+    let a = choose_asset_for_host(ge_arm_and_x86_assets(), ".tar.gz", None, true).unwrap();
+    assert_eq!(a.name, "GE-Proton11-11-aarch64.tar.gz");
+}
+
+#[test]
+fn x86_64_host_with_only_arm64_build_gets_nothing() {
+    let only_arm = vec![GhAsset {
+        name: "GE-Proton11-11-aarch64.tar.gz".to_string(),
+        browser_download_url: "http://x/arm".to_string(),
+        size: 1,
+    }];
+    assert!(choose_asset_for_host(only_arm, ".tar.gz", None, false).is_none());
+}

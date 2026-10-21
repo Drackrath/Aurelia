@@ -235,8 +235,12 @@ pub(crate) async fn cmd_config_steam_runtime_runner(
         print_json(&serde_json::json!({
             "steam_runtime_runner": configured.then(|| current.clone()),
             "resolved_wine": resolved.as_ref().map(|p: &PathBuf| p.display().to_string()),
+            "steam_runtime_supported": aurelia::core::utils::STEAM_RUNTIME_SUPPORTED,
         }));
         return Ok(());
+    }
+    if !aurelia::core::utils::STEAM_RUNTIME_SUPPORTED {
+        cli_eprintln!("Note: {}", aurelia::core::utils::steam_runtime_unsupported_msg());
     }
 
     match (configured, &resolved) {

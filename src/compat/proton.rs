@@ -303,12 +303,40 @@ pub(crate) fn github_client() -> Result<reqwest::Client> {
 }
 
 /// Pick the release asset to download: among assets with the source's extension
-/// (skipping checksum/`.sha*` files), honor CPU microarch when `microarch` is set —
-/// prefer the `x86_64_v3` (AVX2) build when the host supports it, otherwise the
-/// generic `x86_64` build. Falls back to the first matching asset.
+/// (skipping checksum/`.sha*` files), match the host CPU architecture, then honor
+/// CPU microarch when `microarch` is set — prefer the `x86_64_v3` (AVX2) build when
+/// the host supports it, otherwise the generic `x86_64` build. Falls back to the
+/// first matching asset.
 fn choose_asset(assets: Vec<GhAsset>, ext: &str, microarch: Option<&str>) -> Option<GhAsset> {
+    choose_asset_for_host(assets, ext, microarch, cfg!(target_arch = "aarch64"))
+}
+
+/// Whether a release asset name marks an ARM64 build (e.g. GE-Proton's
+/// `GE-Proton11-11-aarch64.tar.gz`). Untagged assets are x86_64.
+fn is_arm64_asset(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.contains("aarch64") || lower.contains("arm64")
+}
+
+/// [`choose_asset`] with the host architecture passed in, so both hosts are testable.
+fn choose_asset_for_host(
+    assets: Vec<GhAsset>,
+    ext: &str,
+    microarch: Option<&str>,
+    host_is_arm64: bool,
+) -> Option<GhAsset> {
     let mut matching: Vec<GhAsset> =
         assets.into_iter().filter(|a| a.name.ends_with(ext)).collect();
+
+    // Releases can ship an ARM64 build beside the x86_64 one, and it may sort
+    // first. Never hand an x86_64 host the ARM64 build; prefer it on ARM64.
+    if host_is_arm64 {
+        if let Some(i) = matching.iter().position(|a| is_arm64_asset(&a.name)) {
+            return Some(matching.swap_remove(i));
+        }
+    } else {
+        matching.retain(|a| !is_arm64_asset(&a.name));
+    }
 
     if let Some(arch) = microarch {
         if arch == "x86_64_v3" {
