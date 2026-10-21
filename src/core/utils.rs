@@ -288,6 +288,52 @@ pub(crate) fn validate_steam_runtime_runner_path(path: &Path) -> Result<()> {
     }
 }
 
+/// Whether this build can host the self-contained Windows Steam runtime. It runs
+/// `steam.exe` under a Proton/Wine runner, and those ship Linux (ELF) binaries:
+/// Windows rejects them with OS error 193 ("not a valid Win32 application").
+pub const STEAM_RUNTIME_SUPPORTED: bool = cfg!(target_os = "linux");
+
+/// Why the Windows Steam runtime is unavailable on this platform, with the
+/// alternative to use instead.
+pub fn steam_runtime_unsupported_msg() -> String {
+    let alternative = if cfg!(target_os = "windows") {
+        "On Windows Aurelia uses your installed Steam client instead: install Steam and \
+         run games with `aurelia play <APP_ID> --steam`."
+    } else {
+        "Run Aurelia on Linux to use it."
+    };
+    format!(
+        "the self-contained Windows Steam runtime is only supported on Linux: it runs \
+         Steam under a Proton/Wine runner, whose binaries are Linux executables and \
+         cannot be started on {}. {alternative}",
+        std::env::consts::OS
+    )
+}
+
+/// Whether Proton/Wine runners, and the plugins built on them (umu, luxtorpeda),
+/// can run on this platform. Same reason as [`STEAM_RUNTIME_SUPPORTED`].
+pub const PROTON_SUPPORTED: bool = cfg!(target_os = "linux");
+
+/// "`what` only runs on Linux" with what to do instead, for errors and notes.
+pub fn linux_only_msg(what: &str) -> String {
+    let os = std::env::consts::OS;
+    let instead = if cfg!(target_os = "windows") {
+        " On Windows Aurelia runs Windows games natively, without Proton/Wine."
+    } else {
+        ""
+    };
+    format!("{what} only runs on Linux, not on {os}.{instead}")
+}
+
+/// Fail early, before downloading or touching a prefix, when the Windows Steam
+/// runtime can't run on this platform.
+pub fn ensure_steam_runtime_supported() -> Result<()> {
+    if STEAM_RUNTIME_SUPPORTED {
+        return Ok(());
+    }
+    bail!("{}", steam_runtime_unsupported_msg())
+}
+
 /// Actionable message for when `steam_runtime_runner` is unset. `action` is the verb
 /// phrase for the failing operation, e.g. "installing" / "repairing". Kept in one place
 /// so every entry point tells the user the same concrete next steps: which runtimes are
@@ -1618,24 +1664,32 @@ pub fn game_save_prefix(
 
 /// Resolve `rel` under `base`, ignoring case.
 ///
-/// Exact component matches win; `None` if missing.
+/// Exact component matches win; `None` if missing. Names come from the directory
+/// listing, not `exists()`: on a case-insensitive filesystem (NTFS, exFAT) any
+/// spelling "exists", which would hand back the caller's spelling instead.
 pub fn resolve_path_ignore_case(base: &Path, rel: &str) -> Option<PathBuf> {
     let mut current = if rel.starts_with('/') { PathBuf::from("/") } else { base.to_path_buf() };
     for part in rel.split(['/', '\\']).filter(|p| !p.is_empty() && *p != ".") {
-        let exact = current.join(part);
-        if exact.exists() {
-            current = exact;
-            continue;
-        }
         let mut matches: Vec<PathBuf> = std::fs::read_dir(&current)
-            .ok()?
+            .into_iter()
+            .flatten()
             .flatten()
             .filter(|e| e.file_name().to_str().is_some_and(|n| n.eq_ignore_ascii_case(part)))
             .map(|e| e.path())
             .collect();
-        // Stable pick among case variants.
-        matches.sort();
-        current = matches.into_iter().next()?;
+        let exact = current.join(part);
+        current = if let Some(i) = matches.iter().position(|m| m.file_name() == exact.file_name()) {
+            matches.swap_remove(i)
+        } else if !matches.is_empty() {
+            // Stable pick among case variants.
+            matches.sort();
+            matches.swap_remove(0)
+        } else if exact.exists() {
+            // Never listed, e.g. `..`.
+            exact
+        } else {
+            return None;
+        };
     }
     current.exists().then_some(current)
 }

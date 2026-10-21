@@ -246,20 +246,20 @@ impl SteamClient {
                 );
             }
         }
-        // None = native Linux; Some = the effective Proton runner.
-        if let Some(cb) = on_target_resolved {
-            cb(match launch_info.target {
-                LaunchTarget::NativeLinux => None,
-                LaunchTarget::WindowsProton => {
-                    Some(proton_path.unwrap_or(&launcher_config.proton_version))
-                }
-            });
-        }
-
         // Proton/Wine only exists on Linux. On Windows, a Windows game runs natively, so
         // run its executable directly instead of routing through the Proton pipeline.
         let native_windows = force_windows
             || (cfg!(target_os = "windows") && launch_info.target == LaunchTarget::WindowsProton);
+
+        // None = native (Linux, or Windows without Proton); Some = the Proton runner.
+        if let Some(cb) = on_target_resolved {
+            cb(match launch_info.target {
+                LaunchTarget::WindowsProton if !native_windows => {
+                    Some(proton_path.unwrap_or(&launcher_config.proton_version))
+                }
+                _ => None,
+            });
+        }
 
         let chosen_proton_path = if native_windows {
             None

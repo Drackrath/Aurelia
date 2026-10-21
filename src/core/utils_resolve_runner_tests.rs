@@ -35,3 +35,15 @@ fn unresolvable_name_falls_back_to_itself() {
     let got = resolve_runner("NoSuchRuntimeXYZ", tmp.path());
     assert_eq!(got, std::path::Path::new("NoSuchRuntimeXYZ"));
 }
+
+#[test]
+fn steam_runtime_is_linux_only() {
+    let result = ensure_steam_runtime_supported();
+    if cfg!(target_os = "linux") {
+        assert!(result.is_ok());
+    } else {
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("only supported on Linux"), "{msg}");
+        assert!(msg.contains(std::env::consts::OS), "{msg}");
+    }
+}

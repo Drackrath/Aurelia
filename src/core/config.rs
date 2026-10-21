@@ -284,7 +284,8 @@ pub fn config_dir() -> Result<PathBuf> {
     if let Some(dir) = std::env::var_os("AURELIA_CONFIG_DIR").filter(|v| !v.is_empty()) {
         return Ok(PathBuf::from(dir));
     }
-    Ok(home_dir()?.join(".config/Aurelia"))
+    // Joined per component so Windows paths don't mix separators.
+    Ok(home_dir()?.join(".config").join("Aurelia"))
 }
 
 pub async fn ensure_config_dirs() -> Result<()> {

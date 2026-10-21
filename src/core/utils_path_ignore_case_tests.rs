@@ -34,6 +34,11 @@ fn exact_match_beats_case_variant() {
     let tmp = tempfile::tempdir().unwrap();
     touch(&tmp.path().join("Game.exe"));
     touch(&tmp.path().join("game.exe"));
+    // A case-insensitive filesystem (NTFS, exFAT) keeps one file, so there is no
+    // variant to beat.
+    if std::fs::read_dir(tmp.path()).unwrap().count() < 2 {
+        return;
+    }
     let got = resolve_path_ignore_case(tmp.path(), "game.exe").unwrap();
     assert_eq!(got, tmp.path().join("game.exe"));
 }
