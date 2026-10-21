@@ -69,9 +69,11 @@ update_package() {
         git -C "$dir" merge -q --ff-only origin/master \
             || die "diverged from AUR: $dir"
     else
-        git clone -q "$AUR_HOST/$pkg.git" "$dir"
+        # errexit is off here (caller uses `||`), so fail explicitly
+        git clone -q "$AUR_HOST/$pkg.git" "$dir" \
+            || { echo "clone failed: $AUR_HOST/$pkg.git" >&2; return 1; }
     fi
-    cd "$dir"
+    cd "$dir" || return 1
 
     current=$(sed -n 's/^pkgver=//p' PKGBUILD)
     if [ "$current" = "$VERSION" ]; then
