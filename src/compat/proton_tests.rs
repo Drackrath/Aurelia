@@ -176,6 +176,45 @@ fn x86_64_host_with_only_arm64_build_gets_nothing() {
 }
 
 #[test]
+fn extracted_top_dir_is_installed_under_the_release_name() {
+    // GE-Proton 11 tarballs unpack to `GE-Proton11-11-x86_64/`.
+    let tmp = tempfile::tempdir().unwrap();
+    let staging = tmp.path().join(".GE-Proton11-11.extract");
+    std::fs::create_dir_all(staging.join("GE-Proton11-11-x86_64/files/bin")).unwrap();
+    std::fs::write(staging.join("GE-Proton11-11-x86_64/proton"), "x").unwrap();
+    let target = tmp.path().join("GE-Proton11-11");
+    place_extracted(&staging, &target).unwrap();
+    assert!(target.join("proton").is_file());
+    assert!(target.join("files/bin").is_dir());
+}
+
+#[test]
+fn extraction_without_a_single_top_dir_moves_everything() {
+    let tmp = tempfile::tempdir().unwrap();
+    let staging = tmp.path().join(".pkg.extract");
+    std::fs::create_dir_all(staging.join("files")).unwrap();
+    std::fs::write(staging.join("proton"), "x").unwrap();
+    let target = tmp.path().join("pkg");
+    place_extracted(&staging, &target).unwrap();
+    assert!(target.join("proton").is_file());
+    assert!(target.join("files").is_dir());
+}
+
+#[test]
+fn reinstall_replaces_the_previous_runtime() {
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("GE-Proton11-11");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(target.join("stale"), "x").unwrap();
+    let staging = tmp.path().join(".GE-Proton11-11.extract");
+    std::fs::create_dir_all(staging.join("GE-Proton11-11-x86_64")).unwrap();
+    std::fs::write(staging.join("GE-Proton11-11-x86_64/proton"), "x").unwrap();
+    place_extracted(&staging, &target).unwrap();
+    assert!(target.join("proton").is_file());
+    assert!(!target.join("stale").exists());
+}
+
+#[test]
 fn plain_tar_is_extracted() {
     // umu-launcher ships its zipapp as an uncompressed `.tar`.
     let tmp = tempfile::tempdir().unwrap();

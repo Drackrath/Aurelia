@@ -454,13 +454,45 @@ pub async fn install_github_package(
         .await
         .with_context(|| format!("failed downloading {}", pkg.name))?;
 
-    let result = extract_tarball(&tmp, ext, &dest_dir)
+    if !crate::core::utils::is_safe_dir_name(&pkg.name) {
+        bail!("invalid runtime name {:?}", pkg.name);
+    }
+    // Extract into a staging dir, then install under the release name: the
+    // tarball's own top dir often differs (`GE-Proton11-11-x86_64`,
+    // `lutris-GE-Proton8-26-x86_64`), and `proton default`/`uninstall` and the
+    // saved default all address the runtime by the release name.
+    let staging = dest_dir.join(format!(".{}.extract", pkg.name));
+    let _ = std::fs::remove_dir_all(&staging);
+    let result = extract_tarball(&tmp, ext, &staging)
         .with_context(|| format!("failed extracting {}", pkg.name));
     // Always clean up the temp tarball, success or failure.
     let _ = std::fs::remove_file(&tmp);
+    let target = dest_dir.join(&pkg.name);
+    let result = result.and_then(|()| place_extracted(&staging, &target));
+    let _ = std::fs::remove_dir_all(&staging);
     result?;
 
-    Ok(dest_dir.join(&pkg.name))
+    Ok(target)
+}
+
+/// Move an extracted archive from `staging` to `target`, replacing any previous
+/// install. A single top-level directory is unwrapped; anything else moves as is.
+pub(crate) fn place_extracted(staging: &Path, target: &Path) -> Result<()> {
+    let entries: Vec<PathBuf> = std::fs::read_dir(staging)
+        .with_context(|| format!("failed reading {}", staging.display()))?
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+    let source = match entries.as_slice() {
+        [only] if only.is_dir() => only.clone(),
+        _ => staging.to_path_buf(),
+    };
+    if target.exists() {
+        std::fs::remove_dir_all(target)
+            .with_context(|| format!("failed replacing {}", target.display()))?;
+    }
+    std::fs::rename(&source, target)
+        .with_context(|| format!("failed moving runtime into {}", target.display()))
 }
 
 /// Stream `url` to `dest`, reporting progress as bytes arrive.
