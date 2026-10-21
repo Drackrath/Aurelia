@@ -441,8 +441,9 @@ fn select_launch_entry_matches_executable_case_insensitively() {
     // Proton request finds the lowercase exe.
     let picked = launch::select_launch_entry(&options, &app, true, false).unwrap();
     assert_eq!(picked.id, "1");
-    assert_eq!(picked.executable, "bin/x64/factorio.exe");
-    assert_eq!(picked.workingdir.as_deref(), Some("bin/x64"));
+    // Compared as paths: the on-disk spelling uses the host's separator.
+    assert_eq!(std::path::Path::new(&picked.executable), std::path::Path::new("bin/x64/factorio.exe"));
+    assert_eq!(picked.workingdir.as_deref().map(std::path::Path::new), Some(std::path::Path::new("bin/x64")));
 
     // Native default is unaffected.
     let picked = launch::select_launch_entry(&options, &app, false, false).unwrap();

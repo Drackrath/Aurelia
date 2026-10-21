@@ -1649,24 +1649,32 @@ pub fn game_save_prefix(
 
 /// Resolve `rel` under `base`, ignoring case.
 ///
-/// Exact component matches win; `None` if missing.
+/// Exact component matches win; `None` if missing. Names come from the directory
+/// listing, not `exists()`: on a case-insensitive filesystem (NTFS, exFAT) any
+/// spelling "exists", which would hand back the caller's spelling instead.
 pub fn resolve_path_ignore_case(base: &Path, rel: &str) -> Option<PathBuf> {
     let mut current = if rel.starts_with('/') { PathBuf::from("/") } else { base.to_path_buf() };
     for part in rel.split(['/', '\\']).filter(|p| !p.is_empty() && *p != ".") {
-        let exact = current.join(part);
-        if exact.exists() {
-            current = exact;
-            continue;
-        }
         let mut matches: Vec<PathBuf> = std::fs::read_dir(&current)
-            .ok()?
+            .into_iter()
+            .flatten()
             .flatten()
             .filter(|e| e.file_name().to_str().is_some_and(|n| n.eq_ignore_ascii_case(part)))
             .map(|e| e.path())
             .collect();
-        // Stable pick among case variants.
-        matches.sort();
-        current = matches.into_iter().next()?;
+        let exact = current.join(part);
+        current = if let Some(i) = matches.iter().position(|m| m.file_name() == exact.file_name()) {
+            matches.swap_remove(i)
+        } else if !matches.is_empty() {
+            // Stable pick among case variants.
+            matches.sort();
+            matches.swap_remove(0)
+        } else if exact.exists() {
+            // Never listed, e.g. `..`.
+            exact
+        } else {
+            return None;
+        };
     }
     current.exists().then_some(current)
 }
