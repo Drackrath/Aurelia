@@ -378,7 +378,14 @@ impl SteamClient {
             tracing::warn!(appid = app.app_id, "could not record running game: {e:#}");
         }
 
-        let wait_result = child.wait().context("failed waiting for game process exit");
+        // On the blocking pool: `Child::wait` blocks its thread for the game's whole
+        // run, and on a runtime worker that starves the tasks tied to it. In the
+        // daemon that froze the shared Steam connection and every other forwarded
+        // command (`running`, `stop`) until the game exited.
+        let wait_result = tokio::task::spawn_blocking(move || child.wait())
+            .await
+            .context("game wait task failed")?
+            .context("failed waiting for game process exit");
         // Wrappers exit while the game lives on; wait for the app's processes.
         loop {
             let survivors = crate::compat::running::processes_for_app(app.app_id);
