@@ -637,8 +637,23 @@ impl AppInfoEnvelope {
 /// Read a value from `HKCU\Software\Valve\Steam` via `reg query` (Windows).
 #[cfg(target_os = "windows")]
 fn read_steam_registry(value: &str) -> Option<String> {
+    read_registry(r"HKCU\Software\Valve\Steam", value)
+}
+
+/// Parse `reg query` DWORD data: `0x1a2b` (how REG_DWORD prints) or decimal.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn parse_reg_dword(data: &str) -> Option<u32> {
+    let data = data.trim();
+    data.strip_prefix("0x")
+        .map(|h| u32::from_str_radix(h, 16).ok())
+        .unwrap_or_else(|| data.parse().ok())
+}
+
+/// Read a registry value's data via `reg query` (Windows).
+#[cfg(target_os = "windows")]
+fn read_registry(key: &str, value: &str) -> Option<String> {
     let output = Command::new("reg")
-        .args(["query", r"HKCU\Software\Valve\Steam", "/v", value])
+        .args(["query", key, "/v", value])
         .output()
         .ok()?;
     if !output.status.success() {

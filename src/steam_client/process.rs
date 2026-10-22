@@ -10,16 +10,25 @@ impl SteamClient {
     /// The running client caches each game's appmanifest at startup, so changes we
     /// make on disk (e.g. enabling a DLC) aren't visible to games until Steam
     /// re-reads them — which it does on restart.
+    ///
+    /// The client publishes its PID as `ActiveProcess\pid`; `SteamPID` is only a
+    /// fallback for older clients. A crash leaves the value stale, so the PID must
+    /// still belong to a live `steam.exe`.
     #[cfg(target_os = "windows")]
     pub fn steam_is_running() -> bool {
-        read_steam_registry("SteamPID")
-            .and_then(|v| {
-                let v = v.trim();
-                v.strip_prefix("0x")
-                    .and_then(|h| u32::from_str_radix(h, 16).ok())
-                    .or_else(|| v.parse::<u32>().ok())
-            })
-            .is_some_and(|pid| pid != 0)
+        use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+        let Some(pid) = read_registry(r"HKCU\Software\Valve\Steam\ActiveProcess", "pid")
+            .or_else(|| read_steam_registry("SteamPID"))
+            .and_then(|v| parse_reg_dword(&v))
+            .filter(|&pid| pid != 0)
+        else {
+            return false;
+        };
+        let pid = Pid::from_u32(pid);
+        let mut sys = System::new();
+        sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), true, ProcessRefreshKind::nothing());
+        sys.process(pid)
+            .is_some_and(|p| p.name().to_string_lossy().eq_ignore_ascii_case("steam.exe"))
     }
 
     #[cfg(not(target_os = "windows"))]
