@@ -31,6 +31,44 @@ impl SteamClient {
             .is_some_and(|p| p.name().to_string_lossy().eq_ignore_ascii_case("steam.exe"))
     }
 
+    /// Whether the desktop Steam client has an account signed in: Steam sets
+    /// `ActiveProcess\ActiveUser` to the account id while logged on, 0 otherwise.
+    #[cfg(target_os = "windows")]
+    pub fn steam_is_logged_on() -> bool {
+        read_registry(r"HKCU\Software\Valve\Steam\ActiveProcess", "ActiveUser")
+            .and_then(|v| parse_reg_dword(&v))
+            .is_some_and(|user| user != 0)
+    }
+
+    /// Make sure the desktop Steam client is up for a `--steam` launch: start it
+    /// silently if it isn't running, then wait (up to `timeout`) for it to sign in
+    /// so Steamworks/DRM can initialise. Best-effort, like the Linux path: on
+    /// failure or timeout the game launches anyway and the reason is logged.
+    #[cfg(target_os = "windows")]
+    pub async fn ensure_host_steam_ready(timeout: std::time::Duration) {
+        if SteamClient::steam_is_running() {
+            tracing::info!("Steam client already running; not starting it");
+        } else {
+            tracing::info!("Steam client not running; starting `steam.exe -silent` (tray)");
+            if let Err(e) = SteamClient::start_steam() {
+                tracing::warn!("could not start Steam client: {e:#}");
+                return;
+            }
+        }
+        let start = std::time::Instant::now();
+        while !(SteamClient::steam_is_running() && SteamClient::steam_is_logged_on()) {
+            if start.elapsed() >= timeout {
+                tracing::warn!(
+                    "Steam not logged on within {}s; launching anyway (Steamworks auth may fail)",
+                    timeout.as_secs()
+                );
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+        tracing::info!("host Steam logged on; proceeding with launch");
+    }
+
     #[cfg(not(target_os = "windows"))]
     pub fn steam_is_running() -> bool {
         false

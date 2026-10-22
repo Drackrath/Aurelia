@@ -209,7 +209,11 @@ impl SteamClient {
 
         // With Steam integration the game talks to the host Steam client; make sure
         // one is running (start it silently if not) so Steamworks/Family-Sharing can
-        // initialise. Best-effort and Linux-only.
+        // initialise. Best-effort.
+        #[cfg(target_os = "windows")]
+        if steam_enabled {
+            SteamClient::ensure_host_steam_ready(std::time::Duration::from_secs(30)).await;
+        }
         #[cfg(target_os = "linux")]
         if steam_enabled {
             crate::core::utils::ensure_steam_running();
