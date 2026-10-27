@@ -116,6 +116,11 @@ fn install_without_a_runner_gives_actionable_guidance() {
     let o = aurelia(tmp.path(), &["steam-runtime", "install"]);
     assert!(!o.status.success());
     let text = out(&o);
-    assert!(text.contains("aurelia proton list"), "{text}");
-    assert!(text.contains("config steam-runtime-runner"), "{text}");
+    if cfg!(target_os = "linux") {
+        assert!(text.contains("aurelia proton list"), "{text}");
+        assert!(text.contains("config steam-runtime-runner"), "{text}");
+    } else {
+        // No runner choice helps off Linux, so the platform error comes first.
+        assert!(text.contains("only supported on Linux"), "{text}");
+    }
 }

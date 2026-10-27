@@ -125,27 +125,31 @@ async fn latest_release(spec: &PluginSpec) -> Result<PluginRelease> {
         .await
         .with_context(|| format!("failed parsing the {} release JSON", spec.display))?;
 
-    // Prefer a .tar.gz, then .tar.xz; skip checksum sidecars (.sha*).
-    let pick = |ext: &str| {
-        release
-            .assets
-            .iter()
-            .find(|a| a.name.ends_with(ext) && !a.name.contains(".sha"))
-    };
-    let (asset, ext) = pick(".tar.gz")
-        .map(|a| (a, ".tar.gz"))
-        .or_else(|| pick(".tar.xz").map(|a| (a, ".tar.xz")))
-        .with_context(|| {
-            format!(
-                "no .tar.gz/.tar.xz asset on {} release '{}'",
-                spec.display, release.tag_name
-            )
-        })?;
+    let (asset, ext) = pick_archive(&release.assets).with_context(|| {
+        format!(
+            "no .tar.gz/.tar.xz/.tar asset on {} release '{}'",
+            spec.display, release.tag_name
+        )
+    })?;
 
     Ok(PluginRelease {
         tag: release.tag_name.clone(),
         url: asset.browser_download_url.clone(),
         ext: ext.to_string(),
+    })
+}
+
+/// The release's tarball and its extension: `.tar.gz`, then `.tar.xz`, then a plain
+/// `.tar` (umu-launcher ships its zipapp as `umu-launcher-<ver>-zipapp.tar`).
+/// Checksum sidecars (`.sha*`) are skipped.
+fn pick_archive(
+    assets: &[crate::compat::proton::GhAsset],
+) -> Option<(&crate::compat::proton::GhAsset, &'static str)> {
+    [".tar.gz", ".tar.xz", ".tar"].into_iter().find_map(|ext| {
+        assets
+            .iter()
+            .find(|a| a.name.ends_with(ext) && !a.name.contains(".sha"))
+            .map(|a| (a, ext))
     })
 }
 
@@ -191,3 +195,7 @@ pub(crate) fn uninstall(spec: &PluginSpec) -> Result<bool> {
         .with_context(|| format!("failed removing {}", base.display()))?;
     Ok(true)
 }
+
+#[cfg(test)]
+#[path = "plugin_tests.rs"]
+mod tests;

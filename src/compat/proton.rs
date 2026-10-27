@@ -303,12 +303,40 @@ pub(crate) fn github_client() -> Result<reqwest::Client> {
 }
 
 /// Pick the release asset to download: among assets with the source's extension
-/// (skipping checksum/`.sha*` files), honor CPU microarch when `microarch` is set —
-/// prefer the `x86_64_v3` (AVX2) build when the host supports it, otherwise the
-/// generic `x86_64` build. Falls back to the first matching asset.
+/// (skipping checksum/`.sha*` files), match the host CPU architecture, then honor
+/// CPU microarch when `microarch` is set — prefer the `x86_64_v3` (AVX2) build when
+/// the host supports it, otherwise the generic `x86_64` build. Falls back to the
+/// first matching asset.
 fn choose_asset(assets: Vec<GhAsset>, ext: &str, microarch: Option<&str>) -> Option<GhAsset> {
+    choose_asset_for_host(assets, ext, microarch, cfg!(target_arch = "aarch64"))
+}
+
+/// Whether a release asset name marks an ARM64 build (e.g. GE-Proton's
+/// `GE-Proton11-11-aarch64.tar.gz`). Untagged assets are x86_64.
+fn is_arm64_asset(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.contains("aarch64") || lower.contains("arm64")
+}
+
+/// [`choose_asset`] with the host architecture passed in, so both hosts are testable.
+fn choose_asset_for_host(
+    assets: Vec<GhAsset>,
+    ext: &str,
+    microarch: Option<&str>,
+    host_is_arm64: bool,
+) -> Option<GhAsset> {
     let mut matching: Vec<GhAsset> =
         assets.into_iter().filter(|a| a.name.ends_with(ext)).collect();
+
+    // Releases can ship an ARM64 build beside the x86_64 one, and it may sort
+    // first. Never hand an x86_64 host the ARM64 build; prefer it on ARM64.
+    if host_is_arm64 {
+        if let Some(i) = matching.iter().position(|a| is_arm64_asset(&a.name)) {
+            return Some(matching.swap_remove(i));
+        }
+    } else {
+        matching.retain(|a| !is_arm64_asset(&a.name));
+    }
 
     if let Some(arch) = microarch {
         if arch == "x86_64_v3" {
@@ -426,13 +454,45 @@ pub async fn install_github_package(
         .await
         .with_context(|| format!("failed downloading {}", pkg.name))?;
 
-    let result = extract_tarball(&tmp, ext, &dest_dir)
+    if !crate::core::utils::is_safe_dir_name(&pkg.name) {
+        bail!("invalid runtime name {:?}", pkg.name);
+    }
+    // Extract into a staging dir, then install under the release name: the
+    // tarball's own top dir often differs (`GE-Proton11-11-x86_64`,
+    // `lutris-GE-Proton8-26-x86_64`), and `proton default`/`uninstall` and the
+    // saved default all address the runtime by the release name.
+    let staging = dest_dir.join(format!(".{}.extract", pkg.name));
+    let _ = std::fs::remove_dir_all(&staging);
+    let result = extract_tarball(&tmp, ext, &staging)
         .with_context(|| format!("failed extracting {}", pkg.name));
     // Always clean up the temp tarball, success or failure.
     let _ = std::fs::remove_file(&tmp);
+    let target = dest_dir.join(&pkg.name);
+    let result = result.and_then(|()| place_extracted(&staging, &target));
+    let _ = std::fs::remove_dir_all(&staging);
     result?;
 
-    Ok(dest_dir.join(&pkg.name))
+    Ok(target)
+}
+
+/// Move an extracted archive from `staging` to `target`, replacing any previous
+/// install. A single top-level directory is unwrapped; anything else moves as is.
+pub(crate) fn place_extracted(staging: &Path, target: &Path) -> Result<()> {
+    let entries: Vec<PathBuf> = std::fs::read_dir(staging)
+        .with_context(|| format!("failed reading {}", staging.display()))?
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+    let source = match entries.as_slice() {
+        [only] if only.is_dir() => only.clone(),
+        _ => staging.to_path_buf(),
+    };
+    if target.exists() {
+        std::fs::remove_dir_all(target)
+            .with_context(|| format!("failed replacing {}", target.display()))?;
+    }
+    std::fs::rename(&source, target)
+        .with_context(|| format!("failed moving runtime into {}", target.display()))
 }
 
 /// Stream `url` to `dest`, reporting progress as bytes arrive.
@@ -470,14 +530,17 @@ pub(crate) async fn download_to(
     Ok(())
 }
 
-/// Extract a `.tar.gz` or `.tar.xz` tarball into `dest_parent` (the tarball's own
-/// top-level directory becomes the runtime folder).
+/// Extract a `.tar.gz`, `.tar.xz` or uncompressed `.tar` into `dest_parent` (the
+/// tarball's own top-level directory becomes the runtime folder).
 pub(crate) fn extract_tarball(archive: &Path, ext: &str, dest_parent: &Path) -> Result<()> {
+    std::fs::create_dir_all(dest_parent)
+        .with_context(|| format!("failed creating {}", dest_parent.display()))?;
     let file = std::fs::File::open(archive)
         .with_context(|| format!("failed opening {}", archive.display()))?;
     match ext {
         ".tar.gz" => unpack_guarded(flate2::read::GzDecoder::new(file), dest_parent),
         ".tar.xz" => unpack_guarded(xz2::read::XzDecoder::new(file), dest_parent),
+        ".tar" => unpack_guarded(file, dest_parent),
         other => bail!("unsupported runtime archive type '{other}'"),
     }
 }

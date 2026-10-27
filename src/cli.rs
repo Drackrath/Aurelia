@@ -22,9 +22,10 @@ pub(crate) struct Cli {
     /// Emit output (and errors) as JSON. Works with every command.
     #[arg(short = 'j', long, global = true)]
     pub(crate) json: bool,
-    /// Increase log verbosity (repeatable: -v, -vv, -vvv). Unmutes the Steam
-    /// networking stack so a stalled command shows where it is stuck.
-    /// `RUST_LOG` / `AURELIA_LOG` override this.
+    /// Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only
+    /// warnings and errors are logged. -v adds progress/debug logs and a launched
+    /// game's own output; -vv/-vvv unmute the Steam networking stack so a stalled
+    /// command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs.
     #[arg(short, long, global = true, action = clap::ArgAction::Count)]
     pub(crate) verbose: u8,
 }

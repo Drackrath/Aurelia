@@ -73,6 +73,12 @@ pub fn write(stream: Stream, s: &str) {
     });
     if routed.is_err() {
         use std::io::Write as _;
+        // In the daemon, this is its own output: pass it to any request watching it.
+        let relay_stream = match stream {
+            Stream::Stdout => aurelia::infra::logging::relay::RelayStream::Stdout,
+            Stream::Stderr => aurelia::infra::logging::relay::RelayStream::Stderr,
+        };
+        aurelia::infra::logging::relay::broadcast_daemon_output(relay_stream, s.as_bytes());
         match stream {
             // stdout is line-buffered, so the trailing '\n' from cli_println! flushes.
             Stream::Stdout => {

@@ -200,6 +200,40 @@ where
     })
 }
 
+/// Whether this request also receives the daemon's own output: a verbose `play`,
+/// where background session activity (reconnects, liveness) helps diagnose a launch.
+fn watches_daemon(argv: &[String]) -> bool {
+    use clap::Parser;
+
+    crate::cli::Cli::try_parse_from(argv)
+        .is_ok_and(|cli| cli.verbose > 0 && matches!(cli.command, crate::cli::Command::Play { .. }))
+}
+
+/// Build the request's output relay: the requester's `-v` count (parsed from its
+/// argv) and a sink feeding the captured-output channel.
+fn output_relay(
+    argv: &[String],
+    out_tx: &mpsc::UnboundedSender<OutChunk>,
+) -> aurelia::infra::logging::relay::Relay {
+    use aurelia::infra::logging::relay::{Relay, RelayStream};
+    use clap::Parser;
+
+    let verbosity = crate::cli::Cli::try_parse_from(argv).map_or(0, |cli| cli.verbose);
+    let weak = out_tx.downgrade();
+    Relay::new(
+        verbosity,
+        std::sync::Arc::new(move |stream, bytes: &[u8]| {
+            if let Some(tx) = weak.upgrade() {
+                let stream = match stream {
+                    RelayStream::Stdout => Stream::Stdout,
+                    RelayStream::Stderr => Stream::Stderr,
+                };
+                let _ = tx.send(OutChunk { stream, bytes: bytes.to_vec() });
+            }
+        }),
+    )
+}
+
 /// Handle one forwarded command: read the header, run it with stdio routed over the
 /// socket, then send the exit code.
 async fn handle<S>(stream: S) -> Result<()>
@@ -221,10 +255,21 @@ where
     let (in_tx, in_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut reader_task = spawn_stdin_pump(reader, in_tx);
 
+    // Tracing events and child process output → the same captured streams. The relay
+    // holds only a weak sender so a game outliving the request can't keep `out_tx`
+    // (and thus `writer_task`) alive.
+    let relay = output_relay(&argv, &out_tx);
+    // Held until this request ends (including the disconnect early return).
+    let _daemon_watch = watches_daemon(&argv)
+        .then(|| aurelia::infra::logging::relay::watch_daemon(relay.clone()));
+
     // Run the command with IO routed to this connection. Dropping `ctx` when the
     // scope ends closes `out_tx`, which ends `writer_task`.
     let ctx = OutputCtx::new(out_tx, in_rx);
-    let command = crate::output::scoped(ctx, crate::run_argv(argv.clone()));
+    let command = crate::output::scoped(
+        ctx,
+        aurelia::infra::logging::relay::scoped(relay, crate::run_argv(argv.clone())),
+    );
     tokio::pin!(command);
 
     // Run the command, but if the client's connection drops abort the command

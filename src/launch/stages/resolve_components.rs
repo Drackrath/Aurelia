@@ -72,13 +72,13 @@ impl Runner for NativeRunner {
             cmd.envs(&spec.env);
             match session_log_file(spec, "AURELIA_STDOUT_LOG") {
                 Some(file) => { cmd.stdout(file); }
-                None => { cmd.stdout(std::process::Stdio::inherit()); }
+                None => { cmd.stdout(crate::infra::logging::relay::child_stdio()); }
             }
             match session_log_file(spec, "AURELIA_STDERR_LOG") {
                 Some(file) => { cmd.stderr(file); }
-                None => { cmd.stderr(std::process::Stdio::inherit()); }
+                None => { cmd.stderr(crate::infra::logging::relay::child_stdio()); }
             }
-            cmd.spawn()
+            cmd.spawn().map(crate::infra::logging::relay::attach)
         };
         #[allow(unused_mut)]
         let mut result = spawn(&spec.program, None);
