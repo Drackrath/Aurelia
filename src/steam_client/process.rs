@@ -367,12 +367,16 @@ NoSavePersonalInfo=1
             }
         }
 
+        cmd.stdout(crate::infra::logging::relay::child_stdio());
+        cmd.stderr(crate::infra::logging::relay::child_stdio());
+
         tracing::info!(
             "Launching game (Native Windows): {:?} with args {:?}",
             executable,
             args
         );
         cmd.spawn()
+            .map(crate::infra::logging::relay::attach)
             .with_context(|| format!("failed to spawn windows game {}", executable.display()))
     }
 
@@ -466,8 +470,13 @@ NoSavePersonalInfo=1
                     }
                 }
 
+                cmd.stdout(crate::infra::logging::relay::child_stdio());
+                cmd.stderr(crate::infra::logging::relay::child_stdio());
+
                 tracing::info!("Launching game (Native): {:?} with args {:?}", executable, args);
-                cmd.spawn().context("failed to spawn native linux game")
+                cmd.spawn()
+                    .map(crate::infra::logging::relay::attach)
+                    .context("failed to spawn native linux game")
             }
             LaunchTarget::WindowsProton => {
                 bail!("WindowsProton targets must be launched via the Pipeline and Runner abstraction. Ad-hoc bypass is prohibited.");

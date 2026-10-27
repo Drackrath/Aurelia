@@ -933,13 +933,13 @@ impl Runner for WineTkgRunner {
             if let Ok(log_file) = std::fs::File::create(&path) {
                 cmd.stderr(log_file);
             } else {
-                cmd.stderr(std::process::Stdio::inherit());
+                cmd.stderr(crate::infra::logging::relay::child_stdio());
             }
         } else {
-            cmd.stderr(std::process::Stdio::inherit());
+            cmd.stderr(crate::infra::logging::relay::child_stdio());
         }
 
-        cmd.stdout(std::process::Stdio::inherit());
+        cmd.stdout(crate::infra::logging::relay::child_stdio());
 
         tracing::debug!(
             program = ?cmd.get_program(),
@@ -948,7 +948,9 @@ impl Runner for WineTkgRunner {
             "runner launch",
         );
 
-        cmd.spawn().map_err(|e| LaunchError::new(LaunchErrorKind::Process, "failed to spawn runner process").with_source(anyhow!(e)))
+        cmd.spawn()
+            .map(crate::infra::logging::relay::attach)
+            .map_err(|e| LaunchError::new(LaunchErrorKind::Process, "failed to spawn runner process").with_source(anyhow!(e)))
     }
 }
 

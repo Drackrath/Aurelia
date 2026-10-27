@@ -146,7 +146,11 @@ async fn async_main() {
     };
 
     // Send tracing/diagnostics to stderr so stdout stays clean for --json output.
-    aurelia::infra::logging::init_cli_logging(cli.verbose);
+    if matches!(cli.command, Command::Daemon { command: None, .. }) {
+        aurelia::infra::logging::init_daemon_logging(cli.verbose);
+    } else {
+        aurelia::infra::logging::init_cli_logging(cli.verbose);
+    }
 
     // Bare `aurelia daemon`: become the shared-session server. Never forwards.
     if let Command::Daemon { socket, command: None } = &cli.command {

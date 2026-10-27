@@ -120,8 +120,8 @@ impl Runner for LuxtorpedaRunner {
             cmd.current_dir(cwd);
         }
         cmd.envs(&spec.env);
-        cmd.stdout(std::process::Stdio::inherit());
-        cmd.stderr(std::process::Stdio::inherit());
+        cmd.stdout(crate::infra::logging::relay::child_stdio());
+        cmd.stderr(crate::infra::logging::relay::child_stdio());
 
         tracing::debug!(
             program = ?cmd.get_program(),
@@ -129,7 +129,7 @@ impl Runner for LuxtorpedaRunner {
             "luxtorpeda launch",
         );
 
-        cmd.spawn().map_err(|e| {
+        cmd.spawn().map(crate::infra::logging::relay::attach).map_err(|e| {
             LaunchError::new(LaunchErrorKind::Process, "failed to spawn luxtorpeda process")
                 .with_source(anyhow!(e))
         })

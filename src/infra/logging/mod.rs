@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod relay;
 pub mod session;
 pub mod event_log;
 pub mod wine_capture;
