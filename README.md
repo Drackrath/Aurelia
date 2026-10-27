@@ -271,6 +271,10 @@ aurelia launch-options 1245620       # list Steam launch configs (exe, args, pla
 aurelia play 1245620                 # launch a game and wait for it to exit
 aurelia play 1245620 --proton experimental   # Linux: force a specific Proton or Wine runner
 aurelia play 1245620 --steam         # run with Steam online features (Family Sharing, DRM)
+aurelia launch-targets 1245620       # installed builds + Steam modes, and the `play` flags for each
+aurelia play 1245620 --platform linux        # Linux: run the native build (or `windows` via Proton)
+aurelia play 1245620 --steam-mode host       # one launch: `runtime` (in-Wine), `host` or `none`
+aurelia play 1245620 -v              # also log progress/debug output (-vv/-vvv: Steam networking)
 aurelia running                      # list games Aurelia is currently running
 aurelia stop 1245620                 # stop a running game (--force to kill a hung one)
 
@@ -405,6 +409,19 @@ aurelia scripts remove 2270           # delete the dir-based script
 
 Add `--json` to any command for machine-readable output (errors included). It's a global
 flag, so `aurelia --json <command>` and `aurelia <command> --json` are equivalent.
+
+Logs go to stderr. By default only warnings and errors are shown. `-v` adds Aurelia's
+progress and debug logs, and `-vv`/`-vvv` unmute the Steam networking stack, which helps when
+a command seems stuck. Commands run through the session daemon show the same logs at your
+`-v` level, and a verbose `play` also shows the daemon's own activity, prefixed `[daemon]`.
+`AURELIA_LOG` or `RUST_LOG` override the level for a command run locally. A launched game's
+own output is saved per launch under `~/.config/Aurelia/logs/` (Proton's stderr in
+`wine_<appid>.log`).
+
+On Windows, games run natively and the Linux-only parts are switched off: `proton install`,
+`steam-runtime install|repair|login`, and `umu`/`luxtorpeda install` refuse with an
+explanation, and `play` rejects `--proton`, `--platform linux`, `--steam-mode runtime`,
+`--umu` and `--native-engine`. Use `play --steam` with your installed Steam client instead.
 
 📖 **See the [Usage page on the wiki](https://github.com/Drackrath/Aurelia/wiki/Usage) for complete documentation of every command and option.**
 
