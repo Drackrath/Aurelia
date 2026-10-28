@@ -36,8 +36,12 @@ pub(crate) enum Command {
     Login(LoginArgs),
     /// Describe this build for drivers: commands, flags, JSON events, error types
     /// and exit codes, and the `--json` schema version. Offline. Without `--json` it
-    /// prints a PowerShell-style list and error table.
-    Capabilities,
+    /// prints a PowerShell-style list and error table. Name a command path
+    /// (e.g. `capabilities config game`) for its flags, values and help.
+    Capabilities {
+        /// Command path to describe, e.g. `config game`.
+        path: Vec<String>,
+    },
     /// List games in your library.
     List {
         /// Only show installed games.
