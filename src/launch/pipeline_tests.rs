@@ -4,14 +4,20 @@ use tempfile::tempdir;
 struct SuccessStage(&'static str);
 #[async_trait]
 impl PipelineStage for SuccessStage {
-    fn name(&self) -> &str { self.0 }
-    async fn execute(&self, _ctx: &mut PipelineContext) -> std::result::Result<(), LaunchError> { Ok(()) }
+    fn name(&self) -> &str {
+        self.0
+    }
+    async fn execute(&self, _ctx: &mut PipelineContext) -> std::result::Result<(), LaunchError> {
+        Ok(())
+    }
 }
 
 struct FailStage(&'static str);
 #[async_trait]
 impl PipelineStage for FailStage {
-    fn name(&self) -> &str { self.0 }
+    fn name(&self) -> &str {
+        self.0
+    }
     async fn execute(&self, _ctx: &mut PipelineContext) -> std::result::Result<(), LaunchError> {
         Err(LaunchError::new(LaunchErrorKind::Unknown, "failure"))
     }
@@ -113,7 +119,10 @@ fn test_map_io_error_permission_denied() {
 #[test]
 fn test_map_io_error_lock_detected() {
     // Simulating a "Resource busy" or "locked" error which often maps to 'Other' or 'WouldBlock' in std::io
-    let err = std::io::Error::new(std::io::ErrorKind::Other, "file is locked by another process");
+    let err = std::io::Error::new(
+        std::io::ErrorKind::Other,
+        "file is locked by another process",
+    );
     let mapped = map_io_error(&err, None);
     assert_eq!(mapped.kind, LaunchErrorKind::Process);
     assert!(mapped.message.contains("locked by another process"));
@@ -128,9 +137,19 @@ fn test_map_io_error_with_explicit_dup_info() {
     };
     let mapped = map_io_error(&err, Some(&info));
     assert_eq!(mapped.kind, LaunchErrorKind::Process);
-    assert!(mapped.message.contains("Ensure no other instance is running"));
-    assert_eq!(mapped.context.get("duplicate_instance_detected").unwrap(), "true");
-    assert_eq!(mapped.context.get("duplicate_detection_source").unwrap(), "lockfile");
+    assert!(
+        mapped
+            .message
+            .contains("Ensure no other instance is running")
+    );
+    assert_eq!(
+        mapped.context.get("duplicate_instance_detected").unwrap(),
+        "true"
+    );
+    assert_eq!(
+        mapped.context.get("duplicate_detection_source").unwrap(),
+        "lockfile"
+    );
 }
 
 #[test]

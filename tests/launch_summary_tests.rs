@@ -1,12 +1,14 @@
-use aurelia::launch::pipeline::{LaunchPipeline, PipelineContext, LaunchErrorKind, LaunchError};
-use aurelia::infra::logging::{LaunchSession, LaunchResult, load_launch_summary};
 use async_trait::async_trait;
+use aurelia::infra::logging::{LaunchResult, LaunchSession, load_launch_summary};
+use aurelia::launch::pipeline::{LaunchError, LaunchErrorKind, LaunchPipeline, PipelineContext};
 use tempfile::tempdir;
 
 struct MockSuccessStage(&'static str);
 #[async_trait]
 impl aurelia::launch::pipeline::PipelineStage for MockSuccessStage {
-    fn name(&self) -> &str { self.0 }
+    fn name(&self) -> &str {
+        self.0
+    }
     async fn execute(&self, _ctx: &mut PipelineContext) -> std::result::Result<(), LaunchError> {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         Ok(())
@@ -16,7 +18,9 @@ impl aurelia::launch::pipeline::PipelineStage for MockSuccessStage {
 struct MockFailStage(&'static str);
 #[async_trait]
 impl aurelia::launch::pipeline::PipelineStage for MockFailStage {
-    fn name(&self) -> &str { self.0 }
+    fn name(&self) -> &str {
+        self.0
+    }
     async fn execute(&self, _ctx: &mut PipelineContext) -> std::result::Result<(), LaunchError> {
         Err(LaunchError::new(LaunchErrorKind::Unknown, "forced failure"))
     }

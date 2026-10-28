@@ -3,13 +3,13 @@
 use crate::cli::*;
 use crate::commands::common::*;
 
-use std::path::PathBuf;
-use std::sync::atomic::Ordering;
-use std::sync::{Arc, RwLock};
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use aurelia::core::config::load_launcher_config;
 use aurelia::core::models::{DepotPlatform, DownloadState, LibraryGame};
 use aurelia::steam_client::{InstallOptions, SteamClient};
+use std::path::PathBuf;
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, RwLock};
 
 /// Prefer the Windows depot; Proton runs it on Linux.
 ///
@@ -114,8 +114,12 @@ pub(crate) async fn cmd_install(
     let steam_restart_required = is_dlc && !manage_steam && SteamClient::steam_is_running();
     if steam_restart_required && !json {
         cli_eprintln!();
-        cli_eprintln!("Note: the DLC content is installed, but a running Steam client reads DLC state");
-        cli_eprintln!("      only at startup. Restart Steam (or re-run with --restart-steam) for it to");
+        cli_eprintln!(
+            "Note: the DLC content is installed, but a running Steam client reads DLC state"
+        );
+        cli_eprintln!(
+            "      only at startup. Restart Steam (or re-run with --restart-steam) for it to"
+        );
         cli_eprintln!("      be recognized in-game.");
     }
 
@@ -256,7 +260,12 @@ pub(crate) async fn cmd_install_list(json: bool) -> Result<()> {
         return Ok(());
     }
 
-    cli_println!("{:>9}  {:>20}  {:>9}  NAME / STATUS", "APPID", "PROGRESS", "");
+    cli_println!(
+        "{:>9}  {:>20}  {:>9}  NAME / STATUS",
+        "APPID",
+        "PROGRESS",
+        ""
+    );
     for (app_id, name, total, done, status, _) in &rows {
         let progress = format!("{} / {}", human_bytes(*done), human_bytes(*total));
         cli_println!(
@@ -362,7 +371,14 @@ pub(crate) async fn cmd_relink(
     json: bool,
 ) -> Result<()> {
     let human = |_: &std::path::Path| format!("Relinked app {app_id} to {}.", library.display());
-    steam_guarded_relocate(app_id, library.clone(), restart_steam, json, "relinked", "relink", human,
+    steam_guarded_relocate(
+        app_id,
+        library.clone(),
+        restart_steam,
+        json,
+        "relinked",
+        "relink",
+        human,
         |client, lib| async move { client.relink_install(app_id, lib).await },
     )
     .await
@@ -376,13 +392,23 @@ pub(crate) async fn cmd_import(
     json: bool,
 ) -> Result<()> {
     // Default to the OS we're running on for the depot/platform match.
-    let platform: DepotPlatform = platform.map(Into::into).unwrap_or(if cfg!(target_os = "windows") {
-        DepotPlatform::Windows
-    } else {
-        DepotPlatform::Linux
-    });
+    let platform: DepotPlatform =
+        platform
+            .map(Into::into)
+            .unwrap_or(if cfg!(target_os = "windows") {
+                DepotPlatform::Windows
+            } else {
+                DepotPlatform::Linux
+            });
     let human = |path: &std::path::Path| format!("Imported app {app_id} from {}.", path.display());
-    steam_guarded_relocate(app_id, library, restart_steam, json, "imported", "import", human,
+    steam_guarded_relocate(
+        app_id,
+        library,
+        restart_steam,
+        json,
+        "imported",
+        "import",
+        human,
         move |client, lib| async move { client.import_install(app_id, lib, platform).await },
     )
     .await
@@ -408,7 +434,11 @@ pub(crate) async fn cmd_available(app_id: u32, json: bool) -> Result<()> {
     } else {
         cli_println!(
             "App {app_id}: {}{}",
-            if available { "available" } else { "not available" },
+            if available {
+                "available"
+            } else {
+                "not available"
+            },
             if pinned { " (pinned)" } else { "" }
         );
         if let Some(p) = install_path {
@@ -419,7 +449,9 @@ pub(crate) async fn cmd_available(app_id: u32, json: bool) -> Result<()> {
 }
 
 /// Stable JSON map, stringified keys.
-fn manifests_json(map: &std::collections::HashMap<u32, u64>) -> std::collections::BTreeMap<String, u64> {
+fn manifests_json(
+    map: &std::collections::HashMap<u32, u64>,
+) -> std::collections::BTreeMap<String, u64> {
     map.iter().map(|(d, m)| (d.to_string(), *m)).collect()
 }
 
@@ -866,7 +898,10 @@ pub(crate) async fn cmd_duplicates(json: bool) -> Result<()> {
 
     let mut reclaimable = 0u64;
     for d in &duplicates {
-        let name = d.name.clone().unwrap_or_else(|| format!("App {}", d.app_id));
+        let name = d
+            .name
+            .clone()
+            .unwrap_or_else(|| format!("App {}", d.app_id));
         cli_println!("{name}  ({})", d.app_id);
         cli_println!(
             "  keep    {}  (updated {}, build {})",
@@ -888,12 +923,21 @@ pub(crate) async fn cmd_duplicates(json: bool) -> Result<()> {
         cli_println!("");
     }
 
-    cli_println!("Removing every copy above frees {}.\n", human_bytes(reclaimable));
+    cli_println!(
+        "Removing every copy above frees {}.\n",
+        human_bytes(reclaimable)
+    );
     cli_println!("Close Steam first — it rewrites appmanifests on exit — then run:\n");
     for d in &duplicates {
         for s in &d.stale {
-            cli_println!("  rm -rf {}", shell_quote(&s.install_path.to_string_lossy()));
-            cli_println!("  rm -f  {}", shell_quote(&s.manifest_path.to_string_lossy()));
+            cli_println!(
+                "  rm -rf {}",
+                shell_quote(&s.install_path.to_string_lossy())
+            );
+            cli_println!(
+                "  rm -f  {}",
+                shell_quote(&s.manifest_path.to_string_lossy())
+            );
         }
     }
     cli_println!(

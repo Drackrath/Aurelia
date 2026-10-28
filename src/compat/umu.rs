@@ -49,7 +49,10 @@ pub fn installed(custom: Option<&Path>) -> Option<InstalledPlugin> {
     if let Some(custom) = custom {
         // A custom path may be the umu-run binary itself, or a directory holding it.
         if custom.is_file() && custom.file_name().and_then(|n| n.to_str()) == Some(ENTRY_NAME) {
-            let root = custom.parent().map(Path::to_path_buf).unwrap_or_else(|| custom.to_path_buf());
+            let root = custom
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| custom.to_path_buf());
             return Some(InstalledPlugin {
                 version: "custom".to_string(),
                 entry: custom.to_path_buf(),

@@ -4,11 +4,11 @@
 
 use anyhow::{Context, Result};
 
+use super::SteamClient;
 use super::cloudconfig::{
     CCloudConfigStore_Download_Request, CCloudConfigStore_Entry, CCloudConfigStore_NamespaceData,
     CCloudConfigStore_NamespaceVersion, CCloudConfigStore_Upload_Request,
 };
-use super::SteamClient;
 use steam_vent::ConnectionTrait;
 
 /// The user-collections namespace in CloudConfigStore.

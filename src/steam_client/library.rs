@@ -20,7 +20,10 @@ impl SteamClient {
             .service_method(request)
             .await
             .context("failed calling Player.GetOwnedGames")?;
-        tracing::debug!("Player.GetOwnedGames returned {} games", response.games.len());
+        tracing::debug!(
+            "Player.GetOwnedGames returned {} games",
+            response.games.len()
+        );
 
         let owned: Vec<OwnedGame> = response
             .games
@@ -171,14 +174,21 @@ impl SteamClient {
         Ok((manifests, parsed.active_branch, update_pending))
     }
 
-    pub(crate) async fn remote_manifest_ids(&self, appid: u32, branch: &str) -> Result<HashMap<u64, u64>> {
+    pub(crate) async fn remote_manifest_ids(
+        &self,
+        appid: u32,
+        branch: &str,
+    ) -> Result<HashMap<u64, u64>> {
         let connection = self.require_connection()?;
         SteamClient::remote_manifest_ids_static(connection, appid, branch).await
     }
 
     pub async fn get_extended_app_info(&self, appid: u32) -> Result<ExtendedAppInfo> {
         let buffer = self
-            .pics_buffer(appid, "failed requesting appinfo product info for extended metadata")
+            .pics_buffer(
+                appid,
+                "failed requesting appinfo product info for extended metadata",
+            )
             .await?;
 
         // PICS product-info buffers are usually *binary* VDF (text only for some
@@ -187,8 +197,7 @@ impl SteamClient {
         // Extract everything in a block so the borrowed VDF tree is dropped before
         // the later `.await`.
         let (name, dlcs, depots, launch_options, store_meta) = {
-            let vdf = find_vdf_in_pics(&buffer)
-                .context("failed to parse product info VDF")?;
+            let vdf = find_vdf_in_pics(&buffer).context("failed to parse product info VDF")?;
             let section = pics_app_section(vdf.value());
 
             let name = section.get_str(&["common", "name"]).map(str::to_string);
@@ -246,7 +255,10 @@ impl SteamClient {
     /// an empty list for apps with no UFS config.
     pub async fn fetch_ufs_save_specs(&self, appid: u32) -> Result<Vec<UfsSaveSpec>> {
         let buffer = self
-            .pics_buffer(appid, "failed requesting appinfo product info for UFS save specs")
+            .pics_buffer(
+                appid,
+                "failed requesting appinfo product info for UFS save specs",
+            )
             .await?;
 
         let vdf = find_vdf_in_pics(&buffer).context("failed to parse product info VDF")?;
@@ -259,7 +271,10 @@ impl SteamClient {
     /// [`category_online_required`]. Requires an active Steam connection.
     pub async fn fetch_online_required(&self, appid: u32) -> Result<bool> {
         let buffer = self
-            .pics_buffer(appid, "failed requesting appinfo product info for online-required check")
+            .pics_buffer(
+                appid,
+                "failed requesting appinfo product info for online-required check",
+            )
             .await?;
 
         // PICS product-info buffers are usually *binary* VDF (text only for some
@@ -338,7 +353,10 @@ impl SteamClient {
             .collect();
 
         // Resolve tag names once for the whole batch.
-        let mut ids: Vec<u32> = apps.iter().flat_map(|a| a.tags.iter().map(|t| t.id)).collect();
+        let mut ids: Vec<u32> = apps
+            .iter()
+            .flat_map(|a| a.tags.iter().map(|t| t.id))
+            .collect();
         ids.sort_unstable();
         ids.dedup();
         if !ids.is_empty() {
@@ -352,7 +370,10 @@ impl SteamClient {
 
     pub async fn get_product_info(&mut self, appid: u32) -> Result<Vec<LaunchInfo>> {
         let buffer = match self
-            .pics_buffer(appid, "failed requesting appinfo product info for launch metadata")
+            .pics_buffer(
+                appid,
+                "failed requesting appinfo product info for launch metadata",
+            )
             .await
         {
             Ok(buffer) => buffer,
@@ -386,7 +407,6 @@ impl SteamClient {
         parse_launch_info_from_vdf(appid, &raw_vdf)
             .context("failed to parse launch metadata from PICS appinfo")
     }
-
 }
 
 /// Storefront-ish fields PICS carries.
@@ -426,7 +446,10 @@ fn store_meta_from_section(section: &steam_vdf_parser::Value) -> PicsStoreMeta {
     // `category_N` keys carry the id.
     if let Some(categories) = section.get_obj(&["common", "category"]) {
         for (k, _) in categories.iter() {
-            if let Some(id) = k.strip_prefix("category_").and_then(|s| s.parse::<u32>().ok()) {
+            if let Some(id) = k
+                .strip_prefix("category_")
+                .and_then(|s| s.parse::<u32>().ok())
+            {
                 meta.category_ids.push(id);
             }
         }
@@ -442,7 +465,9 @@ fn depots_from_section(section: &steam_vdf_parser::Value) -> Vec<(u32, String)> 
     let mut depots = Vec::new();
     if let Some(depots_obj) = section.get_obj(&["depots"]) {
         for (id_str, node) in depots_obj.iter() {
-            let Ok(id) = id_str.parse::<u32>() else { continue };
+            let Ok(id) = id_str.parse::<u32>() else {
+                continue;
+            };
             let name = node
                 .get("name")
                 .and_then(|v| v.as_str())

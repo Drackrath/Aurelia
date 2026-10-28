@@ -1,9 +1,9 @@
+use crate::launch::pipeline::{LaunchError, LaunchErrorKind, PipelineContext, PipelineStage};
 use async_trait::async_trait;
-use crate::launch::pipeline::{PipelineStage, PipelineContext, LaunchError, LaunchErrorKind};
 
+use crate::infra::runners::{CommandSpec, LaunchContext, Runner};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use crate::infra::runners::{Runner, LaunchContext, CommandSpec};
 
 pub struct ResolveComponentsStage;
 
@@ -11,22 +11,44 @@ pub struct NativeRunner;
 
 #[async_trait::async_trait]
 impl Runner for NativeRunner {
-    fn name(&self) -> &str { "Native" }
-    async fn prepare_prefix(&self, _ctx: &LaunchContext) -> std::result::Result<(), LaunchError> { Ok(()) }
-    async fn build_env(&self, ctx: &LaunchContext) -> std::result::Result<HashMap<String, String>, LaunchError> {
+    fn name(&self) -> &str {
+        "Native"
+    }
+    async fn prepare_prefix(&self, _ctx: &LaunchContext) -> std::result::Result<(), LaunchError> {
+        Ok(())
+    }
+    async fn build_env(
+        &self,
+        ctx: &LaunchContext,
+    ) -> std::result::Result<HashMap<String, String>, LaunchError> {
         let mut env = HashMap::new();
         env.insert("SteamAppId".to_string(), ctx.app.app_id.to_string());
         if let Some(config) = &ctx.user_config {
-            env.extend(config.env_variables.iter().map(|(k, v)| (k.clone(), v.clone())));
+            env.extend(
+                config
+                    .env_variables
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone())),
+            );
         }
         Ok(env)
     }
-    async fn build_command(&self, ctx: &LaunchContext) -> std::result::Result<CommandSpec, LaunchError> {
-        let install_path = ctx.app.install_path.as_ref()
-            .ok_or_else(|| LaunchError::new(LaunchErrorKind::GameData, "Install path missing"))?;
+    async fn build_command(
+        &self,
+        ctx: &LaunchContext,
+    ) -> std::result::Result<CommandSpec, LaunchError> {
+        let install_path =
+            ctx.app.install_path.as_ref().ok_or_else(|| {
+                LaunchError::new(LaunchErrorKind::GameData, "Install path missing")
+            })?;
 
         let exe_rel = ctx.launch_info.executable.replace('\\', "/");
-        let mut args: Vec<String> = ctx.launch_info.arguments.split_whitespace().map(str::to_string).collect();
+        let mut args: Vec<String> = ctx
+            .launch_info
+            .arguments
+            .split_whitespace()
+            .map(str::to_string)
+            .collect();
         if let Some(config) = &ctx.user_config {
             args.extend(config.launch_options.split_whitespace().map(str::to_string));
         }
@@ -66,17 +88,29 @@ impl Runner for NativeRunner {
     fn launch(&self, spec: &CommandSpec) -> std::result::Result<std::process::Child, LaunchError> {
         let spawn = |program: &std::path::Path, script: Option<&std::path::Path>| {
             let mut cmd = std::process::Command::new(program);
-            if let Some(script) = script { cmd.arg(script); }
+            if let Some(script) = script {
+                cmd.arg(script);
+            }
             cmd.args(&spec.args);
-            if let Some(cwd) = &spec.cwd { cmd.current_dir(cwd); }
+            if let Some(cwd) = &spec.cwd {
+                cmd.current_dir(cwd);
+            }
             cmd.envs(&spec.env);
             match session_log_file(spec, "AURELIA_STDOUT_LOG") {
-                Some(file) => { cmd.stdout(file); }
-                None => { cmd.stdout(crate::infra::logging::relay::child_stdio()); }
+                Some(file) => {
+                    cmd.stdout(file);
+                }
+                None => {
+                    cmd.stdout(crate::infra::logging::relay::child_stdio());
+                }
             }
             match session_log_file(spec, "AURELIA_STDERR_LOG") {
-                Some(file) => { cmd.stderr(file); }
-                None => { cmd.stderr(crate::infra::logging::relay::child_stdio()); }
+                Some(file) => {
+                    cmd.stderr(file);
+                }
+                None => {
+                    cmd.stderr(crate::infra::logging::relay::child_stdio());
+                }
             }
             cmd.spawn().map(crate::infra::logging::relay::attach)
         };
@@ -91,7 +125,10 @@ impl Runner for NativeRunner {
             );
             result = spawn(std::path::Path::new("/bin/sh"), Some(&spec.program));
         }
-        result.map_err(|e| LaunchError::new(LaunchErrorKind::Process, "Native launch failed").with_source(anyhow::anyhow!(e)))
+        result.map_err(|e| {
+            LaunchError::new(LaunchErrorKind::Process, "Native launch failed")
+                .with_source(anyhow::anyhow!(e))
+        })
     }
 }
 
@@ -169,7 +206,9 @@ fn wants_luxtorpeda(ctx: &PipelineContext) -> bool {
     if ctx.force_native_engine {
         return true;
     }
-    let Some(config) = &ctx.launcher_config else { return false };
+    let Some(config) = &ctx.launcher_config else {
+        return false;
+    };
     config.luxtorpeda_enabled
         && config
             .game_configs
@@ -184,7 +223,9 @@ fn wants_umu(ctx: &PipelineContext) -> bool {
     if ctx.force_umu {
         return true;
     }
-    let Some(config) = &ctx.launcher_config else { return false };
+    let Some(config) = &ctx.launcher_config else {
+        return false;
+    };
     config.umu_enabled
         && config
             .game_configs
@@ -195,7 +236,9 @@ fn wants_umu(ctx: &PipelineContext) -> bool {
 
 #[async_trait]
 impl PipelineStage for ResolveComponentsStage {
-    fn name(&self) -> &str { "ResolveComponents" }
+    fn name(&self) -> &str {
+        "ResolveComponents"
+    }
     async fn execute(&self, ctx: &mut PipelineContext) -> std::result::Result<(), LaunchError> {
         use crate::infra::runners::{LuxtorpedaRunner, WineTkgRunner};
         use crate::steam_client::LaunchTarget;
@@ -226,19 +269,24 @@ impl PipelineStage for ResolveComponentsStage {
                     .as_ref()
                     .and_then(|c| c.umu_path.clone());
                 let custom_path = custom.as_deref().map(std::path::Path::new);
-                let umu_run = crate::compat::umu::ensure_installed(custom_path).await.map_err(|e| {
-                    LaunchError::new(
-                        LaunchErrorKind::Runner,
-                        format!("failed to resolve the umu-launcher plugin: {e:#}"),
-                    )
-                    .with_source(e)
-                })?;
+                let umu_run = crate::compat::umu::ensure_installed(custom_path)
+                    .await
+                    .map_err(|e| {
+                        LaunchError::new(
+                            LaunchErrorKind::Runner,
+                            format!("failed to resolve the umu-launcher plugin: {e:#}"),
+                        )
+                        .with_source(e)
+                    })?;
                 ctx.use_umu = true;
                 ctx.umu_run = Some(umu_run);
             }
 
             let Some(info) = &ctx.launch_info else {
-                return Err(LaunchError::new(LaunchErrorKind::Validation, "LaunchInfo missing in ResolveComponentsStage"));
+                return Err(LaunchError::new(
+                    LaunchErrorKind::Validation,
+                    "LaunchInfo missing in ResolveComponentsStage",
+                ));
             };
             ctx.runner = Some(match info.target {
                 LaunchTarget::NativeLinux => Box::new(NativeRunner) as Box<dyn Runner>,

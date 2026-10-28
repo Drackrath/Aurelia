@@ -256,7 +256,10 @@ impl SteamClient {
             .map(|f| f.published_file_id())
             .filter(|&id| id != 0)
             .collect();
-        tracing::debug!("user has {} subscribed Workshop items for app {app_id}", ids.len());
+        tracing::debug!(
+            "user has {} subscribed Workshop items for app {app_id}",
+            ids.len()
+        );
         Ok(ids)
     }
 
@@ -310,7 +313,10 @@ impl SteamClient {
             .await
             .with_context(|| format!("failed voting on Workshop item {id}"))?;
 
-        tracing::info!("voted {} on Workshop item {id}", if up { "up" } else { "down" });
+        tracing::info!(
+            "voted {} on Workshop item {id}",
+            if up { "up" } else { "down" }
+        );
         Ok(())
     }
 
@@ -340,7 +346,8 @@ impl SteamClient {
 
         let mut request = CCommunity_GetCommentThread_Request::new();
         request.set_steamid(owner);
-        request.set_comment_thread_type(ECommentThreadType::k_ECommentThreadTypePublishedFile_Public);
+        request
+            .set_comment_thread_type(ECommentThreadType::k_ECommentThreadTypePublishedFile_Public);
         request.set_gidfeature(id);
         request.set_start(start.max(0));
         request.set_count(count.clamp(1, 100));
@@ -372,7 +379,8 @@ impl SteamClient {
 
         let mut request = CCommunity_PostCommentToThread_Request::new();
         request.set_steamid(owner);
-        request.set_comment_thread_type(ECommentThreadType::k_ECommentThreadTypePublishedFile_Public);
+        request
+            .set_comment_thread_type(ECommentThreadType::k_ECommentThreadTypePublishedFile_Public);
         request.set_gidfeature(id);
         request.set_text(text.to_string());
 
@@ -415,7 +423,11 @@ impl SteamClient {
         let time_updated = item.time_updated;
         let title = item.title.clone();
 
-        let dest = super::workshop_manifest::workshop_content_dir(&library_root, app_id, published_file_id);
+        let dest = super::workshop_manifest::workshop_content_dir(
+            &library_root,
+            app_id,
+            published_file_id,
+        );
         std::fs::create_dir_all(&dest)
             .with_context(|| format!("failed creating {}", dest.display()))?;
         let manifest_path = super::workshop_manifest::workshop_manifest_path(&library_root, app_id);
@@ -461,9 +473,11 @@ impl SteamClient {
                         size,
                         time_updated,
                     };
-                    if let Err(e) =
-                        super::workshop_manifest::upsert_installed_item(&manifest_path, app_id, record)
-                    {
+                    if let Err(e) = super::workshop_manifest::upsert_installed_item(
+                        &manifest_path,
+                        app_id,
+                        record,
+                    ) {
                         emit_failed(
                             &tx,
                             format!(
@@ -476,7 +490,11 @@ impl SteamClient {
                     emit_completed(&tx, "").await;
                 }
                 Err(e) => {
-                    emit_failed(&tx, format!("failed downloading Workshop item {published_file_id}: {e:#}")).await;
+                    emit_failed(
+                        &tx,
+                        format!("failed downloading Workshop item {published_file_id}: {e:#}"),
+                    )
+                    .await;
                 }
             }
         });
@@ -510,8 +528,11 @@ impl SteamClient {
     pub async fn uninstall_workshop_item(&self, published_file_id: u64, app_id: u32) -> Result<()> {
         let cfg = load_launcher_config().await?;
         let library_root = PathBuf::from(&cfg.steam_library_path);
-        let dir =
-            super::workshop_manifest::workshop_content_dir(&library_root, app_id, published_file_id);
+        let dir = super::workshop_manifest::workshop_content_dir(
+            &library_root,
+            app_id,
+            published_file_id,
+        );
         if dir.exists() {
             std::fs::remove_dir_all(&dir)
                 .with_context(|| format!("failed removing {}", dir.display()))?;

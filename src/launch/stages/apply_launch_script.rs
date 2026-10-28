@@ -21,7 +21,9 @@ pub struct ApplyLaunchScriptStage;
 
 #[async_trait]
 impl PipelineStage for ApplyLaunchScriptStage {
-    fn name(&self) -> &str { "ApplyLaunchScript" }
+    fn name(&self) -> &str {
+        "ApplyLaunchScript"
+    }
 
     async fn execute(&self, ctx: &mut PipelineContext) -> std::result::Result<(), LaunchError> {
         let script = launch_script::resolve(
@@ -31,7 +33,9 @@ impl PipelineStage for ApplyLaunchScriptStage {
             ctx.disable_launch_script,
         );
 
-        let Some(script) = script else { return Ok(()); };
+        let Some(script) = script else {
+            return Ok(());
+        };
 
         // No command_spec means the legacy/native fallback path in SpawnProcessStage
         // builds and spawns its own command; there is nothing to wrap here. This is
@@ -54,30 +58,26 @@ impl PipelineStage for ApplyLaunchScriptStage {
 
         // Gather read-only context before taking the mutable spec borrow.
         let app_id = ctx.app_id;
-        let app_name = ctx
-            .app
-            .as_ref()
-            .map(|a| a.name.clone())
-            .unwrap_or_default();
-        let game_dir = ctx
-            .resolved_install_dir
-            .clone()
-            .or_else(|| {
-                ctx.app
-                    .as_ref()
-                    .and_then(|a| a.install_path.as_ref().map(PathBuf::from))
-            });
+        let app_name = ctx.app.as_ref().map(|a| a.name.clone()).unwrap_or_default();
+        let game_dir = ctx.resolved_install_dir.clone().or_else(|| {
+            ctx.app
+                .as_ref()
+                .and_then(|a| a.install_path.as_ref().map(PathBuf::from))
+        });
 
         let spec = ctx.command_spec.as_mut().expect("command_spec present");
         let old_program = spec.program.clone();
         let old_args = std::mem::take(&mut spec.args);
 
         // Export AURELIA_* env vars alongside the already-resolved launch env.
-        spec.env.insert("AURELIA_APP_ID".to_string(), app_id.to_string());
+        spec.env
+            .insert("AURELIA_APP_ID".to_string(), app_id.to_string());
         spec.env.insert("AURELIA_APP_NAME".to_string(), app_name);
         if let Some(dir) = &game_dir {
-            spec.env
-                .insert("AURELIA_GAME_DIR".to_string(), dir.to_string_lossy().to_string());
+            spec.env.insert(
+                "AURELIA_GAME_DIR".to_string(),
+                dir.to_string_lossy().to_string(),
+            );
         }
         spec.env.insert(
             "AURELIA_LAUNCH_PROGRAM".to_string(),
@@ -95,7 +95,10 @@ impl PipelineStage for ApplyLaunchScriptStage {
         // cwd is intentionally preserved.
 
         let mut metadata = HashMap::new();
-        metadata.insert("launch_script".to_string(), script.to_string_lossy().to_string());
+        metadata.insert(
+            "launch_script".to_string(),
+            script.to_string_lossy().to_string(),
+        );
         metadata.insert(
             "wrapped_program".to_string(),
             old_program.to_string_lossy().to_string(),

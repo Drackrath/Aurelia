@@ -7,9 +7,9 @@ use crate::commands::common::*;
 
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use aurelia::core::config::{experimental_enabled, load_session, save_session};
-use aurelia::core::error::{classify, ErrorKind, Reported, TypedError};
+use aurelia::core::error::{ErrorKind, Reported, TypedError, classify};
 use aurelia::core::models::QrEvent;
 use aurelia::steam_client::SteamClient;
 
@@ -116,9 +116,9 @@ async fn warn_if_already_logged_in() {
         StoredSession::Account(name) => cli_eprintln!(
             "Warning: already logged in as {name} — logging in again replaces that session."
         ),
-        StoredSession::Unknown => cli_eprintln!(
-            "Warning: an existing session is active — logging in again replaces it."
-        ),
+        StoredSession::Unknown => {
+            cli_eprintln!("Warning: an existing session is active — logging in again replaces it.")
+        }
         StoredSession::None => {}
     }
 }
@@ -171,8 +171,9 @@ pub(crate) async fn cmd_login(args: crate::cli::LoginArgs, json: bool) -> Result
     let account = username.clone();
     let password = match password.or_else(|| std::env::var("AURELIA_PASSWORD").ok()) {
         Some(p) => p,
-        None => rpassword::prompt_password("Steam password: ")
-            .context("failed reading password")?,
+        None => {
+            rpassword::prompt_password("Steam password: ").context("failed reading password")?
+        }
     };
 
     let mut client = SteamClient::new()?;
@@ -207,11 +208,12 @@ pub(crate) async fn cmd_login(args: crate::cli::LoginArgs, json: bool) -> Result
                 secure_session(&client).await;
                 report_login_success(&account, json);
                 Ok(())
-            } else if client
-                .pending_confirmations()
-                .iter()
-                .any(|p| matches!(p.requirement, aurelia::core::models::SteamGuardReq::DeviceConfirmation))
-            {
+            } else if client.pending_confirmations().iter().any(|p| {
+                matches!(
+                    p.requirement,
+                    aurelia::core::models::SteamGuardReq::DeviceConfirmation
+                )
+            }) {
                 tracing::info!("Login method awaited: Steam Mobile app approval");
                 bail!("approve this login in the Steam Mobile app, then run `aurelia login` again")
             } else {
@@ -542,8 +544,7 @@ pub(crate) async fn cmd_login_json(
     password: Option<String>,
     guard: Option<String>,
 ) -> Result<()> {
-    let username =
-        username.context("--json login requires a username (-u/--username)")?;
+    let username = username.context("--json login requires a username (-u/--username)")?;
     let password = password
         .or_else(|| std::env::var("AURELIA_PASSWORD").ok())
         .context("--json login requires a password (-p/--password or AURELIA_PASSWORD)")?;
@@ -570,13 +571,19 @@ pub(crate) async fn cmd_login_json(
             use aurelia::core::models::SteamGuardReq::{DeviceCode, DeviceConfirmation, EmailCode};
 
             // A typed Steam Guard code is needed (email or authenticator).
-            let code_kind = guard.is_none().then(|| {
-                client.pending_confirmations().iter().find_map(|p| match p.requirement {
-                    EmailCode { .. } => Some("email"),
-                    DeviceCode => Some("device"),
-                    _ => None,
+            let code_kind = guard
+                .is_none()
+                .then(|| {
+                    client
+                        .pending_confirmations()
+                        .iter()
+                        .find_map(|p| match p.requirement {
+                            EmailCode { .. } => Some("email"),
+                            DeviceCode => Some("device"),
+                            _ => None,
+                        })
                 })
-            }).flatten();
+                .flatten();
 
             if let Some(kind) = code_kind {
                 eprint_json_line(&serde_json::json!({ "event": "guard_required", "type": kind }));
@@ -721,7 +728,11 @@ pub(crate) fn report_session_status(status: &daemon::SessionStatus, via_daemon: 
     } else {
         cli_println!(
             "Session : {}",
-            if status.authenticated { "authenticated" } else { "not logged in" }
+            if status.authenticated {
+                "authenticated"
+            } else {
+                "not logged in"
+            }
         );
         if let Some(account) = &status.account {
             cli_println!("Account : {account}");
@@ -734,7 +745,11 @@ pub(crate) fn report_session_status(status: &daemon::SessionStatus, via_daemon: 
         }
         cli_println!(
             "Daemon  : {}",
-            if via_daemon { "yes (shared session)" } else { "no (standalone)" }
+            if via_daemon {
+                "yes (shared session)"
+            } else {
+                "no (standalone)"
+            }
         );
     }
 }

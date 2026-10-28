@@ -1,12 +1,12 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 use sha1::Digest;
 use std::collections::HashMap;
 use std::path::Path;
 
-use steam_vent::connection::Connection;
-use steam_cdn::CDNClient;
 use std::sync::Arc;
+use steam_cdn::CDNClient;
+use steam_vent::connection::Connection;
 
 #[derive(Debug, Clone)]
 pub struct DepotInfo {

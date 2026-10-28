@@ -105,16 +105,14 @@ fn record_path(app_id: u32) -> Result<PathBuf> {
 /// Persist that `game` is now running so `stop` can find it later.
 pub fn record_launch(game: &RunningGame) -> Result<()> {
     let dir = running_dir()?;
-    std::fs::create_dir_all(&dir)
-        .with_context(|| format!("failed creating {}", dir.display()))?;
+    std::fs::create_dir_all(&dir).with_context(|| format!("failed creating {}", dir.display()))?;
     let path = record_path(game.app_id)?;
     let body = serde_json::to_string_pretty(game)?;
     // Write-then-rename so a reader (or a crash) never sees a half-written
     // record. The `.tmp` extension keeps it out of `list()`.
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, body).with_context(|| format!("failed writing {}", tmp.display()))?;
-    std::fs::rename(&tmp, &path)
-        .with_context(|| format!("failed replacing {}", path.display()))?;
+    std::fs::rename(&tmp, &path).with_context(|| format!("failed replacing {}", path.display()))?;
     Ok(())
 }
 

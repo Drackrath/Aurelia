@@ -91,7 +91,11 @@ fn copy_file_chunked(
 
     let mut reader = std::fs::File::open(src)?;
     let mut writer = std::fs::File::create(dst)?;
-    let name = src.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let name = src
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
 
     loop {
         let n = reader.read(buf)?;

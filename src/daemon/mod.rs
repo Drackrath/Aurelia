@@ -85,7 +85,10 @@ fn write_daemon_info() {
     match serde_json::to_vec(&info) {
         Ok(bytes) => {
             if let Err(e) = std::fs::write(&path, bytes) {
-                tracing::warn!("daemon: could not write version marker {}: {e}", path.display());
+                tracing::warn!(
+                    "daemon: could not write version marker {}: {e}",
+                    path.display()
+                );
             }
         }
         Err(e) => tracing::warn!("daemon: could not serialize version marker: {e}"),

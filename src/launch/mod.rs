@@ -1,19 +1,19 @@
-pub mod pipeline;
-pub mod stages;
-pub mod validators;
 pub mod dll_provider_resolver;
 pub mod fixups;
 pub mod launch_script;
+pub mod pipeline;
+pub mod stages;
+pub mod validators;
 
 #[cfg(test)]
 mod verification_tests;
 
+use crate::core::config::{LauncherConfig, config_dir};
+use crate::core::utils::MasterSteamConfig;
+use crate::steam_client::SteamClient;
+use anyhow::{Context, Result, anyhow};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use anyhow::{Result, Context, anyhow};
-use crate::core::config::{config_dir, LauncherConfig};
-use crate::steam_client::SteamClient;
-use crate::core::utils::MasterSteamConfig;
 
 /// Kill processes holding `wine_prefix`.
 fn stop_prefix_processes(wine_prefix: &Path) {
@@ -179,7 +179,9 @@ fn launch_master_steam(
     apply_install_diagnostics(&mut cmd, base_dir);
 
     tracing::info!("Launching Master Steam: {:?}", cmd);
-    let _child = cmd.spawn().context("Failed to spawn master steam process")?;
+    let _child = cmd
+        .spawn()
+        .context("Failed to spawn master steam process")?;
     Ok(())
 }
 
@@ -202,7 +204,12 @@ fn apply_master_steam_env(
     // desktops place the cookie under $XDG_RUNTIME_DIR, not ~/.Xauthority): without it
     // Wine's winex11 driver can't authenticate to the X server and Steam runs
     // *invisibly* even though DISPLAY is set — so `steam-runtime login` shows no window.
-    for var in ["DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "XAUTHORITY"] {
+    for var in [
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "XDG_RUNTIME_DIR",
+        "XAUTHORITY",
+    ] {
         if let Ok(value) = std::env::var(var) {
             cmd.env(var, value);
         }
@@ -224,7 +231,11 @@ fn apply_install_diagnostics(cmd: &mut Command, base_dir: &Path) {
     }
     let logs_dir = base_dir.join("logs");
     if let Err(e) = std::fs::create_dir_all(&logs_dir) {
-        tracing::warn!("AURELIA_DIAGNOSE_INSTALL set but could not create log dir {}: {}", logs_dir.display(), e);
+        tracing::warn!(
+            "AURELIA_DIAGNOSE_INSTALL set but could not create log dir {}: {}",
+            logs_dir.display(),
+            e
+        );
         return;
     }
     let stamp = crate::core::utils::now_unix();
@@ -243,7 +254,8 @@ fn apply_install_diagnostics(cmd: &mut Command, base_dir: &Path) {
         }
         Err(e) => tracing::warn!(
             "AURELIA_DIAGNOSE_INSTALL set but could not create diagnostic log {}: {}",
-            log_path.display(), e
+            log_path.display(),
+            e
         ),
     }
 }
@@ -283,7 +295,10 @@ pub async fn repair_master_steam(config: &LauncherConfig) -> Result<()> {
         bak.push(format!(".bak-{}", crate::core::utils::now_unix()));
         let bak = PathBuf::from(bak);
         if bak.exists() {
-            return Err(anyhow!("backup {} already exists; retry shortly", bak.display()));
+            return Err(anyhow!(
+                "backup {} already exists; retry shortly",
+                bak.display()
+            ));
         }
         tracing::info!(
             "Repair: backing up {} -> {}",
@@ -431,7 +446,9 @@ pub async fn launch_game_via_master_steam(
 
     // Identify the game by its install-dir basename (the manifest `installdir`), which
     // shows up in the running game's cmdline as `…\common\<installdir>\…exe`.
-    let Some(installdir) = install_path.file_name().map(|n| n.to_string_lossy().to_string())
+    let Some(installdir) = install_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
     else {
         return Ok(());
     };
@@ -512,10 +529,13 @@ async fn download_steam_setup(path: &Path) -> Result<()> {
     // Write to a temp file and rename, so an interrupted write can never leave a
     // truncated SteamSetup.exe behind.
     let tmp = path.with_extension("exe.part");
-    std::fs::write(&tmp, &bytes)
-        .with_context(|| format!("failed writing {}", tmp.display()))?;
-    std::fs::rename(&tmp, path)
-        .with_context(|| format!("failed moving {} into place at {}", tmp.display(), path.display()))?;
+    std::fs::write(&tmp, &bytes).with_context(|| format!("failed writing {}", tmp.display()))?;
+    std::fs::rename(&tmp, path).with_context(|| {
+        format!(
+            "failed moving {} into place at {}",
+            tmp.display(),
+            path.display()
+        )
+    })?;
     Ok(())
 }
-

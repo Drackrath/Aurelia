@@ -1,9 +1,10 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use sha1::{Digest, Sha1};
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
+use steam_vent::ConnectionTrait;
 use steam_vent::connection::Connection;
 use steam_vent_proto::steammessages_cloud_steamclient::{
     CCloud_ClientBeginFileUpload_Request, CCloud_ClientBeginFileUpload_Response,
@@ -11,7 +12,6 @@ use steam_vent_proto::steammessages_cloud_steamclient::{
     CCloud_ClientFileDownload_Request, CCloud_ClientFileDownload_Response,
     CCloud_EnumerateUserFiles_Request, CCloud_EnumerateUserFiles_Response,
 };
-use steam_vent::ConnectionTrait;
 
 #[derive(Debug, Clone)]
 pub struct CloudFileEntry {
@@ -206,10 +206,12 @@ fn sha1_hex_of_file(path: &Path) -> Option<String> {
 
 fn hex_lower(bytes: &[u8]) -> String {
     use std::fmt::Write;
-    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
-        let _ = write!(s, "{b:02x}");
-        s
-    })
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        })
 }
 
 /// Cloud SHA hashes arrive as hex strings; normalize both sides before comparing
@@ -328,7 +330,11 @@ fn discover_local_saves(
             let Ok(rel) = entry.path().strip_prefix(&base) else {
                 continue;
             };
-            let cloud_name = format!("%{}%{}", spec.root, rel.to_string_lossy().replace('\\', "/"));
+            let cloud_name = format!(
+                "%{}%{}",
+                spec.root,
+                rel.to_string_lossy().replace('\\', "/")
+            );
             out.push((cloud_name, entry.path().to_path_buf()));
         }
     }
@@ -603,8 +609,14 @@ impl CloudClient {
     /// Thin wrapper over [`sync`](Self::sync) restricted to the download direction;
     /// `Detect` so a divergent file is reported, never silently overwritten.
     pub async fn sync_down(&self, appid: u32, resolver: &CloudPathResolver) -> Result<SyncOutcome> {
-        self.sync(appid, resolver, &[], SyncDirection::Down, ConflictPolicy::Detect)
-            .await
+        self.sync(
+            appid,
+            resolver,
+            &[],
+            SyncDirection::Down,
+            ConflictPolicy::Detect,
+        )
+        .await
     }
 
     /// Upload local saves that are new or newer than their cloud copy. Thin wrapper
@@ -615,8 +627,14 @@ impl CloudClient {
         resolver: &CloudPathResolver,
         specs: &[UfsSaveSpec],
     ) -> Result<SyncOutcome> {
-        self.sync(appid, resolver, specs, SyncDirection::Up, ConflictPolicy::Detect)
-            .await
+        self.sync(
+            appid,
+            resolver,
+            specs,
+            SyncDirection::Up,
+            ConflictPolicy::Detect,
+        )
+        .await
     }
 
     /// Reconcile a game's Steam Cloud saves with their on-disk copies.
@@ -712,7 +730,9 @@ impl CloudClient {
                         .await;
                 }
                 PlannedAction::Conflict => {
-                    let (Some(l), Some(c)) = (&local, cloud) else { continue };
+                    let (Some(l), Some(c)) = (&local, cloud) else {
+                        continue;
+                    };
                     match policy {
                         ConflictPolicy::Detect => {
                             outcome.conflicts.push(SyncConflict {
@@ -727,12 +747,26 @@ impl CloudClient {
                             });
                         }
                         ConflictPolicy::TakeCloud => {
-                            self.apply_download(appid, &name, &local_path, c, &mut baseline, &mut outcome)
-                                .await;
+                            self.apply_download(
+                                appid,
+                                &name,
+                                &local_path,
+                                c,
+                                &mut baseline,
+                                &mut outcome,
+                            )
+                            .await;
                         }
                         ConflictPolicy::TakeLocal => {
-                            self.apply_upload(appid, &name, &local_path, l, &mut baseline, &mut outcome)
-                                .await;
+                            self.apply_upload(
+                                appid,
+                                &name,
+                                &local_path,
+                                l,
+                                &mut baseline,
+                                &mut outcome,
+                            )
+                            .await;
                         }
                     }
                 }
@@ -776,7 +810,10 @@ impl CloudClient {
         baseline: &mut SyncBaseline,
         outcome: &mut SyncOutcome,
     ) {
-        match self.upload_from(appid, name, local_path, local.timestamp).await {
+        match self
+            .upload_from(appid, name, local_path, local.timestamp)
+            .await
+        {
             Ok(()) => {
                 baseline.files.insert(name.to_string(), local.as_baseline());
                 outcome.uploaded.push(name.to_string());
@@ -793,14 +830,16 @@ impl CloudClient {
         cloud: &CloudFileEntry,
     ) -> Result<()> {
         if let Some(parent) = local_path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .with_context(|| format!("failed to create parent directory {}", parent.display()))?;
+            tokio::fs::create_dir_all(parent).await.with_context(|| {
+                format!("failed to create parent directory {}", parent.display())
+            })?;
         }
         let body = self
             .download_file(appid, filename, cloud.sha_hash.as_deref())
             .await
-            .with_context(|| format!("failed downloading cloud file '{filename}' for app {appid}"))?;
+            .with_context(|| {
+                format!("failed downloading cloud file '{filename}' for app {appid}")
+            })?;
         tokio::fs::write(local_path, &body)
             .await
             .with_context(|| format!("failed writing {}", local_path.display()))?;

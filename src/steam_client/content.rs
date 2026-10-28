@@ -99,7 +99,10 @@ impl SteamClient {
 
     pub async fn get_depot_list(&self, app_id: u32) -> Result<Vec<DepotInfo>> {
         let buffer = self
-            .pics_buffer(app_id, "failed requesting appinfo product info for depot list")
+            .pics_buffer(
+                app_id,
+                "failed requesting appinfo product info for depot list",
+            )
             .await?;
 
         let mut out = Vec::new();
@@ -158,7 +161,10 @@ impl SteamClient {
     /// install pipeline reads.
     pub async fn list_depot_manifests(&self, app_id: u32) -> Result<Vec<DepotManifestInfo>> {
         let buffer = self
-            .pics_buffer(app_id, "failed requesting appinfo product info for manifests")
+            .pics_buffer(
+                app_id,
+                "failed requesting appinfo product info for manifests",
+            )
             .await?;
 
         // Parse a gid value that may be encoded as a quoted string or a raw u64.
@@ -174,7 +180,9 @@ impl SteamClient {
             let depots_val = pics_depots_value(&vdf);
             if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
                 for (key, value) in depots.iter() {
-                    let Ok(depot_id) = key.parse::<u32>() else { continue };
+                    let Ok(depot_id) = key.parse::<u32>() else {
+                        continue;
+                    };
                     let Some(obj) = value.as_obj() else { continue };
                     let depot_name = obj.get("name").and_then(|v| v.as_str()).map(str::to_string);
 
@@ -291,7 +299,10 @@ impl SteamClient {
         });
 
         let mut out = Vec::new();
-        if let Some(launch) = config.and_then(|c| c.get("launch")).and_then(|v| v.as_obj()) {
+        if let Some(launch) = config
+            .and_then(|c| c.get("launch"))
+            .and_then(|v| v.as_obj())
+        {
             for (id, entry) in launch.iter() {
                 let Some(e) = entry.as_obj() else { continue };
                 let field = |k: &str| e.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -402,7 +413,11 @@ impl SteamClient {
                         .and_then(|times| times.get(bit as usize))
                         .copied()
                         .unwrap_or(0);
-                    if t > 0 { (true, Some(t)) } else { (false, None) }
+                    if t > 0 {
+                        (true, Some(t))
+                    } else {
+                        (false, None)
+                    }
                 }
                 None => (false, None),
             };
@@ -472,5 +487,4 @@ impl SteamClient {
             output_dir,
         )
     }
-
 }

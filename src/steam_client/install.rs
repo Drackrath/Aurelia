@@ -101,7 +101,9 @@ impl SteamClient {
                 }
             }
         } else {
-            tracing::warn!("get_available_platforms: VDF parse failed for {appid}, using fallback discovery");
+            tracing::warn!(
+                "get_available_platforms: VDF parse failed for {appid}, using fallback discovery"
+            );
             return Ok((vec![DepotPlatform::Windows, DepotPlatform::Linux], buffer));
         }
 
@@ -163,7 +165,10 @@ impl SteamClient {
         if let Ok(raw) = std::fs::read_to_string(&existing_manifest) {
             let parsed = crate::core::acf::parse_app_manifest(&raw);
             if let Some(dir) = parsed.install_dir.clone() {
-                let existing_dir = Path::new(&library_root).join("steamapps").join("common").join(&dir);
+                let existing_dir = Path::new(&library_root)
+                    .join("steamapps")
+                    .join("common")
+                    .join(&dir);
                 if existing_dir.is_dir() && crate::core::utils::is_safe_dir_name(&dir) {
                     installdir = dir;
                 }
@@ -511,7 +516,9 @@ impl SteamClient {
         let connection = self.require_connection_owned()?;
 
         let hosts = self.get_content_servers(connection.cell_id()).await?;
-        let key = self.get_depot_key(app_id, depot_id).await
+        let key = self
+            .get_depot_key(app_id, depot_id)
+            .await
             .with_context(|| format!("failed to get depot key for depot {depot_id}"))?;
 
         // grand_total_bytes = 0: this standalone call has no whole-app total, so
@@ -590,10 +597,7 @@ impl SteamClient {
             };
 
             let (host_name, port) = if let Some(pos) = host.find(':') {
-                (
-                    &host[..pos],
-                    host[pos + 1..].parse::<u16>().unwrap_or(80),
-                )
+                (&host[..pos], host[pos + 1..].parse::<u16>().unwrap_or(80))
             } else {
                 (host.as_str(), 80)
             };
@@ -639,10 +643,7 @@ impl SteamClient {
                 }
             });
 
-            let abort_signal = shared_state
-                .read()
-                .ok()
-                .map(|s| s.abort_signal.clone());
+            let abort_signal = shared_state.read().ok().map(|s| s.abort_signal.clone());
 
             match cdn_client
                 .download_depot(

@@ -14,7 +14,7 @@
 //! check* (`login --openid`); a full session still comes from the
 //! password/Steam Guard or QR flows.
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use std::collections::HashSet;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -217,8 +217,8 @@ pub(crate) fn steam_id_from_claimed_id(claimed: &str) -> Result<u64> {
 async fn check_authentication(http: &reqwest::Client, params: &[(String, String)]) -> Result<()> {
     // Form-urlencode by hand (via the url crate's form serializer behind
     // `query_pairs_mut`) — this build of reqwest carries no `form` feature.
-    let mut encoder = reqwest::Url::parse(STEAM_OPENID_ENDPOINT)
-        .context("invalid Steam OpenID endpoint")?;
+    let mut encoder =
+        reqwest::Url::parse(STEAM_OPENID_ENDPOINT).context("invalid Steam OpenID endpoint")?;
     {
         let mut pairs = encoder.query_pairs_mut();
         pairs.clear();
@@ -275,7 +275,10 @@ async fn read_request_head(stream: &mut TcpStream) -> Result<String> {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 1024];
     loop {
-        let n = stream.read(&mut chunk).await.context("callback read failed")?;
+        let n = stream
+            .read(&mut chunk)
+            .await
+            .context("callback read failed")?;
         if n == 0 {
             break;
         }

@@ -229,7 +229,9 @@ pub async fn experimental_enabled() -> bool {
     if let Some(value) = std::env::var_os("AURELIA_EXPERIMENTAL") {
         let value = value.to_string_lossy();
         let value = value.trim();
-        if !value.is_empty() && !value.eq_ignore_ascii_case("0") && !value.eq_ignore_ascii_case("false")
+        if !value.is_empty()
+            && !value.eq_ignore_ascii_case("0")
+            && !value.eq_ignore_ascii_case("false")
         {
             return true;
         }
@@ -276,7 +278,9 @@ pub fn home_dir() -> Result<PathBuf> {
         return Ok(combined);
     }
 
-    anyhow::bail!("could not determine home directory (none of HOME, USERPROFILE, or HOMEDRIVE/HOMEPATH are set)")
+    anyhow::bail!(
+        "could not determine home directory (none of HOME, USERPROFILE, or HOMEDRIVE/HOMEPATH are set)"
+    )
 }
 
 pub fn config_dir() -> Result<PathBuf> {
@@ -363,12 +367,11 @@ pub async fn save_session(session: &SessionState) -> Result<()> {
     let session_path = session_path()?;
     if session_encryption_active(&session_path).await {
         // Automatic OS-keyring key; created on demand, never prompts.
-        let key = tokio::task::spawn_blocking(
-            crate::core::session_crypto::keyring_secret_or_create,
-        )
-        .await
-        .ok()
-        .flatten();
+        let key =
+            tokio::task::spawn_blocking(crate::core::session_crypto::keyring_secret_or_create)
+                .await
+                .ok()
+                .flatten();
         match key {
             Some(key) => {
                 let plain = serde_json::to_vec(session)?;
@@ -549,7 +552,13 @@ fn info_cache_dir() -> Result<PathBuf> {
 fn info_cache_path(app_id: u32, language: &str, country: &str) -> Result<PathBuf> {
     let sanitize = |s: &str| -> String {
         s.chars()
-            .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+            .map(|c| {
+                if c.is_ascii_alphanumeric() {
+                    c.to_ascii_lowercase()
+                } else {
+                    '_'
+                }
+            })
             .collect()
     };
     let (lang, cc) = (sanitize(language), sanitize(country));
@@ -596,7 +605,13 @@ pub async fn save_info_cache(
 fn tag_name_cache_path(language: &str) -> Result<PathBuf> {
     let lang: String = language
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
         .collect();
     Ok(data_dir()?.join(format!("tag_names.{lang}.json")))
 }

@@ -57,6 +57,10 @@ fn proton_compat_prefix_matches_steam_compat_data_path() {
     let config = config_with_library(tmp.path());
     assert_eq!(
         proton_compat_prefix(&config, 42),
-        tmp.path().join("steamapps").join("compatdata").join("42").join("pfx"),
+        tmp.path()
+            .join("steamapps")
+            .join("compatdata")
+            .join("42")
+            .join("pfx"),
     );
 }

@@ -4,7 +4,7 @@ use crate::steam_urls;
 
 use crate::commands::common::*;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 /// Outcome of one bounded install-dir walk.
 enum WalkOutcome<T> {
@@ -162,7 +162,11 @@ pub(crate) async fn cmd_list(
         let removed: std::collections::HashSet<u32> = col.removed.iter().copied().collect();
         games.retain(|g| members.contains(&g.app_id) && !removed.contains(&g.app_id));
     }
-    games.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
+    games.sort_by(|a, b| {
+        a.name
+            .to_ascii_lowercase()
+            .cmp(&b.name.to_ascii_lowercase())
+    });
 
     // Precompute each game's static-collection membership names for display.
     let game_collections = |app_id: u32| -> Vec<String> {
@@ -182,12 +186,18 @@ pub(crate) async fn cmd_list(
     // appinfo fetch per game, which is too costly to do on every `list`.
     if online {
         if client.is_authenticated() && !client.is_offline() {
-            tracing::info!("Resolving online-required status for {} game(s) ...", games.len());
+            tracing::info!(
+                "Resolving online-required status for {} game(s) ...",
+                games.len()
+            );
             for g in &mut games {
                 match client.fetch_online_required(g.app_id).await {
                     Ok(required) => g.online_required = Some(required),
                     Err(e) => {
-                        tracing::warn!("could not determine online-required for {}: {e:#}", g.app_id);
+                        tracing::warn!(
+                            "could not determine online-required for {}: {e:#}",
+                            g.app_id
+                        );
                     }
                 }
             }
@@ -243,8 +253,14 @@ pub(crate) async fn cmd_list(
                             "logo": steam_urls::logo_url(g.app_id),
                         }),
                     );
-                    obj.insert("store_url".into(), serde_json::json!(steam_urls::store_url(g.app_id)));
-                    obj.insert("collections".into(), serde_json::json!(game_collections(g.app_id)));
+                    obj.insert(
+                        "store_url".into(),
+                        serde_json::json!(steam_urls::store_url(g.app_id)),
+                    );
+                    obj.insert(
+                        "collections".into(),
+                        serde_json::json!(game_collections(g.app_id)),
+                    );
                 }
                 v
             })
@@ -261,12 +277,19 @@ pub(crate) async fn cmd_list(
     if online {
         cli_println!(
             "{:>9}  {:<10}  {:<13}  {:<7}  {:<20}  NAME",
-            "APPID", "STATUS", "LICENSE", "ONLINE", "COLLECTIONS"
+            "APPID",
+            "STATUS",
+            "LICENSE",
+            "ONLINE",
+            "COLLECTIONS"
         );
     } else {
         cli_println!(
             "{:>9}  {:<10}  {:<13}  {:<20}  NAME",
-            "APPID", "STATUS", "LICENSE", "COLLECTIONS"
+            "APPID",
+            "STATUS",
+            "LICENSE",
+            "COLLECTIONS"
         );
     }
     for g in &games {
@@ -307,12 +330,23 @@ pub(crate) async fn cmd_list(
             };
             cli_println!(
                 "{:>9}  {:<10}  {:<13}  {:<7}  {:<20}  {}{}",
-                g.app_id, status, license, online_col, cols, g.name, branch
+                g.app_id,
+                status,
+                license,
+                online_col,
+                cols,
+                g.name,
+                branch
             );
         } else {
             cli_println!(
                 "{:>9}  {:<10}  {:<13}  {:<20}  {}{}",
-                g.app_id, status, license, cols, g.name, branch
+                g.app_id,
+                status,
+                license,
+                cols,
+                g.name,
+                branch
             );
         }
     }

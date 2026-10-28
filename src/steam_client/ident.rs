@@ -26,7 +26,10 @@ pub enum Ident {
 pub fn parse_ident(input: &str) -> Result<Ident, TypedError> {
     let q = input.trim();
     if q.is_empty() {
-        return Err(TypedError::new(ErrorKind::InvalidInput, "empty user identifier"));
+        return Err(TypedError::new(
+            ErrorKind::InvalidInput,
+            "empty user identifier",
+        ));
     }
     if q.eq_ignore_ascii_case("me") {
         return Ok(Ident::Me);
@@ -69,7 +72,11 @@ pub fn match_friend_name<'a>(
     let needle = name.to_lowercase();
     let exact: Vec<&super::Friend> = friends
         .iter()
-        .filter(|f| f.persona_name.as_deref().is_some_and(|n| n.to_lowercase() == needle))
+        .filter(|f| {
+            f.persona_name
+                .as_deref()
+                .is_some_and(|n| n.to_lowercase() == needle)
+        })
         .collect();
     let candidates = if exact.is_empty() {
         friends
@@ -93,7 +100,13 @@ pub fn match_friend_name<'a>(
             let names: Vec<String> = many
                 .iter()
                 .take(8)
-                .map(|f| format!("{} ({})", f.persona_name.as_deref().unwrap_or("?"), f.steam_id))
+                .map(|f| {
+                    format!(
+                        "{} ({})",
+                        f.persona_name.as_deref().unwrap_or("?"),
+                        f.steam_id
+                    )
+                })
                 .collect();
             Err(TypedError::new(
                 ErrorKind::InvalidInput,

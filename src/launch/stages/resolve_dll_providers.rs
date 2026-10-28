@@ -1,6 +1,6 @@
-use async_trait::async_trait;
-use crate::launch::pipeline::{PipelineStage, PipelineContext, LaunchError, LaunchErrorKind};
 use crate::launch::dll_provider_resolver::DllProviderResolver;
+use crate::launch::pipeline::{LaunchError, LaunchErrorKind, PipelineContext, PipelineStage};
+use async_trait::async_trait;
 use std::path::PathBuf;
 
 pub struct ResolveDllProvidersStage;
@@ -15,7 +15,9 @@ fn exe_paths_from(install_path: &str, executable: Option<&str>) -> (PathBuf, Pat
             let exe_path = install.join(exe.replace('\\', "/"));
             // Joining a relative parent is equivalent to taking the parent of the
             // joined path; fall back to the install dir when there is no parent.
-            let exe_dir = exe_path.parent().map_or_else(|| install.clone(), PathBuf::from);
+            let exe_dir = exe_path
+                .parent()
+                .map_or_else(|| install.clone(), PathBuf::from);
             (exe_path, exe_dir)
         }
         None => (install.clone(), install),
@@ -24,18 +26,31 @@ fn exe_paths_from(install_path: &str, executable: Option<&str>) -> (PathBuf, Pat
 
 #[async_trait]
 impl PipelineStage for ResolveDllProvidersStage {
-    fn name(&self) -> &str { "ResolveDllProviders" }
+    fn name(&self) -> &str {
+        "ResolveDllProviders"
+    }
 
     async fn execute(&self, ctx: &mut PipelineContext) -> std::result::Result<(), LaunchError> {
-        let app = ctx.app.as_ref().ok_or_else(|| LaunchError::new(LaunchErrorKind::Validation, "App context missing"))?;
-        let install_path = app.install_path.as_ref().ok_or_else(|| LaunchError::new(LaunchErrorKind::GameData, "Install path missing"))?;
+        let app = ctx
+            .app
+            .as_ref()
+            .ok_or_else(|| LaunchError::new(LaunchErrorKind::Validation, "App context missing"))?;
+        let install_path = app
+            .install_path
+            .as_ref()
+            .ok_or_else(|| LaunchError::new(LaunchErrorKind::GameData, "Install path missing"))?;
 
         // Derive the executable path and its directory once; with launch info we
         // can be more precise about the exe dir than just the install root.
-        let executable = ctx.launch_info.as_ref().map(|info| info.executable.as_str());
+        let executable = ctx
+            .launch_info
+            .as_ref()
+            .map(|info| info.executable.as_str());
         let (exe_path, game_exe_dir) = exe_paths_from(install_path, executable);
 
-        let nvapi_enabled = ctx.user_config.as_ref()
+        let nvapi_enabled = ctx
+            .user_config
+            .as_ref()
             .map_or(true, |c| c.graphics_layers.nvapi_enabled);
 
         let resolver = DllProviderResolver::new();
@@ -43,7 +58,11 @@ impl PipelineStage for ResolveDllProvidersStage {
         // We need runner components. This implies ResolveComponentsStage must have run.
         // Actually, we can just detect them here or ensure ResolveComponentsStage provides them.
         let proton_path = ctx.proton_path.as_deref().unwrap_or("wine");
-        let library_root = ctx.launcher_config.as_ref().map(|c| PathBuf::from(&c.steam_library_path)).unwrap_or_default();
+        let library_root = ctx
+            .launcher_config
+            .as_ref()
+            .map(|c| PathBuf::from(&c.steam_library_path))
+            .unwrap_or_default();
         let resolved_runner = crate::core::utils::resolve_runner(proton_path, &library_root);
 
         // Resolve WINEPREFIX for component detection
@@ -57,18 +76,24 @@ impl PipelineStage for ResolveDllProvidersStage {
             None
         };
 
-        let components = crate::core::utils::detect_runner_components(&resolved_runner, wineprefix.as_deref());
-        let d3d12_policy = ctx.user_config.as_ref().map(|c| c.graphics_layers.d3d12_policy.clone()).unwrap_or_default();
+        let components =
+            crate::core::utils::detect_runner_components(&resolved_runner, wineprefix.as_deref());
+        let d3d12_policy = ctx
+            .user_config
+            .as_ref()
+            .map(|c| c.graphics_layers.d3d12_policy.clone())
+            .unwrap_or_default();
 
-        let (custom_dxvk, custom_vkd3d, custom_vkd3d_proton) = if let Some(config) = &ctx.user_config {
-            (
-                config.graphics_layers.custom_dxvk_path.as_deref(),
-                config.graphics_layers.custom_vkd3d_path.as_deref(),
-                config.graphics_layers.custom_vkd3d_proton_path.as_deref(),
-            )
-        } else {
-            (None, None, None)
-        };
+        let (custom_dxvk, custom_vkd3d, custom_vkd3d_proton) =
+            if let Some(config) = &ctx.user_config {
+                (
+                    config.graphics_layers.custom_dxvk_path.as_deref(),
+                    config.graphics_layers.custom_vkd3d_path.as_deref(),
+                    config.graphics_layers.custom_vkd3d_proton_path.as_deref(),
+                )
+            } else {
+                (None, None, None)
+            };
 
         // Detect architecture before resolution
         if exe_path.exists() {
@@ -78,9 +103,17 @@ impl PipelineStage for ResolveDllProvidersStage {
 
             let mut metadata = std::collections::HashMap::new();
             metadata.insert("exe_path".into(), exe_path.to_string_lossy().to_string());
-            metadata.insert("detected_arch".into(), format!("{:?}", ctx.target_architecture).to_lowercase());
+            metadata.insert(
+                "detected_arch".into(),
+                format!("{:?}", ctx.target_architecture).to_lowercase(),
+            );
             metadata.insert("detection_method".into(), "PE header".to_string());
-            ctx.log_info("arch_detected", "Target executable architecture determined".into(), Some("ResolveDllProviders".into()), metadata);
+            ctx.log_info(
+                "arch_detected",
+                "Target executable architecture determined".into(),
+                Some("ResolveDllProviders".into()),
+                metadata,
+            );
         }
 
         let (mut resolutions, scan_report) =
@@ -100,7 +133,8 @@ impl PipelineStage for ResolveDllProvidersStage {
                 if res.name.contains("nvapi") || res.name.contains("nvofapi") {
                     res.chosen_provider = crate::launch::dll_provider_resolver::DllProvider::None;
                     res.chosen_path = None;
-                    res.fallback_reason = Some("NVAPI is disabled in per-game settings".to_string());
+                    res.fallback_reason =
+                        Some("NVAPI is disabled in per-game settings".to_string());
                 }
             }
         }
@@ -116,12 +150,17 @@ impl PipelineStage for ResolveDllProvidersStage {
 
                 let has_capability = |name: &str| -> bool {
                     use crate::launch::dll_provider_resolver::DllProvider;
-                    ctx.dll_resolutions.iter()
+                    ctx.dll_resolutions
+                        .iter()
                         .find(|r| r.name == name)
-                        .is_some_and(|r| matches!(
-                            r.chosen_provider,
-                            DllProvider::Runner | DllProvider::GameLocal | DllProvider::Internal
-                        ))
+                        .is_some_and(|r| {
+                            matches!(
+                                r.chosen_provider,
+                                DllProvider::Runner
+                                    | DllProvider::GameLocal
+                                    | DllProvider::Internal
+                            )
+                        })
                 };
 
                 let has_dx11_dxgi = has_capability("d3d11") && has_capability("dxgi");
@@ -133,7 +172,8 @@ impl PipelineStage for ResolveDllProvidersStage {
                     missing_capabilities.push("DX11/DXGI (requires d3d11.dll and dxgi.dll)");
                 }
                 if !has_dx10_core {
-                    missing_capabilities.push("DX10/10.1 capability incomplete: missing d3d10core.dll");
+                    missing_capabilities
+                        .push("DX10/10.1 capability incomplete: missing d3d10core.dll");
                 } else if !has_dx11_dxgi {
                     missing_capabilities.push("DX10/10.1 support unavailable because d3d11.dll or dxgi.dll could not be resolved");
                 }
@@ -167,7 +207,13 @@ impl PipelineStage for ResolveDllProvidersStage {
         }
 
         if scan_report.warnings.is_empty() && scan_report.scan_roots.is_empty() {
-            ctx.log_event(crate::infra::logging::LogLevel::Warn, "zero_runner_roots", "Zero Runner roots derived from runner path".into(), Some("ResolveDllProviders".into()), std::collections::HashMap::new());
+            ctx.log_event(
+                crate::infra::logging::LogLevel::Warn,
+                "zero_runner_roots",
+                "Zero Runner roots derived from runner path".into(),
+                Some("ResolveDllProviders".into()),
+                std::collections::HashMap::new(),
+            );
         }
 
         // Build per-DLL metadata only when logging.
@@ -181,14 +227,31 @@ impl PipelineStage for ResolveDllProvidersStage {
 
             use crate::launch::dll_provider_resolver::DllProvider;
             let count_existing = |provider: DllProvider| {
-                res.candidates.iter().filter(|c| c.provider == provider && c.exists).count()
+                res.candidates
+                    .iter()
+                    .filter(|c| c.provider == provider && c.exists)
+                    .count()
             };
 
-            metadata.insert("count_gamelocal".into(), count_existing(DllProvider::GameLocal).to_string());
-            metadata.insert("count_runner".into(), count_existing(DllProvider::Runner).to_string());
-            metadata.insert("count_system".into(), count_existing(DllProvider::System).to_string());
+            metadata.insert(
+                "count_gamelocal".into(),
+                count_existing(DllProvider::GameLocal).to_string(),
+            );
+            metadata.insert(
+                "count_runner".into(),
+                count_existing(DllProvider::Runner).to_string(),
+            );
+            metadata.insert(
+                "count_system".into(),
+                count_existing(DllProvider::System).to_string(),
+            );
 
-            ctx.log_info("dll_resolved", format!("Resolved {} to {:?}", res.name, res.chosen_provider), Some("ResolveDllProviders".into()), metadata);
+            ctx.log_info(
+                "dll_resolved",
+                format!("Resolved {} to {:?}", res.name, res.chosen_provider),
+                Some("ResolveDllProviders".into()),
+                metadata,
+            );
         }
 
         Ok(())

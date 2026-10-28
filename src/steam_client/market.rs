@@ -9,7 +9,7 @@
 //! Public lookups (item price, market search) need no session and are free functions;
 //! account-scoped reads (inventory, wallet, my listings) are `SteamClient` methods.
 use super::*;
-use crate::web::web_session::{WebSession, ECON_IMAGE_BASE};
+use crate::web::web_session::{ECON_IMAGE_BASE, WebSession};
 use serde_json::Value;
 use std::sync::LazyLock;
 use steam_vent_proto::steammessages_auth_steamclient::{
@@ -192,7 +192,10 @@ pub async fn market_price(
     let resp = crate::core::net::send_with_retry(&client, request)
         .await
         .context("market price request failed")?;
-    let v: Value = resp.json().await.context("invalid price-overview response")?;
+    let v: Value = resp
+        .json()
+        .await
+        .context("invalid price-overview response")?;
     if v.get("success").and_then(Value::as_bool) != Some(true) {
         bail!(
             "no market data for '{market_hash_name}' (it may not be marketable, or the name/app id \
@@ -201,8 +204,14 @@ pub async fn market_price(
     }
     Ok(MarketPrice {
         market_hash_name: market_hash_name.to_string(),
-        lowest_price: v.get("lowest_price").and_then(Value::as_str).map(String::from),
-        median_price: v.get("median_price").and_then(Value::as_str).map(String::from),
+        lowest_price: v
+            .get("lowest_price")
+            .and_then(Value::as_str)
+            .map(String::from),
+        median_price: v
+            .get("median_price")
+            .and_then(Value::as_str)
+            .map(String::from),
         volume: v.get("volume").and_then(Value::as_str).map(String::from),
     })
 }
@@ -233,7 +242,10 @@ pub async fn market_search(
     let resp = crate::core::net::send_with_retry(&client, request)
         .await
         .context("market search request failed")?;
-    let v: Value = resp.json().await.context("invalid market-search response")?;
+    let v: Value = resp
+        .json()
+        .await
+        .context("invalid market-search response")?;
     let total = v.get("total_count").and_then(Value::as_u64).unwrap_or(0) as u32;
     let results = parse_json_array(&v, "results", parse_search_result);
     Ok((total, results))
@@ -251,27 +263,41 @@ fn parse_json_array<T>(v: &Value, key: &str, f: impl FnMut(&Value) -> Option<T>)
 fn parse_search_result(v: &Value) -> Option<MarketSearchResult> {
     Some(MarketSearchResult {
         name: v.get("name")?.as_str()?.to_string(),
-        market_hash_name: v.get("hash_name").and_then(Value::as_str).unwrap_or_default().to_string(),
+        market_hash_name: v
+            .get("hash_name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
         app_id: v
             .get("asset_description")
             .and_then(|a| a.get("appid"))
             .and_then(Value::as_u64)
             .unwrap_or(0) as u32,
-        app_name: v.get("app_name").and_then(Value::as_str).unwrap_or_default().to_string(),
+        app_name: v
+            .get("app_name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
         sell_listings: v.get("sell_listings").and_then(Value::as_u64).unwrap_or(0) as u32,
         sell_price: v.get("sell_price").and_then(Value::as_u64).unwrap_or(0),
-        sell_price_text: v.get("sell_price_text").and_then(Value::as_str).unwrap_or_default().to_string(),
+        sell_price_text: v
+            .get("sell_price_text")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
     })
 }
 
 /// Coerce a JSON value that may be a number or a numeric string into i64.
 fn as_i64_loose(v: &Value) -> Option<i64> {
-    v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+    v.as_i64()
+        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
 }
 
 /// Coerce a JSON value that may be a number or numeric string into u64.
 fn as_u64_loose(v: &Value) -> Option<u64> {
-    v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+    v.as_u64()
+        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
 }
 
 fn parse_inventory(body: &str) -> Result<Vec<InventoryItem>> {
@@ -281,7 +307,10 @@ fn parse_inventory(body: &str) -> Result<Vec<InventoryItem>> {
     )?;
     // An explicit failure (e.g. private inventory) comes back as success:0 + error.
     if v.get("success").and_then(Value::as_i64) == Some(0) {
-        let err = v.get("error").and_then(Value::as_str).unwrap_or("inventory unavailable");
+        let err = v
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("inventory unavailable");
         bail!("{err}");
     }
     let Some(assets) = v.get("assets").and_then(Value::as_array) else {
@@ -292,22 +321,49 @@ fn parse_inventory(body: &str) -> Result<Vec<InventoryItem>> {
     let mut descriptions: HashMap<(String, String), &Value> = HashMap::new();
     if let Some(arr) = v.get("descriptions").and_then(Value::as_array) {
         for d in arr {
-            let cid = d.get("classid").and_then(Value::as_str).unwrap_or_default().to_string();
-            let iid = d.get("instanceid").and_then(Value::as_str).unwrap_or("0").to_string();
+            let cid = d
+                .get("classid")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let iid = d
+                .get("instanceid")
+                .and_then(Value::as_str)
+                .unwrap_or("0")
+                .to_string();
             descriptions.insert((cid, iid), d);
         }
     }
 
     let mut items = Vec::with_capacity(assets.len());
     for a in assets {
-        let class_id = a.get("classid").and_then(Value::as_str).unwrap_or_default().to_string();
-        let instance_id = a.get("instanceid").and_then(Value::as_str).unwrap_or("0").to_string();
-        let asset_id = a.get("assetid").and_then(Value::as_str).unwrap_or_default().to_string();
+        let class_id = a
+            .get("classid")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let instance_id = a
+            .get("instanceid")
+            .and_then(Value::as_str)
+            .unwrap_or("0")
+            .to_string();
+        let asset_id = a
+            .get("assetid")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
         let amount = a.get("amount").and_then(as_u64_loose).unwrap_or(1);
 
         let desc = descriptions.get(&(class_id.clone(), instance_id));
-        let get = |k: &str| desc.and_then(|d| d.get(k).and_then(Value::as_str)).unwrap_or_default();
-        let flag = |k: &str| desc.and_then(|d| d.get(k).and_then(Value::as_i64)).unwrap_or(0) == 1;
+        let get = |k: &str| {
+            desc.and_then(|d| d.get(k).and_then(Value::as_str))
+                .unwrap_or_default()
+        };
+        let flag = |k: &str| {
+            desc.and_then(|d| d.get(k).and_then(Value::as_i64))
+                .unwrap_or(0)
+                == 1
+        };
         let icon = desc
             .and_then(|d| d.get("icon_url").and_then(Value::as_str))
             .filter(|s| !s.is_empty())
@@ -345,7 +401,10 @@ fn parse_my_listings(body: &str) -> Result<MyMarketState> {
     }
     let listings = parse_json_array(&v, "listings", parse_my_listing);
     let buy_orders = parse_json_array(&v, "buy_orders", parse_my_buy_order);
-    Ok(MyMarketState { listings, buy_orders })
+    Ok(MyMarketState {
+        listings,
+        buy_orders,
+    })
 }
 
 fn parse_my_listing(v: &Value) -> Option<MyListing> {
@@ -360,14 +419,22 @@ fn parse_my_listing(v: &Value) -> Option<MyListing> {
         .unwrap_or_default()
         .to_string();
     let price = v.get("price").and_then(as_u64_loose).unwrap_or(0);
-    Some(MyListing { listing_id, market_hash_name: name, price })
+    Some(MyListing {
+        listing_id,
+        market_hash_name: name,
+        price,
+    })
 }
 
 fn parse_my_buy_order(v: &Value) -> Option<MyBuyOrder> {
     let buy_order_id = v.get("buy_orderid")?.as_str()?.to_string();
     Some(MyBuyOrder {
         buy_order_id,
-        market_hash_name: v.get("hash_name").and_then(Value::as_str).unwrap_or_default().to_string(),
+        market_hash_name: v
+            .get("hash_name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
         price: v.get("price").and_then(as_u64_loose).unwrap_or(0),
         quantity: v.get("quantity").and_then(as_u64_loose).unwrap_or(0),
     })
@@ -381,12 +448,21 @@ fn parse_wallet(html: &str) -> Result<WalletBalance> {
         "could not read your wallet (no `g_rgWalletInfo` on the market page). Make sure you are \
          logged in and the account is market-eligible.",
     )?;
-    let json: Value =
-        serde_json::from_str(&caps[1]).context("failed to parse wallet info")?;
+    let json: Value = serde_json::from_str(&caps[1]).context("failed to parse wallet info")?;
 
-    let currency = json.get("wallet_currency").and_then(Value::as_u64).unwrap_or(0) as u32;
-    let country = json.get("wallet_country").and_then(Value::as_str).unwrap_or_default().to_string();
-    let balance_cents = json.get("wallet_balance").and_then(as_i64_loose).unwrap_or(0);
+    let currency = json
+        .get("wallet_currency")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as u32;
+    let country = json
+        .get("wallet_country")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let balance_cents = json
+        .get("wallet_balance")
+        .and_then(as_i64_loose)
+        .unwrap_or(0);
 
     Ok(WalletBalance {
         formatted: format_currency(balance_cents, currency),

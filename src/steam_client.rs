@@ -1,30 +1,32 @@
-use crate::library::cloud_sync::{default_cloud_root, CloudClient, CloudPathResolver, UfsSaveSpec};
-use crate::web::cm_list::get_cm_endpoints;
-use crate::core::utils::extract_quoted_values;
 use crate::core::config::{
     delete_session, library_cache_path, load_launcher_config, load_library_cache, load_session,
     save_library_cache, save_session,
 };
-use crate::library::depot_browser::{self, DepotInfo as BrowserDepotInfo, ManifestFileEntry};
 use crate::core::models::{
     DepotPlatform, DlcState, DownloadProgress, DownloadProgressState, LibraryGame,
     ManifestSelection, OwnedGame, QrEvent, SessionState, SteamGuardReq,
 };
-use anyhow::{anyhow, bail, Context, Result};
+use crate::core::utils::extract_quoted_values;
+use crate::library::cloud_sync::{CloudClient, CloudPathResolver, UfsSaveSpec, default_cloud_root};
+use crate::library::depot_browser::{self, DepotInfo as BrowserDepotInfo, ManifestFileEntry};
+use crate::web::cm_list::get_cm_endpoints;
+use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use protobuf::{Message, MessageField};
 use steam_vent::auth::{
     AuthConfirmationHandler, ConfirmationMethod, DeviceConfirmationHandler, FileGuardDataStore,
     UserProvidedAuthConfirmationHandler,
 };
 use steam_vent::connection::Connection;
+use steam_vent::{ConnectionError, ConnectionTrait, LoginError, ServerList};
 use steam_vent_proto::steammessages_clientserver::{
     CMsgClientGetAppOwnershipTicket, CMsgClientRequestEncryptedAppTicket,
 };
@@ -32,8 +34,11 @@ use steam_vent_proto::steammessages_clientserver_2::{
     CMsgClientGetDepotDecryptionKey, CMsgClientGetDepotDecryptionKeyResponse,
 };
 use steam_vent_proto::steammessages_clientserver_appinfo::{
-    cmsg_client_picsproduct_info_request, CMsgClientPICSProductInfoRequest,
-    CMsgClientPICSProductInfoResponse,
+    CMsgClientPICSProductInfoRequest, CMsgClientPICSProductInfoResponse,
+    cmsg_client_picsproduct_info_request,
+};
+use steam_vent_proto::steammessages_clientserver_userstats::{
+    CMsgClientGetUserStats, CMsgClientGetUserStatsResponse,
 };
 use steam_vent_proto::steammessages_contentsystem_steamclient::{
     CContentServerDirectory_GetCDNAuthToken_Request,
@@ -51,16 +56,11 @@ use steam_vent_proto::steammessages_player_steamclient::{
     CPlayer_GetGameAchievements_Request, CPlayer_GetGameAchievements_Response,
     CPlayer_GetOwnedGames_Request, CPlayer_GetOwnedGames_Response,
 };
-use steam_vent_proto::steammessages_clientserver_userstats::{
-    CMsgClientGetUserStats, CMsgClientGetUserStatsResponse,
-};
 use steam_vent_proto::steammessages_storebrowse_steamclient::{
     CStoreBrowse_GetItems_Request, CStoreBrowse_GetItems_Response, EStoreAppType,
     StoreBrowseContext, StoreBrowseItemDataRequest, StoreItem, StoreItemID,
 };
-use protobuf::{Message, MessageField};
-use steam_vent::{ConnectionError, ConnectionTrait, LoginError, ServerList};
-use tokio::io::{duplex, sink, AsyncWriteExt};
+use tokio::io::{AsyncWriteExt, duplex, sink};
 use tokio::sync::mpsc::Receiver;
 
 /// How long to wait for a single Steam CM connection/refresh-token logon before
@@ -108,19 +108,19 @@ async fn access_with_retry(
                 return Ok(connection);
             }
             // Retrying these only deepens a lockout.
-            Ok(Err(err @ ConnectionError::LoginError(
-                LoginError::RateLimited
-                | LoginError::InvalidCredentials
-                | LoginError::UnavailableAccount
-                | LoginError::InvalidSteamId,
-            ))) => {
+            Ok(Err(
+                err @ ConnectionError::LoginError(
+                    LoginError::RateLimited
+                    | LoginError::InvalidCredentials
+                    | LoginError::UnavailableAccount
+                    | LoginError::InvalidSteamId,
+                ),
+            )) => {
                 tracing::warn!("CM logon rejected: {err}; not retrying");
                 return Err(anyhow::Error::new(err).context("refresh token login failed"));
             }
             Ok(Err(err)) => {
-                tracing::warn!(
-                    "CM connect attempt {attempt}/{CM_CONNECT_ATTEMPTS} failed: {err}"
-                );
+                tracing::warn!("CM connect attempt {attempt}/{CM_CONNECT_ATTEMPTS} failed: {err}");
                 last_err = Some(anyhow::Error::new(err));
             }
             Err(_) => {
@@ -137,9 +137,8 @@ async fn access_with_retry(
         }
     }
 
-    Err(last_err
-        .unwrap_or_else(|| anyhow!("failed to connect to any Steam CM server")))
-    .context("refresh token login failed")
+    Err(last_err.unwrap_or_else(|| anyhow!("failed to connect to any Steam CM server")))
+        .context("refresh token login failed")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -447,14 +446,14 @@ pub struct ConfirmationPrompt {
 pub struct AccountData {
     pub steam_id: u64,
     pub account_name: String,
-    /// Public persona 
+    /// Public persona
     pub persona_name: Option<String>,
     pub country: String,      // GeoIP Country
     pub authed_machines: u32, // Steam Guard count
     pub flags: u32,           // Account Flags
     pub email: String,
     pub email_validated: bool,
-    pub vac_bans: u32,        // Num VAC bans
+    pub vac_bans: u32, // Num VAC bans
     pub vac_banned_apps: Vec<u32>,
 }
 
@@ -489,26 +488,26 @@ pub struct SteamClient {
 }
 
 // SteamClient methods are implemented across these submodules.
-mod client;
 mod chat;
+mod client;
 mod friends;
-mod market;
 mod install;
+mod market;
 pub use install::InstallOptions;
-mod manage;
 mod content;
-mod library;
 mod launch;
-pub use launch::{launch_targets, select_launch_entry, LaunchTargetChoice};
-mod manifests;
-mod process;
-mod workshop;
-mod workshop_manifest;
+mod library;
+mod manage;
+pub use launch::{LaunchTargetChoice, launch_targets, select_launch_entry};
 mod cloudconfig;
 mod collections;
+mod manifests;
+mod process;
+mod storequery;
 mod tags;
 pub mod tags_table;
-mod storequery;
+mod workshop;
+mod workshop_manifest;
 pub use storequery::{DealsScope, QueryPage};
 mod events;
 pub use events::StoreEvent;
@@ -524,8 +523,8 @@ pub mod genres_table;
 pub use collections::RemoteNamespace;
 pub use friends::{AddedFriend, Friend, Roster};
 pub use market::{
-    inventory_via, market_price, market_search, my_listings_via, wallet_via, InventoryItem,
-    MarketPrice, MarketSearchResult, MyMarketState, WalletBalance,
+    InventoryItem, MarketPrice, MarketSearchResult, MyMarketState, WalletBalance, inventory_via,
+    market_price, market_search, my_listings_via, wallet_via,
 };
 
 /// Terminate the process with `pid` and any children it spawned.
@@ -619,7 +618,11 @@ pub fn sanitize_install_dir(name: &str) -> String {
         .collect();
     let sanitized = sanitized.trim().to_string();
     // Dot-only or empty names escape common/.
-    if crate::core::utils::is_safe_dir_name(&sanitized) { sanitized } else { "_".to_string() }
+    if crate::core::utils::is_safe_dir_name(&sanitized) {
+        sanitized
+    } else {
+        "_".to_string()
+    }
 }
 
 /// Steam wraps the entire VDF in a top-level key that is the numeric app ID.
@@ -806,9 +809,10 @@ fn store_item_to_app_info(item: &StoreItem, country: &str) -> StoreAppInfo {
     let option = item.best_purchase_option.as_ref();
     let (price, discount_pct) = match option {
         _ if item.is_free() => (Some("Free".to_string()), 0),
-        Some(p) if !p.formatted_final_price().is_empty() => {
-            (Some(p.formatted_final_price().to_string()), p.discount_pct())
-        }
+        Some(p) if !p.formatted_final_price().is_empty() => (
+            Some(p.formatted_final_price().to_string()),
+            p.discount_pct(),
+        ),
         _ => (None, 0),
     };
     let priced = option.filter(|_| !item.is_free() && price.is_some());
@@ -820,7 +824,12 @@ fn store_item_to_app_info(item: &StoreItem, country: &str) -> StoreAppInfo {
         .map(|p| p.formatted_original_price().to_string())
         .filter(|s| !s.is_empty() && original_price_cents.is_some());
     let discount_end = priced
-        .and_then(|p| p.active_discounts.iter().map(|d| d.discount_end_date()).max())
+        .and_then(|p| {
+            p.active_discounts
+                .iter()
+                .map(|d| d.discount_end_date())
+                .max()
+        })
         .filter(|&t| t > 0)
         .map(u64::from);
 
@@ -848,7 +857,9 @@ fn store_item_to_app_info(item: &StoreItem, country: &str) -> StoreAppInfo {
         app_type: store_app_type_label(item.type_()),
         is_free: item.is_free(),
         is_early_access: item.is_early_access(),
-        short_description: basic.map(|b| b.short_description().to_string()).unwrap_or_default(),
+        short_description: basic
+            .map(|b| b.short_description().to_string())
+            .unwrap_or_default(),
         full_description: crate::web::store::strip_html(item.full_description()),
         developers: basic
             .map(|b| creator_names(&b.developers))
@@ -872,7 +883,11 @@ fn store_item_to_app_info(item: &StoreItem, country: &str) -> StoreAppInfo {
         original_price_cents,
         discount_end,
         region_locked: item.unvailable_for_country_restriction(),
-        purchase_options: item.purchase_options.iter().map(purchase_option_summary).collect(),
+        purchase_options: item
+            .purchase_options
+            .iter()
+            .map(purchase_option_summary)
+            .collect(),
         tags: store_tags(item),
         rating: store_rating(item),
         links: store_links(item),
@@ -957,7 +972,11 @@ fn asset_url(fmt: &str, filename: &str) -> Option<String> {
 }
 
 fn store_screenshots(item: &StoreItem) -> Vec<String> {
-    let fmt = item.assets.as_ref().map(|a| a.asset_url_format()).unwrap_or("");
+    let fmt = item
+        .assets
+        .as_ref()
+        .map(|a| a.asset_url_format())
+        .unwrap_or("");
     let Some(shots) = item.screenshots.as_ref() else {
         return Vec::new();
     };
@@ -1034,7 +1053,8 @@ fn store_assets(item: &StoreItem) -> StoreAppAssets {
             ))
         }
     };
-    let cdn = |file: &str| format!("https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/{file}");
+    let cdn =
+        |file: &str| format!("https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/{file}");
     let pick = |native: Option<String>, fallback: &str| native.or_else(|| Some(cdn(fallback)));
 
     StoreAppAssets {
@@ -1104,9 +1124,7 @@ pub fn parse_appinfo(vdf: &str) -> Result<crate::core::models::AppInfoRoot> {
     // Fall back to envelope parse
     let envelope: AppInfoEnvelope =
         keyvalues_serde::from_str(vdf).context("failed parsing appinfo VDF (envelope)")?;
-    envelope
-        .into_inner()
-        .context("appinfo envelope was empty")
+    envelope.into_inner().context("appinfo envelope was empty")
 }
 
 /// Steam store category IDs that denote *online* multiplayer (as opposed to
@@ -1149,7 +1167,8 @@ async fn update_libraryfolders_for(from_lib: &Path, to_lib: &Path, appid: u32, i
         return;
     };
     let size = crate::library::relocate::dir_size(install_dir);
-    match crate::library::relocate::update_libraryfolders_apps(&text, appid, from_lib, to_lib, size) {
+    match crate::library::relocate::update_libraryfolders_apps(&text, appid, from_lib, to_lib, size)
+    {
         Some(updated) => {
             if let Err(e) = std::fs::write(&vdf_path, updated) {
                 tracing::warn!("could not write libraryfolders.vdf: {e}");
@@ -1209,16 +1228,13 @@ fn parse_achievement_schema_inner(schema: &[u8]) -> HashMap<String, (u32, u32)> 
         return map;
     };
     // `stats` is directly under the appid-keyed root (or one level deeper).
-    let stats = root
-        .get("stats")
-        .and_then(|v| v.as_obj())
-        .or_else(|| {
-            root.values()
-                .next()
-                .and_then(|v| v.as_obj())
-                .and_then(|o| o.get("stats"))
-                .and_then(|v| v.as_obj())
-        });
+    let stats = root.get("stats").and_then(|v| v.as_obj()).or_else(|| {
+        root.values()
+            .next()
+            .and_then(|v| v.as_obj())
+            .and_then(|o| o.get("stats"))
+            .and_then(|v| v.as_obj())
+    });
     let Some(stats) = stats else {
         return map;
     };
@@ -1255,7 +1271,11 @@ fn parse_achievement_schema_inner(schema: &[u8]) -> HashMap<String, (u32, u32)> 
 pub(crate) fn platform_depot_rows<'a, 'text>(
     depots: &'a steam_vdf_parser::Obj<'text>,
     platform: DepotPlatform,
-) -> Vec<(u32, &'a steam_vdf_parser::Obj<'text>, Option<&'a steam_vdf_parser::Obj<'text>>)> {
+) -> Vec<(
+    u32,
+    &'a steam_vdf_parser::Obj<'text>,
+    Option<&'a steam_vdf_parser::Obj<'text>>,
+)> {
     let mut rows = Vec::new();
     for (key, value) in depots.iter() {
         // Only numeric keys are depots.
@@ -1346,8 +1366,8 @@ fn parse_product_info_envelope(vdf: &str) -> Result<ProductInfoEnvelope> {
     if let Ok(parsed) = keyvalues_serde::from_str::<ProductInfoEnvelope>(vdf) {
         return Ok(parsed);
     }
-    let wrapper: ProductInfoEnvelopeWrapper = keyvalues_serde::from_str(vdf)
-        .context("failed parsing product info VDF (wrapper)")?;
+    let wrapper: ProductInfoEnvelopeWrapper =
+        keyvalues_serde::from_str(vdf).context("failed parsing product info VDF (wrapper)")?;
     wrapper
         .into_inner()
         .context("product info envelope was empty")
@@ -1440,7 +1460,10 @@ fn parse_launch_info_from_vdf(appid: u32, raw_vdf: &str) -> Result<Vec<LaunchInf
 
 /// Whether the buffer is text VDF.
 fn pics_buffer_is_text(buffer: &[u8]) -> bool {
-    buffer.first().map(|&b| b == 0x22 || b == 0x7B).unwrap_or(false)
+    buffer
+        .first()
+        .map(|&b| b == 0x22 || b == 0x7B)
+        .unwrap_or(false)
 }
 
 pub fn find_vdf_in_pics(buffer: &[u8]) -> Result<steam_vdf_parser::Vdf<'static>> {
@@ -1482,7 +1505,10 @@ pub(crate) fn pics_app_section<'a, 'text>(
     if has_sections(root) {
         return root;
     }
-    if let Some(inner) = root.as_obj().and_then(|o| o.values().find(|v| has_sections(v))) {
+    if let Some(inner) = root
+        .as_obj()
+        .and_then(|o| o.values().find(|v| has_sections(v)))
+    {
         return inner;
     }
     root
@@ -1501,7 +1527,10 @@ pub(crate) fn download_aborted(
 }
 
 /// Send a terminal `Failed` progress message.
-pub(crate) async fn emit_failed(tx: &tokio::sync::mpsc::Sender<DownloadProgress>, msg: impl Into<String>) {
+pub(crate) async fn emit_failed(
+    tx: &tokio::sync::mpsc::Sender<DownloadProgress>,
+    msg: impl Into<String>,
+) {
     let _ = tx
         .send(DownloadProgress {
             state: DownloadProgressState::Failed,
@@ -1550,8 +1579,16 @@ pub(crate) async fn run_depot_loop(
     hosts: &[String],
     opts: &DepotLoopOpts,
 ) -> Option<Vec<(u32, u64, u64)>> {
-    let verb = if opts.verify_mode { "Verifying" } else { "Downloading" };
-    let fail_verb = if opts.verify_mode { "download/verify" } else { "download" };
+    let verb = if opts.verify_mode {
+        "Verifying"
+    } else {
+        "Downloading"
+    };
+    let fail_verb = if opts.verify_mode {
+        "download/verify"
+    } else {
+        "download"
+    };
     let mut successful_depots = Vec::new();
     for selection in selections {
         tracing::info!(
@@ -1609,7 +1646,11 @@ pub(crate) async fn run_depot_loop(
                     .await;
                     return None;
                 }
-                tracing::warn!("Skipping Depot {} (No Key/Not Owned): {}", selection.depot_id, e);
+                tracing::warn!(
+                    "Skipping Depot {} (No Key/Not Owned): {}",
+                    selection.depot_id,
+                    e
+                );
                 continue;
             }
         };
@@ -1658,12 +1699,18 @@ pub(crate) async fn run_depot_loop(
 }
 
 /// Send the initial `Queued` progress message.
-pub(crate) async fn emit_queued(tx: &tokio::sync::mpsc::Sender<DownloadProgress>, msg: impl Into<String>) {
+pub(crate) async fn emit_queued(
+    tx: &tokio::sync::mpsc::Sender<DownloadProgress>,
+    msg: impl Into<String>,
+) {
     let _ = tx.send(DownloadProgress::queued(msg)).await;
 }
 
 /// Send a terminal `Completed` progress message.
-pub(crate) async fn emit_completed(tx: &tokio::sync::mpsc::Sender<DownloadProgress>, msg: impl Into<String>) {
+pub(crate) async fn emit_completed(
+    tx: &tokio::sync::mpsc::Sender<DownloadProgress>,
+    msg: impl Into<String>,
+) {
     let _ = tx.send(DownloadProgress::completed(msg)).await;
 }
 
@@ -1689,8 +1736,15 @@ pub(crate) fn spawn_progress_reporter(
                 )),
                 Err(_) => None,
             };
-            let Some((downloading, downloaded, total, status, depot_id, depot_downloaded, depot_total)) =
-                snapshot
+            let Some((
+                downloading,
+                downloaded,
+                total,
+                status,
+                depot_id,
+                depot_downloaded,
+                depot_total,
+            )) = snapshot
             else {
                 break;
             };
@@ -2051,7 +2105,6 @@ fn parse_active_branch_from_acf(raw: &str) -> String {
     crate::core::acf::parse_app_manifest(raw).active_branch
 }
 
-
 fn rewrite_app_branch(raw: &str, branch: &str) -> String {
     let mut out = Vec::new();
     let mut in_user_config = false;
@@ -2110,8 +2163,6 @@ fn split_args(args: &str) -> Vec<String> {
     args.split_whitespace().map(ToString::to_string).collect()
 }
 
-
-
 /// One-app PICS `ProductInfo` buffer request.
 pub(crate) async fn pics_app_buffer(
     connection: &Connection,
@@ -2155,7 +2206,11 @@ impl SteamClient {
     }
 
     /// [`pics_app_buffer`] against this client's live connection.
-    pub(crate) async fn pics_buffer(&self, appid: u32, job_context: &'static str) -> Result<Vec<u8>> {
+    pub(crate) async fn pics_buffer(
+        &self,
+        appid: u32,
+        job_context: &'static str,
+    ) -> Result<Vec<u8>> {
         pics_app_buffer(self.require_connection()?, appid, job_context).await
     }
 
@@ -2178,10 +2233,7 @@ impl SteamClient {
         }
 
         // Try ldconfig as fallback
-        if let Ok(output) = std::process::Command::new("ldconfig")
-            .args(["-p"])
-            .output()
-        {
+        if let Ok(output) = std::process::Command::new("ldconfig").args(["-p"]).output() {
             let text = String::from_utf8_lossy(&output.stdout);
             for line in text.lines() {
                 if line.contains("libMangoHud") {

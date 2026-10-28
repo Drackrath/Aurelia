@@ -8,7 +8,7 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 
 use super::transport::{self, Listener};
-use super::{proto, Header};
+use super::{Header, proto};
 use crate::output::{OutChunk, OutputCtx, Stream};
 
 /// Number of forwarded commands currently running, so the upgrade watcher only
@@ -90,8 +90,9 @@ pub async fn run_server() -> Result<()> {
             return Ok(());
         }
         Err(e) => {
-            return Err(e)
-                .with_context(|| format!("failed to bind daemon endpoint {}", transport::endpoint()));
+            return Err(e).with_context(|| {
+                format!("failed to bind daemon endpoint {}", transport::endpoint())
+            });
         }
     };
     tracing::info!("aurelia daemon listening on {}", transport::endpoint());
@@ -228,7 +229,10 @@ fn output_relay(
                     RelayStream::Stdout => Stream::Stdout,
                     RelayStream::Stderr => Stream::Stderr,
                 };
-                let _ = tx.send(OutChunk { stream, bytes: bytes.to_vec() });
+                let _ = tx.send(OutChunk {
+                    stream,
+                    bytes: bytes.to_vec(),
+                });
             }
         }),
     )
@@ -260,8 +264,8 @@ where
     // (and thus `writer_task`) alive.
     let relay = output_relay(&argv, &out_tx);
     // Held until this request ends (including the disconnect early return).
-    let _daemon_watch = watches_daemon(&argv)
-        .then(|| aurelia::infra::logging::relay::watch_daemon(relay.clone()));
+    let _daemon_watch =
+        watches_daemon(&argv).then(|| aurelia::infra::logging::relay::watch_daemon(relay.clone()));
 
     // Run the command with IO routed to this connection. Dropping `ctx` when the
     // scope ends closes `out_tx`, which ends `writer_task`.

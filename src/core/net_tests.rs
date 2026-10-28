@@ -1,6 +1,6 @@
 use super::*;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[test]
@@ -41,9 +41,7 @@ async fn serve(responses: Vec<String>) -> (String, Arc<AtomicUsize>) {
 }
 
 fn response(status: &str, extra_headers: &str) -> String {
-    format!(
-        "HTTP/1.1 {status}\r\n{extra_headers}Content-Length: 2\r\nConnection: close\r\n\r\nok"
-    )
+    format!("HTTP/1.1 {status}\r\n{extra_headers}Content-Length: 2\r\nConnection: close\r\n\r\nok")
 }
 
 fn client() -> reqwest::Client {
@@ -78,8 +76,11 @@ async fn bare_429_fails_fast_as_rate_limited() {
 
 #[tokio::test]
 async fn long_retry_after_is_reported_not_slept() {
-    let (url, hits) =
-        serve(vec![response("429 Too Many Requests", "Retry-After: 120\r\n")]).await;
+    let (url, hits) = serve(vec![response(
+        "429 Too Many Requests",
+        "Retry-After: 120\r\n",
+    )])
+    .await;
     let c = client();
     let err = send_with_retry(&c, c.get(&url)).await.unwrap_err();
     let classified = crate::core::error::classify(&err);

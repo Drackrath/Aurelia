@@ -6,13 +6,13 @@
 //! sets and expects the Steam Linux Runtime container.
 
 use aurelia::core::utils::{
-    build_runner_command, find_steam_exe_in_prefix, resolve_runner_opt,
-    resolve_steam_runtime_wine, steam_runtime_runner_unset_msg,
+    build_runner_command, find_steam_exe_in_prefix, resolve_runner_opt, resolve_steam_runtime_wine,
+    steam_runtime_runner_unset_msg,
 };
 use aurelia::launch::is_valid_setup_exe;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tempfile::{tempdir, TempDir};
+use tempfile::{TempDir, tempdir};
 
 /// Build a Proton tree shaped like GE-Proton9-20: a `proton` launch script at the
 /// root plus a bundled bare wine under `files/bin/`.
@@ -96,7 +96,9 @@ fn proton_script_passed_directly_still_unwraps_to_bare_wine() {
 #[test]
 fn empty_runner_name_is_rejected() {
     let (_tmp, lib) = library();
-    let err = resolve_steam_runtime_wine("", &lib).unwrap_err().to_string();
+    let err = resolve_steam_runtime_wine("", &lib)
+        .unwrap_err()
+        .to_string();
     assert!(
         err.contains("No Steam Runtime Runner selected"),
         "unexpected error: {err}"
@@ -110,8 +112,13 @@ fn unknown_runner_name_reports_what_it_looked_for() {
     // machine's Steam compatibilitytools.d, so a plausible name like "GE-Proton9-20"
     // would resolve on a dev box that happens to have it installed.
     let missing = "aurelia-nonexistent-runner-9x7";
-    let err = resolve_steam_runtime_wine(missing, &lib).unwrap_err().to_string();
-    assert!(err.contains("could not be found"), "unexpected error: {err}");
+    let err = resolve_steam_runtime_wine(missing, &lib)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("could not be found"),
+        "unexpected error: {err}"
+    );
     assert!(err.contains(missing), "unexpected error: {err}");
 }
 
@@ -253,7 +260,10 @@ fn quiet_resolver_finds_installed_runner() {
 fn quiet_resolver_returns_none_for_unknown_runner() {
     let (_tmp, lib) = library();
     // Bogus name so a system-installed GE-Proton on the dev box can't satisfy it.
-    assert_eq!(resolve_runner_opt("aurelia-nonexistent-runner-9x7", &lib), None);
+    assert_eq!(
+        resolve_runner_opt("aurelia-nonexistent-runner-9x7", &lib),
+        None
+    );
 }
 
 /// The quiet resolver matches fuzzily just like resolve_runner, so a config-setter probe

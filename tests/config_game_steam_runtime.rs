@@ -9,7 +9,7 @@
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
-use tempfile::{tempdir, TempDir};
+use tempfile::{TempDir, tempdir};
 
 fn aurelia(config_dir: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_aurelia"))
@@ -41,14 +41,20 @@ fn sandbox() -> TempDir {
 #[test]
 fn enabling_writes_a_complete_valid_user_apps_entry() {
     let tmp = sandbox();
-    let o = aurelia(tmp.path(), &["config", "game", "570", "--steam-runtime", "on"]);
+    let o = aurelia(
+        tmp.path(),
+        &["config", "game", "570", "--steam-runtime", "on"],
+    );
     assert!(o.status.success(), "{}", out(&o));
     assert!(out(&o).contains("Steam runtime: on"), "{}", out(&o));
 
     let json = fs::read_to_string(tmp.path().join("user_apps.json")).unwrap();
     // The whole point: the setter writes a full entry, not a partial one that would fail
     // to parse. Round-tripping it back through the CLI must succeed.
-    assert!(json.contains("\"steam_runtime_policy\": \"Enabled\""), "{json}");
+    assert!(
+        json.contains("\"steam_runtime_policy\": \"Enabled\""),
+        "{json}"
+    );
     assert!(json.contains("\"launch_options\""), "{json}"); // a non-defaulted field is present
     let view = aurelia(tmp.path(), &["config", "game", "570"]);
     assert!(view.status.success(), "{}", out(&view));
@@ -69,10 +75,20 @@ fn prefix_mode_round_trips() {
 #[test]
 fn off_and_auto_are_distinct() {
     let tmp = sandbox();
-    assert!(out(&aurelia(tmp.path(), &["config", "game", "570", "--steam-runtime", "off"]))
-        .contains("Steam runtime: off"));
-    assert!(out(&aurelia(tmp.path(), &["config", "game", "570", "--steam-runtime", "auto"]))
-        .contains("Steam runtime: auto"));
+    assert!(
+        out(&aurelia(
+            tmp.path(),
+            &["config", "game", "570", "--steam-runtime", "off"]
+        ))
+        .contains("Steam runtime: off")
+    );
+    assert!(
+        out(&aurelia(
+            tmp.path(),
+            &["config", "game", "570", "--steam-runtime", "auto"]
+        ))
+        .contains("Steam runtime: auto")
+    );
 }
 
 /// The load-hardening half: a corrupt user_apps.json must fail loudly, not silently reset
@@ -99,7 +115,10 @@ fn setter_refuses_to_overwrite_a_corrupt_file() {
     let corrupt = r#"{ "570": { bad json } }"#;
     fs::write(tmp.path().join("user_apps.json"), corrupt).unwrap();
 
-    let o = aurelia(tmp.path(), &["config", "game", "570", "--steam-runtime", "on"]);
+    let o = aurelia(
+        tmp.path(),
+        &["config", "game", "570", "--steam-runtime", "on"],
+    );
     assert!(!o.status.success(), "{}", out(&o));
     assert_eq!(
         fs::read_to_string(tmp.path().join("user_apps.json")).unwrap(),

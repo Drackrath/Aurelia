@@ -43,7 +43,9 @@ struct PluginRelease {
 
 /// The plugin's extraction directory.
 pub(crate) fn plugin_dir(spec: &PluginSpec) -> Result<PathBuf> {
-    Ok(crate::core::config::config_dir()?.join("plugins").join(spec.id))
+    Ok(crate::core::config::config_dir()?
+        .join("plugins")
+        .join(spec.id))
 }
 
 /// Path of the file we stamp with the installed release tag.
@@ -119,7 +121,10 @@ async fn latest_release(spec: &PluginSpec) -> Result<PluginRelease> {
         .with_context(|| format!("failed requesting the {} latest release", spec.display))?
         .error_for_status()
         .with_context(|| {
-            format!("{} returned an error for the {} latest release", spec.host, spec.display)
+            format!(
+                "{} returned an error for the {} latest release",
+                spec.host, spec.display
+            )
         })?
         .json()
         .await

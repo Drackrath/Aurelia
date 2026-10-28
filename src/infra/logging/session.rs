@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LaunchSessionId(String);
@@ -209,7 +209,11 @@ impl LaunchSession {
 
     /// Serialize `value` as pretty JSON and write it to `path`, ensuring the
     /// session log directory exists first. Shared by all JSON artifact writers.
-    fn write_json_artifact<T: serde::Serialize + ?Sized>(&self, path: &Path, value: &T) -> anyhow::Result<()> {
+    fn write_json_artifact<T: serde::Serialize + ?Sized>(
+        &self,
+        path: &Path,
+        value: &T,
+    ) -> anyhow::Result<()> {
         std::fs::create_dir_all(&self.log_dir)?;
         let content = serde_json::to_string_pretty(value)?;
         std::fs::write(path, content)?;
@@ -240,7 +244,10 @@ impl LaunchSession {
         Ok(())
     }
 
-    pub fn write_command_artifact(&self, spec: &crate::infra::runners::CommandSpec) -> anyhow::Result<()> {
+    pub fn write_command_artifact(
+        &self,
+        spec: &crate::infra::runners::CommandSpec,
+    ) -> anyhow::Result<()> {
         std::fs::create_dir_all(&self.log_dir)?;
         let mut content = format!("Program: {}\n", spec.program.display());
         content.push_str(&format!("Args   : {}\n", spec.args.join(" ")));
@@ -255,11 +262,17 @@ impl LaunchSession {
         self.write_json_artifact(&self.preflight_report_path(), report)
     }
 
-    pub fn write_dll_resolution_artifact(&self, resolutions: &[crate::launch::dll_provider_resolver::DllResolution]) -> anyhow::Result<()> {
+    pub fn write_dll_resolution_artifact(
+        &self,
+        resolutions: &[crate::launch::dll_provider_resolver::DllResolution],
+    ) -> anyhow::Result<()> {
         self.write_json_artifact(&self.log_dir.join("dll_resolution.json"), resolutions)
     }
 
-    pub fn write_effective_launch_config(&self, config: &EffectiveLaunchConfig) -> anyhow::Result<()> {
+    pub fn write_effective_launch_config(
+        &self,
+        config: &EffectiveLaunchConfig,
+    ) -> anyhow::Result<()> {
         self.write_json_artifact(&self.log_dir.join("effective_launch_config.json"), config)
     }
 }
@@ -294,8 +307,10 @@ pub fn check_environment_sanity(
         let d3d_dlls = ["d3d9", "d3d11", "dxgi", "d3d12"];
         let is_baseline = user_config
             .map(|c| {
-                c.graphics_layers.graphics_backend_policy != crate::core::models::GraphicsBackendPolicy::DXVK
-                    && c.graphics_layers.d3d12_policy == crate::core::models::D3D12ProviderPolicy::Auto
+                c.graphics_layers.graphics_backend_policy
+                    != crate::core::models::GraphicsBackendPolicy::DXVK
+                    && c.graphics_layers.d3d12_policy
+                        == crate::core::models::D3D12ProviderPolicy::Auto
                     && !c.graphics_layers.dxvk_enabled
                     && !c.graphics_layers.vkd3d_proton_enabled
                     && !c.graphics_layers.vkd3d_enabled
@@ -332,7 +347,12 @@ pub fn check_environment_sanity(
                 ));
             }
             if let Some(overrides) = env_vars.get("WINEDLLOVERRIDES") {
-                if !overrides.contains("d3d11=n") && !overrides.contains("dxgi=n") && !overrides.contains("d3d9=n") && !overrides.contains("d3d8=n") && !overrides.contains("d3d10core=n") {
+                if !overrides.contains("d3d11=n")
+                    && !overrides.contains("dxgi=n")
+                    && !overrides.contains("d3d9=n")
+                    && !overrides.contains("d3d8=n")
+                    && !overrides.contains("d3d10core=n")
+                {
                     warnings.push(sanity_warning(
                         "SANITY_MISSING_DXVK_OVERRIDE",
                         "DXVK is enabled but WINEDLLOVERRIDES does not appear to contain native overrides for D3D11/DXGI/D3D9/D3D8/D3D10CORE.".to_string(),
@@ -342,7 +362,8 @@ pub fn check_environment_sanity(
             } else {
                 warnings.push(sanity_warning(
                     "SANITY_MISSING_OVERRIDES_ENV",
-                    "DXVK is enabled but WINEDLLOVERRIDES environment variable is missing.".to_string(),
+                    "DXVK is enabled but WINEDLLOVERRIDES environment variable is missing."
+                        .to_string(),
                     [],
                 ));
             }
@@ -369,7 +390,9 @@ pub fn check_environment_sanity(
     }
 
     // 3. Proton specific checks
-    if runner_name.to_lowercase().contains("proton") && !env_vars.contains_key("STEAM_COMPAT_DATA_PATH") {
+    if runner_name.to_lowercase().contains("proton")
+        && !env_vars.contains_key("STEAM_COMPAT_DATA_PATH")
+    {
         warnings.push(sanity_warning(
             "SANITY_MISSING_PROTON_DATA_PATH",
             "Proton runner detected but STEAM_COMPAT_DATA_PATH is missing.".to_string(),

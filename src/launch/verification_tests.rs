@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use tempfile::tempdir;
 
-use crate::launch::pipeline::{PipelineContext, LaunchPipeline, LaunchError, LaunchErrorKind};
-use crate::infra::logging::{LaunchSession, EventLogger};
-use crate::infra::runners::{Runner, CommandSpec, LaunchContext};
+use crate::infra::logging::{EventLogger, LaunchSession};
+use crate::infra::runners::{CommandSpec, LaunchContext, Runner};
+use crate::launch::pipeline::{LaunchError, LaunchErrorKind, LaunchPipeline, PipelineContext};
 
 struct MockRunner {
     exit_immediately: bool,
@@ -16,13 +16,19 @@ struct MockRunner {
 /// with the `tempdir` guard (kept alive so the session dir is not removed).
 fn setup(exit_immediately: bool) -> (LaunchPipeline, PipelineContext, tempfile::TempDir) {
     let mut pipeline = LaunchPipeline::new();
-    pipeline.add_stage(Box::new(crate::launch::stages::spawn_process::SpawnProcessStage));
+    pipeline.add_stage(Box::new(
+        crate::launch::stages::spawn_process::SpawnProcessStage,
+    ));
 
     let tmp = tempdir().unwrap();
     let session = LaunchSession::new(tmp.path());
     let logger = EventLogger::new(&session).unwrap();
 
-    let cmd = if exit_immediately { "exit 0" } else { "sleep 10" };
+    let cmd = if exit_immediately {
+        "exit 0"
+    } else {
+        "sleep 10"
+    };
     let mut ctx = PipelineContext::new(123);
     ctx.logger = Some(logger);
     ctx.session = Some(session);
@@ -43,10 +49,21 @@ fn summary_content(ctx: &PipelineContext) -> String {
 
 #[async_trait]
 impl Runner for MockRunner {
-    fn name(&self) -> &str { "MockRunner" }
-    async fn prepare_prefix(&self, _ctx: &LaunchContext) -> Result<(), LaunchError> { Ok(()) }
-    async fn build_env(&self, _ctx: &LaunchContext) -> Result<HashMap<String, String>, LaunchError> { Ok(HashMap::new()) }
-    async fn build_command(&self, _ctx: &LaunchContext) -> Result<CommandSpec, LaunchError> { Ok(CommandSpec::default()) }
+    fn name(&self) -> &str {
+        "MockRunner"
+    }
+    async fn prepare_prefix(&self, _ctx: &LaunchContext) -> Result<(), LaunchError> {
+        Ok(())
+    }
+    async fn build_env(
+        &self,
+        _ctx: &LaunchContext,
+    ) -> Result<HashMap<String, String>, LaunchError> {
+        Ok(HashMap::new())
+    }
+    async fn build_command(&self, _ctx: &LaunchContext) -> Result<CommandSpec, LaunchError> {
+        Ok(CommandSpec::default())
+    }
     fn launch(&self, _spec: &CommandSpec) -> Result<Child, LaunchError> {
         let cmd = if self.exit_immediately {
             "exit 0"
@@ -62,7 +79,6 @@ impl Runner for MockRunner {
             .map_err(|e| LaunchError::new(LaunchErrorKind::Process, e.to_string()))
     }
 }
-
 
 #[tokio::test]
 async fn test_launch_verification_early_exit() {
@@ -107,7 +123,7 @@ async fn test_launch_verification_success() {
 #[cfg(unix)]
 #[tokio::test]
 async fn test_background_steam_signal_then_exit_within_grace_is_early_exit() {
-    use crate::infra::runners::wine_tkg::{reclassify_after_grace, ReadinessGrace};
+    use crate::infra::runners::wine_tkg::{ReadinessGrace, reclassify_after_grace};
 
     // Stand-in for Steam: writes its "readiness" artifact, stays alive briefly,
     // then crashes with a non-zero code — all within the grace window.
@@ -135,7 +151,7 @@ async fn test_background_steam_signal_then_exit_within_grace_is_early_exit() {
 #[cfg(unix)]
 #[tokio::test]
 async fn test_background_steam_alive_after_grace_is_ready() {
-    use crate::infra::runners::wine_tkg::{reclassify_after_grace, ReadinessGrace};
+    use crate::infra::runners::wine_tkg::{ReadinessGrace, reclassify_after_grace};
 
     let mut child = std::process::Command::new("sh")
         .arg("-c")

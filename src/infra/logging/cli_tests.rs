@@ -64,7 +64,10 @@ async fn daemon_watchers_get_daemon_events_only_while_watching() {
     tracing::info!("after-unwatch");
 
     let out = String::from_utf8_lossy(&seen.lock().unwrap()).into_owned();
-    assert!(out.contains("[daemon] ") && out.contains("daemon-debug"), "{out}");
+    assert!(
+        out.contains("[daemon] ") && out.contains("daemon-debug"),
+        "{out}"
+    );
     assert!(!out.contains("daemon-trace"), "{out}");
     assert_eq!(out.matches("request-info").count(), 1, "{out}");
     assert!(!out.contains("after-unwatch"), "{out}");

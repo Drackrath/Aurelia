@@ -1,4 +1,4 @@
-use super::super::{current_build_id, DaemonInfo};
+use super::super::{DaemonInfo, current_build_id};
 use super::daemon_needs_restart;
 
 fn info(version: &str) -> DaemonInfo {

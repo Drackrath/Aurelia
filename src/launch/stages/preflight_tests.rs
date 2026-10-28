@@ -1,7 +1,7 @@
 use super::*;
 use crate::infra::runners::CommandSpec;
-use tempfile::tempdir;
 use std::fs;
+use tempfile::tempdir;
 
 #[tokio::test]
 async fn test_preflight_missing_exe() {
@@ -48,7 +48,10 @@ async fn test_preflight_missing_prefix() {
     let mut ctx = PipelineContext::new(123);
     let mut spec = CommandSpec::default();
     spec.program = exe;
-    spec.env.insert("WINEPREFIX".to_string(), tmp.path().join("missing_pfx").to_string_lossy().to_string());
+    spec.env.insert(
+        "WINEPREFIX".to_string(),
+        tmp.path().join("missing_pfx").to_string_lossy().to_string(),
+    );
     ctx.command_spec = Some(spec);
 
     let stage = PreflightStage;
@@ -104,7 +107,11 @@ async fn test_preflight_umu_run_allowed() {
     let stage = PreflightStage;
     let res = stage.execute(&mut ctx).await;
 
-    assert!(res.is_ok(), "resolved umu-run should pass preflight: {:?}", res.err());
+    assert!(
+        res.is_ok(),
+        "resolved umu-run should pass preflight: {:?}",
+        res.err()
+    );
 }
 
 #[tokio::test]
@@ -124,9 +131,9 @@ async fn test_preflight_bogus_relative_runner_fails() {
 #[tokio::test]
 #[cfg(unix)]
 async fn test_preflight_native_game_self_heals_exec_bit() {
-    use std::os::unix::fs::PermissionsExt;
     use crate::core::models::LibraryGame;
     use crate::steam_client::{LaunchInfo, LaunchTarget};
+    use std::os::unix::fs::PermissionsExt;
 
     let tmp = tempdir().unwrap();
     let exe = tmp.path().join("Game.AppImage");
@@ -223,7 +230,11 @@ async fn test_preflight_native_ignores_path_like_argument() {
     let stage = PreflightStage;
     let res = stage.execute(&mut ctx).await;
 
-    assert!(res.is_ok(), "native args must not be treated as exe: {:?}", res.err());
+    assert!(
+        res.is_ok(),
+        "native args must not be treated as exe: {:?}",
+        res.err()
+    );
     assert_eq!(ctx.resolved_executable_path, Some(exe));
     assert!(ctx.executable_exists);
 }

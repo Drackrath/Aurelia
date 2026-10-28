@@ -8,8 +8,7 @@ fn temp_dir() -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let d = std::env::temp_dir()
-        .join(format!("aurelia_workshop_test_{}_{n}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("aurelia_workshop_test_{}_{n}", std::process::id()));
     fs::create_dir_all(&d).unwrap();
     d
 }
@@ -38,12 +37,18 @@ fn round_trip_two_items() {
     let items = read_workshop_manifest(&path).unwrap();
     assert_eq!(items.len(), 2, "expected 2 items after two upserts");
 
-    let found_a = items.iter().find(|i| i.published_file_id == 111_000).unwrap();
+    let found_a = items
+        .iter()
+        .find(|i| i.published_file_id == 111_000)
+        .unwrap();
     assert_eq!(found_a.manifest_id, item_a.manifest_id);
     assert_eq!(found_a.size, item_a.size);
     assert_eq!(found_a.time_updated, item_a.time_updated);
 
-    let found_b = items.iter().find(|i| i.published_file_id == 222_000).unwrap();
+    let found_b = items
+        .iter()
+        .find(|i| i.published_file_id == 222_000)
+        .unwrap();
     assert_eq!(found_b.manifest_id, item_b.manifest_id);
     assert_eq!(found_b.size, item_b.size);
     assert_eq!(found_b.time_updated, item_b.time_updated);

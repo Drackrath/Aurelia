@@ -37,8 +37,7 @@ fn empty_input_is_rejected() {
 
 #[test]
 fn duplicate_depot_is_rejected() {
-    let err =
-        parse_manifest_overrides(&[10], &["10:111".into(), "222".into()]).unwrap_err();
+    let err = parse_manifest_overrides(&[10], &["10:111".into(), "222".into()]).unwrap_err();
     assert!(err.to_string().contains("more than once"), "got: {err}");
 }
 

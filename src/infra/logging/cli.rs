@@ -49,9 +49,9 @@ pub fn init_cli_logging(verbosity: u8) {
 /// command into that request's stderr, filtered by the *requester's* `-v` count —
 /// so `aurelia play -vv` shows the same logs whether or not a daemon ran it.
 pub fn init_daemon_logging(verbosity: u8) {
+    use tracing_subscriber::Layer;
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
-    use tracing_subscriber::Layer;
 
     let own = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)
@@ -107,7 +107,10 @@ where
     (0..=MAX_VERBOSITY)
         .map(|level| {
             tracing_subscriber::fmt::layer()
-                .with_writer(super::relay::DaemonWatchWriter { level, max: MAX_VERBOSITY })
+                .with_writer(super::relay::DaemonWatchWriter {
+                    level,
+                    max: MAX_VERBOSITY,
+                })
                 .with_ansi(false)
                 .with_target(level >= 2)
                 .log_internal_errors(false)
@@ -151,7 +154,11 @@ impl<S> tracing_subscriber::layer::Filter<S> for RelayFilter {
             _ => false,
         };
         in_scope
-            && <EnvFilter as tracing_subscriber::layer::Filter<S>>::enabled(&self.directives, meta, cx)
+            && <EnvFilter as tracing_subscriber::layer::Filter<S>>::enabled(
+                &self.directives,
+                meta,
+                cx,
+            )
     }
 
     // Whether an event is relayed depends on the task it fires in, so never let a

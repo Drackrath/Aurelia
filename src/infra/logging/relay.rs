@@ -171,7 +171,9 @@ pub(super) fn has_daemon_watcher(level: u8, max: u8) -> bool {
 
 /// Send daemon output to every watcher, or only those at `level` when given.
 fn broadcast(stream: RelayStream, bytes: &[u8], level: Option<(u8, u8)>) {
-    let Ok(watchers) = WATCHERS.lock() else { return };
+    let Ok(watchers) = WATCHERS.lock() else {
+        return;
+    };
     let mut line = DAEMON_PREFIX.to_vec();
     line.extend_from_slice(bytes);
     for (_, relay) in watchers.iter() {

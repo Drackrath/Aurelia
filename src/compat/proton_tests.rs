@@ -75,7 +75,10 @@ fn cachyos_assets() -> Vec<GhAsset> {
 #[test]
 fn host_microarch_is_a_known_value() {
     let m = host_cachyos_microarch();
-    assert!(m == "x86_64" || m == "x86_64_v3", "unexpected microarch: {m}");
+    assert!(
+        m == "x86_64" || m == "x86_64_v3",
+        "unexpected microarch: {m}"
+    );
 }
 
 #[test]
@@ -143,14 +146,18 @@ fn non_microarch_source_keeps_plain_label() {
 
 /// GE-Proton 11 ships an ARM64 tarball beside the x86_64 one, and it sorts first.
 fn ge_arm_and_x86_assets() -> Vec<GhAsset> {
-    ["GE-Proton11-11-aarch64.tar.gz", "GE-Proton11-11.tar.gz", "GE-Proton11-11.sha512sum"]
-        .iter()
-        .map(|name| GhAsset {
-            name: name.to_string(),
-            browser_download_url: format!("http://x/{name}"),
-            size: 1,
-        })
-        .collect()
+    [
+        "GE-Proton11-11-aarch64.tar.gz",
+        "GE-Proton11-11.tar.gz",
+        "GE-Proton11-11.sha512sum",
+    ]
+    .iter()
+    .map(|name| GhAsset {
+        name: name.to_string(),
+        browser_download_url: format!("http://x/{name}"),
+        size: 1,
+    })
+    .collect()
 }
 
 #[test]
@@ -224,7 +231,9 @@ fn plain_tar_is_extracted() {
     header.set_size(1);
     header.set_mode(0o755);
     header.set_cksum();
-    builder.append_data(&mut header, "umu/umu-run", &b"x"[..]).unwrap();
+    builder
+        .append_data(&mut header, "umu/umu-run", &b"x"[..])
+        .unwrap();
     builder.finish().unwrap();
     drop(builder);
     let out = tmp.path().join("out");

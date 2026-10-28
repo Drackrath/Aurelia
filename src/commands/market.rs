@@ -51,7 +51,12 @@ pub(crate) async fn cmd_wallet(json: bool) -> Result<()> {
 }
 
 /// `aurelia market price <appid> <name>`: look up an item's price (no login needed).
-pub(crate) async fn cmd_market_price(app_id: u32, name: String, currency: u32, json: bool) -> Result<()> {
+pub(crate) async fn cmd_market_price(
+    app_id: u32,
+    name: String,
+    currency: u32,
+    json: bool,
+) -> Result<()> {
     let price = aurelia::steam_client::market_price(app_id, &name, currency).await?;
     if json {
         print_json(&serde_json::json!({
@@ -64,7 +69,10 @@ pub(crate) async fn cmd_market_price(app_id: u32, name: String, currency: u32, j
         cli_println!("Item   : {}", price.market_hash_name);
         cli_println!("Lowest : {}", price.lowest_price.as_deref().unwrap_or("—"));
         cli_println!("Median : {}", price.median_price.as_deref().unwrap_or("—"));
-        cli_println!("Volume : {} sold in 24h", price.volume.as_deref().unwrap_or("0"));
+        cli_println!(
+            "Volume : {} sold in 24h",
+            price.volume.as_deref().unwrap_or("0")
+        );
     }
     Ok(())
 }
@@ -115,7 +123,12 @@ pub(crate) async fn cmd_market_listings(json: bool) -> Result<()> {
     if !state.listings.is_empty() {
         cli_println!("Active listings:");
         for l in &state.listings {
-            cli_println!("  [{}] {} — {} (minor units)", l.listing_id, l.market_hash_name, l.price);
+            cli_println!(
+                "  [{}] {} — {} (minor units)",
+                l.listing_id,
+                l.market_hash_name,
+                l.price
+            );
         }
     }
     if !state.buy_orders.is_empty() {

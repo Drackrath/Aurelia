@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use clap::CommandFactory;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use aurelia::core::error::{ErrorKind, TypedError};
 
@@ -70,7 +70,11 @@ pub(crate) fn command_detail(path: &[String]) -> Result<Value> {
             .find(|c| c.get_name() == name || c.get_all_aliases().any(|a| a == name))
         else {
             let known: Vec<&str> = visible.iter().map(|c| c.get_name()).collect();
-            let at = if depth == 0 { "aurelia".to_string() } else { path[..depth].join(" ") };
+            let at = if depth == 0 {
+                "aurelia".to_string()
+            } else {
+                path[..depth].join(" ")
+            };
             let hint = if known.is_empty() {
                 format!("`{at}` has no subcommands")
             } else {
@@ -130,7 +134,12 @@ pub(crate) fn command_detail(path: &[String]) -> Result<Value> {
     let subcommands: Map<String, Value> = cmd
         .get_subcommands()
         .filter(|c| !c.is_hide_set())
-        .map(|c| (c.get_name().to_string(), c.get_about().map(ToString::to_string).into()))
+        .map(|c| {
+            (
+                c.get_name().to_string(),
+                c.get_about().map(ToString::to_string).into(),
+            )
+        })
         .collect();
     Ok(json!({
         "command": path.join(" "),
@@ -150,8 +159,14 @@ pub(crate) fn render_detail(detail: &Value, width: usize) -> String {
         _ => String::new(),
     };
     let fields = [
-        ("Command", detail["command"].as_str().unwrap_or_default().to_string()),
-        ("About", detail["about"].as_str().unwrap_or_default().to_string()),
+        (
+            "Command",
+            detail["command"].as_str().unwrap_or_default().to_string(),
+        ),
+        (
+            "About",
+            detail["about"].as_str().unwrap_or_default().to_string(),
+        ),
         ("Args", names("args")),
         ("Subcommands", names("subcommands")),
     ];
@@ -168,7 +183,11 @@ pub(crate) fn render_detail(detail: &Value, width: usize) -> String {
                 let text = |k: &str| f[k].as_str().unwrap_or_default().to_string();
                 let values = f["values"].as_array().filter(|v| !v.is_empty());
                 let value = match values {
-                    Some(v) => v.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("|"),
+                    Some(v) => v
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join("|"),
                     None => text("value"),
                 };
                 [text("long"), text("short"), value, text("help")]
@@ -184,20 +203,44 @@ pub(crate) fn render_detail(detail: &Value, width: usize) -> String {
 /// Left-aligned `Format-Table`; last column wraps.
 fn table(head: &[&str; 4], rows: &[[String; 4]], width: usize) -> String {
     let w: Vec<usize> = (0..3)
-        .map(|i| rows.iter().map(|r| r[i].len()).max().unwrap_or(0).max(head[i].len()))
+        .map(|i| {
+            rows.iter()
+                .map(|r| r[i].len())
+                .max()
+                .unwrap_or(0)
+                .max(head[i].len())
+        })
         .collect();
     let lead = w.iter().sum::<usize>() + 3;
     let room = width.saturating_sub(lead).max(20);
     let line = |c: [&str; 4]| {
-        format!("{:<a$} {:<b$} {:<c$} {}", c[0], c[1], c[2], c[3], a = w[0], b = w[1], c = w[2])
-            .trim_end()
-            .to_string()
+        format!(
+            "{:<a$} {:<b$} {:<c$} {}",
+            c[0],
+            c[1],
+            c[2],
+            c[3],
+            a = w[0],
+            b = w[1],
+            c = w[2]
+        )
+        .trim_end()
+        .to_string()
     };
     let rule = head.map(|h| "-".repeat(h.len()));
-    let mut out = format!("{}\n{}\n", line(*head), line([&rule[0], &rule[1], &rule[2], &rule[3]]));
+    let mut out = format!(
+        "{}\n{}\n",
+        line(*head),
+        line([&rule[0], &rule[1], &rule[2], &rule[3]])
+    );
     for r in rows {
         let mut help = wrap_words(&r[3], room).into_iter();
-        out.push_str(&line([&r[0], &r[1], &r[2], &help.next().unwrap_or_default()]));
+        out.push_str(&line([
+            &r[0],
+            &r[1],
+            &r[2],
+            &help.next().unwrap_or_default(),
+        ]));
         out.push('\n');
         for more in help {
             out.push_str(&format!("{}{more}\n", " ".repeat(lead)));
@@ -259,7 +302,9 @@ pub(crate) fn render_report(report: &Value, width: usize) -> String {
         out.push_str(&wrap_field(&format!("{label:<pad$} : "), &value, width));
     }
     out.push_str("\n");
-    out.push_str(&error_table(report["errors"].as_array().map_or(&[][..], Vec::as_slice)));
+    out.push_str(&error_table(
+        report["errors"].as_array().map_or(&[][..], Vec::as_slice),
+    ));
     out.push_str("\n");
     out
 }
@@ -302,7 +347,12 @@ fn error_table(errors: &[Value]) -> String {
             )
         })
         .collect();
-    let tw = rows.iter().map(|r| r.0.len()).max().unwrap_or(0).max("Type".len());
+    let tw = rows
+        .iter()
+        .map(|r| r.0.len())
+        .max()
+        .unwrap_or(0)
+        .max("Type".len());
     let cw = "ExitCode".len();
     let mut out = format!("{:<tw$} {:>cw$} Hint\n", "Type", "ExitCode");
     out.push_str(&format!("{:<tw$} {:>cw$} ----\n", "----", "--------"));

@@ -51,8 +51,8 @@ impl SteamClient {
 
     /// Send a direct chat message to a friend (by SteamID64).
     pub async fn send_chat_message(&self, target: u64, message: String) -> Result<SentMessage> {
-        let target = SteamID::try_from(target)
-            .map_err(|_| anyhow!("invalid target SteamID: {target}"))?;
+        let target =
+            SteamID::try_from(target).map_err(|_| anyhow!("invalid target SteamID: {target}"))?;
         let result = self
             .chat_client()?
             .send_message(target, message)

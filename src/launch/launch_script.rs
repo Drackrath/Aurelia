@@ -96,7 +96,11 @@ pub fn resolve(
 /// semantics and the exported `AURELIA_*` env vars, with commented examples and a
 /// final passthrough (`exec "$@"` on unix; `%AURELIA_LAUNCH_PROGRAM% %*` on Windows).
 pub fn template(app_id: u32, name: &str) -> String {
-    let name = if name.trim().is_empty() { "Unknown Game" } else { name };
+    let name = if name.trim().is_empty() {
+        "Unknown Game"
+    } else {
+        name
+    };
 
     #[cfg(not(windows))]
     {
@@ -179,7 +183,12 @@ pub fn list_script_app_ids(config: Option<&LauncherConfig>) -> Vec<u32> {
 
     if let Some(cfg) = config {
         for (id, gc) in &cfg.game_configs {
-            if gc.launch_script.as_ref().filter(|s| !s.is_empty()).is_some() {
+            if gc
+                .launch_script
+                .as_ref()
+                .filter(|s| !s.is_empty())
+                .is_some()
+            {
                 ids.insert(*id);
             }
         }

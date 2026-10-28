@@ -2,7 +2,10 @@ use super::*;
 
 #[test]
 fn ignores_tooling_by_app_id() {
-    assert!(is_ignored_steam_app(228980, "Steamworks Common Redistributables"));
+    assert!(is_ignored_steam_app(
+        228980,
+        "Steamworks Common Redistributables"
+    ));
     assert!(is_ignored_steam_app(1628350, "")); // Steam Linux Runtime 3.0
     assert!(is_ignored_steam_app(1493710, "Proton Experimental"));
 }
@@ -98,7 +101,8 @@ fn parses_legacy_flat_library_folders() {
 
 #[test]
 fn unescapes_windows_library_paths() {
-    let vdf = "\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\t\"D:\\\\SteamLibrary\"\n\t}\n}\n";
+    let vdf =
+        "\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\t\"D:\\\\SteamLibrary\"\n\t}\n}\n";
     assert_eq!(
         library_folder_paths(vdf),
         vec![PathBuf::from(r"D:\SteamLibrary")]
@@ -114,7 +118,10 @@ fn skips_empty_and_malformed_entries() {
 #[cfg(not(target_os = "windows"))]
 #[test]
 fn decodes_octal_escapes_in_mount_points() {
-    assert_eq!(unescape_mount_target("/media/user/disk"), "/media/user/disk");
+    assert_eq!(
+        unescape_mount_target("/media/user/disk"),
+        "/media/user/disk"
+    );
     assert_eq!(
         unescape_mount_target("/media/user/My\\040Disk"),
         "/media/user/My Disk"
@@ -192,8 +199,16 @@ fn live_copy_is_the_most_recently_updated() {
     // The bug this replaces: whichever library sorted last won, so a stale copy
     // on an external drive shadowed a fresh install and the game reported an
     // available update forever.
-    let stale = copy_at("/run/media/vol/SteamLibrary/common/G", 1_781_182_506, 23_651_528);
-    let fresh = copy_at("/home/u/.local/share/Steam/common/G", 1_786_492_022, 24_486_608);
+    let stale = copy_at(
+        "/run/media/vol/SteamLibrary/common/G",
+        1_781_182_506,
+        23_651_528,
+    );
+    let fresh = copy_at(
+        "/home/u/.local/share/Steam/common/G",
+        1_786_492_022,
+        24_486_608,
+    );
 
     // Stable whichever order they are scanned in.
     for copies in [
@@ -209,13 +224,19 @@ fn live_copy_is_the_most_recently_updated() {
 fn build_id_breaks_a_last_updated_tie() {
     let older = copy_at("/a", 1_786_492_022, 23_000_000);
     let newer = copy_at("/b", 1_786_492_022, 24_486_608);
-    assert_eq!(pick_live_copy(vec![older, newer]).unwrap().install_path, PathBuf::from("/b"));
+    assert_eq!(
+        pick_live_copy(vec![older, newer]).unwrap().install_path,
+        PathBuf::from("/b")
+    );
 }
 
 #[test]
 fn a_single_copy_is_returned_unchanged() {
     let only = copy_at("/only", 0, 0);
-    assert_eq!(pick_live_copy(vec![only]).unwrap().install_path, PathBuf::from("/only"));
+    assert_eq!(
+        pick_live_copy(vec![only]).unwrap().install_path,
+        PathBuf::from("/only")
+    );
     assert!(pick_live_copy(vec![]).is_none());
 }
 
@@ -233,8 +254,7 @@ async fn symlinked_steam_roots_collapse_to_one_library() {
     std::os::unix::fs::symlink(&real, &link_root).unwrap();
     std::os::unix::fs::symlink(&real, &link_steam).unwrap();
 
-    let libraries =
-        expand_library_roots(&[link_root, link_steam, real.clone()]).await;
+    let libraries = expand_library_roots(&[link_root, link_steam, real.clone()]).await;
 
     let canonical_real = std::fs::canonicalize(&real).unwrap();
     assert_eq!(

@@ -1,6 +1,6 @@
-use std::path::{Path, PathBuf};
+use crate::launch::pipeline::{LaunchError, LaunchErrorKind, PipelineContext, PipelineStage};
 use async_trait::async_trait;
-use crate::launch::pipeline::{PipelineStage, PipelineContext, LaunchError, LaunchErrorKind};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct PreflightCheck {
@@ -48,11 +48,17 @@ fn native_game_binary(ctx: &PipelineContext, program: &Path) -> bool {
 
 #[async_trait]
 impl PipelineStage for PreflightStage {
-    fn name(&self) -> &str { "Preflight" }
+    fn name(&self) -> &str {
+        "Preflight"
+    }
 
     async fn execute(&self, ctx: &mut PipelineContext) -> std::result::Result<(), LaunchError> {
-        let spec = ctx.command_spec.as_ref()
-            .ok_or_else(|| LaunchError::new(LaunchErrorKind::Validation, "[Preflight] Command specification missing"))?;
+        let spec = ctx.command_spec.as_ref().ok_or_else(|| {
+            LaunchError::new(
+                LaunchErrorKind::Validation,
+                "[Preflight] Command specification missing",
+            )
+        })?;
 
         let mut checks = Vec::new();
         let runner_path = spec.program.to_string_lossy().to_string();
@@ -63,7 +69,11 @@ impl PipelineStage for PreflightStage {
         // the absolute plugin-resolved `umu-run` path, so the normal existence check
         // applies to it just like any other runner.
         let runner_file = &spec.program;
-        let mut check = PreflightCheck { name: "Runner Existence".into(), status: true, details: "OK".into() };
+        let mut check = PreflightCheck {
+            name: "Runner Existence".into(),
+            status: true,
+            details: "OK".into(),
+        };
         if !runner_file.exists() {
             check.status = false;
             check.details = format!("Runner binary not found: {}", runner_file.display());
@@ -86,9 +96,17 @@ impl PipelineStage for PreflightStage {
                 }
                 ctx.resolved_executable_path = Some(spec.program.clone());
                 ctx.executable_exists = true;
-                checks.push(PreflightCheck { name: "Game Executable Existence".into(), status: true, details: "OK".into() });
+                checks.push(PreflightCheck {
+                    name: "Game Executable Existence".into(),
+                    status: true,
+                    details: "OK".into(),
+                });
             } else if let Some(game_exe) = spec.args.first() {
-                let mut check = PreflightCheck { name: "Game Executable Existence".into(), status: true, details: "OK".into() };
+                let mut check = PreflightCheck {
+                    name: "Game Executable Existence".into(),
+                    status: true,
+                    details: "OK".into(),
+                };
                 let game_exe_path = Path::new(game_exe);
 
                 // Populate diagnostics in context
@@ -100,42 +118,56 @@ impl PipelineStage for PreflightStage {
                 let looks_like_path = game_exe_path.is_absolute()
                     || (game_exe_path.components().count() > 1 && !game_exe.starts_with('-'));
                 if looks_like_path {
-                     if !game_exe_path.exists() {
-                         let fallback_path = ctx.app.as_ref()
-                             .and_then(|app| app.install_path.as_ref())
-                             .map(|install_path| Path::new(install_path).join(game_exe.replace('\\', "/")))
-                             .filter(|alt_path| alt_path.exists() && alt_path.is_file());
-                         let fallback_used = fallback_path.is_some();
+                    if !game_exe_path.exists() {
+                        let fallback_path = ctx
+                            .app
+                            .as_ref()
+                            .and_then(|app| app.install_path.as_ref())
+                            .map(|install_path| {
+                                Path::new(install_path).join(game_exe.replace('\\', "/"))
+                            })
+                            .filter(|alt_path| alt_path.exists() && alt_path.is_file());
+                        let fallback_used = fallback_path.is_some();
 
-                         ctx.executable_exists = fallback_used;
-                         if !fallback_used {
-                             check.status = false;
-                             check.details = format!("Game executable not found: {}", game_exe);
+                        ctx.executable_exists = fallback_used;
+                        if !fallback_used {
+                            check.status = false;
+                            check.details = format!("Game executable not found: {}", game_exe);
 
-                             let mut err = preflight_error(LaunchErrorKind::GameData, &check.details)
-                                .with_context("app_id", ctx.app_id.to_string())
-                                .with_context("app_name", ctx.app.as_ref().map(|a| a.name.clone()).unwrap_or_default())
-                                .with_context("game_exe", game_exe.to_string())
-                                .with_context("resolved_path", game_exe_path.to_string_lossy())
-                                .with_context("fallback_used", fallback_used.to_string());
+                            let mut err =
+                                preflight_error(LaunchErrorKind::GameData, &check.details)
+                                    .with_context("app_id", ctx.app_id.to_string())
+                                    .with_context(
+                                        "app_name",
+                                        ctx.app
+                                            .as_ref()
+                                            .map(|a| a.name.clone())
+                                            .unwrap_or_default(),
+                                    )
+                                    .with_context("game_exe", game_exe.to_string())
+                                    .with_context("resolved_path", game_exe_path.to_string_lossy())
+                                    .with_context("fallback_used", fallback_used.to_string());
 
-                             if let Some(app) = &ctx.app {
-                                 err = err.with_context("steam_install_dir", app.install_path.clone().unwrap_or_default());
-                             }
+                            if let Some(app) = &ctx.app {
+                                err = err.with_context(
+                                    "steam_install_dir",
+                                    app.install_path.clone().unwrap_or_default(),
+                                );
+                            }
 
-                             final_res = Err(err);
-                         } else {
-                             ctx.resolved_executable_path = fallback_path;
-                         }
-                     } else if !game_exe_path.is_file() {
-                          check.status = false;
-                          check.details = format!("Game executable is not a file: {}", game_exe);
-                          ctx.executable_exists = false;
-                          final_res = Err(preflight_error(LaunchErrorKind::GameData, &check.details)
+                            final_res = Err(err);
+                        } else {
+                            ctx.resolved_executable_path = fallback_path;
+                        }
+                    } else if !game_exe_path.is_file() {
+                        check.status = false;
+                        check.details = format!("Game executable is not a file: {}", game_exe);
+                        ctx.executable_exists = false;
+                        final_res = Err(preflight_error(LaunchErrorKind::GameData, &check.details)
                             .with_context("game_exe", game_exe.to_string()));
-                     } else {
-                         ctx.executable_exists = true;
-                     }
+                    } else {
+                        ctx.executable_exists = true;
+                    }
                 }
                 checks.push(check);
             }
@@ -144,17 +176,26 @@ impl PipelineStage for PreflightStage {
         // 3. Verify working directory
         if final_res.is_ok() {
             if let Some(cwd) = &spec.cwd {
-                let mut check = PreflightCheck { name: "Working Directory".into(), status: true, details: "OK".into() };
+                let mut check = PreflightCheck {
+                    name: "Working Directory".into(),
+                    status: true,
+                    details: "OK".into(),
+                };
                 if !cwd.exists() {
                     check.status = false;
                     check.details = format!("Working directory does not exist: {}", cwd.display());
-                    final_res = Err(preflight_error(LaunchErrorKind::Environment, &check.details)
-                        .with_context("cwd", cwd.to_string_lossy()));
+                    final_res = Err(
+                        preflight_error(LaunchErrorKind::Environment, &check.details)
+                            .with_context("cwd", cwd.to_string_lossy()),
+                    );
                 } else if !cwd.is_dir() {
                     check.status = false;
-                    check.details = format!("Working directory is not a directory: {}", cwd.display());
-                    final_res = Err(preflight_error(LaunchErrorKind::Environment, &check.details)
-                        .with_context("cwd", cwd.to_string_lossy()));
+                    check.details =
+                        format!("Working directory is not a directory: {}", cwd.display());
+                    final_res = Err(
+                        preflight_error(LaunchErrorKind::Environment, &check.details)
+                            .with_context("cwd", cwd.to_string_lossy()),
+                    );
                 }
                 checks.push(check);
             }
@@ -163,18 +204,26 @@ impl PipelineStage for PreflightStage {
         // 4. Verify WINEPREFIX
         if final_res.is_ok() {
             if let Some(prefix) = spec.env.get("WINEPREFIX") {
-                let mut check = PreflightCheck { name: "WINEPREFIX Existence".into(), status: true, details: "OK".into() };
+                let mut check = PreflightCheck {
+                    name: "WINEPREFIX Existence".into(),
+                    status: true,
+                    details: "OK".into(),
+                };
                 let prefix_path = Path::new(prefix);
                 if !prefix_path.exists() {
                     check.status = false;
                     check.details = format!("WINEPREFIX does not exist: {}", prefix);
-                    final_res = Err(preflight_error(LaunchErrorKind::Environment, &check.details)
-                        .with_context("wineprefix", prefix));
+                    final_res = Err(
+                        preflight_error(LaunchErrorKind::Environment, &check.details)
+                            .with_context("wineprefix", prefix),
+                    );
                 } else if !prefix_path.is_dir() {
                     check.status = false;
                     check.details = format!("WINEPREFIX is not a directory: {}", prefix);
-                    final_res = Err(preflight_error(LaunchErrorKind::Environment, &check.details)
-                        .with_context("wineprefix", prefix));
+                    final_res = Err(
+                        preflight_error(LaunchErrorKind::Environment, &check.details)
+                            .with_context("wineprefix", prefix),
+                    );
                 }
                 checks.push(check);
             }
@@ -184,7 +233,11 @@ impl PipelineStage for PreflightStage {
         #[cfg(unix)]
         if final_res.is_ok() {
             use std::os::unix::fs::PermissionsExt;
-            let mut check = PreflightCheck { name: "Runner Executability".into(), status: true, details: "OK".into() };
+            let mut check = PreflightCheck {
+                name: "Runner Executability".into(),
+                status: true,
+                details: "OK".into(),
+            };
             if let Ok(metadata) = std::fs::metadata(runner_file) {
                 if metadata.is_file() && metadata.permissions().mode() & 0o111 == 0 {
                     // Native launches self-heal missing exec bit.
@@ -193,7 +246,10 @@ impl PipelineStage for PreflightStage {
                         permissions.set_mode(permissions.mode() | 0o755);
                         match std::fs::set_permissions(runner_file, permissions) {
                             Ok(()) => {
-                                check.details = format!("Added executable permission: {}", runner_file.display());
+                                check.details = format!(
+                                    "Added executable permission: {}",
+                                    runner_file.display()
+                                );
                             }
                             Err(e) => {
                                 check.status = false;
@@ -202,15 +258,20 @@ impl PipelineStage for PreflightStage {
                                     e,
                                     runner_file.display()
                                 );
-                                final_res = Err(preflight_error(LaunchErrorKind::Permission, &check.details)
-                                    .with_context("runner_path", runner_path.clone()));
+                                final_res = Err(preflight_error(
+                                    LaunchErrorKind::Permission,
+                                    &check.details,
+                                )
+                                .with_context("runner_path", runner_path.clone()));
                             }
                         }
                     } else {
                         check.status = false;
-                        check.details = format!("Runner binary is not executable: {}", runner_file.display());
-                        final_res = Err(preflight_error(LaunchErrorKind::Permission, &check.details)
-                            .with_context("runner_path", runner_path.clone()));
+                        check.details =
+                            format!("Runner binary is not executable: {}", runner_file.display());
+                        final_res =
+                            Err(preflight_error(LaunchErrorKind::Permission, &check.details)
+                                .with_context("runner_path", runner_path.clone()));
                     }
                 }
             }
@@ -231,11 +292,22 @@ impl PipelineStage for PreflightStage {
         // 6. Architecture Hint & Context
         let mut metadata = std::collections::HashMap::new();
         metadata.insert("runner_path".to_string(), report.runner_path.clone());
-        metadata.insert("target_architecture".to_string(), format!("{:?}", report.target_architecture).to_lowercase());
+        metadata.insert(
+            "target_architecture".to_string(),
+            format!("{:?}", report.target_architecture).to_lowercase(),
+        );
         metadata.insert("success".to_string(), report.success.to_string());
 
-        let event_type = if report.success { "preflight_success" } else { "preflight_failure" };
-        let message = if report.success { "Preflight validation successful".to_string() } else { "Preflight validation failed".to_string() };
+        let event_type = if report.success {
+            "preflight_success"
+        } else {
+            "preflight_failure"
+        };
+        let message = if report.success {
+            "Preflight validation successful".to_string()
+        } else {
+            "Preflight validation failed".to_string()
+        };
 
         ctx.log_info(event_type, message, Some("Preflight".to_string()), metadata);
 

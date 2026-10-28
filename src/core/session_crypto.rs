@@ -7,7 +7,7 @@
 //! No passwords, no prompts; without a reachable keyring the session stays
 //! plaintext with owner-only permissions.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use argon2::Argon2;
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
@@ -90,9 +90,7 @@ pub fn decrypt(envelope: &EncryptedSession, password: &str) -> Result<Vec<u8>> {
     let cipher = ChaCha20Poly1305::new(Key::from_slice(&key));
     cipher
         .decrypt(Nonce::from_slice(&nonce), ciphertext.as_slice())
-        .map_err(|_| {
-            anyhow!("could not decrypt session.json — the key does not match this file")
-        })
+        .map_err(|_| anyhow!("could not decrypt session.json — the key does not match this file"))
 }
 
 /// Per-process keyring-key cache: one D-Bus round trip.

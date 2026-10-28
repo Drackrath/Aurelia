@@ -13,7 +13,9 @@ fn recognises_aurelia_executable_names() {
 fn distinguishes_daemon_from_admin_and_clients() {
     let s = |args: &[&str]| args.iter().map(|a| a.to_string()).collect::<Vec<_>>();
     assert!(cmd_is_daemon(&s(&["aurelia.exe", "daemon"])));
-    assert!(cmd_is_daemon(&s(&["aurelia", "daemon", "--socket", "/tmp/x"])));
+    assert!(cmd_is_daemon(&s(&[
+        "aurelia", "daemon", "--socket", "/tmp/x"
+    ])));
     // A `daemon stop|list` invocation is not itself a daemon.
     assert!(!cmd_is_daemon(&s(&["aurelia", "daemon", "stop"])));
     assert!(!cmd_is_daemon(&s(&["aurelia", "daemon", "list"])));

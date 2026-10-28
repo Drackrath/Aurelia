@@ -2,7 +2,8 @@
 
 use super::*;
 
-const RETURN_TO: &str = "http://127.0.0.1:43210/callback?aurelia_nonce=00000000000000000000000000abcdef";
+const RETURN_TO: &str =
+    "http://127.0.0.1:43210/callback?aurelia_nonce=00000000000000000000000000abcdef";
 const STEAM_ID: &str = "76561197990935091";
 
 /// A well-formed Steam `id_res` assertion, as `(key, value)` pairs.
@@ -49,14 +50,18 @@ fn accepts_a_well_formed_assertion() {
 
 #[test]
 fn rejects_a_cancelled_sign_in() {
-    let err = validate_assertion(&with(good_params(), "openid.mode", "cancel"), RETURN_TO)
-        .unwrap_err();
+    let err =
+        validate_assertion(&with(good_params(), "openid.mode", "cancel"), RETURN_TO).unwrap_err();
     assert!(err.to_string().contains("cancelled"));
 }
 
 #[test]
 fn rejects_a_foreign_op_endpoint() {
-    let params = with(good_params(), "openid.op_endpoint", "https://evil.example/openid");
+    let params = with(
+        good_params(),
+        "openid.op_endpoint",
+        "https://evil.example/openid",
+    );
     assert!(validate_assertion(&params, RETURN_TO).is_err());
 }
 
@@ -104,10 +109,10 @@ fn steam_id_parses_from_both_url_schemes() {
 #[test]
 fn steam_id_rejects_malformed_claims() {
     for claimed in [
-        "https://steamcommunity.com/openid/id/1234",              // too short
+        "https://steamcommunity.com/openid/id/1234", // too short
         "https://steamcommunity.com/openid/id/7656119799093509x", // non-digit
         "https://steamcommunity.com/openid/id/10000000000000000", // below individual range
-        "https://example.com/openid/id/76561197990935091",        // wrong host
+        "https://example.com/openid/id/76561197990935091", // wrong host
     ] {
         assert!(steam_id_from_claimed_id(claimed).is_err(), "{claimed}");
     }

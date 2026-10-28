@@ -259,7 +259,9 @@ impl SteamClient {
                 tracing::debug!("CM discovery failed; falling back to bootstrap endpoints");
                 let tcp_servers = get_cm_endpoints().await;
                 if tcp_servers.is_empty() {
-                    bail!("failed to discover Steam CM servers and no fallback endpoints were available")
+                    bail!(
+                        "failed to discover Steam CM servers and no fallback endpoints were available"
+                    )
                 }
 
                 let ws_servers = tcp_servers
@@ -381,16 +383,20 @@ impl SteamClient {
         } else if interactive_pin {
             // Read the Steam Guard code from stdin when Steam asks for it; fall back
             // to mobile-app approval if the account only allows that.
-            tracing::info!(
-                "Login method awaited: Steam Guard code — enter it when prompted below"
-            );
+            tracing::info!("Login method awaited: Steam Guard code — enter it when prompted below");
             let handler =
                 UserProvidedAuthConfirmationHandler::new(tokio::io::stdin(), tokio::io::stderr())
                     .or(DeviceConfirmationHandler);
 
             login_with(&server_list, &account_name, &password, handler).await
         } else {
-            login_with(&server_list, &account_name, &password, DeviceConfirmationHandler).await
+            login_with(
+                &server_list,
+                &account_name,
+                &password,
+                DeviceConfirmationHandler,
+            )
+            .await
         };
 
         let connection = match login_result {
@@ -455,7 +461,10 @@ impl SteamClient {
         let timed_out = || {
             anyhow!(TypedError::new(
                 ErrorKind::Timeout,
-                format!("QR login timed out after {}s without approval", timeout.as_secs()),
+                format!(
+                    "QR login timed out after {}s without approval",
+                    timeout.as_secs()
+                ),
             ))
         };
         let mut last_emitted_url = String::new();
@@ -490,8 +499,10 @@ impl SteamClient {
 
             loop {
                 // Never sleep past the deadline.
-                tokio::time::sleep(poll_interval.min(deadline.saturating_duration_since(Instant::now())))
-                    .await;
+                tokio::time::sleep(
+                    poll_interval.min(deadline.saturating_duration_since(Instant::now())),
+                )
+                .await;
                 if Instant::now() >= deadline {
                     return Err(timed_out());
                 }
@@ -501,18 +512,24 @@ impl SteamClient {
                 poll.set_request_id(request_id.clone());
 
                 let resp: CAuthentication_PollAuthSessionStatus_Response =
-                    match tokio::time::timeout(CM_CONNECT_TIMEOUT, anon.service_method(poll)).await {
+                    match tokio::time::timeout(CM_CONNECT_TIMEOUT, anon.service_method(poll)).await
+                    {
                         Ok(Ok(resp)) => resp,
                         Ok(Err(steam_vent::NetworkError::ApiError(result))) => {
                             match qr_poll_step(result, scanned) {
                                 Some(QrPollStep::Regenerate) => {
-                                    tracing::info!(?result, "QR auth session ended unscanned; regenerating code");
+                                    tracing::info!(
+                                        ?result,
+                                        "QR auth session ended unscanned; regenerating code"
+                                    );
                                     continue 'session;
                                 }
                                 Some(QrPollStep::Fail(e)) => return Err(anyhow!(e)),
                                 None => {
-                                    return Err(anyhow!(steam_vent::NetworkError::ApiError(result)))
-                                        .context("Authentication.PollAuthSessionStatus failed");
+                                    return Err(anyhow!(steam_vent::NetworkError::ApiError(
+                                        result
+                                    )))
+                                    .context("Authentication.PollAuthSessionStatus failed");
                                 }
                             }
                         }
@@ -583,7 +600,6 @@ impl SteamClient {
             web_token: None,
         })
     }
-
 }
 
 /// What a failed QR status poll means.

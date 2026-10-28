@@ -11,7 +11,10 @@ fn game_config_without_runner_defaults_to_auto() {
 
 #[test]
 fn game_runner_round_trips_as_lowercase() {
-    let cfg = GameConfig { runner: GameRunner::Luxtorpeda, ..Default::default() };
+    let cfg = GameConfig {
+        runner: GameRunner::Luxtorpeda,
+        ..Default::default()
+    };
     let json = serde_json::to_string(&cfg).unwrap();
     assert!(json.contains("\"luxtorpeda\""), "got: {json}");
     let back: GameConfig = serde_json::from_str(&json).unwrap();
@@ -37,7 +40,11 @@ fn game_config_pin_round_trips_and_omits_empty() {
     // A pinned config round-trips its depot→manifest map.
     let mut manifests = HashMap::new();
     manifests.insert(1234u32, 5678u64);
-    let pinned = GameConfig { pinned: true, pinned_manifests: manifests.clone(), ..Default::default() };
+    let pinned = GameConfig {
+        pinned: true,
+        pinned_manifests: manifests.clone(),
+        ..Default::default()
+    };
     let json = serde_json::to_string(&pinned).unwrap();
     let back: GameConfig = serde_json::from_str(&json).unwrap();
     assert!(back.pinned);

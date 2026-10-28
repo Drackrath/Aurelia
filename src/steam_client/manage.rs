@@ -74,7 +74,10 @@ impl SteamClient {
             None
         };
         // Never delete outside steamapps/common/<dir>.
-        if let Some(dir) = installdir.as_deref().filter(|d| !crate::core::utils::is_safe_dir_name(d)) {
+        if let Some(dir) = installdir
+            .as_deref()
+            .filter(|d| !crate::core::utils::is_safe_dir_name(d))
+        {
             bail!("refusing to uninstall app {appid}: unsafe installdir {dir:?}");
         }
         let install_dir = steamapps
@@ -184,7 +187,10 @@ impl SteamClient {
                 let _ = tx.blocking_send(DownloadProgress::queued("sizing"));
 
                 let common_bytes = relocate::dir_size(&src_common);
-                let compat_bytes = src_compat.as_ref().map(|p| relocate::dir_size(p)).unwrap_or(0);
+                let compat_bytes = src_compat
+                    .as_ref()
+                    .map(|p| relocate::dir_size(p))
+                    .unwrap_or(0);
                 let total = common_bytes + compat_bytes;
 
                 // Both phases emit identical `Moving` events; the prefix phase just
@@ -200,10 +206,17 @@ impl SteamClient {
                 };
 
                 // Game files.
-                relocate::move_dir_with_progress(&src_common, &dest_common, common_bytes, |copied, file| {
-                    send_moving(0, copied, file);
-                })
-                .with_context(|| format!("failed moving game files to {}", dest_common.display()))?;
+                relocate::move_dir_with_progress(
+                    &src_common,
+                    &dest_common,
+                    common_bytes,
+                    |copied, file| {
+                        send_moving(0, copied, file);
+                    },
+                )
+                .with_context(|| {
+                    format!("failed moving game files to {}", dest_common.display())
+                })?;
 
                 // Proton prefix.
                 if let (Some(sc), Some(dc)) = (&src_compat, &dest_compat) {
@@ -226,7 +239,11 @@ impl SteamClient {
                     match std::fs::read_to_string(vdf_path) {
                         Ok(text) => {
                             match relocate::update_libraryfolders_apps(
-                                &text, appid, &src_lib_root, &dest_library, common_bytes,
+                                &text,
+                                appid,
+                                &src_lib_root,
+                                &dest_library,
+                                common_bytes,
                             ) {
                                 Some(updated) => {
                                     if let Err(e) = std::fs::write(vdf_path, updated) {
@@ -281,7 +298,7 @@ impl SteamClient {
         }
     }
 
-    /// Relink 
+    /// Relink
     pub async fn relink_install(&self, appid: u32, dest_library: PathBuf) -> Result<PathBuf> {
         let (src_manifest, src_steamapps, src_lib_root, installdir) = self
             .resolve_source_layout(
@@ -298,7 +315,10 @@ impl SteamClient {
             );
         }
         if dest_steamapps == src_steamapps {
-            bail!("app {appid} is already linked to {}", dest_library.display());
+            bail!(
+                "app {appid} is already linked to {}",
+                dest_library.display()
+            );
         }
         let dest_common = dest_steamapps.join("common").join(&installdir);
         if !dest_common.exists() {
@@ -399,7 +419,10 @@ impl SteamClient {
         }
         let manifest = steamapps.join(format!("appmanifest_{appid}.acf"));
         if manifest.exists() {
-            bail!("app {appid} is already registered at {}", manifest.display());
+            bail!(
+                "app {appid} is already registered at {}",
+                manifest.display()
+            );
         }
 
         Self::write_appmanifest(
@@ -417,5 +440,4 @@ impl SteamClient {
         update_libraryfolders_for(&library, &library, appid, &common_dir).await;
         Ok(common_dir)
     }
-
 }

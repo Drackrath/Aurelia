@@ -9,7 +9,7 @@
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
-use tempfile::{tempdir, TempDir};
+use tempfile::{TempDir, tempdir};
 
 fn aurelia(config_dir: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_aurelia"))
@@ -51,7 +51,10 @@ fn out(o: &Output) -> String {
 #[test]
 fn setting_an_installed_runner_persists_and_reports_resolved_wine() {
     let tmp = sandbox_with_proton();
-    let o = aurelia(tmp.path(), &["config", "steam-runtime-runner", "GE-Proton9-20"]);
+    let o = aurelia(
+        tmp.path(),
+        &["config", "steam-runtime-runner", "GE-Proton9-20"],
+    );
     assert!(o.status.success(), "{}", out(&o));
 
     let text = out(&o);
@@ -102,9 +105,14 @@ fn viewing_when_unset_explains_how_to_set_it() {
 #[test]
 fn empty_value_clears_the_runner() {
     let tmp = sandbox_with_proton();
-    assert!(aurelia(tmp.path(), &["config", "steam-runtime-runner", "GE-Proton9-20"])
+    assert!(
+        aurelia(
+            tmp.path(),
+            &["config", "steam-runtime-runner", "GE-Proton9-20"]
+        )
         .status
-        .success());
+        .success()
+    );
     let o = aurelia(tmp.path(), &["config", "steam-runtime-runner", ""]);
     assert!(o.status.success(), "{}", out(&o));
     assert!(out(&o).contains("(unset)"), "{}", out(&o));

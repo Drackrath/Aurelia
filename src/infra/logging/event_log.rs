@@ -1,11 +1,11 @@
+use crate::infra::logging::LaunchSession;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-use serde::{Serialize, Deserialize};
-use anyhow::Result;
-use crate::infra::logging::LaunchSession;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LogLevel {
@@ -37,7 +37,14 @@ impl EventLogger {
         Ok(Self { file_path })
     }
 
-    pub fn log(&self, level: LogLevel, event_type: &str, message: String, stage: Option<String>, metadata: HashMap<String, String>) -> Result<()> {
+    pub fn log(
+        &self,
+        level: LogLevel,
+        event_type: &str,
+        message: String,
+        stage: Option<String>,
+        metadata: HashMap<String, String>,
+    ) -> Result<()> {
         let event = LogEvent {
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             level,
@@ -57,11 +64,23 @@ impl EventLogger {
         Ok(())
     }
 
-    pub fn info(&self, event_type: &str, message: String, stage: Option<String>, metadata: HashMap<String, String>) -> Result<()> {
+    pub fn info(
+        &self,
+        event_type: &str,
+        message: String,
+        stage: Option<String>,
+        metadata: HashMap<String, String>,
+    ) -> Result<()> {
         self.log(LogLevel::Info, event_type, message, stage, metadata)
     }
 
-    pub fn error(&self, event_type: &str, message: String, stage: Option<String>, metadata: HashMap<String, String>) -> Result<()> {
+    pub fn error(
+        &self,
+        event_type: &str,
+        message: String,
+        stage: Option<String>,
+        metadata: HashMap<String, String>,
+    ) -> Result<()> {
         self.log(LogLevel::Error, event_type, message, stage, metadata)
     }
 }

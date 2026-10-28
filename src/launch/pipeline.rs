@@ -1,12 +1,12 @@
-use std::fmt;
 use async_trait::async_trait;
+use std::fmt;
 
-use std::collections::HashMap;
-use crate::core::models::{LibraryGame, UserAppConfig};
 use crate::core::config::LauncherConfig;
+use crate::core::models::{LibraryGame, UserAppConfig};
+use crate::infra::logging::{EventLogger, LaunchSession};
+use crate::infra::runners::{CommandSpec, Runner};
 use crate::steam_client::LaunchInfo;
-use crate::infra::runners::{Runner, CommandSpec};
-use crate::infra::logging::{LaunchSession, EventLogger};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CompatibilityWarning {
@@ -23,11 +23,11 @@ pub struct DuplicateInstanceInfo {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct GraphicsStackInfo {
-    pub graphics_stack_expected: String,           // e.g. "DXVK v2.3, VKD3D-Proton v2.10"
-    pub graphics_stack_evidence: Vec<String>,      // e.g. ["DXVK: v2.3.1"]
-    pub graphics_stack_confidence: String,         // "low" | "medium" | "high"
-    pub override_policy: String,                   // e.g. "Native-only"
-    pub dll_providers: HashMap<String, String>,    // e.g. {"d3d11": "Runner", "d3d9": "GameLocal"}
+    pub graphics_stack_expected: String, // e.g. "DXVK v2.3, VKD3D-Proton v2.10"
+    pub graphics_stack_evidence: Vec<String>, // e.g. ["DXVK: v2.3.1"]
+    pub graphics_stack_confidence: String, // "low" | "medium" | "high"
+    pub override_policy: String,         // e.g. "Native-only"
+    pub dll_providers: HashMap<String, String>, // e.g. {"d3d11": "Runner", "d3d9": "GameLocal"}
     pub requested_backend: String,
     pub effective_backend: String,
     pub requested_d3d12_provider: String,
@@ -142,7 +142,13 @@ impl PipelineContext {
         stage: Option<String>,
         metadata: HashMap<String, String>,
     ) {
-        self.log_event(crate::infra::logging::LogLevel::Info, event_type, message, stage, metadata);
+        self.log_event(
+            crate::infra::logging::LogLevel::Info,
+            event_type,
+            message,
+            stage,
+            metadata,
+        );
     }
 
     /// Error-level [`PipelineContext::log_event`].
@@ -153,7 +159,13 @@ impl PipelineContext {
         stage: Option<String>,
         metadata: HashMap<String, String>,
     ) {
-        self.log_event(crate::infra::logging::LogLevel::Error, event_type, message, stage, metadata);
+        self.log_event(
+            crate::infra::logging::LogLevel::Error,
+            event_type,
+            message,
+            stage,
+            metadata,
+        );
     }
 
     /// Snapshot pipeline state for a runner.
@@ -228,7 +240,13 @@ impl PipelineContext {
         let mut metadata = HashMap::new();
         metadata.insert("warning_code".to_string(), warning.code.clone());
         metadata.insert("warning_message".to_string(), warning.message.clone());
-        self.log_event(crate::infra::logging::LogLevel::Warn, "compatibility_warning", warning.message.clone(), None, metadata);
+        self.log_event(
+            crate::infra::logging::LogLevel::Warn,
+            "compatibility_warning",
+            warning.message.clone(),
+            None,
+            metadata,
+        );
 
         self.warnings.push(warning);
     }
@@ -236,13 +254,13 @@ impl PipelineContext {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LaunchErrorKind {
-    Validation,      // Missing app context, invalid app id
-    Environment,     // Missing proton path, config issues
-    Permission,      // Failed to create dir, set permissions
-    Runner,          // Runner prepare_prefix/build_command failed
-    GameData,        // appmanifest not found, executable not found
-    Process,         // Failed to spawn process
-    Dependency,      // Missing MangoHud, etc.
+    Validation,  // Missing app context, invalid app id
+    Environment, // Missing proton path, config issues
+    Permission,  // Failed to create dir, set permissions
+    Runner,      // Runner prepare_prefix/build_command failed
+    GameData,    // appmanifest not found, executable not found
+    Process,     // Failed to spawn process
+    Dependency,  // Missing MangoHud, etc.
     Unknown,
 }
 
@@ -308,7 +326,13 @@ impl LaunchError {
 
 impl fmt::Display for LaunchError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[{}] {} - {}", self.kind, self.message, self.kind.remediation_hint())
+        write!(
+            f,
+            "[{}] {} - {}",
+            self.kind,
+            self.message,
+            self.kind.remediation_hint()
+        )
     }
 }
 
@@ -343,9 +367,13 @@ pub fn map_io_error(err: &std::io::Error, dup_info: Option<&DuplicateInstanceInf
 
     let mut message = match err.kind() {
         ErrorKind::NotFound => "The game executable or runner was not found.".to_string(),
-        ErrorKind::PermissionDenied => "Access denied while attempting to start the game. Check file permissions.".to_string(),
+        ErrorKind::PermissionDenied => {
+            "Access denied while attempting to start the game. Check file permissions.".to_string()
+        }
         ErrorKind::InvalidInput => "Invalid launch configuration or malformed path.".to_string(),
-        ErrorKind::AlreadyExists => "A lock file or another instance of the game was detected.".to_string(),
+        ErrorKind::AlreadyExists => {
+            "A lock file or another instance of the game was detected.".to_string()
+        }
         _ => format!("Process spawn failed: {}", err),
     };
 
@@ -357,12 +385,15 @@ pub fn map_io_error(err: &std::io::Error, dup_info: Option<&DuplicateInstanceInf
         if info.detected {
             message = lock_msg.to_string();
         }
-    } else if err.kind() == ErrorKind::AlreadyExists || err_str.contains("locked") || err_str.contains("Resource busy") {
+    } else if err.kind() == ErrorKind::AlreadyExists
+        || err_str.contains("locked")
+        || err_str.contains("Resource busy")
+    {
         message = lock_msg.to_string();
     }
 
-    let mut launch_err = LaunchError::new(kind, message)
-        .with_context("io_kind", format!("{:?}", err.kind()));
+    let mut launch_err =
+        LaunchError::new(kind, message).with_context("io_kind", format!("{:?}", err.kind()));
 
     if let Some(code) = err.raw_os_error() {
         launch_err = launch_err.with_context("os_errno", code.to_string());
@@ -403,12 +434,12 @@ pub fn detect_duplicate_instance(ctx: &PipelineContext) -> DuplicateInstanceInfo
         // For now, check if steam.pid exists in the prefix (if applicable)
         if let Some(prefix) = spec.env.get("WINEPREFIX") {
             if std::path::Path::new(prefix).join("steam.pid").exists() {
-                 // Note: Ideally we'd check if the PID is still alive,
-                 // but existence of the file in WINEPREFIX is a strong hint.
-                 return DuplicateInstanceInfo {
-                     detected: true,
-                     source: "pid".to_string(),
-                 };
+                // Note: Ideally we'd check if the PID is still alive,
+                // but existence of the file in WINEPREFIX is a strong hint.
+                return DuplicateInstanceInfo {
+                    detected: true,
+                    source: "pid".to_string(),
+                };
             }
         }
     }
@@ -427,7 +458,11 @@ pub struct PipelineError {
 
 impl fmt::Display for PipelineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Pipeline failed at stage '{}': {}", self.stage_name, self.inner)
+        write!(
+            f,
+            "Pipeline failed at stage '{}': {}",
+            self.stage_name, self.inner
+        )
     }
 }
 
@@ -457,17 +492,24 @@ impl LaunchPipeline {
                 Ok(Some(status)) => {
                     // Process exited already
                     ctx.verification.status = "failed_after_spawn".to_string();
-                    ctx.verification.process_lifetime_ms = Some(start_wait.elapsed().as_millis() as u64);
+                    ctx.verification.process_lifetime_ms =
+                        Some(start_wait.elapsed().as_millis() as u64);
                     ctx.verification.exit_code = status.code();
                 }
                 Ok(None) => {
                     // Process still running
                     ctx.verification.status = "verified".to_string();
-                    ctx.verification.process_lifetime_ms = Some(start_wait.elapsed().as_millis() as u64);
+                    ctx.verification.process_lifetime_ms =
+                        Some(start_wait.elapsed().as_millis() as u64);
                 }
                 Err(e) => {
                     ctx.verification.status = "uncertain".to_string();
-                     ctx.log_error("verification_error", format!("Failed to poll process status: {}", e), None, HashMap::new());
+                    ctx.log_error(
+                        "verification_error",
+                        format!("Failed to poll process status: {}", e),
+                        None,
+                        HashMap::new(),
+                    );
                 }
             }
         } else {
@@ -477,7 +519,9 @@ impl LaunchPipeline {
 
     fn classify_early_exit(&self, ctx: &mut PipelineContext) {
         if ctx.verification.status != "failed_after_spawn" {
-            if ctx.verification.steam_runtime_milestone == "steam_process_exited_early" || ctx.verification.steam_auto_start_failed {
+            if ctx.verification.steam_runtime_milestone == "steam_process_exited_early"
+                || ctx.verification.steam_auto_start_failed
+            {
                 ctx.verification.detailed_status = Some("steam_runtime_startup_failed".to_string());
                 return;
             }
@@ -496,23 +540,30 @@ impl LaunchPipeline {
         }
 
         let dxvk_found = ctx.graphics_stack.runtime_evidence.dxvk.evidence_found;
-        let vkd3d_found = ctx.graphics_stack.runtime_evidence.vkd3d_proton.evidence_found || ctx.graphics_stack.runtime_evidence.vkd3d.evidence_found;
+        let vkd3d_found = ctx
+            .graphics_stack
+            .runtime_evidence
+            .vkd3d_proton
+            .evidence_found
+            || ctx.graphics_stack.runtime_evidence.vkd3d.evidence_found;
 
         let mut fatal_error = None;
         for evidence in &ctx.graphics_stack.graphics_stack_evidence {
             if evidence.contains("Override Policy Conflict") {
-                 fatal_error = Some("override_policy_regression");
-                 break;
+                fatal_error = Some("override_policy_regression");
+                break;
             }
             if evidence.contains("Steam Client/Environment Failure") {
-                 fatal_error = Some("steam_runtime_exposure_regression");
-                 break;
+                fatal_error = Some("steam_runtime_exposure_regression");
+                break;
             }
             if evidence.contains("PhysX/Middleware failure") {
                 fatal_error = Some("middleware_dependency_failure");
                 break;
             }
-            if evidence.contains("SteamAPI Initialization Failed") || evidence.contains("SteamAPI Access Violation") {
+            if evidence.contains("SteamAPI Initialization Failed")
+                || evidence.contains("SteamAPI Access Violation")
+            {
                 fatal_error = Some("steamapi_init_failed");
                 break;
             }
@@ -526,9 +577,9 @@ impl LaunchPipeline {
             }
             if evidence.contains("DLL Load Failure") {
                 if evidence.contains("d3d11") {
-                     fatal_error = Some("startup_environment_regression");
+                    fatal_error = Some("startup_environment_regression");
                 } else {
-                     fatal_error = Some("missing_required_module");
+                    fatal_error = Some("missing_required_module");
                 }
                 break;
             }
@@ -542,7 +593,9 @@ impl LaunchPipeline {
             "game_failed_after_spawn".to_string()
         } else if let Some(err) = fatal_error {
             err.to_string()
-        } else if ctx.verification.steam_running_before_launch && ctx.verification.steam_client_exposed {
+        } else if ctx.verification.steam_running_before_launch
+            && ctx.verification.steam_client_exposed
+        {
             "steam_sensitive_game_failed_after_spawn".to_string()
         } else {
             "game_failed_after_spawn".to_string()
@@ -560,27 +613,54 @@ impl LaunchPipeline {
         self.stages.push(stage);
     }
 
-    pub fn add_validator(&mut self, validator: Box<dyn crate::launch::validators::LaunchValidator>) {
+    pub fn add_validator(
+        &mut self,
+        validator: Box<dyn crate::launch::validators::LaunchValidator>,
+    ) {
         self.validators.push(validator);
     }
 
     pub fn with_default_stages() -> Self {
         let mut pipeline = Self::new();
-        pipeline.add_stage(Box::new(crate::launch::stages::resolve_game::ResolveGameStage));
-        pipeline.add_stage(Box::new(crate::launch::stages::resolve_profile::ResolveProfileStage));
-        pipeline.add_stage(Box::new(crate::launch::stages::resolve_game_fixups::ResolveGameFixupsStage));
-        pipeline.add_stage(Box::new(crate::launch::stages::resolve_components::ResolveComponentsStage));
-        pipeline.add_stage(Box::new(crate::launch::stages::resolve_dll_providers::ResolveDllProvidersStage));
-        pipeline.add_stage(Box::new(crate::launch::stages::prepare_prefix::PreparePrefixStage));
-        pipeline.add_stage(Box::new(crate::launch::stages::build_environment::BuildEnvironmentStage));
-        pipeline.add_stage(Box::new(crate::launch::stages::build_command::BuildCommandStage));
+        pipeline.add_stage(Box::new(
+            crate::launch::stages::resolve_game::ResolveGameStage,
+        ));
+        pipeline.add_stage(Box::new(
+            crate::launch::stages::resolve_profile::ResolveProfileStage,
+        ));
+        pipeline.add_stage(Box::new(
+            crate::launch::stages::resolve_game_fixups::ResolveGameFixupsStage,
+        ));
+        pipeline.add_stage(Box::new(
+            crate::launch::stages::resolve_components::ResolveComponentsStage,
+        ));
+        pipeline.add_stage(Box::new(
+            crate::launch::stages::resolve_dll_providers::ResolveDllProvidersStage,
+        ));
+        pipeline.add_stage(Box::new(
+            crate::launch::stages::prepare_prefix::PreparePrefixStage,
+        ));
+        pipeline.add_stage(Box::new(
+            crate::launch::stages::build_environment::BuildEnvironmentStage,
+        ));
+        pipeline.add_stage(Box::new(
+            crate::launch::stages::build_command::BuildCommandStage,
+        ));
         pipeline.add_stage(Box::new(crate::launch::stages::preflight::PreflightStage));
-        pipeline.add_stage(Box::new(crate::launch::stages::apply_launch_script::ApplyLaunchScriptStage));
-        pipeline.add_stage(Box::new(crate::launch::stages::spawn_process::SpawnProcessStage));
+        pipeline.add_stage(Box::new(
+            crate::launch::stages::apply_launch_script::ApplyLaunchScriptStage,
+        ));
+        pipeline.add_stage(Box::new(
+            crate::launch::stages::spawn_process::SpawnProcessStage,
+        ));
         pipeline.add_stage(Box::new(crate::launch::stages::finalize::FinalizeStage));
 
-        pipeline.add_validator(Box::new(crate::launch::validators::overrides::OverrideConflictValidator));
-        pipeline.add_validator(Box::new(crate::launch::validators::invariants::LaunchInvariantValidator));
+        pipeline.add_validator(Box::new(
+            crate::launch::validators::overrides::OverrideConflictValidator,
+        ));
+        pipeline.add_validator(Box::new(
+            crate::launch::validators::invariants::LaunchInvariantValidator,
+        ));
 
         pipeline
     }
@@ -608,7 +688,12 @@ impl LaunchPipeline {
         if let Some(app) = &ctx.app {
             metadata.insert("app_name".to_string(), app.name.clone());
         }
-        ctx.log_info("launch_start", "Starting launch pipeline".to_string(), None, metadata);
+        ctx.log_info(
+            "launch_start",
+            "Starting launch pipeline".to_string(),
+            None,
+            metadata,
+        );
 
         let mut final_result = LaunchResult::Success;
 
@@ -619,7 +704,12 @@ impl LaunchPipeline {
 
         for stage in &self.stages {
             let stage_name = stage.name().to_string();
-            ctx.log_info("stage_start", format!("Starting stage: {}", stage_name), Some(stage_name.clone()), HashMap::new());
+            ctx.log_info(
+                "stage_start",
+                format!("Starting stage: {}", stage_name),
+                Some(stage_name.clone()),
+                HashMap::new(),
+            );
 
             let start_time = std::time::Instant::now();
             let res = stage.execute(ctx).await;
@@ -637,11 +727,22 @@ impl LaunchPipeline {
                 for (k, v) in &e.context {
                     metadata.insert(format!("error_ctx_{}", k), v.clone());
                 }
-                ctx.log_error("stage_failure", format!("Stage failed: {}", stage_name), Some(stage_name.clone()), metadata.clone());
+                ctx.log_error(
+                    "stage_failure",
+                    format!("Stage failed: {}", stage_name),
+                    Some(stage_name.clone()),
+                    metadata.clone(),
+                );
 
                 ctx.log_error("launch_end", "Launch failed".to_string(), None, metadata);
 
-                self.write_summary_if_possible(ctx, final_result, failing_stage, total_start.elapsed().as_millis(), stage_durations.clone());
+                self.write_summary_if_possible(
+                    ctx,
+                    final_result,
+                    failing_stage,
+                    total_start.elapsed().as_millis(),
+                    stage_durations.clone(),
+                );
 
                 return Err(PipelineError {
                     stage_name,
@@ -651,10 +752,20 @@ impl LaunchPipeline {
 
             let mut metadata = HashMap::new();
             metadata.insert("duration_ms".to_string(), duration.to_string());
-            ctx.log_info("stage_success", format!("Stage succeeded: {}", stage_name), Some(stage_name.clone()), metadata);
+            ctx.log_info(
+                "stage_success",
+                format!("Stage succeeded: {}", stage_name),
+                Some(stage_name.clone()),
+                metadata,
+            );
         }
 
-        ctx.log_info("launch_end", "Process spawned successfully".to_string(), None, HashMap::new());
+        ctx.log_info(
+            "launch_end",
+            "Process spawned successfully".to_string(),
+            None,
+            HashMap::new(),
+        );
 
         // Post-spawn verification window
         self.verify_launch_health(ctx).await;
@@ -667,7 +778,12 @@ impl LaunchPipeline {
         if let Some(code) = ctx.verification.exit_code {
             metadata.insert("exit_code".to_string(), code.to_string());
         }
-        ctx.log_info("launch_verification", "Launch health verification complete".to_string(), None, metadata);
+        ctx.log_info(
+            "launch_verification",
+            "Launch health verification complete".to_string(),
+            None,
+            metadata,
+        );
 
         // After stages are complete (or failed), populate effective stack and scan logs for evidence
         self.record_dll_provider_diagnostics(ctx);
@@ -681,11 +797,18 @@ impl LaunchPipeline {
 
         // Track environment propagation
         if let Some(spec) = &ctx.command_spec {
-             for key in &["DXVK_HUD", "VKD3D_DEBUG", "DRI_PRIME", "__NV_PRIME_RENDER_OFFLOAD"] {
-                 if spec.env.contains_key(*key) {
-                     ctx.graphics_stack.env_propagation.insert(key.to_string(), true);
-                 }
-             }
+            for key in &[
+                "DXVK_HUD",
+                "VKD3D_DEBUG",
+                "DRI_PRIME",
+                "__NV_PRIME_RENDER_OFFLOAD",
+            ] {
+                if spec.env.contains_key(*key) {
+                    ctx.graphics_stack
+                        .env_propagation
+                        .insert(key.to_string(), true);
+                }
+            }
         }
 
         self.scan_logs_for_graphics_evidence(ctx).await;
@@ -707,20 +830,26 @@ impl LaunchPipeline {
 
         // Determine if policy was satisfied
         let mut policy_satisfied = true;
-        if !ctx.graphics_stack.requested_backend.is_empty() && ctx.graphics_stack.requested_backend != "Auto" {
-            if ctx.graphics_stack.requested_backend == "DXVK" && ctx.graphics_stack.effective_backend != "DXVK" {
+        if !ctx.graphics_stack.requested_backend.is_empty()
+            && ctx.graphics_stack.requested_backend != "Auto"
+        {
+            if ctx.graphics_stack.requested_backend == "DXVK"
+                && ctx.graphics_stack.effective_backend != "DXVK"
+            {
                 policy_satisfied = false;
-            } else if ctx.graphics_stack.requested_backend == "WineD3D" && ctx.graphics_stack.effective_backend != "WineD3D (Baseline)" {
+            } else if ctx.graphics_stack.requested_backend == "WineD3D"
+                && ctx.graphics_stack.effective_backend != "WineD3D (Baseline)"
+            {
                 policy_satisfied = false;
             }
         }
 
         if !policy_satisfied && final_result == LaunchResult::Success {
-             if ctx.graphics_stack.requested_backend == "DXVK" {
-                 final_result = LaunchResult::Failure;
-             } else {
-                 final_result = LaunchResult::Degraded;
-             }
+            if ctx.graphics_stack.requested_backend == "DXVK" {
+                final_result = LaunchResult::Failure;
+            } else {
+                final_result = LaunchResult::Degraded;
+            }
         }
 
         // Adjust result based on verification
@@ -733,7 +862,13 @@ impl LaunchPipeline {
         self.classify_early_exit(ctx);
         self.check_prefix_health(ctx);
 
-        self.write_summary_if_possible(ctx, final_result, failing_stage, total_start.elapsed().as_millis(), stage_durations);
+        self.write_summary_if_possible(
+            ctx,
+            final_result,
+            failing_stage,
+            total_start.elapsed().as_millis(),
+            stage_durations,
+        );
 
         let msg = match final_result {
             LaunchResult::Success => "Launch successful".to_string(),
@@ -748,63 +883,86 @@ impl LaunchPipeline {
 
     fn populate_effective_graphics_stack(&self, ctx: &mut PipelineContext) {
         if let Some(spec) = &ctx.command_spec {
-             if let Some(overrides) = spec.env.get("WINEDLLOVERRIDES") {
-                 let has_dxvk = overrides.contains("d3d11=n") || overrides.contains("dxgi=n") || overrides.contains("d3d9=n") || overrides.contains("d3d8=n");
-                 let has_vkd3dp = overrides.contains("d3d12=n");
-                 let has_vkd3dw = overrides.contains("libvkd3d-1=n");
+            if let Some(overrides) = spec.env.get("WINEDLLOVERRIDES") {
+                let has_dxvk = overrides.contains("d3d11=n")
+                    || overrides.contains("dxgi=n")
+                    || overrides.contains("d3d9=n")
+                    || overrides.contains("d3d8=n");
+                let has_vkd3dp = overrides.contains("d3d12=n");
+                let has_vkd3dw = overrides.contains("libvkd3d-1=n");
 
-                 ctx.graphics_stack.effective_backend = if has_dxvk { "DXVK" } else { "WineD3D (Baseline)" }.to_string();
-                 ctx.graphics_stack.effective_d3d12_provider = if has_vkd3dp { "vkd3d-proton" } else if has_vkd3dw { "vkd3d" } else { "None" }.to_string();
+                ctx.graphics_stack.effective_backend = if has_dxvk {
+                    "DXVK"
+                } else {
+                    "WineD3D (Baseline)"
+                }
+                .to_string();
+                ctx.graphics_stack.effective_d3d12_provider = if has_vkd3dp {
+                    "vkd3d-proton"
+                } else if has_vkd3dw {
+                    "vkd3d"
+                } else {
+                    "None"
+                }
+                .to_string();
 
-                 if has_dxvk || has_vkd3dp || has_vkd3dw {
-                     ctx.graphics_stack.override_policy = "Native-preferred".to_string();
-                 } else {
-                     ctx.graphics_stack.override_policy = "Builtin-only".to_string();
-                 }
-             } else {
-                 ctx.graphics_stack.effective_backend = "WineD3D (Baseline)".to_string();
-                 ctx.graphics_stack.effective_d3d12_provider = "None".to_string();
-                 ctx.graphics_stack.override_policy = "Builtin-only".to_string();
-             }
+                if has_dxvk || has_vkd3dp || has_vkd3dw {
+                    ctx.graphics_stack.override_policy = "Native-preferred".to_string();
+                } else {
+                    ctx.graphics_stack.override_policy = "Builtin-only".to_string();
+                }
+            } else {
+                ctx.graphics_stack.effective_backend = "WineD3D (Baseline)".to_string();
+                ctx.graphics_stack.effective_d3d12_provider = "None".to_string();
+                ctx.graphics_stack.override_policy = "Builtin-only".to_string();
+            }
 
-             // Synchronize expected stack string with effective resolution
-             let mut stack_parts = Vec::new();
-             if ctx.graphics_stack.effective_backend == "DXVK" {
-                 stack_parts.push("DXVK");
-             }
-             if ctx.graphics_stack.effective_d3d12_provider != "None" {
-                 stack_parts.push(&ctx.graphics_stack.effective_d3d12_provider);
-             }
+            // Synchronize expected stack string with effective resolution
+            let mut stack_parts = Vec::new();
+            if ctx.graphics_stack.effective_backend == "DXVK" {
+                stack_parts.push("DXVK");
+            }
+            if ctx.graphics_stack.effective_d3d12_provider != "None" {
+                stack_parts.push(&ctx.graphics_stack.effective_d3d12_provider);
+            }
 
-             if stack_parts.is_empty() {
-                 ctx.graphics_stack.graphics_stack_expected = "WineD3D (Baseline)".to_string();
-             } else {
-                 ctx.graphics_stack.graphics_stack_expected = stack_parts.join(", ");
-             }
+            if stack_parts.is_empty() {
+                ctx.graphics_stack.graphics_stack_expected = "WineD3D (Baseline)".to_string();
+            } else {
+                ctx.graphics_stack.graphics_stack_expected = stack_parts.join(", ");
+            }
 
-             let nvapi_res = ctx.dll_resolutions.iter().find(|r| r.name == "nvapi");
-             ctx.graphics_stack.effective_nvapi = nvapi_res.map(|r| r.chosen_provider != crate::launch::dll_provider_resolver::DllProvider::None).unwrap_or(false);
+            let nvapi_res = ctx.dll_resolutions.iter().find(|r| r.name == "nvapi");
+            ctx.graphics_stack.effective_nvapi = nvapi_res
+                .map(|r| {
+                    r.chosen_provider != crate::launch::dll_provider_resolver::DllProvider::None
+                })
+                .unwrap_or(false);
 
-             // GPU Selection
-             ctx.graphics_stack.effective_gpu = None;
-             if let Some(val) = spec.env.get("__NV_PRIME_RENDER_OFFLOAD") {
-                 if val == "1" {
-                     ctx.graphics_stack.effective_gpu = Some("NVIDIA Discrete GPU".to_string());
-                 }
-             } else if let Some(val) = spec.env.get("DRI_PRIME") {
-                 if val == "1" {
-                     ctx.graphics_stack.effective_gpu = Some("Secondary GPU (DRI_PRIME=1)".to_string());
-                 } else if val == "0" {
-                     ctx.graphics_stack.effective_gpu = Some("Primary GPU (DRI_PRIME=0)".to_string());
-                 }
-             }
+            // GPU Selection
+            ctx.graphics_stack.effective_gpu = None;
+            if let Some(val) = spec.env.get("__NV_PRIME_RENDER_OFFLOAD") {
+                if val == "1" {
+                    ctx.graphics_stack.effective_gpu = Some("NVIDIA Discrete GPU".to_string());
+                }
+            } else if let Some(val) = spec.env.get("DRI_PRIME") {
+                if val == "1" {
+                    ctx.graphics_stack.effective_gpu =
+                        Some("Secondary GPU (DRI_PRIME=1)".to_string());
+                } else if val == "0" {
+                    ctx.graphics_stack.effective_gpu =
+                        Some("Primary GPU (DRI_PRIME=0)".to_string());
+                }
+            }
         }
     }
 
     fn populate_expected_graphics_stack(&self, ctx: &mut PipelineContext) {
         if let Some(config) = &ctx.user_config {
-            ctx.graphics_stack.requested_backend = format!("{:?}", config.graphics_layers.graphics_backend_policy);
-            ctx.graphics_stack.requested_d3d12_provider = format!("{:?}", config.graphics_layers.d3d12_policy);
+            ctx.graphics_stack.requested_backend =
+                format!("{:?}", config.graphics_layers.graphics_backend_policy);
+            ctx.graphics_stack.requested_d3d12_provider =
+                format!("{:?}", config.graphics_layers.d3d12_policy);
             ctx.graphics_stack.requested_nvapi = config.graphics_layers.nvapi_enabled;
             ctx.graphics_stack.requested_gpu = config.gpu_preference.clone();
 
@@ -816,9 +974,13 @@ impl LaunchPipeline {
 
     fn record_dll_provider_diagnostics(&self, ctx: &mut PipelineContext) {
         for res in &ctx.dll_resolutions {
-            ctx.graphics_stack.dll_providers.insert(res.name.clone(), format!("{:?}", res.chosen_provider));
+            ctx.graphics_stack
+                .dll_providers
+                .insert(res.name.clone(), format!("{:?}", res.chosen_provider));
             if let Some(reason) = &res.fallback_reason {
-                ctx.graphics_stack.fallback_reasons.insert(res.name.clone(), reason.clone());
+                ctx.graphics_stack
+                    .fallback_reasons
+                    .insert(res.name.clone(), reason.clone());
             }
         }
     }
@@ -826,11 +988,14 @@ impl LaunchPipeline {
     async fn scan_logs_for_graphics_evidence(&self, ctx: &mut PipelineContext) {
         let scan_start = std::time::Instant::now();
         if let Some(session) = &ctx.session {
-            let log_path = ctx.command_spec.as_ref()
+            let log_path = ctx
+                .command_spec
+                .as_ref()
                 .and_then(|spec| spec.env.get("WINE_LOG_OUTPUT"))
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|| session.stderr_path());
-            ctx.graphics_stack.runtime_evidence.scan_metadata.log_path = log_path.to_string_lossy().to_string();
+            ctx.graphics_stack.runtime_evidence.scan_metadata.log_path =
+                log_path.to_string_lossy().to_string();
 
             let mut retries = 0;
             let max_retries = 3;
@@ -840,7 +1005,10 @@ impl LaunchPipeline {
 
             while retries <= max_retries {
                 if log_path.exists() {
-                    ctx.graphics_stack.runtime_evidence.scan_metadata.file_exists = true;
+                    ctx.graphics_stack
+                        .runtime_evidence
+                        .scan_metadata
+                        .file_exists = true;
                     let current_size = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
                     ctx.graphics_stack.runtime_evidence.scan_metadata.file_size = current_size;
 
@@ -861,7 +1029,10 @@ impl LaunchPipeline {
                 } else {
                     false
                 };
-                ctx.graphics_stack.runtime_evidence.scan_metadata.process_running_during_scan = process_running;
+                ctx.graphics_stack
+                    .runtime_evidence
+                    .scan_metadata
+                    .process_running_during_scan = process_running;
 
                 if !process_running && retries > 0 {
                     break;
@@ -879,7 +1050,13 @@ impl LaunchPipeline {
                 // Capture Log Head/Tail
                 ctx.verification.log_head = lines.iter().take(50).map(|s| s.to_string()).collect();
                 if lines.len() > 50 {
-                     ctx.verification.log_tail = lines.iter().rev().take(100).rev().map(|s| s.to_string()).collect();
+                    ctx.verification.log_tail = lines
+                        .iter()
+                        .rev()
+                        .take(100)
+                        .rev()
+                        .map(|s| s.to_string())
+                        .collect();
                 }
 
                 let mut max_milestone = crate::infra::logging::StartupMilestone::None;
@@ -887,15 +1064,23 @@ impl LaunchPipeline {
                 // Derive component paths from dll resolutions
                 let mut component_paths = HashMap::new();
                 for res in &ctx.dll_resolutions {
-                    if res.chosen_provider == crate::launch::dll_provider_resolver::DllProvider::Runner {
+                    if res.chosen_provider
+                        == crate::launch::dll_provider_resolver::DllProvider::Runner
+                    {
                         if let Some(path) = &res.chosen_path {
                             if let Some(parent) = path.parent() {
-                                let family = if res.name.contains("d3d12") || res.name.contains("vkd3d") {
-                                    if path.to_string_lossy().contains("vkd3d-proton") { "vkd3d_proton" } else { "vkd3d" }
-                                } else {
-                                    "dxvk"
-                                };
-                                component_paths.insert(family, parent.to_string_lossy().to_string());
+                                let family =
+                                    if res.name.contains("d3d12") || res.name.contains("vkd3d") {
+                                        if path.to_string_lossy().contains("vkd3d-proton") {
+                                            "vkd3d_proton"
+                                        } else {
+                                            "vkd3d"
+                                        }
+                                    } else {
+                                        "dxvk"
+                                    };
+                                component_paths
+                                    .insert(family, parent.to_string_lossy().to_string());
                             }
                         }
                     }
@@ -914,22 +1099,34 @@ impl LaunchPipeline {
 
                     for (family, patterns) in families_to_scan {
                         if patterns.iter().any(|p| line_lower.contains(p))
-                            && !ctx.verification.dependency_families_detected.contains(&family.to_string())
+                            && !ctx
+                                .verification
+                                .dependency_families_detected
+                                .contains(&family.to_string())
                         {
-                            ctx.verification.dependency_families_detected.push(family.to_string());
+                            ctx.verification
+                                .dependency_families_detected
+                                .push(family.to_string());
                         }
                     }
 
                     // Update Milestone
                     if let Some(m) = crate::infra::logging::detect_startup_milestone(line) {
-                         if m > max_milestone {
-                             max_milestone = m;
-                         }
+                        if m > max_milestone {
+                            max_milestone = m;
+                        }
                     }
 
-                    if let Some(evidence) = crate::infra::logging::classify_graphics_evidence(line) {
-                        if !ctx.graphics_stack.graphics_stack_evidence.contains(&evidence) {
-                            ctx.graphics_stack.graphics_stack_evidence.push(evidence.clone());
+                    if let Some(evidence) = crate::infra::logging::classify_graphics_evidence(line)
+                    {
+                        if !ctx
+                            .graphics_stack
+                            .graphics_stack_evidence
+                            .contains(&evidence)
+                        {
+                            ctx.graphics_stack
+                                .graphics_stack_evidence
+                                .push(evidence.clone());
                         }
 
                         if evidence.contains("SteamAPI Initialization Failed") {
@@ -939,22 +1136,38 @@ impl LaunchPipeline {
                             ctx.verification.steam_ownership_confirmed = Some(false);
                         }
                         if evidence.contains("Steam Client Artifact:") {
-                            if evidence.contains("local") { ctx.verification.steam_client_artifact = Some("local".into()); }
-                            else if evidence.contains("windows") { ctx.verification.steam_client_artifact = Some("windows".into()); }
-                            else if evidence.contains("host") { ctx.verification.steam_client_artifact = Some("host".into()); }
+                            if evidence.contains("local") {
+                                ctx.verification.steam_client_artifact = Some("local".into());
+                            } else if evidence.contains("windows") {
+                                ctx.verification.steam_client_artifact = Some("windows".into());
+                            } else if evidence.contains("host") {
+                                ctx.verification.steam_client_artifact = Some("host".into());
+                            }
                         }
 
                         if evidence.contains("DXVK") {
-                            record_evidence(&mut ctx.graphics_stack.runtime_evidence.dxvk, evidence.clone());
+                            record_evidence(
+                                &mut ctx.graphics_stack.runtime_evidence.dxvk,
+                                evidence.clone(),
+                            );
                         }
                         if evidence.contains("VKD3D-Proton") {
-                            record_evidence(&mut ctx.graphics_stack.runtime_evidence.vkd3d_proton, evidence.clone());
+                            record_evidence(
+                                &mut ctx.graphics_stack.runtime_evidence.vkd3d_proton,
+                                evidence.clone(),
+                            );
                         }
                         if evidence.contains("VKD3D") && !evidence.contains("Proton") {
-                            record_evidence(&mut ctx.graphics_stack.runtime_evidence.vkd3d, evidence.clone());
+                            record_evidence(
+                                &mut ctx.graphics_stack.runtime_evidence.vkd3d,
+                                evidence.clone(),
+                            );
                         }
                         if evidence.contains("WineD3D") {
-                            record_evidence(&mut ctx.graphics_stack.runtime_evidence.wined3d, evidence.clone());
+                            record_evidence(
+                                &mut ctx.graphics_stack.runtime_evidence.wined3d,
+                                evidence.clone(),
+                            );
                         }
                         line_matched = true;
                     }
@@ -964,7 +1177,10 @@ impl LaunchPipeline {
                     // DXVK Path Match
                     if let Some(path) = component_paths.get("dxvk") {
                         if line_lower.contains(&path.to_lowercase()) {
-                            record_evidence(&mut ctx.graphics_stack.runtime_evidence.dxvk, format!("Path match: {}", line.trim()));
+                            record_evidence(
+                                &mut ctx.graphics_stack.runtime_evidence.dxvk,
+                                format!("Path match: {}", line.trim()),
+                            );
                             line_matched = true;
                         }
                     }
@@ -972,18 +1188,35 @@ impl LaunchPipeline {
                     // VKD3D-Proton Path Match
                     if let Some(path) = component_paths.get("vkd3d_proton") {
                         if line_lower.contains(&path.to_lowercase()) {
-                            record_evidence(&mut ctx.graphics_stack.runtime_evidence.vkd3d_proton, format!("Path match: {}", line.trim()));
+                            record_evidence(
+                                &mut ctx.graphics_stack.runtime_evidence.vkd3d_proton,
+                                format!("Path match: {}", line.trim()),
+                            );
                             line_matched = true;
                         }
                     }
 
                     // Generic Module Loader matches for graphics DLLs
-                    if line_lower.contains("loaddll") || line_lower.contains("load_module") || line_lower.contains("import_dll") {
-                        let graphics_dlls = ["d3d9", "d3d11", "dxgi", "d3d12", "d3d8", "d3d10core", "libvkd3d"];
+                    if line_lower.contains("loaddll")
+                        || line_lower.contains("load_module")
+                        || line_lower.contains("import_dll")
+                    {
+                        let graphics_dlls = [
+                            "d3d9",
+                            "d3d11",
+                            "dxgi",
+                            "d3d12",
+                            "d3d8",
+                            "d3d10core",
+                            "libvkd3d",
+                        ];
                         for dll in graphics_dlls {
                             if line_lower.contains(dll) {
-                                let is_failed = line_lower.contains("failed") || line_lower.contains("error");
-                                let is_builtin = line_lower.contains("system32") || (line_lower.contains("builtin") && !line_lower.contains("native"));
+                                let is_failed =
+                                    line_lower.contains("failed") || line_lower.contains("error");
+                                let is_builtin = line_lower.contains("system32")
+                                    || (line_lower.contains("builtin")
+                                        && !line_lower.contains("native"));
 
                                 let evidence_type = if is_failed {
                                     "Module load FAILED"
@@ -998,7 +1231,10 @@ impl LaunchPipeline {
                                     ctx.graphics_stack.graphics_stack_evidence.push(msg.clone());
 
                                     if is_builtin {
-                                        record_evidence(&mut ctx.graphics_stack.runtime_evidence.wined3d, msg);
+                                        record_evidence(
+                                            &mut ctx.graphics_stack.runtime_evidence.wined3d,
+                                            msg,
+                                        );
                                     }
                                 }
                                 line_matched = true;
@@ -1007,90 +1243,140 @@ impl LaunchPipeline {
                     }
 
                     if line_matched {
-                        ctx.graphics_stack.runtime_evidence.scan_metadata.candidate_matches += 1;
+                        ctx.graphics_stack
+                            .runtime_evidence
+                            .scan_metadata
+                            .candidate_matches += 1;
                     }
                 }
 
                 ctx.verification.last_successful_startup_milestone = max_milestone.to_string();
             }
         } else {
-            ctx.graphics_stack.runtime_evidence.scan_metadata.file_exists = false;
+            ctx.graphics_stack
+                .runtime_evidence
+                .scan_metadata
+                .file_exists = false;
         }
 
         // Populate expectations
-            ctx.graphics_stack.runtime_evidence.dxvk.expected = ctx.graphics_stack.effective_backend == "DXVK";
-            ctx.graphics_stack.runtime_evidence.vkd3d_proton.expected = ctx.graphics_stack.effective_d3d12_provider == "vkd3d-proton";
-            ctx.graphics_stack.runtime_evidence.vkd3d.expected = ctx.graphics_stack.effective_d3d12_provider == "vkd3d";
-            ctx.graphics_stack.runtime_evidence.wined3d.expected = ctx.graphics_stack.effective_backend == "WineD3D (Baseline)";
+        ctx.graphics_stack.runtime_evidence.dxvk.expected =
+            ctx.graphics_stack.effective_backend == "DXVK";
+        ctx.graphics_stack.runtime_evidence.vkd3d_proton.expected =
+            ctx.graphics_stack.effective_d3d12_provider == "vkd3d-proton";
+        ctx.graphics_stack.runtime_evidence.vkd3d.expected =
+            ctx.graphics_stack.effective_d3d12_provider == "vkd3d";
+        ctx.graphics_stack.runtime_evidence.wined3d.expected =
+            ctx.graphics_stack.effective_backend == "WineD3D (Baseline)";
 
-            // Build diagnosis
-            let diagnose = |item: &mut EvidenceItem, name: &str, metadata: &EvidenceScanMetadata| {
-                if !metadata.file_exists {
-                    item.diagnosis = format!("{} requested; Wine log missing", name);
-                    item.diagnostics_note = format!("Log file was not found at {}.", metadata.log_path);
-                    return;
-                }
-                if metadata.line_count == 0 {
-                    if metadata.process_running_during_scan {
-                        item.diagnosis = format!("{} requested; Wine log empty (early scan)", name);
-                        item.diagnostics_note = format!("Log file exists but is empty. Process is still running (retries: {}). Evidence may appear later.", metadata.retries);
-                    } else {
-                        item.diagnosis = format!("{} requested; Wine log empty", name);
-                        item.diagnostics_note = format!("Log file exists but contains no lines after {} retries. Process has exited. Logging may be disabled or failed to initialize.", metadata.retries);
-                    }
-                    return;
-                }
-
-                if item.expected {
-                    if item.evidence_found {
-                        item.diagnosis = format!("confirmed: {} loaded based on runtime evidence", name);
-                    } else {
-                        item.diagnosis = format!("inconclusive: {} requested but no runtime evidence found", name);
-                        item.diagnostics_note = format!("Scanned {} lines, found {} matches for graphics patterns, but none confirmed {} usage.",
-                            metadata.line_count, metadata.candidate_matches, name);
-                    }
-                } else if item.evidence_found {
-                    item.diagnosis = format!("suspected fallback: {} not requested but runtime evidence found", name);
+        // Build diagnosis
+        let diagnose = |item: &mut EvidenceItem, name: &str, metadata: &EvidenceScanMetadata| {
+            if !metadata.file_exists {
+                item.diagnosis = format!("{} requested; Wine log missing", name);
+                item.diagnostics_note = format!("Log file was not found at {}.", metadata.log_path);
+                return;
+            }
+            if metadata.line_count == 0 {
+                if metadata.process_running_during_scan {
+                    item.diagnosis = format!("{} requested; Wine log empty (early scan)", name);
+                    item.diagnostics_note = format!(
+                        "Log file exists but is empty. Process is still running (retries: {}). Evidence may appear later.",
+                        metadata.retries
+                    );
                 } else {
-                    item.diagnosis = "neutral: inconclusive".to_string();
+                    item.diagnosis = format!("{} requested; Wine log empty", name);
+                    item.diagnostics_note = format!(
+                        "Log file exists but contains no lines after {} retries. Process has exited. Logging may be disabled or failed to initialize.",
+                        metadata.retries
+                    );
                 }
-            };
-
-            let meta = ctx.graphics_stack.runtime_evidence.scan_metadata.clone();
-            diagnose(&mut ctx.graphics_stack.runtime_evidence.dxvk, "DXVK", &meta);
-            diagnose(&mut ctx.graphics_stack.runtime_evidence.vkd3d_proton, "VKD3D-Proton", &meta);
-            diagnose(&mut ctx.graphics_stack.runtime_evidence.vkd3d, "VKD3D", &meta);
-            diagnose(&mut ctx.graphics_stack.runtime_evidence.wined3d, "WineD3D", &meta);
-
-            // Refinement: Do not mark WineD3D fallback when primary components are confirmed
-            if (ctx.graphics_stack.runtime_evidence.dxvk.evidence_found ||
-                ctx.graphics_stack.runtime_evidence.vkd3d_proton.evidence_found ||
-                ctx.graphics_stack.runtime_evidence.vkd3d.evidence_found) &&
-               !ctx.graphics_stack.runtime_evidence.wined3d.expected
-            {
-                if ctx.graphics_stack.runtime_evidence.wined3d.evidence_found {
-                    let has_strong_wined3d = ctx.graphics_stack.runtime_evidence.wined3d.evidence.iter()
-                        .any(|e| e.contains("Fallback Detected"));
-                    if !has_strong_wined3d {
-                        ctx.graphics_stack.runtime_evidence.wined3d.diagnosis = "neutral: inconclusive (standard builtins loaded)".to_string();
-                    }
-                }
+                return;
             }
 
-            // Update confidence based on evidence vs expectation
-            if ctx.graphics_stack.graphics_stack_evidence.is_empty() {
-                ctx.graphics_stack.graphics_stack_confidence = "low".to_string();
+            if item.expected {
+                if item.evidence_found {
+                    item.diagnosis =
+                        format!("confirmed: {} loaded based on runtime evidence", name);
+                } else {
+                    item.diagnosis = format!(
+                        "inconclusive: {} requested but no runtime evidence found",
+                        name
+                    );
+                    item.diagnostics_note = format!(
+                        "Scanned {} lines, found {} matches for graphics patterns, but none confirmed {} usage.",
+                        metadata.line_count, metadata.candidate_matches, name
+                    );
+                }
+            } else if item.evidence_found {
+                item.diagnosis = format!(
+                    "suspected fallback: {} not requested but runtime evidence found",
+                    name
+                );
             } else {
-                let has_expected = !ctx.graphics_stack.runtime_evidence.dxvk.expected
-                    || ctx.graphics_stack.runtime_evidence.dxvk.evidence_found;
+                item.diagnosis = "neutral: inconclusive".to_string();
+            }
+        };
 
-                if has_expected {
-                    ctx.graphics_stack.graphics_stack_confidence = "high".to_string();
-                } else {
-                    ctx.graphics_stack.graphics_stack_confidence = "medium".to_string();
+        let meta = ctx.graphics_stack.runtime_evidence.scan_metadata.clone();
+        diagnose(&mut ctx.graphics_stack.runtime_evidence.dxvk, "DXVK", &meta);
+        diagnose(
+            &mut ctx.graphics_stack.runtime_evidence.vkd3d_proton,
+            "VKD3D-Proton",
+            &meta,
+        );
+        diagnose(
+            &mut ctx.graphics_stack.runtime_evidence.vkd3d,
+            "VKD3D",
+            &meta,
+        );
+        diagnose(
+            &mut ctx.graphics_stack.runtime_evidence.wined3d,
+            "WineD3D",
+            &meta,
+        );
+
+        // Refinement: Do not mark WineD3D fallback when primary components are confirmed
+        if (ctx.graphics_stack.runtime_evidence.dxvk.evidence_found
+            || ctx
+                .graphics_stack
+                .runtime_evidence
+                .vkd3d_proton
+                .evidence_found
+            || ctx.graphics_stack.runtime_evidence.vkd3d.evidence_found)
+            && !ctx.graphics_stack.runtime_evidence.wined3d.expected
+        {
+            if ctx.graphics_stack.runtime_evidence.wined3d.evidence_found {
+                let has_strong_wined3d = ctx
+                    .graphics_stack
+                    .runtime_evidence
+                    .wined3d
+                    .evidence
+                    .iter()
+                    .any(|e| e.contains("Fallback Detected"));
+                if !has_strong_wined3d {
+                    ctx.graphics_stack.runtime_evidence.wined3d.diagnosis =
+                        "neutral: inconclusive (standard builtins loaded)".to_string();
                 }
             }
-        ctx.graphics_stack.runtime_evidence.scan_metadata.scan_duration_ms = scan_start.elapsed().as_millis();
+        }
+
+        // Update confidence based on evidence vs expectation
+        if ctx.graphics_stack.graphics_stack_evidence.is_empty() {
+            ctx.graphics_stack.graphics_stack_confidence = "low".to_string();
+        } else {
+            let has_expected = !ctx.graphics_stack.runtime_evidence.dxvk.expected
+                || ctx.graphics_stack.runtime_evidence.dxvk.evidence_found;
+
+            if has_expected {
+                ctx.graphics_stack.graphics_stack_confidence = "high".to_string();
+            } else {
+                ctx.graphics_stack.graphics_stack_confidence = "medium".to_string();
+            }
+        }
+        ctx.graphics_stack
+            .runtime_evidence
+            .scan_metadata
+            .scan_duration_ms = scan_start.elapsed().as_millis();
     }
 
     fn check_prefix_health(&self, ctx: &mut PipelineContext) {
@@ -1098,7 +1384,10 @@ impl LaunchPipeline {
             if let Some(prefix) = spec.env.get("WINEPREFIX") {
                 let prefix_path = std::path::PathBuf::from(prefix);
                 if !prefix_path.exists() {
-                    ctx.add_warning("PREFIX_MISSING", format!("WINEPREFIX does not exist on disk: {}", prefix));
+                    ctx.add_warning(
+                        "PREFIX_MISSING",
+                        format!("WINEPREFIX does not exist on disk: {}", prefix),
+                    );
                     return;
                 }
 
@@ -1113,21 +1402,28 @@ impl LaunchPipeline {
                         for entry in entries.flatten() {
                             if entry.file_type().is_ok_and(|t| t.is_dir()) {
                                 let name = entry.file_name().to_string_lossy().to_string();
-                                if name != "Public" && name != "All Users" && name != "Default User" {
+                                if name != "Public" && name != "All Users" && name != "Default User"
+                                {
                                     usernames.push(name);
                                 }
                             }
                         }
                         // Pick the alphabetically first (most likely primary)
                         if let Some(primary) = usernames.into_iter().min() {
-                            ctx.verification.windows_user_path = Some(format!("C:\\users\\{}", primary));
-                            metadata.insert("detected_windows_username".to_string(), primary.clone());
+                            ctx.verification.windows_user_path =
+                                Some(format!("C:\\users\\{}", primary));
+                            metadata
+                                .insert("detected_windows_username".to_string(), primary.clone());
                             ctx.verification.windows_username = Some(primary);
                         }
                     }
                 }
 
-                let username = ctx.verification.windows_username.as_deref().unwrap_or("steamuser");
+                let username = ctx
+                    .verification
+                    .windows_username
+                    .as_deref()
+                    .unwrap_or("steamuser");
                 let common_dirs = [
                     format!("drive_c/users/{}/Documents", username),
                     format!("drive_c/users/{}/AppData/Local", username),
@@ -1152,9 +1448,27 @@ impl LaunchPipeline {
                 // Title-Specific Dependency Detection
                 let families = &mut ctx.verification.dependency_families_detected;
                 let families_to_check = [
-                    ("Batman (PhysX/APEX)", vec!["drive_c/windows/system32/PhysXLoader.dll", "drive_c/windows/syswow64/PhysXLoader.dll"]),
-                    ("Amnesia (SDL2/Newton)", vec!["drive_c/windows/system32/SDL2.dll", "drive_c/windows/syswow64/SDL2.dll"]),
-                    ("Metro (4A Engine)", vec!["drive_c/windows/system32/PhysXDevice.dll", "drive_c/windows/syswow64/PhysXDevice.dll"]),
+                    (
+                        "Batman (PhysX/APEX)",
+                        vec![
+                            "drive_c/windows/system32/PhysXLoader.dll",
+                            "drive_c/windows/syswow64/PhysXLoader.dll",
+                        ],
+                    ),
+                    (
+                        "Amnesia (SDL2/Newton)",
+                        vec![
+                            "drive_c/windows/system32/SDL2.dll",
+                            "drive_c/windows/syswow64/SDL2.dll",
+                        ],
+                    ),
+                    (
+                        "Metro (4A Engine)",
+                        vec![
+                            "drive_c/windows/system32/PhysXDevice.dll",
+                            "drive_c/windows/syswow64/PhysXDevice.dll",
+                        ],
+                    ),
                 ];
 
                 for (family, paths) in families_to_check {
@@ -1166,10 +1480,20 @@ impl LaunchPipeline {
                 }
 
                 // Check steam client exposure
-                ctx.verification.steam_client_exposed = spec.env.contains_key("STEAM_COMPAT_CLIENT_INSTALL_PATH") ||
-                                                       spec.env.get("WINEPATH").map(|wp| wp.contains("Steam")).unwrap_or(false);
+                ctx.verification.steam_client_exposed =
+                    spec.env.contains_key("STEAM_COMPAT_CLIENT_INSTALL_PATH")
+                        || spec
+                            .env
+                            .get("WINEPATH")
+                            .map(|wp| wp.contains("Steam"))
+                            .unwrap_or(false);
 
-                ctx.log_info("prefix_health_check", "WINEPREFIX sanity check complete".to_string(), None, metadata);
+                ctx.log_info(
+                    "prefix_health_check",
+                    "WINEPREFIX sanity check complete".to_string(),
+                    None,
+                    metadata,
+                );
             }
         }
     }
@@ -1224,64 +1548,86 @@ impl LaunchPipeline {
 
             // Write Effective Launch Config
             if let Some(spec) = &ctx.command_spec {
-                 use crate::infra::logging::{EffectiveLaunchConfig, EffectiveGameConfig, EffectiveRunnerConfig, EffectiveSettingsConfig, EffectiveCommandConfig};
-                 let config = EffectiveLaunchConfig {
-                     session_id: session.id.to_string(),
-                     app_id: ctx.app_id,
-                     app_name: ctx.app.as_ref().map(|a| a.name.clone()),
-                     game: EffectiveGameConfig {
-                         install_dir: ctx.resolved_install_dir.clone(),
-                         executable_path: ctx.resolved_executable_path.clone(),
-                         executable_exists: ctx.executable_exists,
-                     },
-                     runner: EffectiveRunnerConfig {
-                         name: ctx.runner.as_ref().map(|r| r.name().to_string()),
-                         root: {
-                             let proton = if let Some(forced) = ctx.launcher_config.as_ref()
-                                 .and_then(|c| c.game_configs.get(&ctx.app_id))
-                                 .and_then(|c| c.forced_proton_version.as_ref())
-                             {
-                                 forced.as_str()
-                             } else {
-                                 ctx.proton_path.as_deref().unwrap_or("wine")
-                             };
-                             let library_root = ctx.launcher_config.as_ref().map(|c| std::path::PathBuf::from(&c.steam_library_path)).unwrap_or_default();
-                             let active_runner = crate::core::utils::resolve_runner(proton, &library_root);
-                             Some(crate::core::utils::derive_runner_root(&active_runner))
-                         },
-                     },
-                     settings: EffectiveSettingsConfig {
-                         requested_backend: ctx.graphics_stack.requested_backend.clone(),
-                         effective_backend: ctx.graphics_stack.effective_backend.clone(),
-                         requested_d3d12_provider: ctx.graphics_stack.requested_d3d12_provider.clone(),
-                         effective_d3d12_provider: ctx.graphics_stack.effective_d3d12_provider.clone(),
-                         requested_nvapi: ctx.graphics_stack.requested_nvapi,
-                         effective_nvapi: ctx.graphics_stack.effective_nvapi,
-                         requested_gpu: ctx.graphics_stack.requested_gpu.clone(),
-                         effective_gpu: ctx.graphics_stack.effective_gpu.clone(),
-                         target_architecture: ctx.target_architecture,
-                         dll_resolutions: ctx.dll_resolutions.clone(),
-                         wine_dll_overrides: spec.env.get("WINEDLLOVERRIDES").cloned(),
-                         runtime_evidence: Some(ctx.graphics_stack.runtime_evidence.clone()),
-                         env_propagation: Some(ctx.graphics_stack.env_propagation.clone()),
-                     },
-                     command: EffectiveCommandConfig {
-                         program: spec.program.clone(),
-                         args: spec.args.clone(),
-                         cwd: spec.cwd.clone(),
-                         env_subset: {
-                             let mut subset = HashMap::new();
-                             for key in &["DRI_PRIME", "__NV_PRIME_RENDER_OFFLOAD", "__NV_PRIME_RENDER_OFFLOAD_PROVIDER", "DXVK_HUD", "VKD3D_DEBUG"] {
-                                 if let Some(val) = spec.env.get(*key) {
-                                     subset.insert(key.to_string(), val.clone());
-                                 }
-                             }
-                             subset
-                         },
-                     },
-                     fallbacks: ctx.graphics_stack.fallback_reasons.clone(),
-                 };
-                 let _ = session.write_effective_launch_config(&config);
+                use crate::infra::logging::{
+                    EffectiveCommandConfig, EffectiveGameConfig, EffectiveLaunchConfig,
+                    EffectiveRunnerConfig, EffectiveSettingsConfig,
+                };
+                let config = EffectiveLaunchConfig {
+                    session_id: session.id.to_string(),
+                    app_id: ctx.app_id,
+                    app_name: ctx.app.as_ref().map(|a| a.name.clone()),
+                    game: EffectiveGameConfig {
+                        install_dir: ctx.resolved_install_dir.clone(),
+                        executable_path: ctx.resolved_executable_path.clone(),
+                        executable_exists: ctx.executable_exists,
+                    },
+                    runner: EffectiveRunnerConfig {
+                        name: ctx.runner.as_ref().map(|r| r.name().to_string()),
+                        root: {
+                            let proton = if let Some(forced) = ctx
+                                .launcher_config
+                                .as_ref()
+                                .and_then(|c| c.game_configs.get(&ctx.app_id))
+                                .and_then(|c| c.forced_proton_version.as_ref())
+                            {
+                                forced.as_str()
+                            } else {
+                                ctx.proton_path.as_deref().unwrap_or("wine")
+                            };
+                            let library_root = ctx
+                                .launcher_config
+                                .as_ref()
+                                .map(|c| std::path::PathBuf::from(&c.steam_library_path))
+                                .unwrap_or_default();
+                            let active_runner =
+                                crate::core::utils::resolve_runner(proton, &library_root);
+                            Some(crate::core::utils::derive_runner_root(&active_runner))
+                        },
+                    },
+                    settings: EffectiveSettingsConfig {
+                        requested_backend: ctx.graphics_stack.requested_backend.clone(),
+                        effective_backend: ctx.graphics_stack.effective_backend.clone(),
+                        requested_d3d12_provider: ctx
+                            .graphics_stack
+                            .requested_d3d12_provider
+                            .clone(),
+                        effective_d3d12_provider: ctx
+                            .graphics_stack
+                            .effective_d3d12_provider
+                            .clone(),
+                        requested_nvapi: ctx.graphics_stack.requested_nvapi,
+                        effective_nvapi: ctx.graphics_stack.effective_nvapi,
+                        requested_gpu: ctx.graphics_stack.requested_gpu.clone(),
+                        effective_gpu: ctx.graphics_stack.effective_gpu.clone(),
+                        target_architecture: ctx.target_architecture,
+                        dll_resolutions: ctx.dll_resolutions.clone(),
+                        wine_dll_overrides: spec.env.get("WINEDLLOVERRIDES").cloned(),
+                        runtime_evidence: Some(ctx.graphics_stack.runtime_evidence.clone()),
+                        env_propagation: Some(ctx.graphics_stack.env_propagation.clone()),
+                    },
+                    command: EffectiveCommandConfig {
+                        program: spec.program.clone(),
+                        args: spec.args.clone(),
+                        cwd: spec.cwd.clone(),
+                        env_subset: {
+                            let mut subset = HashMap::new();
+                            for key in &[
+                                "DRI_PRIME",
+                                "__NV_PRIME_RENDER_OFFLOAD",
+                                "__NV_PRIME_RENDER_OFFLOAD_PROVIDER",
+                                "DXVK_HUD",
+                                "VKD3D_DEBUG",
+                            ] {
+                                if let Some(val) = spec.env.get(*key) {
+                                    subset.insert(key.to_string(), val.clone());
+                                }
+                            }
+                            subset
+                        },
+                    },
+                    fallbacks: ctx.graphics_stack.fallback_reasons.clone(),
+                };
+                let _ = session.write_effective_launch_config(&config);
             }
         }
 
@@ -1307,76 +1653,144 @@ impl LaunchPipeline {
 
             // Add concise summary block to events log
             if ctx.logger.is_some() {
-                 let mut metadata = HashMap::new();
-                 if let Some(path) = &ctx.resolved_executable_path {
-                     metadata.insert("exe".to_string(), path.to_string_lossy().to_string());
-                 }
-                 metadata.insert("backend".to_string(), ctx.graphics_stack.effective_backend.clone());
-                 metadata.insert("d3d12_provider".to_string(), ctx.graphics_stack.effective_d3d12_provider.clone());
-                 metadata.insert("gpu".to_string(), ctx.graphics_stack.effective_gpu.clone().unwrap_or_else(|| "default".to_string()));
-                 metadata.insert("arch".to_string(), format!("{:?}", ctx.target_architecture).to_lowercase());
-                 if let Some(spec) = &ctx.command_spec {
-                     if let Some(overrides) = spec.env.get("WINEDLLOVERRIDES") {
-                         metadata.insert("overrides".to_string(), overrides.clone());
-                     }
-                 }
-                 metadata.insert("validation_passed".to_string(), ctx.warnings.is_empty().to_string());
-                 metadata.insert("fallback_occurred".to_string(), (!ctx.graphics_stack.fallback_reasons.is_empty()).to_string());
+                let mut metadata = HashMap::new();
+                if let Some(path) = &ctx.resolved_executable_path {
+                    metadata.insert("exe".to_string(), path.to_string_lossy().to_string());
+                }
+                metadata.insert(
+                    "backend".to_string(),
+                    ctx.graphics_stack.effective_backend.clone(),
+                );
+                metadata.insert(
+                    "d3d12_provider".to_string(),
+                    ctx.graphics_stack.effective_d3d12_provider.clone(),
+                );
+                metadata.insert(
+                    "gpu".to_string(),
+                    ctx.graphics_stack
+                        .effective_gpu
+                        .clone()
+                        .unwrap_or_else(|| "default".to_string()),
+                );
+                metadata.insert(
+                    "arch".to_string(),
+                    format!("{:?}", ctx.target_architecture).to_lowercase(),
+                );
+                if let Some(spec) = &ctx.command_spec {
+                    if let Some(overrides) = spec.env.get("WINEDLLOVERRIDES") {
+                        metadata.insert("overrides".to_string(), overrides.clone());
+                    }
+                }
+                metadata.insert(
+                    "validation_passed".to_string(),
+                    ctx.warnings.is_empty().to_string(),
+                );
+                metadata.insert(
+                    "fallback_occurred".to_string(),
+                    (!ctx.graphics_stack.fallback_reasons.is_empty()).to_string(),
+                );
 
-                 if let Some(spec) = &ctx.command_spec {
-                     if let Some(prefix) = spec.env.get("WINEPREFIX") {
-                         metadata.insert("prefix".to_string(), prefix.clone());
-                     }
-                 }
-                 if let Some(config) = &ctx.launcher_config {
-                     metadata.insert("shared_prefix".to_string(), config.use_shared_compat_data.to_string());
-                 }
-                 metadata.insert("nvapi_requested".to_string(), ctx.graphics_stack.requested_nvapi.to_string());
-                 metadata.insert("nvapi_exposed".to_string(), ctx.graphics_stack.effective_nvapi.to_string());
-                 if let Some(ref detailed) = ctx.verification.detailed_status {
-                     metadata.insert("verification_detailed".to_string(), detailed.clone());
-                 }
+                if let Some(spec) = &ctx.command_spec {
+                    if let Some(prefix) = spec.env.get("WINEPREFIX") {
+                        metadata.insert("prefix".to_string(), prefix.clone());
+                    }
+                }
+                if let Some(config) = &ctx.launcher_config {
+                    metadata.insert(
+                        "shared_prefix".to_string(),
+                        config.use_shared_compat_data.to_string(),
+                    );
+                }
+                metadata.insert(
+                    "nvapi_requested".to_string(),
+                    ctx.graphics_stack.requested_nvapi.to_string(),
+                );
+                metadata.insert(
+                    "nvapi_exposed".to_string(),
+                    ctx.graphics_stack.effective_nvapi.to_string(),
+                );
+                if let Some(ref detailed) = ctx.verification.detailed_status {
+                    metadata.insert("verification_detailed".to_string(), detailed.clone());
+                }
 
-                 if let Some(ref username) = ctx.verification.windows_username {
-                      metadata.insert("windows_user".to_string(), username.clone());
-                 }
-                 metadata.insert("steam_client_exposed".to_string(), ctx.verification.steam_client_exposed.to_string());
-                 metadata.insert("last_milestone".to_string(), ctx.verification.last_successful_startup_milestone.clone());
-                 if !ctx.verification.dependency_families_detected.is_empty() {
-                      metadata.insert("dependency_families".to_string(), ctx.verification.dependency_families_detected.join(", "));
-                 }
-                 if !ctx.verification.steam_runtime_milestone.is_empty() {
-                      metadata.insert("steam_runtime_milestone".to_string(), ctx.verification.steam_runtime_milestone.clone());
-                 }
-                 if let Some(init) = ctx.verification.steam_api_initialized {
-                      metadata.insert("steam_api_initialized".to_string(), init.to_string());
-                 }
-                 if let Some(own) = ctx.verification.steam_ownership_confirmed {
-                      metadata.insert("steam_ownership_confirmed".to_string(), own.to_string());
-                 }
-                 if let Some(ref art) = ctx.verification.steam_client_artifact {
-                      metadata.insert("steam_client_artifact".to_string(), art.clone());
-                 }
-                 if let Some(ref pfx) = ctx.verification.effective_game_wineprefix {
-                      metadata.insert("effective_game_wineprefix".to_string(), pfx.clone());
-                 }
-                 if let Some(ref pfx) = ctx.verification.effective_steam_wineprefix {
-                      metadata.insert("effective_steam_wineprefix".to_string(), pfx.clone());
-                 }
-                 if let Some(ref path) = ctx.verification.steam_client_install_path_exposed_to_game {
-                      metadata.insert("steam_client_install_path_exposed_to_game".to_string(), path.clone());
-                 }
-                 if let Some(ref source) = ctx.verification.steam_client_install_path_source {
-                      metadata.insert("steam_client_install_path_source".to_string(), source.clone());
-                 }
-                 metadata.insert("per_game_prefix_requested".to_string(), ctx.verification.per_game_prefix_requested.to_string());
-                 metadata.insert("per_game_prefix_honored".to_string(), ctx.verification.per_game_prefix_honored.to_string());
+                if let Some(ref username) = ctx.verification.windows_username {
+                    metadata.insert("windows_user".to_string(), username.clone());
+                }
+                metadata.insert(
+                    "steam_client_exposed".to_string(),
+                    ctx.verification.steam_client_exposed.to_string(),
+                );
+                metadata.insert(
+                    "last_milestone".to_string(),
+                    ctx.verification.last_successful_startup_milestone.clone(),
+                );
+                if !ctx.verification.dependency_families_detected.is_empty() {
+                    metadata.insert(
+                        "dependency_families".to_string(),
+                        ctx.verification.dependency_families_detected.join(", "),
+                    );
+                }
+                if !ctx.verification.steam_runtime_milestone.is_empty() {
+                    metadata.insert(
+                        "steam_runtime_milestone".to_string(),
+                        ctx.verification.steam_runtime_milestone.clone(),
+                    );
+                }
+                if let Some(init) = ctx.verification.steam_api_initialized {
+                    metadata.insert("steam_api_initialized".to_string(), init.to_string());
+                }
+                if let Some(own) = ctx.verification.steam_ownership_confirmed {
+                    metadata.insert("steam_ownership_confirmed".to_string(), own.to_string());
+                }
+                if let Some(ref art) = ctx.verification.steam_client_artifact {
+                    metadata.insert("steam_client_artifact".to_string(), art.clone());
+                }
+                if let Some(ref pfx) = ctx.verification.effective_game_wineprefix {
+                    metadata.insert("effective_game_wineprefix".to_string(), pfx.clone());
+                }
+                if let Some(ref pfx) = ctx.verification.effective_steam_wineprefix {
+                    metadata.insert("effective_steam_wineprefix".to_string(), pfx.clone());
+                }
+                if let Some(ref path) = ctx.verification.steam_client_install_path_exposed_to_game {
+                    metadata.insert(
+                        "steam_client_install_path_exposed_to_game".to_string(),
+                        path.clone(),
+                    );
+                }
+                if let Some(ref source) = ctx.verification.steam_client_install_path_source {
+                    metadata.insert(
+                        "steam_client_install_path_source".to_string(),
+                        source.clone(),
+                    );
+                }
+                metadata.insert(
+                    "per_game_prefix_requested".to_string(),
+                    ctx.verification.per_game_prefix_requested.to_string(),
+                );
+                metadata.insert(
+                    "per_game_prefix_honored".to_string(),
+                    ctx.verification.per_game_prefix_honored.to_string(),
+                );
 
-                 metadata.insert("steam_running_before_launch".to_string(), ctx.verification.steam_running_before_launch.to_string());
-                 metadata.insert("steam_auto_start_attempted".to_string(), ctx.verification.steam_auto_start_attempted.to_string());
-                 metadata.insert("steam_auto_start_failed".to_string(), ctx.verification.steam_auto_start_failed.to_string());
+                metadata.insert(
+                    "steam_running_before_launch".to_string(),
+                    ctx.verification.steam_running_before_launch.to_string(),
+                );
+                metadata.insert(
+                    "steam_auto_start_attempted".to_string(),
+                    ctx.verification.steam_auto_start_attempted.to_string(),
+                );
+                metadata.insert(
+                    "steam_auto_start_failed".to_string(),
+                    ctx.verification.steam_auto_start_failed.to_string(),
+                );
 
-                 ctx.log_info("launch_summary_concise", "Concise launch summary recorded".to_string(), None, metadata);
+                ctx.log_info(
+                    "launch_summary_concise",
+                    "Concise launch summary recorded".to_string(),
+                    None,
+                    metadata,
+                );
             }
         }
     }

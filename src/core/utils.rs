@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -76,7 +76,10 @@ pub fn build_runner_command(runner_path: &Path) -> Result<Command> {
         return Ok(Command::new(&final_path));
     }
 
-    bail!("Failed to resolve a valid runner binary from {}", runner_path.display())
+    bail!(
+        "Failed to resolve a valid runner binary from {}",
+        runner_path.display()
+    )
 }
 
 /// Normalize a runtime name for fuzzy matching: lowercase, alphanumerics only.
@@ -162,7 +165,9 @@ pub fn resolve_runner_opt(name: &str, library_root: &Path) -> Option<PathBuf> {
         }
         // Prefer an exact normalized match; otherwise the shortest (closest) name.
         matches.sort_by_key(|p| {
-            p.file_name().map(|n| n.to_string_lossy().len()).unwrap_or(usize::MAX)
+            p.file_name()
+                .map(|n| n.to_string_lossy().len())
+                .unwrap_or(usize::MAX)
         });
         if let Some(exact) = matches.iter().find(|p| {
             normalize_runner_name(&p.file_name().unwrap_or_default().to_string_lossy()) == needle
@@ -233,7 +238,12 @@ pub(crate) fn classify_runner(runner_dir: &Path) -> RunnerKind {
 /// binary shipped inside it (`files/bin/wine64`, then a few known fallbacks).
 pub(crate) fn proton_bundled_bare_wine(runner_dir: &Path) -> Option<PathBuf> {
     let root = derive_runner_root(runner_dir);
-    for rel in ["files/bin/wine64", "files/bin/wine", "dist/bin/wine64", "dist/bin/wine"] {
+    for rel in [
+        "files/bin/wine64",
+        "files/bin/wine",
+        "dist/bin/wine64",
+        "dist/bin/wine",
+    ] {
         let p = root.join(rel);
         if p.exists() {
             return Some(p);
@@ -451,7 +461,9 @@ pub fn ensure_steam_runtime_prefix_libs(bare_wine: &Path, wine_prefix: &Path) {
         }
         for rel in candidates {
             let src = files_root.join(rel);
-            let Ok(entries) = std::fs::read_dir(&src) else { continue };
+            let Ok(entries) = std::fs::read_dir(&src) else {
+                continue;
+            };
             let mut copied = 0usize;
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -629,7 +641,8 @@ fn read_tail(path: &Path, max_bytes: u64) -> Option<String> {
     use std::io::{Read, Seek, SeekFrom};
     let mut f = std::fs::File::open(path).ok()?;
     let len = f.metadata().ok()?.len();
-    f.seek(SeekFrom::Start(len.saturating_sub(max_bytes))).ok()?;
+    f.seek(SeekFrom::Start(len.saturating_sub(max_bytes)))
+        .ok()?;
     let mut buf = Vec::new();
     f.read_to_end(&mut buf).ok()?;
     Some(String::from_utf8_lossy(&buf).into_owned())
@@ -725,10 +738,7 @@ pub fn derive_runner_root(binary_path: &Path) -> PathBuf {
     parent.to_path_buf()
 }
 
-pub fn detect_runner_components(
-    runner_path: &Path,
-    wineprefix: Option<&Path>,
-) -> RunnerComponents {
+pub fn detect_runner_components(runner_path: &Path, wineprefix: Option<&Path>) -> RunnerComponents {
     let root = derive_runner_root(runner_path);
 
     RunnerComponents {
@@ -746,7 +756,15 @@ fn detect_dxvk(root: &Path, prefix: Option<&Path>) -> Option<ComponentInfo> {
     if let Some(info) = detect_bundled_modern(
         root,
         &crate::compat::proton::wine_component_dirs("dxvk"),
-        |_| &["d3d11.dll", "dxgi.dll", "d3d9.dll", "d3d8.dll", "d3d10core.dll"],
+        |_| {
+            &[
+                "d3d11.dll",
+                "dxgi.dll",
+                "d3d9.dll",
+                "d3d8.dll",
+                "d3d10core.dll",
+            ]
+        },
     ) {
         return Some(info);
     }
@@ -888,7 +906,10 @@ fn detect_bundled_modern<S: AsRef<str>>(
         }
         // Only the Windows PE arch dirs hold the DLLs we match here; the `-unix`
         // WOW64 bridge dirs from ARCH_SUBDIRS are irrelevant to this check.
-        for arch in crate::compat::proton::ARCH_SUBDIRS.iter().filter(|a| a.ends_with("-windows")) {
+        for arch in crate::compat::proton::ARCH_SUBDIRS
+            .iter()
+            .filter(|a| a.ends_with("-windows"))
+        {
             let arch = *arch;
             let arch_path = comp_path.join(arch);
             let required = required_for_arch(arch);
@@ -912,10 +933,17 @@ fn detect_bundled_modern<S: AsRef<str>>(
 
 /// Legacy bundled-layout probe per component.
 fn check_bundled_legacy(root: &Path, component: &str, dll: &str) -> Option<ComponentInfo> {
-    let dll_candidates: Vec<String> = ["files/lib64", "files/lib", "dist/lib64", "dist/lib", "lib64", "lib"]
-        .iter()
-        .map(|base| format!("{base}/wine/{component}/{dll}"))
-        .collect();
+    let dll_candidates: Vec<String> = [
+        "files/lib64",
+        "files/lib",
+        "dist/lib64",
+        "dist/lib",
+        "lib64",
+        "lib",
+    ]
+    .iter()
+    .map(|base| format!("{base}/wine/{component}/{dll}"))
+    .collect();
     let version_files: Vec<String> = ["files/share", "dist/share", "share"]
         .iter()
         .map(|base| format!("{base}/{component}/version"))
@@ -944,11 +972,18 @@ fn check_prefix_d3d12(pfx: &Path, want_proton: bool) -> Option<ComponentInfo> {
     None
 }
 
-fn check_bundled(root: &Path, dll_candidates: &[&str], version_files: &[&str]) -> Option<ComponentInfo> {
+fn check_bundled(
+    root: &Path,
+    dll_candidates: &[&str],
+    version_files: &[&str],
+) -> Option<ComponentInfo> {
     let Some(found_dll) = dll_candidates.iter().find(|rel| root.join(rel).exists()) else {
         return None;
     };
-    tracing::debug!("Found bundled component DLL at: {}", root.join(found_dll).display());
+    tracing::debug!(
+        "Found bundled component DLL at: {}",
+        root.join(found_dll).display()
+    );
 
     let version = version_files
         .iter()
@@ -1034,11 +1069,7 @@ pub fn parse_short_version(s: &str) -> String {
 
     // Try to find content inside parentheses first (Wine-TKG style)
     let v = if let (Some(start), Some(end)) = (s.find('('), s.rfind(')')) {
-        if start < end {
-            &s[start + 1..end]
-        } else {
-            s
-        }
+        if start < end { &s[start + 1..end] } else { s }
     } else {
         // If no parentheses, it might be a simple version string
         // or a Wine-TKG style without () but with multiple space-separated parts.
@@ -1067,9 +1098,7 @@ pub fn parse_short_version(s: &str) -> String {
     // Strip trailing git hash suffix: -g[0-9a-f]{7,10}
     if let Some(hyphen_idx) = v.rfind("-g") {
         let suffix = &v[hyphen_idx + 2..];
-        if suffix.len() >= 7
-            && suffix.len() <= 10
-            && suffix.chars().all(|c| c.is_ascii_hexdigit())
+        if suffix.len() >= 7 && suffix.len() <= 10 && suffix.chars().all(|c| c.is_ascii_hexdigit())
         {
             return v[..hyphen_idx].to_string();
         }
@@ -1226,9 +1255,9 @@ pub fn build_dll_overrides(
 
 #[derive(Debug, Clone)]
 pub struct MasterSteamConfig {
-    pub root_dir: PathBuf,      // e.g. ~/.config/Aurelia/master_steam_prefix
-    pub wine_prefix: PathBuf,   // e.g. root_dir or root_dir/pfx
-    pub layout_kind: String,    // "root" or "pfx"
+    pub root_dir: PathBuf,    // e.g. ~/.config/Aurelia/master_steam_prefix
+    pub wine_prefix: PathBuf, // e.g. root_dir or root_dir/pfx
+    pub layout_kind: String,  // "root" or "pfx"
     pub steam_exe: Option<PathBuf>,
 }
 
@@ -1322,7 +1351,11 @@ pub fn list_available_gpus() -> Vec<DetectedGpu> {
                     .unwrap_or_default();
 
                 let pci_id = if !vendor.is_empty() && !device.is_empty() {
-                    Some(format!("{}:{}", vendor.replace("0x", ""), device.replace("0x", "")))
+                    Some(format!(
+                        "{}:{}",
+                        vendor.replace("0x", ""),
+                        device.replace("0x", "")
+                    ))
                 } else {
                     None
                 };
@@ -1426,7 +1459,11 @@ fn deploy_one_dll_symlink(src: &Path, dest: &Path, log: bool) -> Result<()> {
             let backup = dest.with_extension("dll.bak");
             if !backup.exists() {
                 if log {
-                    tracing::info!("Backing up original DLL: {} -> {}", dest.display(), backup.display());
+                    tracing::info!(
+                        "Backing up original DLL: {} -> {}",
+                        dest.display(),
+                        backup.display()
+                    );
                 }
                 std::fs::rename(dest, &backup)?;
             } else {
@@ -1459,8 +1496,9 @@ pub fn deploy_dll_symlinks(
     let is_64bit_prefix = prefix.join("drive_c/windows/syswow64").exists();
 
     for res in resolutions {
-        if res.chosen_provider != crate::launch::dll_provider_resolver::DllProvider::Runner &&
-           res.chosen_provider != crate::launch::dll_provider_resolver::DllProvider::Custom {
+        if res.chosen_provider != crate::launch::dll_provider_resolver::DllProvider::Runner
+            && res.chosen_provider != crate::launch::dll_provider_resolver::DllProvider::Custom
+        {
             continue;
         }
 
@@ -1497,11 +1535,11 @@ pub fn deploy_dll_symlinks(
                 let (other_arch, other_dir) = match target_arch {
                     crate::core::models::ExecutableArchitecture::X86_64 => (
                         crate::core::models::ExecutableArchitecture::X86,
-                        prefix.join("drive_c/windows/syswow64")
+                        prefix.join("drive_c/windows/syswow64"),
                     ),
                     crate::core::models::ExecutableArchitecture::X86 => (
                         crate::core::models::ExecutableArchitecture::X86_64,
-                        prefix.join("drive_c/windows/system32")
+                        prefix.join("drive_c/windows/system32"),
                     ),
                     _ => continue,
                 };
@@ -1549,8 +1587,15 @@ fn find_sibling_dll(
 
 pub fn cleanup_dll_symlinks(prefix: &Path) -> Result<()> {
     let target_dlls = [
-        "d3d8.dll", "d3d9.dll", "dxgi.dll", "d3d10core.dll",
-        "d3d11.dll", "d3d12.dll", "d3d12core.dll", "libvkd3d-1.dll", "libvkd3d-shader-1.dll"
+        "d3d8.dll",
+        "d3d9.dll",
+        "dxgi.dll",
+        "d3d10core.dll",
+        "d3d11.dll",
+        "d3d12.dll",
+        "d3d12core.dll",
+        "libvkd3d-1.dll",
+        "libvkd3d-shader-1.dll",
     ];
 
     let dirs = [
@@ -1559,7 +1604,9 @@ pub fn cleanup_dll_symlinks(prefix: &Path) -> Result<()> {
     ];
 
     for dir in dirs {
-        if !dir.exists() { continue; }
+        if !dir.exists() {
+            continue;
+        }
         for dll in &target_dlls {
             let p = dir.join(dll);
             if p.exists() {
@@ -1605,7 +1652,10 @@ pub fn wineprefix_for_game(
     };
 
     let use_per_game_compat_data = user_config
-        .map(|c| use_steam_runtime && c.steam_prefix_mode == crate::core::models::SteamPrefixMode::PerGame)
+        .map(|c| {
+            use_steam_runtime
+                && c.steam_prefix_mode == crate::core::models::SteamPrefixMode::PerGame
+        })
         .unwrap_or(config.use_shared_compat_data);
 
     if use_per_game_compat_data {
@@ -1668,17 +1718,31 @@ pub fn game_save_prefix(
 /// listing, not `exists()`: on a case-insensitive filesystem (NTFS, exFAT) any
 /// spelling "exists", which would hand back the caller's spelling instead.
 pub fn resolve_path_ignore_case(base: &Path, rel: &str) -> Option<PathBuf> {
-    let mut current = if rel.starts_with('/') { PathBuf::from("/") } else { base.to_path_buf() };
-    for part in rel.split(['/', '\\']).filter(|p| !p.is_empty() && *p != ".") {
+    let mut current = if rel.starts_with('/') {
+        PathBuf::from("/")
+    } else {
+        base.to_path_buf()
+    };
+    for part in rel
+        .split(['/', '\\'])
+        .filter(|p| !p.is_empty() && *p != ".")
+    {
         let mut matches: Vec<PathBuf> = std::fs::read_dir(&current)
             .into_iter()
             .flatten()
             .flatten()
-            .filter(|e| e.file_name().to_str().is_some_and(|n| n.eq_ignore_ascii_case(part)))
+            .filter(|e| {
+                e.file_name()
+                    .to_str()
+                    .is_some_and(|n| n.eq_ignore_ascii_case(part))
+            })
             .map(|e| e.path())
             .collect();
         let exact = current.join(part);
-        current = if let Some(i) = matches.iter().position(|m| m.file_name() == exact.file_name()) {
+        current = if let Some(i) = matches
+            .iter()
+            .position(|m| m.file_name() == exact.file_name())
+        {
             matches.swap_remove(i)
         } else if !matches.is_empty() {
             // Stable pick among case variants.

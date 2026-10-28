@@ -4,7 +4,9 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 // Fake stdin from a line script.
-fn lines(script: &[Option<&str>]) -> impl FnMut() -> std::future::Ready<std::io::Result<Option<String>>> {
+fn lines(
+    script: &[Option<&str>],
+) -> impl FnMut() -> std::future::Ready<std::io::Result<Option<String>>> {
     let queue: Arc<Mutex<VecDeque<Option<String>>>> = Arc::new(Mutex::new(
         script.iter().map(|l| l.map(str::to_string)).collect(),
     ));
@@ -19,7 +21,10 @@ async fn cancel_line_cancels() {
 
 #[tokio::test]
 async fn eof_closes_input() {
-    assert_eq!(watch_control(lines(&[Some("noise"), None])).await, ErrorKind::InputClosed);
+    assert_eq!(
+        watch_control(lines(&[Some("noise"), None])).await,
+        ErrorKind::InputClosed
+    );
 }
 
 #[tokio::test]
@@ -31,13 +36,17 @@ async fn read_error_closes_input() {
 #[tokio::test]
 async fn control_ends_a_pending_login() {
     let work = std::future::pending::<Result<()>>();
-    let err = race_control(work, async { ErrorKind::Cancelled }).await.unwrap_err();
+    let err = race_control(work, async { ErrorKind::Cancelled })
+        .await
+        .unwrap_err();
     assert_eq!(classify(&err).kind, ErrorKind::Cancelled);
 }
 
 #[tokio::test]
 async fn finished_login_wins() {
-    let out = race_control(async { Ok(7) }, std::future::pending()).await.unwrap();
+    let out = race_control(async { Ok(7) }, std::future::pending())
+        .await
+        .unwrap();
     assert_eq!(out, 7);
 }
 

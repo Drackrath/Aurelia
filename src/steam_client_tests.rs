@@ -99,9 +99,18 @@ fn achievement_icon_urls() {
 
 #[test]
 fn store_app_type_labels() {
-    assert_eq!(store_app_type_label(EStoreAppType::k_EStoreAppType_Game), "Game");
-    assert_eq!(store_app_type_label(EStoreAppType::k_EStoreAppType_DLC), "DLC");
-    assert_eq!(store_app_type_label(EStoreAppType::k_EStoreAppType_Music), "Soundtrack");
+    assert_eq!(
+        store_app_type_label(EStoreAppType::k_EStoreAppType_Game),
+        "Game"
+    );
+    assert_eq!(
+        store_app_type_label(EStoreAppType::k_EStoreAppType_DLC),
+        "DLC"
+    );
+    assert_eq!(
+        store_app_type_label(EStoreAppType::k_EStoreAppType_Music),
+        "Soundtrack"
+    );
 }
 
 #[tokio::test]
@@ -134,10 +143,17 @@ async fn test_legacy_path_blocks_windows_proton() {
     };
     let config = crate::core::config::LauncherConfig::default();
 
-    let result = client.internal_legacy_launch_adhoc(&app, &launch_info, None, &config, None).await;
+    let result = client
+        .internal_legacy_launch_adhoc(&app, &launch_info, None, &config, None)
+        .await;
 
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Ad-hoc bypass is prohibited"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Ad-hoc bypass is prohibited")
+    );
 }
 
 #[tokio::test]
@@ -246,7 +262,10 @@ fn extracts_dlc_ids_from_listofdlc() {
     let vdf = find_vdf_in_pics(raw.as_bytes()).expect("parse pics vdf");
     let section = pics_app_section(vdf.value());
 
-    assert_eq!(section.get_str(&["common", "name"]), Some("Vampire Survivors"));
+    assert_eq!(
+        section.get_str(&["common", "name"]),
+        Some("Vampire Survivors")
+    );
     assert_eq!(
         dlc_ids_from_section(section),
         vec![2305610, 2305620, 2305630, 2305640, 2305650],
@@ -329,10 +348,16 @@ fn write_appmanifest_preserves_owner_and_branch() {
     let raw = std::fs::read_to_string(&path).unwrap();
     assert_eq!(parse_last_owner_from_acf(&raw), Some(76561198000000001));
     assert_eq!(parse_active_branch_from_acf(&raw), "no-discord");
-    assert_eq!(parse_installdir_from_acf(&raw).as_deref(), Some("BloonsTD6"));
+    assert_eq!(
+        parse_installdir_from_acf(&raw).as_deref(),
+        Some("BloonsTD6")
+    );
     assert_eq!(parse_name_from_acf(&raw).as_deref(), Some("Bloons TD 6"));
     assert!(manifest_is_fully_installed(&raw));
-    assert_eq!(parse_installed_depots_from_acf(&raw).get(&960091), Some(&3975959124549939908));
+    assert_eq!(
+        parse_installed_depots_from_acf(&raw).get(&960091),
+        Some(&3975959124549939908)
+    );
 }
 
 #[test]
@@ -418,7 +443,12 @@ fn select_launch_entry_matches_executable_case_insensitively() {
         target,
     };
     let options = vec![
-        entry("1", "bin\\x64\\Factorio.exe", Some("BIN/X64"), LaunchTarget::WindowsProton),
+        entry(
+            "1",
+            "bin\\x64\\Factorio.exe",
+            Some("BIN/X64"),
+            LaunchTarget::WindowsProton,
+        ),
         entry("3", "bin/x64/factorio", None, LaunchTarget::NativeLinux),
     ];
     let app = LibraryGame {
@@ -442,8 +472,14 @@ fn select_launch_entry_matches_executable_case_insensitively() {
     let picked = launch::select_launch_entry(&options, &app, true, false).unwrap();
     assert_eq!(picked.id, "1");
     // Compared as paths: the on-disk spelling uses the host's separator.
-    assert_eq!(std::path::Path::new(&picked.executable), std::path::Path::new("bin/x64/factorio.exe"));
-    assert_eq!(picked.workingdir.as_deref().map(std::path::Path::new), Some(std::path::Path::new("bin/x64")));
+    assert_eq!(
+        std::path::Path::new(&picked.executable),
+        std::path::Path::new("bin/x64/factorio.exe")
+    );
+    assert_eq!(
+        picked.workingdir.as_deref().map(std::path::Path::new),
+        Some(std::path::Path::new("bin/x64"))
+    );
 
     // Native default is unaffected.
     let picked = launch::select_launch_entry(&options, &app, false, false).unwrap();
@@ -567,35 +603,97 @@ fn launch_targets_lists_installed_builds_and_steam_modes() {
     };
 
     let ids = |targets: &[LaunchTargetChoice]| targets.iter().map(|t| t.id).collect::<Vec<_>>();
-    let default_id = |targets: &[LaunchTargetChoice]| targets.iter().find(|t| t.default).map(|t| t.id);
-    let missing = |targets: &[LaunchTargetChoice]| targets.iter().map(|t| t.missing).collect::<Vec<_>>();
+    let default_id =
+        |targets: &[LaunchTargetChoice]| targets.iter().find(|t| t.default).map(|t| t.id);
+    let missing =
+        |targets: &[LaunchTargetChoice]| targets.iter().map(|t| t.missing).collect::<Vec<_>>();
 
     // Everything available, native default.
-    let targets = launch_targets(&options, &app, true, true, false, Some(LaunchTarget::NativeLinux), SteamMode::Standalone);
-    assert_eq!(ids(&targets), ["linux", "windows-runtime", "windows-host", "windows-standalone"]);
+    let targets = launch_targets(
+        &options,
+        &app,
+        true,
+        true,
+        false,
+        Some(LaunchTarget::NativeLinux),
+        SteamMode::Standalone,
+    );
+    assert_eq!(
+        ids(&targets),
+        [
+            "linux",
+            "windows-runtime",
+            "windows-host",
+            "windows-standalone"
+        ]
+    );
     assert!(targets.iter().all(|t| t.available));
     assert_eq!(default_id(&targets), Some("linux"));
-    assert_eq!(targets[2].flags, ["--platform", "windows", "--steam-mode", "host"]);
+    assert_eq!(
+        targets[2].flags,
+        ["--platform", "windows", "--steam-mode", "host"]
+    );
 
     // Missing Steam installs are flagged.
-    let targets = launch_targets(&options, &app, false, false, true, Some(LaunchTarget::WindowsProton), SteamMode::Standalone);
-    assert_eq!(missing(&targets), [None, Some("steam-runtime"), Some("host-steam"), None]);
+    let targets = launch_targets(
+        &options,
+        &app,
+        false,
+        false,
+        true,
+        Some(LaunchTarget::WindowsProton),
+        SteamMode::Standalone,
+    );
+    assert_eq!(
+        missing(&targets),
+        [None, Some("steam-runtime"), Some("host-steam"), None]
+    );
     assert_eq!(default_id(&targets), Some("windows-standalone"));
     assert_eq!(targets[0].flags, ["--platform", "linux", "--steam"]);
 
     // Windows default follows Steam mode.
-    let targets = launch_targets(&options, &app, true, true, false, Some(LaunchTarget::WindowsProton), SteamMode::InWineRuntime);
+    let targets = launch_targets(
+        &options,
+        &app,
+        true,
+        true,
+        false,
+        Some(LaunchTarget::WindowsProton),
+        SteamMode::InWineRuntime,
+    );
     assert_eq!(default_id(&targets), Some("windows-runtime"));
 
     // Missing build flags every target.
     std::fs::remove_file(tmp.path().join("bin/x64/factorio")).unwrap();
-    let targets = launch_targets(&options, &app, false, true, false, None, SteamMode::Standalone);
-    assert_eq!(missing(&targets), [Some("build"), Some("steam-runtime"), None, None]);
+    let targets = launch_targets(
+        &options,
+        &app,
+        false,
+        true,
+        false,
+        None,
+        SteamMode::Standalone,
+    );
+    assert_eq!(
+        missing(&targets),
+        [Some("build"), Some("steam-runtime"), None, None]
+    );
     assert_eq!(default_id(&targets), Some("windows-host"));
 
     // Unoffered platforms aren't listed.
-    let targets = launch_targets(&options[..2], &app, true, true, false, None, SteamMode::Standalone);
-    assert_eq!(ids(&targets), ["windows-runtime", "windows-host", "windows-standalone"]);
+    let targets = launch_targets(
+        &options[..2],
+        &app,
+        true,
+        true,
+        false,
+        None,
+        SteamMode::Standalone,
+    );
+    assert_eq!(
+        ids(&targets),
+        ["windows-runtime", "windows-host", "windows-standalone"]
+    );
 }
 
 #[test]
@@ -610,7 +708,7 @@ fn reg_dword_parses_hex_and_decimal() {
 
 #[test]
 fn qr_poll_unscanned_expiry_regenerates() {
-    use client::{qr_poll_step, QrPollStep};
+    use client::{QrPollStep, qr_poll_step};
     assert!(matches!(
         qr_poll_step(steam_vent::EResult::Expired, false),
         Some(QrPollStep::Regenerate)
@@ -619,17 +717,22 @@ fn qr_poll_unscanned_expiry_regenerates() {
 
 #[test]
 fn qr_poll_scanned_expiry_is_expired() {
-    use client::{qr_poll_step, QrPollStep};
+    use client::{QrPollStep, qr_poll_step};
     match qr_poll_step(steam_vent::EResult::Expired, true) {
-        Some(QrPollStep::Fail(e)) => assert_eq!(e.kind, crate::core::error::ErrorKind::LoginExpired),
+        Some(QrPollStep::Fail(e)) => {
+            assert_eq!(e.kind, crate::core::error::ErrorKind::LoginExpired)
+        }
         other => panic!("{other:?}"),
     }
 }
 
 #[test]
 fn qr_poll_scanned_cancel_is_denied() {
-    use client::{qr_poll_step, QrPollStep};
-    for r in [steam_vent::EResult::FileNotFound, steam_vent::EResult::Cancelled] {
+    use client::{QrPollStep, qr_poll_step};
+    for r in [
+        steam_vent::EResult::FileNotFound,
+        steam_vent::EResult::Cancelled,
+    ] {
         match qr_poll_step(r, true) {
             Some(QrPollStep::Fail(e)) => {
                 assert_eq!(e.kind, crate::core::error::ErrorKind::LoginDenied)
@@ -642,9 +745,15 @@ fn qr_poll_scanned_cancel_is_denied() {
 // Seen live: ~10 min unscanned.
 #[test]
 fn qr_poll_unscanned_session_end_regenerates() {
-    use client::{qr_poll_step, QrPollStep};
-    for r in [steam_vent::EResult::FileNotFound, steam_vent::EResult::Cancelled] {
-        assert!(matches!(qr_poll_step(r, false), Some(QrPollStep::Regenerate)), "{r:?}");
+    use client::{QrPollStep, qr_poll_step};
+    for r in [
+        steam_vent::EResult::FileNotFound,
+        steam_vent::EResult::Cancelled,
+    ] {
+        assert!(
+            matches!(qr_poll_step(r, false), Some(QrPollStep::Regenerate)),
+            "{r:?}"
+        );
     }
 }
 

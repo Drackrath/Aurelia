@@ -45,7 +45,12 @@ fn env_proxy_already_set() -> bool {
 /// because [`std::env::set_var`] is not sound to call concurrently with other threads
 /// that may be reading the environment.
 pub fn install_proxy_env(config: &ProxyConfig) {
-    let Some(url) = config.url.as_deref().map(str::trim).filter(|u| !u.is_empty()) else {
+    let Some(url) = config
+        .url
+        .as_deref()
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+    else {
         return;
     };
 
@@ -59,7 +64,12 @@ pub fn install_proxy_env(config: &ProxyConfig) {
         }
     }
 
-    if let Some(no_proxy) = config.no_proxy.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+    if let Some(no_proxy) = config
+        .no_proxy
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+    {
         if std::env::var_os("NO_PROXY").is_none() && std::env::var_os("no_proxy").is_none() {
             // SAFETY: as above — single-threaded startup.
             unsafe { std::env::set_var("NO_PROXY", no_proxy) };
@@ -110,7 +120,10 @@ impl Verdict {
 }
 
 fn header_str<'a>(headers: &'a reqwest::header::HeaderMap, name: &str) -> Option<&'a str> {
-    headers.get(name).and_then(|v| v.to_str().ok()).map(str::trim)
+    headers
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
 }
 
 /// Integer-seconds `Retry-After`; HTTP-dates are unused here.
@@ -122,7 +135,9 @@ fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
 
 /// GitHub's epoch reset header, relative to now.
 fn ratelimit_reset(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
-    let reset = header_str(headers, "x-ratelimit-reset")?.parse::<u64>().ok()?;
+    let reset = header_str(headers, "x-ratelimit-reset")?
+        .parse::<u64>()
+        .ok()?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()?
@@ -143,7 +158,11 @@ fn backoff(attempt: u32) -> Duration {
         + Duration::from_millis(jitter_ms)
 }
 
-fn rate_limited(host: &str, status: reqwest::StatusCode, retry_after: Option<Duration>) -> TypedError {
+fn rate_limited(
+    host: &str,
+    status: reqwest::StatusCode,
+    retry_after: Option<Duration>,
+) -> TypedError {
     TypedError::new(
         ErrorKind::RateLimited,
         format!(

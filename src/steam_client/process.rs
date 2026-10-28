@@ -26,7 +26,11 @@ impl SteamClient {
         };
         let pid = Pid::from_u32(pid);
         let mut sys = System::new();
-        sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), true, ProcessRefreshKind::nothing());
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[pid]),
+            true,
+            ProcessRefreshKind::nothing(),
+        );
         sys.process(pid)
             .is_some_and(|p| p.name().to_string_lossy().eq_ignore_ascii_case("steam.exe"))
     }
@@ -285,12 +289,17 @@ impl SteamClient {
 
             Self::scan_proc_pids(|pid_path, _pid_str| {
                 // Must have steam.exe in cmdline
-                if !Self::proc_cmdline(pid_path)?.to_lowercase().contains("steam.exe") {
+                if !Self::proc_cmdline(pid_path)?
+                    .to_lowercase()
+                    .contains("steam.exe")
+                {
                     return None;
                 }
 
                 // Must have our WINEPREFIX in its environment
-                Self::proc_environ(pid_path)?.contains(&prefix_str).then_some(true)
+                Self::proc_environ(pid_path)?
+                    .contains(&prefix_str)
+                    .then_some(true)
             })
             .unwrap_or(false)
         }
@@ -326,7 +335,9 @@ impl SteamClient {
                 if cmdline_str.contains("steam.exe") || cmdline_str.contains("steamwebhelper") {
                     return None;
                 }
-                Self::proc_environ(pid_path)?.contains(&prefix_str).then_some(true)
+                Self::proc_environ(pid_path)?
+                    .contains(&prefix_str)
+                    .then_some(true)
             })
             .unwrap_or(false)
         }
@@ -396,8 +407,9 @@ NoSavePersonalInfo=1
         launch_info: &LaunchInfo,
         user_config: Option<&crate::core::models::UserAppConfig>,
     ) -> Result<std::process::Child> {
-        let (_install_dir, executable, args, game_working_dir) =
-            self.resolve_exec_plan(app, launch_info, user_config).await?;
+        let (_install_dir, executable, args, game_working_dir) = self
+            .resolve_exec_plan(app, launch_info, user_config)
+            .await?;
 
         // Standard Steam identity fallback so the game can resolve its app id.
         let app_id_path = game_working_dir.join("steam_appid.txt");
@@ -440,8 +452,8 @@ NoSavePersonalInfo=1
         disable_launch_script: bool,
         steam_enabled: bool,
     ) -> Result<std::process::Child> {
+        use crate::infra::logging::{EventLogger, LaunchSession};
         use crate::launch::pipeline::{LaunchPipeline, PipelineContext};
-        use crate::infra::logging::{LaunchSession, EventLogger};
 
         let mut ctx = PipelineContext::new(app.app_id);
         ctx.app = Some(app.clone());
@@ -464,10 +476,10 @@ NoSavePersonalInfo=1
         }
 
         let pipeline = LaunchPipeline::with_default_stages();
-        pipeline.run(&mut ctx).await
-            .map_err(|e| anyhow!(e))?;
+        pipeline.run(&mut ctx).await.map_err(|e| anyhow!(e))?;
 
-        ctx.child.ok_or_else(|| anyhow!("Pipeline finished without spawning a process"))
+        ctx.child
+            .ok_or_else(|| anyhow!("Pipeline finished without spawning a process"))
     }
 
     /// Internal legacy ad-hoc launch path.
@@ -480,8 +492,9 @@ NoSavePersonalInfo=1
         _launcher_config: &crate::core::config::LauncherConfig,
         user_config: Option<&crate::core::models::UserAppConfig>,
     ) -> Result<std::process::Child> {
-        let (install_dir, executable, args, game_working_dir) =
-            self.resolve_exec_plan(app, launch_info, user_config).await?;
+        let (install_dir, executable, args, game_working_dir) = self
+            .resolve_exec_plan(app, launch_info, user_config)
+            .await?;
         let app_id_str = app.app_id.to_string();
 
         match launch_info.target {
@@ -507,7 +520,10 @@ NoSavePersonalInfo=1
                 let existing_ld = std::env::var("LD_LIBRARY_PATH").unwrap_or_default();
                 let existing_path = std::env::var("PATH").unwrap_or_default();
 
-                cmd.env("LD_LIBRARY_PATH", format!("{}:{}", bin_dir.display(), existing_ld));
+                cmd.env(
+                    "LD_LIBRARY_PATH",
+                    format!("{}:{}", bin_dir.display(), existing_ld),
+                );
                 cmd.env("PATH", format!("{}:{}", bin_dir.display(), existing_path));
                 cmd.env("SteamAppId", app.app_id.to_string());
 
@@ -520,13 +536,19 @@ NoSavePersonalInfo=1
                 cmd.stdout(crate::infra::logging::relay::child_stdio());
                 cmd.stderr(crate::infra::logging::relay::child_stdio());
 
-                tracing::info!("Launching game (Native): {:?} with args {:?}", executable, args);
+                tracing::info!(
+                    "Launching game (Native): {:?} with args {:?}",
+                    executable,
+                    args
+                );
                 cmd.spawn()
                     .map(crate::infra::logging::relay::attach)
                     .context("failed to spawn native linux game")
             }
             LaunchTarget::WindowsProton => {
-                bail!("WindowsProton targets must be launched via the Pipeline and Runner abstraction. Ad-hoc bypass is prohibited.");
+                bail!(
+                    "WindowsProton targets must be launched via the Pipeline and Runner abstraction. Ad-hoc bypass is prohibited."
+                );
             }
         }
     }

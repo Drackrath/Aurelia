@@ -9,7 +9,10 @@ fn parses_commandline_path() {
 #[test]
 fn parses_commandline_extra_spacing() {
     let manifest = "\"commandline\"    \"/bin/luxtorpeda   %verb%\"";
-    assert_eq!(parse_commandline(manifest).as_deref(), Some("/bin/luxtorpeda"));
+    assert_eq!(
+        parse_commandline(manifest).as_deref(),
+        Some("/bin/luxtorpeda")
+    );
 }
 
 #[test]

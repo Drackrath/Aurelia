@@ -13,7 +13,7 @@
 //! Proton lives in [`crate::core::config::LauncherConfig::proton_version`]; a fresh install
 //! sets it (so the default is the most recently downloaded runtime).
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
@@ -73,11 +73,26 @@ struct GithubSource {
 }
 
 const GE_SOURCES: &[GithubSource] = &[
-    GithubSource { repo: "GloriousEggroll/proton-ge-custom", label: "Proton-GE", ext: ".tar.gz", microarch: false },
-    GithubSource { repo: "GloriousEggroll/wine-ge-custom", label: "Wine-GE", ext: ".tar.xz", microarch: false },
+    GithubSource {
+        repo: "GloriousEggroll/proton-ge-custom",
+        label: "Proton-GE",
+        ext: ".tar.gz",
+        microarch: false,
+    },
+    GithubSource {
+        repo: "GloriousEggroll/wine-ge-custom",
+        label: "Wine-GE",
+        ext: ".tar.xz",
+        microarch: false,
+    },
     // Proton-CachyOS ships two microarch builds per release: a baseline `x86_64` and
     // an AVX2-optimized `x86_64_v3`. We pick the best one for the host CPU.
-    GithubSource { repo: "CachyOS/proton-cachyos", label: "Proton-CachyOS", ext: ".tar.xz", microarch: true },
+    GithubSource {
+        repo: "CachyOS/proton-cachyos",
+        label: "Proton-CachyOS",
+        ext: ".tar.xz",
+        microarch: true,
+    },
 ];
 
 /// How many recent releases to list per GE repo.
@@ -184,7 +199,11 @@ pub fn list_installed(steam_library_path: &Path) -> Vec<InstalledProton> {
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
             if path.is_dir() && name.to_ascii_lowercase().contains("proton") {
-                out.push(InstalledProton { name, location: "steam", path });
+                out.push(InstalledProton {
+                    name,
+                    location: "steam",
+                    path,
+                });
             }
         }
     }
@@ -214,7 +233,11 @@ pub fn list_installed(steam_library_path: &Path) -> Vec<InstalledProton> {
         seen_paths.insert(key)
     });
 
-    out.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
+    out.sort_by(|a, b| {
+        a.name
+            .to_ascii_lowercase()
+            .cmp(&b.name.to_ascii_lowercase())
+    });
     out.dedup_by(|a, b| a.name == b.name);
     out
 }
@@ -299,7 +322,9 @@ pub(crate) fn github_client() -> Result<reqwest::Client> {
         }
         builder = builder.default_headers(headers);
     }
-    builder.build().context("failed to build the GitHub HTTP client")
+    builder
+        .build()
+        .context("failed to build the GitHub HTTP client")
 }
 
 /// Pick the release asset to download: among assets with the source's extension
@@ -325,8 +350,10 @@ fn choose_asset_for_host(
     microarch: Option<&str>,
     host_is_arm64: bool,
 ) -> Option<GhAsset> {
-    let mut matching: Vec<GhAsset> =
-        assets.into_iter().filter(|a| a.name.ends_with(ext)).collect();
+    let mut matching: Vec<GhAsset> = assets
+        .into_iter()
+        .filter(|a| a.name.ends_with(ext))
+        .collect();
 
     // Releases can ship an ARM64 build beside the x86_64 one, and it may sort
     // first. Never hand an x86_64 host the ARM64 build; prefer it on ARM64.
@@ -406,7 +433,10 @@ async fn fetch_github_release_by_tag(
     src: &GithubSource,
     tag: &str,
 ) -> Result<Option<ProtonPackage>> {
-    let url = format!("https://api.github.com/repos/{}/releases/tags/{tag}", src.repo);
+    let url = format!(
+        "https://api.github.com/repos/{}/releases/tags/{tag}",
+        src.repo
+    );
     let client = github_client()?;
     let resp = crate::core::net::send_with_retry(&client, client.get(&url))
         .await
@@ -440,7 +470,10 @@ pub async fn install_github_package(
     let (url, ext) = match &pkg.source {
         ProtonSource::Github { url, ext } => (url, ext),
         ProtonSource::Valve { .. } => {
-            bail!("'{}' is an official Valve Proton — install it via Steam, not the GE downloader", pkg.name)
+            bail!(
+                "'{}' is an official Valve Proton — install it via Steam, not the GE downloader",
+                pkg.name
+            )
         }
     };
 
@@ -519,7 +552,11 @@ pub(crate) async fn download_to(
 
     let mut downloaded = 0u64;
     on_progress(0, total);
-    while let Some(chunk) = resp.chunk().await.context("failed reading download stream")? {
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .context("failed reading download stream")?
+    {
         file.write_all(&chunk)
             .await
             .with_context(|| format!("failed writing {}", dest.display()))?;
@@ -553,14 +590,25 @@ pub(crate) fn extract_tarball(archive: &Path, ext: &str, dest_parent: &Path) -> 
 fn unpack_guarded<R: std::io::Read>(reader: R, dest_parent: &Path) -> Result<()> {
     use std::path::Component;
     let mut archive = tar::Archive::new(reader);
-    for entry in archive.entries().context("reading runtime archive entries")? {
+    for entry in archive
+        .entries()
+        .context("reading runtime archive entries")?
+    {
         let mut entry = entry.context("reading runtime archive entry")?;
-        let path = entry.path().context("decoding archive entry path")?.into_owned();
-        if path
-            .components()
-            .any(|c| matches!(c, Component::ParentDir | Component::RootDir | Component::Prefix(_)))
-        {
-            bail!("refusing unsafe path '{}' in runtime archive", path.display());
+        let path = entry
+            .path()
+            .context("decoding archive entry path")?
+            .into_owned();
+        if path.components().any(|c| {
+            matches!(
+                c,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        }) {
+            bail!(
+                "refusing unsafe path '{}' in runtime archive",
+                path.display()
+            );
         }
         entry
             .unpack_in(dest_parent)

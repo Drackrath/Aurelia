@@ -30,7 +30,10 @@ fn source_events(dir: &Path, found: &mut BTreeSet<String>) {
 #[test]
 fn events_match_the_source() {
     let mut found = BTreeSet::new();
-    source_events(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut found);
+    source_events(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut found,
+    );
     let listed: BTreeSet<String> = EVENTS.iter().map(|e| e.to_string()).collect();
     assert_eq!(listed, found, "update capabilities::EVENTS");
 }
@@ -41,8 +44,18 @@ fn report_has_the_contract_fields() {
     assert_eq!(r["name"], "aurelia");
     assert_eq!(r["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(r["schema"], JSON_SCHEMA);
-    assert!(r["global_flags"].as_array().unwrap().contains(&"--json".into()));
-    assert!(r["features"].as_array().unwrap().contains(&"login.qr.stdin_control".into()));
+    assert!(
+        r["global_flags"]
+            .as_array()
+            .unwrap()
+            .contains(&"--json".into())
+    );
+    assert!(
+        r["features"]
+            .as_array()
+            .unwrap()
+            .contains(&"login.qr.stdin_control".into())
+    );
 }
 
 #[test]
@@ -83,7 +96,10 @@ fn list_view_is_padded_and_braced() {
 fn long_values_wrap_under_the_value() {
     let text = render_report(&capabilities(), 60);
     let lines: Vec<&str> = text.lines().collect();
-    let at = lines.iter().position(|l| l.starts_with("Commands")).unwrap();
+    let at = lines
+        .iter()
+        .position(|l| l.starts_with("Commands"))
+        .unwrap();
     assert!(lines[at + 1].starts_with(&" ".repeat("Commands    : ".len())));
     let list = &lines[..lines.iter().position(|l| l.starts_with("Type ")).unwrap()];
     assert!(list.iter().all(|l| l.len() <= 60), "{text}");
@@ -98,7 +114,10 @@ fn errors_render_as_a_table() {
     assert!(lines[head + 1].starts_with("---- ") && lines[head + 1].ends_with("-------- ----"));
     // Codes right-align under ExitCode.
     let code_end = lines[head].find("ExitCode").unwrap() + "ExitCode".len();
-    let denied = lines.iter().find(|l| l.starts_with("login_denied ")).unwrap();
+    let denied = lines
+        .iter()
+        .find(|l| l.starts_with("login_denied "))
+        .unwrap();
     assert_eq!(&denied[code_end - 2..code_end], "80");
     assert!(denied[code_end..].starts_with(" the sign-in was declined"));
     let unknown = lines.iter().find(|l| l.starts_with("unknown ")).unwrap();
@@ -114,7 +133,12 @@ fn detail_reaches_nested_commands() {
     let d = command_detail(&path(&["config", "game"])).unwrap();
     assert_eq!(d["command"], "config game");
     assert_eq!(d["args"][0]["name"], "app_id");
-    let mode = d["flags"].as_array().unwrap().iter().find(|f| f["long"] == "--steam-prefix-mode").unwrap();
+    let mode = d["flags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["long"] == "--steam-prefix-mode")
+        .unwrap();
     assert_eq!(mode["short"], "-m");
     assert_eq!(mode["values"], json!(["shared", "per-game"]));
 }
@@ -134,15 +158,26 @@ fn detail_flags_values_and_switches() {
 #[test]
 fn detail_lists_subcommands_with_about() {
     let d = command_detail(&path(&["config"])).unwrap();
-    assert!(d["subcommands"]["game"].as_str().unwrap().contains("per-game"));
+    assert!(
+        d["subcommands"]["game"]
+            .as_str()
+            .unwrap()
+            .contains("per-game")
+    );
 }
 
 #[test]
 fn unknown_path_is_not_found_with_choices() {
     let err = command_detail(&path(&["config", "nope"])).unwrap_err();
-    assert_eq!(aurelia::core::error::classify(&err).kind, ErrorKind::NotFound);
+    assert_eq!(
+        aurelia::core::error::classify(&err).kind,
+        ErrorKind::NotFound
+    );
     let msg = err.to_string();
-    assert!(msg.contains("no command `config nope`") && msg.contains("game"), "{msg}");
+    assert!(
+        msg.contains("no command `config nope`") && msg.contains("game"),
+        "{msg}"
+    );
     let err = command_detail(&path(&["config", "game", "x"])).unwrap_err();
     assert!(err.to_string().contains("`config game` has no subcommands"));
 }

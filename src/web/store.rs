@@ -93,7 +93,9 @@ fn requirements_lines(html: &str) -> Vec<String> {
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
-        .filter(|line| !line.eq_ignore_ascii_case("Minimum:") && !line.eq_ignore_ascii_case("Recommended:"))
+        .filter(|line| {
+            !line.eq_ignore_ascii_case("Minimum:") && !line.eq_ignore_ascii_case("Recommended:")
+        })
         .map(String::from)
         .collect()
 }

@@ -1,4 +1,4 @@
-use super::tags_table::{tag_name, TAGS};
+use super::tags_table::{TAGS, tag_name};
 
 #[test]
 fn table_is_sorted_and_unique() {

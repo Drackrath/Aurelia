@@ -35,7 +35,10 @@ pub fn parse_locale(raw: &str) -> Option<SystemLocale> {
         match part.len() {
             4 if alpha && script.is_none() => {
                 let mut chars = part.chars();
-                let head = chars.next().map(|c| c.to_ascii_uppercase()).unwrap_or_default();
+                let head = chars
+                    .next()
+                    .map(|c| c.to_ascii_uppercase())
+                    .unwrap_or_default();
                 script = Some(format!("{head}{}", chars.as_str().to_ascii_lowercase()));
             }
             2 if alpha && region.is_none() => region = Some(part.to_ascii_uppercase()),

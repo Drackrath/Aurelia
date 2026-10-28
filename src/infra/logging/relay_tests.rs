@@ -7,7 +7,9 @@ fn recording_relay(verbosity: u8) -> (Relay, Arc<Mutex<Vec<(RelayStream, Vec<u8>
     let sink_seen = Arc::clone(&seen);
     let relay = Relay::new(
         verbosity,
-        Arc::new(move |stream, bytes: &[u8]| sink_seen.lock().unwrap().push((stream, bytes.to_vec()))),
+        Arc::new(move |stream, bytes: &[u8]| {
+            sink_seen.lock().unwrap().push((stream, bytes.to_vec()))
+        }),
     );
     (relay, seen)
 }

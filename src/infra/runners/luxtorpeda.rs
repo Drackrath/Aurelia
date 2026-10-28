@@ -25,13 +25,15 @@ impl Runner for LuxtorpedaRunner {
 
     async fn prepare_prefix(&self, ctx: &LaunchContext) -> Result<(), LaunchError> {
         // Use a configured external install if present, else download on first use.
-        crate::compat::luxtorpeda::ensure_installed(custom_path(ctx).as_deref()).await.map_err(|e| {
-            LaunchError::new(
-                LaunchErrorKind::Environment,
-                "failed to install the luxtorpeda plugin",
-            )
-            .with_source(e)
-        })?;
+        crate::compat::luxtorpeda::ensure_installed(custom_path(ctx).as_deref())
+            .await
+            .map_err(|e| {
+                LaunchError::new(
+                    LaunchErrorKind::Environment,
+                    "failed to install the luxtorpeda plugin",
+                )
+                .with_source(e)
+            })?;
 
         // Luxtorpeda expects a Steam compat-data directory to exist for the app.
         let compat = compat_data_path(ctx);
@@ -79,13 +81,15 @@ impl Runner for LuxtorpedaRunner {
     }
 
     async fn build_command(&self, ctx: &LaunchContext) -> Result<CommandSpec, LaunchError> {
-        let entry = crate::compat::luxtorpeda::ensure_installed(custom_path(ctx).as_deref()).await.map_err(|e| {
-            LaunchError::new(
-                LaunchErrorKind::Environment,
-                "failed to resolve the luxtorpeda entry point",
-            )
-            .with_source(e)
-        })?;
+        let entry = crate::compat::luxtorpeda::ensure_installed(custom_path(ctx).as_deref())
+            .await
+            .map_err(|e| {
+                LaunchError::new(
+                    LaunchErrorKind::Environment,
+                    "failed to resolve the luxtorpeda entry point",
+                )
+                .with_source(e)
+            })?;
 
         let (_install_dir, executable, game_working_dir) = ctx.game_paths()?;
 
@@ -129,10 +133,15 @@ impl Runner for LuxtorpedaRunner {
             "luxtorpeda launch",
         );
 
-        cmd.spawn().map(crate::infra::logging::relay::attach).map_err(|e| {
-            LaunchError::new(LaunchErrorKind::Process, "failed to spawn luxtorpeda process")
+        cmd.spawn()
+            .map(crate::infra::logging::relay::attach)
+            .map_err(|e| {
+                LaunchError::new(
+                    LaunchErrorKind::Process,
+                    "failed to spawn luxtorpeda process",
+                )
                 .with_source(anyhow!(e))
-        })
+            })
     }
 }
 

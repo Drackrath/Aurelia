@@ -3,8 +3,8 @@
 use crate::cli::*;
 use crate::commands::common::*;
 
-use std::path::PathBuf;
 use anyhow::{Context, Result};
+use std::path::PathBuf;
 
 pub(crate) async fn cmd_cloud_sync(
     app_id: u32,
@@ -63,7 +63,10 @@ pub(crate) async fn cmd_cloud_sync(
     let policy = resolve.map_or(ConflictPolicy::Detect, ConflictPolicy::from);
 
     // UFS save rules let the upload pass discover brand-new local saves.
-    let specs = client.fetch_ufs_save_specs(app_id).await.unwrap_or_default();
+    let specs = client
+        .fetch_ufs_save_specs(app_id)
+        .await
+        .unwrap_or_default();
     let outcome = cloud
         .sync(app_id, &resolver, &specs, direction, policy)
         .await
@@ -120,7 +123,11 @@ pub(crate) async fn cmd_cloud_sync(
         for c in &outcome.conflicts {
             cli_println!(
                 "  {}  (cloud {} bytes @ {}, local {} bytes @ {})",
-                c.filename, c.cloud_size, c.cloud_timestamp, c.local_size, c.local_timestamp
+                c.filename,
+                c.cloud_size,
+                c.cloud_timestamp,
+                c.local_size,
+                c.local_timestamp
             );
         }
         cli_println!(

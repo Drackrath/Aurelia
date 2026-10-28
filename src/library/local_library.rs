@@ -70,7 +70,9 @@ pub async fn discover_from_root(root: &Path) -> Vec<OwnedGame> {
     for app_id in candidates {
         // Keep only titles Steam classifies as games (drops DLC, tools,
         // soundtracks, config apps, runtimes, …).
-        let Some(info) = meta.get(&app_id).filter(|i| i.app_type.eq_ignore_ascii_case("game"))
+        let Some(info) = meta
+            .get(&app_id)
+            .filter(|i| i.app_type.eq_ignore_ascii_case("game"))
         else {
             continue;
         };
@@ -83,7 +85,11 @@ pub async fn discover_from_root(root: &Path) -> Vec<OwnedGame> {
         });
     }
 
-    games.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
+    games.sort_by(|a, b| {
+        a.name
+            .to_ascii_lowercase()
+            .cmp(&b.name.to_ascii_lowercase())
+    });
     games
 }
 
@@ -106,7 +112,9 @@ async fn locate_localconfig(root: &Path) -> Option<PathBuf> {
 
     // Prefer the MostRecent user recorded in loginusers.vdf.
     if let Some(id3) = most_recent_account_id(root).await {
-        let candidate = userdata.join(id3.to_string()).join("config/localconfig.vdf");
+        let candidate = userdata
+            .join(id3.to_string())
+            .join("config/localconfig.vdf");
         if candidate.is_file() {
             return Some(candidate);
         }

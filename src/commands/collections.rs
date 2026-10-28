@@ -76,7 +76,11 @@ pub(crate) async fn cmd_collections_show(name: String, json: bool) -> Result<()>
     let members: Vec<u32> = if c.is_dynamic() {
         Vec::new()
     } else {
-        c.added.iter().copied().filter(|a| !c.removed.contains(a)).collect()
+        c.added
+            .iter()
+            .copied()
+            .filter(|a| !c.removed.contains(a))
+            .collect()
     };
 
     if json {
@@ -139,7 +143,11 @@ pub(crate) async fn cmd_collections_delete(name: String, json: bool) -> Result<(
 }
 
 /// `collections rename <name> <new_name>` (offline).
-pub(crate) async fn cmd_collections_rename(name: String, new_name: String, json: bool) -> Result<()> {
+pub(crate) async fn cmd_collections_rename(
+    name: String,
+    new_name: String,
+    json: bool,
+) -> Result<()> {
     let mut store = CollectionsStore::load()?;
     store.rename(&name, &new_name)?;
     if json {
@@ -163,7 +171,11 @@ pub(crate) async fn cmd_collections_add(name: String, app_ids: Vec<u32>, json: b
 }
 
 /// `collections remove <name> <appid>...` (offline).
-pub(crate) async fn cmd_collections_remove(name: String, app_ids: Vec<u32>, json: bool) -> Result<()> {
+pub(crate) async fn cmd_collections_remove(
+    name: String,
+    app_ids: Vec<u32>,
+    json: bool,
+) -> Result<()> {
     let mut store = CollectionsStore::load()?;
     store.remove(&name, &app_ids)?;
     if json {

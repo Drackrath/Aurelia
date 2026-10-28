@@ -1,5 +1,5 @@
-pub mod r#trait;
 pub mod luxtorpeda;
+pub mod r#trait;
 pub mod wine_tkg;
 
 pub use luxtorpeda::*;

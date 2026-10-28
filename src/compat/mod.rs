@@ -1,5 +1,5 @@
-pub mod proton;
-pub mod plugin;
 pub mod luxtorpeda;
-pub mod umu;
+pub mod plugin;
+pub mod proton;
 pub mod running;
+pub mod umu;

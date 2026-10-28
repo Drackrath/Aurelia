@@ -26,7 +26,12 @@ pub(crate) async fn cmd_scripts_list(json: bool) -> Result<()> {
 
     // Best-effort name resolution from the offline library cache.
     let library = load_library_cache().await.unwrap_or_default();
-    let name_of = |id: u32| library.iter().find(|g| g.app_id == id).map(|g| g.name.clone());
+    let name_of = |id: u32| {
+        library
+            .iter()
+            .find(|g| g.app_id == id)
+            .map(|g| g.name.clone())
+    };
 
     if json {
         let entries: Vec<_> = ids
@@ -47,7 +52,10 @@ pub(crate) async fn cmd_scripts_list(json: bool) -> Result<()> {
         cli_println!("No launch scripts. Create one with `aurelia scripts new <app_id>`.");
         return Ok(());
     }
-    cli_println!("Launch scripts (dir: {}):", launch_script::script_dir().display());
+    cli_println!(
+        "Launch scripts (dir: {}):",
+        launch_script::script_dir().display()
+    );
     for id in ids {
         let name = name_of(id).unwrap_or_else(|| "(unknown)".to_string());
         match launch_script::resolve(id, Some(&cfg), None, false) {
@@ -142,7 +150,10 @@ pub(crate) async fn cmd_scripts_remove(app_id: u32, json: bool) -> Result<()> {
     } else if removed {
         cli_println!("Removed launch script: {}", path.display());
     } else {
-        cli_println!("No dir-based launch script for app {app_id} at {}.", path.display());
+        cli_println!(
+            "No dir-based launch script for app {app_id} at {}.",
+            path.display()
+        );
     }
     Ok(())
 }

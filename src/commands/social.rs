@@ -69,7 +69,10 @@ pub(crate) async fn cmd_user(user: String, json: bool) -> Result<()> {
     }
     cli_println!(
         "{}  ({})",
-        profile.persona_name.as_deref().unwrap_or("(no persona name)"),
+        profile
+            .persona_name
+            .as_deref()
+            .unwrap_or("(no persona name)"),
         profile.steam_id
     );
     cli_println!("Profile  : {}", profile.profile_url);
@@ -82,7 +85,11 @@ pub(crate) async fn cmd_user(user: String, json: bool) -> Result<()> {
         1 => "private",
         _ => "unknown",
     };
-    let limited = if profile.is_limited { ", limited account" } else { "" };
+    let limited = if profile.is_limited {
+        ", limited account"
+    } else {
+        ""
+    };
     cli_println!("Privacy  : {visibility}{limited}");
     if let Some(name) = &profile.real_name {
         cli_println!("Name     : {name}");
@@ -91,7 +98,10 @@ pub(crate) async fn cmd_user(user: String, json: bool) -> Result<()> {
         cli_println!("Location : {place}");
     }
     if let Some(t) = profile.created {
-        cli_println!("Created  : {}", aurelia::steam_client::unix_to_ymd(t as i64));
+        cli_println!(
+            "Created  : {}",
+            aurelia::steam_client::unix_to_ymd(t as i64)
+        );
     }
     cli_println!("Status   : {}", persona_state_label(profile.persona_state));
     match (&profile.game_name, profile.game_app_id) {
@@ -100,7 +110,10 @@ pub(crate) async fn cmd_user(user: String, json: bool) -> Result<()> {
         _ => {}
     }
     if let Some(t) = profile.last_logoff {
-        cli_println!("Last seen: {}", aurelia::steam_client::unix_to_ymd(t as i64));
+        cli_println!(
+            "Last seen: {}",
+            aurelia::steam_client::unix_to_ymd(t as i64)
+        );
     }
     if let Some(h) = &profile.headline {
         cli_println!("Headline : {h}");
@@ -109,7 +122,10 @@ pub(crate) async fn cmd_user(user: String, json: bool) -> Result<()> {
         cli_println!("\n{}", aurelia::web::store::strip_html(s));
     }
     if let Some(t) = profile.ban_expires {
-        cli_println!("\nCommunity ban until {}", aurelia::steam_client::unix_to_ymd(t as i64));
+        cli_println!(
+            "\nCommunity ban until {}",
+            aurelia::steam_client::unix_to_ymd(t as i64)
+        );
     }
     Ok(())
 }

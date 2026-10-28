@@ -2,11 +2,11 @@
 
 use crate::commands::common::*;
 
-use std::sync::{Arc, RwLock};
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use aurelia::core::config::load_launcher_config;
 use aurelia::core::models::{DepotPlatform, DownloadState};
 use aurelia::steam_client::InstallOptions;
+use std::sync::{Arc, RwLock};
 
 /// `proton list`: show installable runtimes and what's installed.
 pub(crate) async fn cmd_proton_list(installed_only: bool, json: bool) -> Result<()> {
@@ -16,7 +16,10 @@ pub(crate) async fn cmd_proton_list(installed_only: bool, json: bool) -> Result<
     let default = cfg.proton_version;
     let is_installed = |name: &str| installed.iter().any(|i| i.name.eq_ignore_ascii_case(name));
     if !json && !aurelia::core::utils::PROTON_SUPPORTED {
-        cli_eprintln!("Note: {}", aurelia::core::utils::linux_only_msg("Proton/Wine"));
+        cli_eprintln!(
+            "Note: {}",
+            aurelia::core::utils::linux_only_msg("Proton/Wine")
+        );
     }
 
     if installed_only {
@@ -36,7 +39,9 @@ pub(crate) async fn cmd_proton_list(installed_only: bool, json: bool) -> Result<
         return Ok(());
     }
 
-    let available = aurelia::compat::proton::list_available().await.unwrap_or_default();
+    let available = aurelia::compat::proton::list_available()
+        .await
+        .unwrap_or_default();
     if json {
         print_json(&serde_json::json!({
             "default": default,
@@ -48,7 +53,11 @@ pub(crate) async fn cmd_proton_list(installed_only: bool, json: bool) -> Result<
 
     cli_println!("{:<10}  {:<28}  {:>10}  STATUS", "SOURCE", "NAME", "SIZE");
     for pkg in &available {
-        let size = if pkg.size > 0 { human_bytes(pkg.size) } else { "-".to_string() };
+        let size = if pkg.size > 0 {
+            human_bytes(pkg.size)
+        } else {
+            "-".to_string()
+        };
         let mut status = String::new();
         if is_installed(&pkg.name) {
             status.push_str("installed");
@@ -56,14 +65,28 @@ pub(crate) async fn cmd_proton_list(installed_only: bool, json: bool) -> Result<
         if pkg.name == default {
             status.push_str(" *default");
         }
-        cli_println!("{:<10}  {:<28}  {:>10}  {}", pkg.label, pkg.name, size, status.trim());
+        cli_println!(
+            "{:<10}  {:<28}  {:>10}  {}",
+            pkg.label,
+            pkg.name,
+            size,
+            status.trim()
+        );
     }
     // Surface any installed runtime not present in the available list (e.g. an old GE
     // build no longer in recent releases) so the user still sees everything on disk.
     for i in &installed {
-        if !available.iter().any(|p| p.name.eq_ignore_ascii_case(&i.name)) {
+        if !available
+            .iter()
+            .any(|p| p.name.eq_ignore_ascii_case(&i.name))
+        {
             let star = if i.name == default { " *default" } else { "" };
-            cli_println!("{:<10}  {:<28}  {:>10}  installed{star}", "(local)", i.name, "-");
+            cli_println!(
+                "{:<10}  {:<28}  {:>10}  installed{star}",
+                "(local)",
+                i.name,
+                "-"
+            );
         }
     }
     cli_println!("\nInstall with `aurelia proton install <NAME>`.");
@@ -90,7 +113,12 @@ pub(crate) async fn cmd_proton_install(version: String, json: bool) -> Result<()
             let client = authed_client().await?;
             let state = Arc::new(RwLock::new(DownloadState::default()));
             let rx = client
-                .install_game(app_id, DepotPlatform::Linux, InstallOptions::default(), state)
+                .install_game(
+                    app_id,
+                    DepotPlatform::Linux,
+                    InstallOptions::default(),
+                    state,
+                )
                 .await
                 .with_context(|| format!("failed to start installing {}", pkg.name))?;
             drive_progress(rx, json).await?;
@@ -100,7 +128,8 @@ pub(crate) async fn cmd_proton_install(version: String, json: bool) -> Result<()
                 cli_println!("Downloading {} ({}) ...", pkg.name, pkg.label);
             }
             let mut on_progress = byte_progress_printer(json);
-            let path = aurelia::compat::proton::install_github_package(&pkg, &mut on_progress).await?;
+            let path =
+                aurelia::compat::proton::install_github_package(&pkg, &mut on_progress).await?;
             if !json {
                 cli_println!("\n  Extracted to {}", path.display());
             }
@@ -110,7 +139,9 @@ pub(crate) async fn cmd_proton_install(version: String, json: bool) -> Result<()
     // The freshly installed runtime becomes the global default ("last downloaded").
     let mut cfg = load_launcher_config().await?;
     cfg.proton_version = pkg.name.clone();
-    cfg.save().await.context("failed saving the default Proton version")?;
+    cfg.save()
+        .await
+        .context("failed saving the default Proton version")?;
 
     if json {
         print_json(&serde_json::json!({
@@ -156,10 +187,14 @@ pub(crate) async fn cmd_proton_default(version: String, json: bool) -> Result<()
     let mut cfg = load_launcher_config().await?;
     let installed =
         aurelia::compat::proton::list_installed(std::path::Path::new(&cfg.steam_library_path));
-    let present = installed.iter().any(|i| i.name.eq_ignore_ascii_case(&version));
+    let present = installed
+        .iter()
+        .any(|i| i.name.eq_ignore_ascii_case(&version));
 
     cfg.proton_version = version.clone();
-    cfg.save().await.context("failed saving the default Proton version")?;
+    cfg.save()
+        .await
+        .context("failed saving the default Proton version")?;
 
     if json {
         print_json(&serde_json::json!({
@@ -169,7 +204,10 @@ pub(crate) async fn cmd_proton_default(version: String, json: bool) -> Result<()
     } else {
         cli_println!("Global default Proton set to {version}.");
         if !aurelia::core::utils::PROTON_SUPPORTED {
-            cli_eprintln!("Note: {}", aurelia::core::utils::linux_only_msg("Proton/Wine"));
+            cli_eprintln!(
+                "Note: {}",
+                aurelia::core::utils::linux_only_msg("Proton/Wine")
+            );
         } else if !present {
             cli_eprintln!(
                 "Note: '{version}' is not installed — run `aurelia proton install {version}`."
@@ -186,7 +224,10 @@ async fn steam_runtime_config(gerund: &str) -> Result<aurelia::core::config::Lau
     let config = load_launcher_config().await?;
     aurelia::core::utils::ensure_steam_runtime_supported()?;
     if config.steam_runtime_runner.as_os_str().is_empty() {
-        bail!("{}", aurelia::core::utils::steam_runtime_runner_unset_msg(gerund));
+        bail!(
+            "{}",
+            aurelia::core::utils::steam_runtime_runner_unset_msg(gerund)
+        );
     }
     Ok(config)
 }
@@ -213,7 +254,11 @@ pub(crate) async fn cmd_steam_runtime_install(reinstall: bool, json: bool) -> Re
             "steam_exe": steam_cfg.steam_exe,
         }));
     } else {
-        let verb = if reinstall { "reinstalled" } else { "installed" };
+        let verb = if reinstall {
+            "reinstalled"
+        } else {
+            "installed"
+        };
         cli_println!("Master Steam runtime {verb}; Steam client started.");
         if let Some(exe) = &steam_cfg.steam_exe {
             cli_println!("steam.exe path    : {}", exe.display());
@@ -233,7 +278,10 @@ pub(crate) async fn cmd_steam_runtime_uninstall(json: bool) -> Result<()> {
             "removed_path": steam_cfg.root_dir,
         }));
     } else if existed {
-        cli_println!("Removed the master Windows Steam runtime ({}).", steam_cfg.root_dir.display());
+        cli_println!(
+            "Removed the master Windows Steam runtime ({}).",
+            steam_cfg.root_dir.display()
+        );
         cli_println!("Reinstall with `aurelia steam-runtime install`.");
     } else {
         cli_println!("No master Windows Steam runtime was installed — nothing to remove.");
@@ -313,7 +361,10 @@ pub(crate) async fn cmd_steam_runtime_status(json: bool) -> Result<()> {
         }));
     } else {
         if !aurelia::core::utils::STEAM_RUNTIME_SUPPORTED {
-            cli_println!("Supported here    : no — {}", aurelia::core::utils::steam_runtime_unsupported_msg());
+            cli_println!(
+                "Supported here    : no — {}",
+                aurelia::core::utils::steam_runtime_unsupported_msg()
+            );
         }
         cli_println!("Master Steam root : {}", steam_cfg.root_dir.display());
         cli_println!("Wine prefix       : {}", steam_cfg.wine_prefix.display());
@@ -327,7 +378,11 @@ pub(crate) async fn cmd_steam_runtime_status(json: bool) -> Result<()> {
         }
         cli_println!(
             "Runtime runner    : {}",
-            if runner_configured { runner.as_str() } else { "(unset)" }
+            if runner_configured {
+                runner.as_str()
+            } else {
+                "(unset)"
+            }
         );
     }
     Ok(())

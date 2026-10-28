@@ -1,5 +1,5 @@
-pub mod overrides;
 pub mod invariants;
+pub mod overrides;
 
 use crate::launch::pipeline::PipelineContext;
 

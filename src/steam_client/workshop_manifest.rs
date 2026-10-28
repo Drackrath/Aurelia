@@ -8,10 +8,10 @@
 //! integrator can `mod workshop_manifest;` in `steam_client.rs` without any
 //! build-order concerns.
 
+use crate::core::utils::extract_quoted_values;
 use anyhow::{Context, Result};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use crate::core::utils::extract_quoted_values;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -133,7 +133,11 @@ pub(crate) fn remove_installed_item(
 // Internal: serialise
 // ---------------------------------------------------------------------------
 
-fn write_workshop_manifest(path: &Path, app_id: u32, items: &[InstalledWorkshopItem]) -> Result<()> {
+fn write_workshop_manifest(
+    path: &Path,
+    app_id: u32,
+    items: &[InstalledWorkshopItem],
+) -> Result<()> {
     let size_on_disk: u64 = items.iter().map(|i| i.size).sum();
 
     // Writing directly into the buffer with `write!` avoids allocating a fresh

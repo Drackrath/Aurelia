@@ -49,7 +49,11 @@ impl SteamClient {
             .iter()
             .filter(|t| t.tagid() != 0)
             .map(|t| {
-                let name = if t.name().is_empty() { t.english_name() } else { t.name() };
+                let name = if t.name().is_empty() {
+                    t.english_name()
+                } else {
+                    t.name()
+                };
                 (t.tagid(), name.to_string())
             })
             .filter(|(_, name)| !name.is_empty())
@@ -77,7 +81,11 @@ impl SteamClient {
                 names.entry(id).or_insert_with(|| name.clone());
             }
         }
-        let missing: Vec<u32> = ids.iter().copied().filter(|id| !names.contains_key(id)).collect();
+        let missing: Vec<u32> = ids
+            .iter()
+            .copied()
+            .filter(|id| !names.contains_key(id))
+            .collect();
         if missing.is_empty() {
             return names;
         }

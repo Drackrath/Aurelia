@@ -1,8 +1,8 @@
-pub mod local_library;
+pub mod cloud_sync;
 pub mod collections;
 pub mod depot_browser;
+pub mod local_library;
 pub mod relocate;
-pub mod cloud_sync;
 
 use crate::core::config::load_launcher_config;
 use crate::core::models::{GameLibrary, LibraryGame, OwnedGame};
@@ -76,17 +76,28 @@ pub async fn scan_installed_app_info() -> Result<HashMap<u32, InstalledAppInfo>>
     // machine can carry a leftover native `~/.steam` next to the Flatpak install
     // that actually holds the games, and only one of them lists the libraries.
     let libraries = expand_library_roots(&steam_data_roots().await).await;
-    tracing::debug!("scanning {} librar(y/ies): {:?}", libraries.len(), libraries);
+    tracing::debug!(
+        "scanning {} librar(y/ies): {:?}",
+        libraries.len(),
+        libraries
+    );
     let mut installed = scan_libraries(&libraries).await;
 
     if config.is_some_and(|cfg| cfg.windows_steam_discovery_enabled) {
         let master_steam = crate::core::utils::get_master_steam_config();
         if master_steam.wine_prefix.exists() {
-            tracing::debug!("scanning Windows Steam root: {:?}", master_steam.wine_prefix);
+            tracing::debug!(
+                "scanning Windows Steam root: {:?}",
+                master_steam.wine_prefix
+            );
             // Windows Steam layout is drive_c/Program Files (x86)/Steam
-            let windows_steam_root = master_steam.wine_prefix.join("drive_c/Program Files (x86)/Steam");
+            let windows_steam_root = master_steam
+                .wine_prefix
+                .join("drive_c/Program Files (x86)/Steam");
             if windows_steam_root.exists() {
-                let windows_installed = scan_library_info(&windows_steam_root).await.unwrap_or_default();
+                let windows_installed = scan_library_info(&windows_steam_root)
+                    .await
+                    .unwrap_or_default();
                 for (app_id, mut info) in windows_installed {
                     // Mark the source so `list` can flag it and `play` routes it through
                     // the in-Wine Steam. Prefer native/standard Linux Steam if duplicate.
@@ -234,12 +245,10 @@ async fn scan_libraries(libraries: &[PathBuf]) -> HashMap<u32, InstalledAppInfo>
 /// Equal on both, the first (libraries are scanned in sorted order) is kept, so
 /// the result stays deterministic.
 fn pick_live_copy(copies: Vec<InstalledAppInfo>) -> Option<InstalledAppInfo> {
-    copies
-        .into_iter()
-        .reduce(|best, next| {
-            let better = (next.last_updated, next.build_id) > (best.last_updated, best.build_id);
-            if better { next } else { best }
-        })
+    copies.into_iter().reduce(|best, next| {
+        let better = (next.last_updated, next.build_id) > (best.last_updated, best.build_id);
+        if better { next } else { best }
+    })
 }
 
 /// Every install of every app across `libraries`, including duplicates. Backs both
@@ -298,9 +307,31 @@ const MAX_PROBE_ENTRIES: usize = 512;
 /// volumes. Names Steam itself uses are deliberately absent — a library is
 /// recognised by its structure, not its name.
 const PROBE_SKIP_DIRS: &[&str] = &[
-    "bin", "boot", "dev", "etc", "lib", "lib32", "lib64", "libx32", "proc", "root", "run", "sbin",
-    "srv", "sys", "tmp", "usr", "var", "lost+found", "$RECYCLE.BIN", "System Volume Information",
-    "Recovery", "Windows", "WinSxS", "AppData", "node_modules",
+    "bin",
+    "boot",
+    "dev",
+    "etc",
+    "lib",
+    "lib32",
+    "lib64",
+    "libx32",
+    "proc",
+    "root",
+    "run",
+    "sbin",
+    "srv",
+    "sys",
+    "tmp",
+    "usr",
+    "var",
+    "lost+found",
+    "$RECYCLE.BIN",
+    "System Volume Information",
+    "Recovery",
+    "Windows",
+    "WinSxS",
+    "AppData",
+    "node_modules",
 ];
 
 /// Probe every connected drive for Steam library folders.
@@ -351,7 +382,10 @@ fn probe_for_libraries(dir: &Path, depth: usize, found: &mut Vec<PathBuf>) {
         // Hidden directories hold caches and dotfile trees, not game libraries.
         // The Steam data roots that *are* hidden are covered by
         // [`steam_root_candidates`], not by this probe.
-        if name.starts_with('.') || PROBE_SKIP_DIRS.iter().any(|skip| name.eq_ignore_ascii_case(skip))
+        if name.starts_with('.')
+            || PROBE_SKIP_DIRS
+                .iter()
+                .any(|skip| name.eq_ignore_ascii_case(skip))
         {
             continue;
         }
@@ -700,7 +734,7 @@ async fn parse_app_manifest_info(path: &Path) -> Result<Option<(u32, InstalledAp
     }
     let steamapps = path.parent().map(Path::to_path_buf).unwrap_or_default();
     let mut install_path = steamapps.join("common").join(&dir);
-    // A manifest whose `installdir` no longer matches the folder on disk 
+    // A manifest whose `installdir` no longer matches the folder on disk
     if !install_path.is_dir() {
         if let Some(found) = probe_install_dir_by_appid(&steamapps, id) {
             tracing::debug!(
@@ -781,7 +815,8 @@ pub fn build_game_library(
         // Only claim Family Sharing when we positively know the install belongs to
         // a different account. If we can't determine the owner (e.g. not logged in,
         // or the manifest has no LastOwner), don't guess — avoid false positives.
-        let family_shared = matches!((info.last_owner, steam_id), (Some(owner), Some(me)) if owner != me);
+        let family_shared =
+            matches!((info.last_owner, steam_id), (Some(owner), Some(me)) if owner != me);
         let from_windows_steam = info.from_windows_steam;
 
         games.push(LibraryGame {

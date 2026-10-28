@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
-use tempfile::{tempdir, TempDir};
+use tempfile::{TempDir, tempdir};
 
 fn aurelia(config_dir: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_aurelia"))

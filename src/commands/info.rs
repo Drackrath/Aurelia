@@ -4,14 +4,19 @@ use crate::steam_urls;
 
 use crate::commands::common::*;
 
-use std::path::PathBuf;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use aurelia::core::config::info_cache_ttl;
 use aurelia::core::config::load_info_cache;
 use aurelia::core::config::save_info_cache;
 use aurelia::steam_client::{SteamClient, StoreAppInfo};
+use std::path::PathBuf;
 
-pub(crate) async fn cmd_set_dlc(app_id: u32, enable: bool, restart_steam: bool, json: bool) -> Result<()> {
+pub(crate) async fn cmd_set_dlc(
+    app_id: u32,
+    enable: bool,
+    restart_steam: bool,
+    json: bool,
+) -> Result<()> {
     let client = restored_client().await?;
 
     // Steam flushes its in-memory app state on exit, so the edit must happen while
@@ -47,10 +52,14 @@ pub(crate) async fn cmd_set_dlc(app_id: u32, enable: bool, restart_steam: bool, 
 
     cli_println!("DLC {app_id} {action} for base game {base}.");
     if enable {
-        cli_println!("(Toggles the flag only — run `aurelia install {app_id}` if the content isn't downloaded.)");
+        cli_println!(
+            "(Toggles the flag only — run `aurelia install {app_id}` if the content isn't downloaded.)"
+        );
     }
     if restart_required {
-        cli_eprintln!("Note: Steam is running and reads DLC state only at startup, so this won't apply");
+        cli_eprintln!(
+            "Note: Steam is running and reads DLC state only at startup, so this won't apply"
+        );
         cli_eprintln!("      until you restart Steam (or re-run with --restart-steam).");
     }
     Ok(())
@@ -85,7 +94,9 @@ pub(crate) async fn cmd_set_branch(app_id: u32, branch: String, json: bool) -> R
     if json {
         print_json(&serde_json::json!({ "app_id": app_id, "branch": branch, "status": "set" }));
     } else {
-        cli_println!("App {app_id} set to branch '{branch}'. Run `aurelia update {app_id}` to apply.");
+        cli_println!(
+            "App {app_id} set to branch '{branch}'. Run `aurelia update {app_id}` to apply."
+        );
     }
     Ok(())
 }
@@ -328,7 +339,11 @@ pub(crate) fn info_json_value(
     });
     if let Some(web) = extended_info {
         // `tags` kept for older consumers; now CM-sourced.
-        let tag_names: Vec<&str> = details.tags.iter().filter_map(|t| t.name.as_deref()).collect();
+        let tag_names: Vec<&str> = details
+            .tags
+            .iter()
+            .filter_map(|t| t.name.as_deref())
+            .collect();
         value["extended"] = serde_json::json!({
             "genres": web.genres,
             "categories": web.categories,
@@ -352,7 +367,11 @@ pub(crate) fn print_info_human(
     extended_info: Option<&ExtendedInfo>,
 ) {
     // --- Header ---
-    let ea = if details.is_early_access { " [Early Access]" } else { "" };
+    let ea = if details.is_early_access {
+        " [Early Access]"
+    } else {
+        ""
+    };
     cli_println!("{}  (app {}){ea}", details.name, details.app_id);
     if !details.app_type.is_empty() {
         cli_println!("Type       : {}", details.app_type);
@@ -367,7 +386,11 @@ pub(crate) fn print_info_human(
         cli_println!("Franchises : {}", details.franchises.join(", "));
     }
     if let Some(date) = &details.release_date {
-        let suffix = if details.coming_soon { " (coming soon)" } else { "" };
+        let suffix = if details.coming_soon {
+            " (coming soon)"
+        } else {
+            ""
+        };
         cli_println!("Released   : {date}{suffix}");
     }
     if let Some(price) = &details.price {
@@ -377,7 +400,10 @@ pub(crate) fn print_info_human(
                 note.push_str(&format!(", was {orig}"));
             }
             if let Some(end) = details.discount_end {
-                note.push_str(&format!(", until {}", aurelia::steam_client::unix_to_ymd(end as i64)));
+                note.push_str(&format!(
+                    ", until {}",
+                    aurelia::steam_client::unix_to_ymd(end as i64)
+                ));
             }
             note.push(')');
             note
@@ -485,7 +511,9 @@ pub(crate) fn print_info_human(
     if !dlc.is_empty() {
         cli_println!("\nDLC ({}):", dlc.len());
         for (id, name) in dlc {
-            let name = name.clone().unwrap_or_else(|| "(name unavailable)".to_string());
+            let name = name
+                .clone()
+                .unwrap_or_else(|| "(name unavailable)".to_string());
             cli_println!("  {id:>9}  {name}");
         }
     }
@@ -558,7 +586,15 @@ pub(crate) async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
     let store = resolve_dlc_store_info(&steam, &dlc_ids, &lang, &country).await;
     let mut dlc: Vec<(u32, Option<String>)> = dlc_ids
         .iter()
-        .map(|&id| (id, store.get(&id).map(|i| i.name.clone()).filter(|s| !s.is_empty())))
+        .map(|&id| {
+            (
+                id,
+                store
+                    .get(&id)
+                    .map(|i| i.name.clone())
+                    .filter(|s| !s.is_empty()),
+            )
+        })
         .collect();
     dlc.sort_by_key(|(id, _)| *id);
     let states = steam
@@ -603,10 +639,15 @@ pub(crate) async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
     }
     cli_println!(
         "{:>9}  {:<5}  {:<13}  {:<16}  NAME",
-        "APPID", "OWNED", "STATUS", "PRICE"
+        "APPID",
+        "OWNED",
+        "STATUS",
+        "PRICE"
     );
     for (id, name) in &dlc {
-        let name = name.clone().unwrap_or_else(|| "(name unavailable)".to_string());
+        let name = name
+            .clone()
+            .unwrap_or_else(|| "(name unavailable)".to_string());
         let price = store
             .get(id)
             .map(|i| {
@@ -829,7 +870,11 @@ pub(crate) async fn cmd_launch_options(app_id: u32, json: bool) -> Result<()> {
     }
     cli_println!("{:>3}  {:<10}  NAME / COMMAND", "ID", "OS");
     for o in &options {
-        let os = if o.oslist.is_empty() { "any" } else { &o.oslist };
+        let os = if o.oslist.is_empty() {
+            "any"
+        } else {
+            &o.oslist
+        };
         let desc = if o.description.is_empty() {
             &o.executable
         } else {
@@ -845,7 +890,12 @@ pub(crate) async fn cmd_launch_options(app_id: u32, json: bool) -> Result<()> {
     Ok(())
 }
 
-pub(crate) async fn cmd_image(app_id: u32, output: Option<PathBuf>, force: bool, json: bool) -> Result<()> {
+pub(crate) async fn cmd_image(
+    app_id: u32,
+    output: Option<PathBuf>,
+    force: bool,
+    json: bool,
+) -> Result<()> {
     let cache_dir = aurelia::core::config::opensteam_image_cache_dir()?;
     tokio::fs::create_dir_all(&cache_dir)
         .await
@@ -855,7 +905,9 @@ pub(crate) async fn cmd_image(app_id: u32, output: Option<PathBuf>, force: bool,
     if force || tokio::fs::metadata(&cache_path).await.is_err() {
         // Steam CDN artwork variants, tried in order of preference.
         let candidates = [
-            format!("https://cdn.akamai.steamstatic.com/steam/apps/{app_id}/library_600x900_2x.jpg"),
+            format!(
+                "https://cdn.akamai.steamstatic.com/steam/apps/{app_id}/library_600x900_2x.jpg"
+            ),
             format!("https://cdn.akamai.steamstatic.com/steam/apps/{app_id}/header.jpg"),
             format!("https://steamcdn-a.akamaihd.net/steam/apps/{app_id}/library_capsule_2x.jpg"),
         ];

@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use crate::infra::runners::{LaunchContext, CommandSpec, Runner, WineTkgRunner};
-    use crate::core::models::LibraryGame;
-    use crate::steam_client::{LaunchInfo, LaunchTarget};
     use crate::core::config::LauncherConfig;
+    use crate::core::models::LibraryGame;
+    use crate::infra::runners::{CommandSpec, LaunchContext, Runner, WineTkgRunner};
+    use crate::steam_client::{LaunchInfo, LaunchTarget};
     use std::collections::HashMap;
     use std::path::PathBuf;
 
@@ -70,8 +70,8 @@ mod tests {
     #[tokio::test]
     async fn test_wine_tkg_runner_graphics_policy_autodetect() {
         use crate::core::models::{GraphicsBackendPolicy, UserAppConfig};
-        use tempfile::tempdir;
         use std::fs;
+        use tempfile::tempdir;
 
         let tmp = tempdir().unwrap();
         let lib = tmp.path().join("library");
@@ -165,7 +165,10 @@ mod tests {
 
         assert_eq!(env.get("PROTON_NO_ESYNC").map(String::as_str), Some("1"));
         let overrides = env.get("WINEDLLOVERRIDES").unwrap();
-        assert!(overrides.contains("xlive=builtin"), "overrides were: {overrides}");
+        assert!(
+            overrides.contains("xlive=builtin"),
+            "overrides were: {overrides}"
+        );
     }
 
     #[tokio::test]
@@ -178,7 +181,8 @@ mod tests {
             dll_overrides: vec![],
         };
         let mut user = UserAppConfig::default();
-        user.env_variables.insert("PROTON_NO_ESYNC".to_string(), "0".to_string());
+        user.env_variables
+            .insert("PROTON_NO_ESYNC".to_string(), "0".to_string());
         ctx.user_config = Some(user);
 
         let env = runner.build_env(&ctx).await.unwrap();

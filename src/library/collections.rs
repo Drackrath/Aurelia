@@ -15,7 +15,7 @@
 //!   platforms, …). Aurelia round-trips these opaquely — it never edits or
 //!   fabricates a `filterSpec` — so a `sync` won't clobber them.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -118,7 +118,11 @@ impl Collection {
 fn parse_app_ids(value: Option<&Value>) -> Vec<u32> {
     value
         .and_then(Value::as_array)
-        .map(|arr| arr.iter().filter_map(|x| x.as_u64().map(|n| n as u32)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_u64().map(|n| n as u32))
+                .collect()
+        })
         .unwrap_or_default()
 }
 

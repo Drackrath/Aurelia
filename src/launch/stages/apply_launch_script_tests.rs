@@ -22,7 +22,10 @@ async fn wraps_spec_with_override_script() {
     let spec = ctx.command_spec.unwrap();
     assert_eq!(spec.program, script);
     assert_eq!(spec.args, vec!["/usr/bin/proton", "run", "game.exe"]);
-    assert_eq!(spec.env.get("AURELIA_APP_ID").map(String::as_str), Some("555"));
+    assert_eq!(
+        spec.env.get("AURELIA_APP_ID").map(String::as_str),
+        Some("555")
+    );
     assert_eq!(
         spec.env.get("AURELIA_LAUNCH_PROGRAM").map(String::as_str),
         Some("/usr/bin/proton")
@@ -49,7 +52,9 @@ async fn missing_explicit_script_errors() {
 
 #[tokio::test]
 async fn no_script_is_noop() {
-    let _guard = crate::launch::launch_script::SCRIPT_DIR_ENV_LOCK.lock().unwrap();
+    let _guard = crate::launch::launch_script::SCRIPT_DIR_ENV_LOCK
+        .lock()
+        .unwrap();
     let tmp = tempdir().unwrap();
     unsafe { std::env::set_var("AURELIA_SCRIPT_DIR", tmp.path()) };
     let mut ctx = PipelineContext::new(555);
@@ -83,5 +88,8 @@ async fn disabled_skips_wrapping() {
 
     let stage = ApplyLaunchScriptStage;
     stage.execute(&mut ctx).await.unwrap();
-    assert_eq!(ctx.command_spec.unwrap().program, Path::new("/usr/bin/proton"));
+    assert_eq!(
+        ctx.command_spec.unwrap().program,
+        Path::new("/usr/bin/proton")
+    );
 }

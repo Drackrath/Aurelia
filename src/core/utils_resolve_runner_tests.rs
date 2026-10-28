@@ -2,8 +2,14 @@ use super::*;
 
 #[test]
 fn normalize_strips_punctuation_and_case() {
-    assert_eq!(normalize_runner_name("Proton - Experimental"), "protonexperimental");
-    assert_eq!(normalize_runner_name("Proton Experimental"), "protonexperimental");
+    assert_eq!(
+        normalize_runner_name("Proton - Experimental"),
+        "protonexperimental"
+    );
+    assert_eq!(
+        normalize_runner_name("Proton Experimental"),
+        "protonexperimental"
+    );
     assert_eq!(normalize_runner_name("GE-Proton9-20"), "geproton920");
 }
 

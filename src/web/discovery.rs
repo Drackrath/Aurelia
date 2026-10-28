@@ -132,7 +132,8 @@ pub async fn fetch_reviews(
                         votes_up: i64_of(r, "votes_up"),
                         votes_funny: i64_of(r, "votes_funny"),
                         playtime_hours: i64_of(&author, "playtime_forever") as f64 / 60.0,
-                        playtime_at_review_hours: i64_of(&author, "playtime_at_review") as f64 / 60.0,
+                        playtime_at_review_hours: i64_of(&author, "playtime_at_review") as f64
+                            / 60.0,
                         created: i64_of(r, "timestamp_created").max(0) as u64,
                         steam_purchase: bool_of(r, "steam_purchase"),
                         received_for_free: bool_of(r, "received_for_free"),

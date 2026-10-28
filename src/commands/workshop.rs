@@ -3,10 +3,10 @@
 use crate::cli::*;
 use crate::commands::common::*;
 
-use std::sync::{Arc, RwLock};
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use aurelia::core::models::DownloadState;
 use aurelia::steam_client::SteamClient;
+use std::sync::{Arc, RwLock};
 
 /// Human label for a Workshop entry kind.
 pub(crate) fn workshop_kind_label(kind: aurelia::core::models::WorkshopItemKind) -> &'static str {
@@ -28,7 +28,14 @@ pub(crate) async fn cmd_workshop_browse(
 ) -> Result<()> {
     let client = authed_client().await?;
     let page = client
-        .query_workshop_files(app_id, search.as_deref(), sort.query_type(), &cursor, count, &tags)
+        .query_workshop_files(
+            app_id,
+            search.as_deref(),
+            sort.query_type(),
+            &cursor,
+            count,
+            &tags,
+        )
         .await?;
 
     if json {
@@ -54,7 +61,11 @@ pub(crate) async fn cmd_workshop_browse(
         };
         cli_println!("{:>12}  {:>10}  {}", item.id, size, item.title);
     }
-    cli_println!("\nShowing {} of {} result(s).", page.items.len(), page.total);
+    cli_println!(
+        "\nShowing {} of {} result(s).",
+        page.items.len(),
+        page.total
+    );
     // Offer the next page only when the cursor actually advances.
     if !page.next_cursor.is_empty() && page.next_cursor != cursor {
         cli_println!("Next page: --cursor \"{}\"", page.next_cursor);
@@ -86,7 +97,10 @@ pub(crate) async fn cmd_workshop_info(ids: Vec<u64>, json: bool) -> Result<()> {
             cli_println!("Size    : {}", human_bytes(item.file_size));
             cli_println!("Manifest: {}", item.hcontent_file);
         }
-        cli_println!("Updated : {}", format_unix_timestamp(item.time_updated.max(0) as u64));
+        cli_println!(
+            "Updated : {}",
+            format_unix_timestamp(item.time_updated.max(0) as u64)
+        );
         cli_println!();
     }
     Ok(())
@@ -108,7 +122,12 @@ pub(crate) async fn cmd_workshop_list(app_id: u32, json: bool) -> Result<()> {
     }
     cli_println!("{:>12}  {:>12}  TITLE", "ID", "SIZE");
     for item in &items {
-        cli_println!("{:>12}  {:>12}  {}", item.id, human_bytes(item.file_size), item.title);
+        cli_println!(
+            "{:>12}  {:>12}  {}",
+            item.id,
+            human_bytes(item.file_size),
+            item.title
+        );
     }
     cli_println!("\n{} subscribed item(s).", items.len());
     Ok(())
@@ -179,7 +198,11 @@ async fn install_one_workshop_item(
 }
 
 /// `workshop install`: download item(s)/collection(s) and register them.
-pub(crate) async fn cmd_workshop_install(ids: Vec<u64>, no_recurse: bool, json: bool) -> Result<()> {
+pub(crate) async fn cmd_workshop_install(
+    ids: Vec<u64>,
+    no_recurse: bool,
+    json: bool,
+) -> Result<()> {
     let (client, items) = resolve_workshop_items(ids, no_recurse).await?;
     if items.is_empty() {
         bail!("no installable Workshop items resolved");
@@ -202,13 +225,22 @@ pub(crate) async fn cmd_workshop_install(ids: Vec<u64>, no_recurse: bool, json: 
 }
 
 /// `workshop uninstall`: remove installed item(s)/collection(s).
-pub(crate) async fn cmd_workshop_uninstall(ids: Vec<u64>, no_recurse: bool, json: bool) -> Result<()> {
+pub(crate) async fn cmd_workshop_uninstall(
+    ids: Vec<u64>,
+    no_recurse: bool,
+    json: bool,
+) -> Result<()> {
     // GetDetails resolves each item's owning app id (needed to find its files).
     let (client, items) = resolve_workshop_items(ids, no_recurse).await?;
 
-    let removed = for_each_workshop_item(&client, &items, "Uninstalled", "uninstall", json, |c, id, app| {
-        c.uninstall_workshop_item(id, app)
-    })
+    let removed = for_each_workshop_item(
+        &client,
+        &items,
+        "Uninstalled",
+        "uninstall",
+        json,
+        |c, id, app| c.uninstall_workshop_item(id, app),
+    )
     .await?;
     if json {
         print_json(&serde_json::json!({ "uninstalled": removed }));
@@ -227,11 +259,15 @@ pub(crate) async fn cmd_workshop_subscribe(
 ) -> Result<()> {
     let (client, items) = resolve_workshop_items(ids, no_recurse).await?;
 
-    let subscribed =
-        for_each_workshop_item(&client, &items, "Subscribed to", "subscribe to", json, |c, id, app| {
-            c.subscribe_published_file(id, app)
-        })
-        .await?;
+    let subscribed = for_each_workshop_item(
+        &client,
+        &items,
+        "Subscribed to",
+        "subscribe to",
+        json,
+        |c, id, app| c.subscribe_published_file(id, app),
+    )
+    .await?;
 
     if install {
         for item in &items {
@@ -249,7 +285,11 @@ pub(crate) async fn cmd_workshop_subscribe(
 }
 
 /// `workshop unsubscribe`: unsubscribe from item(s)/collection(s).
-pub(crate) async fn cmd_workshop_unsubscribe(ids: Vec<u64>, no_recurse: bool, json: bool) -> Result<()> {
+pub(crate) async fn cmd_workshop_unsubscribe(
+    ids: Vec<u64>,
+    no_recurse: bool,
+    json: bool,
+) -> Result<()> {
     let (client, items) = resolve_workshop_items(ids, no_recurse).await?;
 
     let unsubscribed = for_each_workshop_item(
@@ -273,7 +313,10 @@ pub(crate) async fn cmd_workshop_status(app_id: u32, json: bool) -> Result<()> {
     let installed = client.read_installed_workshop(app_id).await?;
     // Subscriptions and live manifests need the network; treat them as best-effort
     // so `status` still reports the local install set when offline.
-    let subscribed = client.fetch_subscribed_items(app_id).await.unwrap_or_default();
+    let subscribed = client
+        .fetch_subscribed_items(app_id)
+        .await
+        .unwrap_or_default();
 
     // Union of installed + subscribed ids, to fetch current manifests for update detection.
     let mut all_ids: Vec<u64> = installed.iter().map(|i| i.id).collect();
@@ -315,7 +358,10 @@ pub(crate) async fn cmd_workshop_status(app_id: u32, json: bool) -> Result<()> {
             };
             StatusRow {
                 id,
-                title: detail_by_id.get(&id).map(|d| d.title.clone()).unwrap_or_default(),
+                title: detail_by_id
+                    .get(&id)
+                    .map(|d| d.title.clone())
+                    .unwrap_or_default(),
                 installed: inst.is_some(),
                 subscribed: subscribed.contains(&id),
                 update,
@@ -346,7 +392,10 @@ pub(crate) async fn cmd_workshop_status(app_id: u32, json: bool) -> Result<()> {
     }
     cli_println!(
         "{:>12}  {:<9}  {:<10}  {:<7}  TITLE",
-        "ID", "INSTALLED", "SUBSCRIBED", "UPDATE"
+        "ID",
+        "INSTALLED",
+        "SUBSCRIBED",
+        "UPDATE"
     );
     for r in &rows {
         cli_println!(
@@ -381,7 +430,12 @@ pub(crate) async fn cmd_workshop_rate(id: u64, up: bool, json: bool) -> Result<(
 }
 
 /// `workshop comments`: read a page of a Workshop item's comments.
-pub(crate) async fn cmd_workshop_comments_read(id: u64, start: i32, count: i32, json: bool) -> Result<()> {
+pub(crate) async fn cmd_workshop_comments_read(
+    id: u64,
+    start: i32,
+    count: i32,
+    json: bool,
+) -> Result<()> {
     let client = authed_client().await?;
     let comments = client.workshop_comments(id, start, count).await?;
 

@@ -28,7 +28,10 @@ pub async fn write_frame<W: AsyncWrite + Unpin>(
     payload: &[u8],
 ) -> std::io::Result<()> {
     let len = u32::try_from(payload.len()).map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "frame payload exceeds u32")
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "frame payload exceeds u32",
+        )
     })?;
     w.write_u8(channel).await?;
     w.write_u32(len).await?;
@@ -40,9 +43,7 @@ pub async fn write_frame<W: AsyncWrite + Unpin>(
 }
 
 /// Read one frame. Returns `Ok(None)` on a clean EOF (peer closed the stream).
-pub async fn read_frame<R: AsyncRead + Unpin>(
-    r: &mut R,
-) -> std::io::Result<Option<(u8, Vec<u8>)>> {
+pub async fn read_frame<R: AsyncRead + Unpin>(r: &mut R) -> std::io::Result<Option<(u8, Vec<u8>)>> {
     let channel = match r.read_u8().await {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
@@ -69,7 +70,10 @@ pub type SharedWriter<W> = std::sync::Arc<tokio::sync::Mutex<W>>;
 /// Split; share the write half.
 pub fn split_shared<S>(
     stream: S,
-) -> (tokio::io::ReadHalf<S>, SharedWriter<tokio::io::WriteHalf<S>>)
+) -> (
+    tokio::io::ReadHalf<S>,
+    SharedWriter<tokio::io::WriteHalf<S>>,
+)
 where
     S: AsyncRead + AsyncWrite,
 {

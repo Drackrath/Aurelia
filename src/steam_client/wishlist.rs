@@ -10,8 +10,8 @@ include!(concat!(env!("OUT_DIR"), "/wishlist/mod.rs"));
 
 use service_wishlist::{
     CWishlist_AddToWishlist_Request, CWishlist_AddToWishlist_Response,
-    CWishlist_GetWishlistItemCount_Request, CWishlist_GetWishlistItemCount_Response,
     CWishlist_GetWishlist_Request, CWishlist_GetWishlist_Response,
+    CWishlist_GetWishlistItemCount_Request, CWishlist_GetWishlistItemCount_Response,
     CWishlist_RemoveFromWishlist_Request, CWishlist_RemoveFromWishlist_Response,
 };
 
@@ -112,10 +112,11 @@ impl SteamClient {
         let connection = self.require_connection()?;
         let mut request = CWishlist_AddToWishlist_Request::new();
         request.set_appid(app_id);
-        let response: CWishlist_AddToWishlist_Response = connection
-            .service_method(request)
-            .await
-            .context("failed calling Wishlist.AddToWishlist")?;
+        let response: CWishlist_AddToWishlist_Response =
+            connection
+                .service_method(request)
+                .await
+                .context("failed calling Wishlist.AddToWishlist")?;
         Ok(response.wishlist_count())
     }
 

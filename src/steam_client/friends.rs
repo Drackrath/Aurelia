@@ -11,8 +11,9 @@ use super::*;
 use std::sync::RwLock;
 use steam_vent::NetMessage;
 use steam_vent_proto::steammessages_clientserver_friends::{
-    CMsgClientAddFriend, CMsgClientAddFriendResponse, CMsgClientChangeStatus, CMsgClientFriendsList,
-    CMsgClientPersonaState, CMsgClientRemoveFriend, CMsgClientRequestFriendData,
+    CMsgClientAddFriend, CMsgClientAddFriendResponse, CMsgClientChangeStatus,
+    CMsgClientFriendsList, CMsgClientPersonaState, CMsgClientRemoveFriend,
+    CMsgClientRequestFriendData,
 };
 use tokio_stream::StreamExt;
 
@@ -317,7 +318,10 @@ impl SteamClient {
         })
         .await;
 
-        tracing::info!("friends watcher started ({} friend(s) so far)", initial_ids.len());
+        tracing::info!(
+            "friends watcher started ({} friend(s) so far)",
+            initial_ids.len()
+        );
         loop {
             tokio::select! {
                 Some(Ok(list)) = friends_stream.next() => {

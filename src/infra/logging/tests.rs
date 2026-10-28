@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use crate::infra::logging::{LaunchSessionId, LaunchSession, EventLogger, LogLevel, LogEvent};
+    use crate::infra::logging::{EventLogger, LaunchSession, LaunchSessionId, LogEvent, LogLevel};
+    use std::collections::{HashMap, HashSet};
     use std::path::PathBuf;
-    use std::collections::{HashSet, HashMap};
     use tempfile::tempdir;
 
     #[test]
@@ -21,9 +21,21 @@ mod tests {
 
         let id_str = session.id.to_string();
         assert!(session.log_dir.ends_with(&id_str));
-        assert!(session.event_log_path().ends_with(format!("{}/events.jsonl", id_str)));
-        assert!(session.stdout_path().ends_with(format!("{}/stdout.log", id_str)));
-        assert!(session.stderr_path().ends_with(format!("{}/stderr.log", id_str)));
+        assert!(
+            session
+                .event_log_path()
+                .ends_with(format!("{}/events.jsonl", id_str))
+        );
+        assert!(
+            session
+                .stdout_path()
+                .ends_with(format!("{}/stdout.log", id_str))
+        );
+        assert!(
+            session
+                .stderr_path()
+                .ends_with(format!("{}/stderr.log", id_str))
+        );
     }
 
     #[test]
@@ -32,14 +44,20 @@ mod tests {
         let session = LaunchSession::new(dir.path());
         let logger = EventLogger::new(&session).expect("Failed to create logger");
 
-        logger.log(LogLevel::Info, "test_event", "Test message".to_string(), Some("Init".to_string()), HashMap::new())
+        logger
+            .log(
+                LogLevel::Info,
+                "test_event",
+                "Test message".to_string(),
+                Some("Init".to_string()),
+                HashMap::new(),
+            )
             .expect("Failed to log event");
 
-        let content = std::fs::read_to_string(session.event_log_path())
-            .expect("Failed to read log file");
+        let content =
+            std::fs::read_to_string(session.event_log_path()).expect("Failed to read log file");
 
-        let event: LogEvent = serde_json::from_str(&content)
-            .expect("Failed to parse log event");
+        let event: LogEvent = serde_json::from_str(&content).expect("Failed to parse log event");
 
         assert_eq!(event.message, "Test message");
         assert_eq!(event.stage, Some("Init".to_string()));
@@ -59,7 +77,8 @@ mod tests {
         metadata.insert("STEAM_TOKEN".to_string(), "secret123".to_string());
         metadata.insert("NORMAL_VAR".to_string(), "safe".to_string());
 
-        logger.log(LogLevel::Info, "test", "msg".to_string(), None, metadata)
+        logger
+            .log(LogLevel::Info, "test", "msg".to_string(), None, metadata)
             .expect("Failed to log");
 
         let content = std::fs::read_to_string(session.event_log_path()).unwrap();
@@ -93,7 +112,10 @@ mod tests {
         let read_env: EffectiveEnv = serde_json::from_str(&content).unwrap();
 
         assert_eq!(read_env.env_vars.get("STEAM_TOKEN").unwrap(), "[REDACTED]");
-        assert_eq!(read_env.env_vars.get("REFRESH_TOKEN").unwrap(), "[REDACTED]");
+        assert_eq!(
+            read_env.env_vars.get("REFRESH_TOKEN").unwrap(),
+            "[REDACTED]"
+        );
         assert_eq!(read_env.env_vars.get("NORMAL_VAR").unwrap(), "safe");
     }
 
@@ -102,13 +124,25 @@ mod tests {
         use crate::infra::logging::wine_capture::classify_graphics_evidence;
 
         let dxvk_line = "info:  DXVK: v2.3.1";
-        assert!(classify_graphics_evidence(dxvk_line).unwrap().contains("DXVK Detected"));
+        assert!(
+            classify_graphics_evidence(dxvk_line)
+                .unwrap()
+                .contains("DXVK Detected")
+        );
 
         let vkd3d_line = "info:  VKD3D-Proton: v2.10";
-        assert!(classify_graphics_evidence(vkd3d_line).unwrap().contains("VKD3D-Proton Detected"));
+        assert!(
+            classify_graphics_evidence(vkd3d_line)
+                .unwrap()
+                .contains("VKD3D-Proton Detected")
+        );
 
         let wined3d_line = "err:   wined3d: v8.0";
-        assert!(classify_graphics_evidence(wined3d_line).unwrap().contains("WineD3D Fallback"));
+        assert!(
+            classify_graphics_evidence(wined3d_line)
+                .unwrap()
+                .contains("WineD3D Fallback")
+        );
 
         let random_line = "some random log";
         assert!(classify_graphics_evidence(random_line).is_none());
@@ -116,12 +150,15 @@ mod tests {
 
     #[test]
     fn test_environment_sanity_checks() {
+        use crate::core::models::{GraphicsLayerConfig, UserAppConfig};
         use crate::infra::logging::check_environment_sanity;
-        use crate::core::models::{UserAppConfig, GraphicsLayerConfig};
 
         // Case 1: Baseline with unexpected overrides
         let mut env = HashMap::new();
-        env.insert("WINEDLLOVERRIDES".to_string(), "d3d11=n,b;dxgi=n,b".to_string());
+        env.insert(
+            "WINEDLLOVERRIDES".to_string(),
+            "d3d11=n,b;dxgi=n,b".to_string(),
+        );
 
         let mut config = UserAppConfig::default();
         config.graphics_layers = GraphicsLayerConfig {
@@ -138,7 +175,11 @@ mod tests {
         };
 
         let warnings = check_environment_sanity(&env, "Wine", Some(&config));
-        assert!(warnings.iter().any(|w| w.code == "SANITY_UNEXPECTED_OVERRIDE"));
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.code == "SANITY_UNEXPECTED_OVERRIDE")
+        );
 
         // Case 2: DXVK enabled but overrides missing
         let env = HashMap::new();
@@ -146,11 +187,19 @@ mod tests {
         config.graphics_layers.dxvk_enabled = true;
 
         let warnings = check_environment_sanity(&env, "Wine", Some(&config));
-        assert!(warnings.iter().any(|w| w.code == "SANITY_MISSING_OVERRIDES_ENV"));
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.code == "SANITY_MISSING_OVERRIDES_ENV")
+        );
 
         // Case 3: Proton missing data path
         let env = HashMap::new();
         let warnings = check_environment_sanity(&env, "Proton 8.0", None);
-        assert!(warnings.iter().any(|w| w.code == "SANITY_MISSING_PROTON_DATA_PATH"));
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.code == "SANITY_MISSING_PROTON_DATA_PATH")
+        );
     }
 }

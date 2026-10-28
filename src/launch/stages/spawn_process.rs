@@ -1,17 +1,25 @@
+use crate::launch::pipeline::{LaunchError, LaunchErrorKind, PipelineContext, PipelineStage};
 use async_trait::async_trait;
-use crate::launch::pipeline::{PipelineStage, PipelineContext, LaunchError, LaunchErrorKind};
 
 pub struct SpawnProcessStage;
 
 #[async_trait]
 impl PipelineStage for SpawnProcessStage {
-    fn name(&self) -> &str { "SpawnProcess" }
+    fn name(&self) -> &str {
+        "SpawnProcess"
+    }
     async fn execute(&self, ctx: &mut PipelineContext) -> std::result::Result<(), LaunchError> {
         // Native captures game output into session logs.
         if ctx.runner.as_ref().is_some_and(|r| r.name() == "Native") {
             if let (Some(session), Some(spec)) = (&ctx.session, ctx.command_spec.as_mut()) {
-                spec.env.insert("AURELIA_STDOUT_LOG".to_string(), session.stdout_path().to_string_lossy().into_owned());
-                spec.env.insert("AURELIA_STDERR_LOG".to_string(), session.stderr_path().to_string_lossy().into_owned());
+                spec.env.insert(
+                    "AURELIA_STDOUT_LOG".to_string(),
+                    session.stdout_path().to_string_lossy().into_owned(),
+                );
+                spec.env.insert(
+                    "AURELIA_STDERR_LOG".to_string(),
+                    session.stderr_path().to_string_lossy().into_owned(),
+                );
             }
         }
 
@@ -20,16 +28,28 @@ impl PipelineStage for SpawnProcessStage {
                 // Stringify env only when logging.
                 if ctx.logger.is_some() {
                     let mut metadata = std::collections::HashMap::new();
-                    metadata.insert("program".to_string(), spec.program.to_string_lossy().to_string());
+                    metadata.insert(
+                        "program".to_string(),
+                        spec.program.to_string_lossy().to_string(),
+                    );
                     metadata.insert("args".to_string(), spec.args.join(" "));
                     for (k, v) in &spec.env {
                         metadata.insert(format!("env:{}", k), v.clone());
                     }
-                    ctx.log_info("process_spawn_attempt", "Attempting to spawn process via runner".to_string(), Some("SpawnProcess".to_string()), metadata);
+                    ctx.log_info(
+                        "process_spawn_attempt",
+                        "Attempting to spawn process via runner".to_string(),
+                        Some("SpawnProcess".to_string()),
+                        metadata,
+                    );
                 }
 
                 let child = runner.launch(spec).map_err(|e| {
-                    match e.source.as_ref().and_then(|s| s.downcast_ref::<std::io::Error>()) {
+                    match e
+                        .source
+                        .as_ref()
+                        .and_then(|s| s.downcast_ref::<std::io::Error>())
+                    {
                         Some(io_err) => {
                             let dup_info = crate::launch::pipeline::detect_duplicate_instance(ctx);
                             crate::launch::pipeline::map_io_error(io_err, Some(&dup_info))
@@ -38,37 +58,55 @@ impl PipelineStage for SpawnProcessStage {
                     }
                 })?;
                 // Record immediately; play_game refines it later.
-                let _ = crate::compat::running::record_launch(&crate::compat::running::RunningGame::new(
-                    ctx.app_id,
-                    ctx.app.as_ref().map(|a| a.name.clone()).unwrap_or_default(),
-                    child.id(),
-                    None,
-                ));
+                let _ = crate::compat::running::record_launch(
+                    &crate::compat::running::RunningGame::new(
+                        ctx.app_id,
+                        ctx.app.as_ref().map(|a| a.name.clone()).unwrap_or_default(),
+                        child.id(),
+                        None,
+                    ),
+                );
                 ctx.child = Some(child);
             }
         } else {
             // Legacy fallback when no runner resolved.
-            let app = ctx.app.as_ref().ok_or_else(|| LaunchError::new(LaunchErrorKind::Validation, "app missing"))?;
-            let launch_info = ctx.launch_info.as_ref().ok_or_else(|| LaunchError::new(LaunchErrorKind::Validation, "launch_info missing"))?;
-            let launcher_config = ctx.launcher_config.as_ref().ok_or_else(|| LaunchError::new(LaunchErrorKind::Validation, "launcher_config missing"))?;
+            let app = ctx
+                .app
+                .as_ref()
+                .ok_or_else(|| LaunchError::new(LaunchErrorKind::Validation, "app missing"))?;
+            let launch_info = ctx.launch_info.as_ref().ok_or_else(|| {
+                LaunchError::new(LaunchErrorKind::Validation, "launch_info missing")
+            })?;
+            let launcher_config = ctx.launcher_config.as_ref().ok_or_else(|| {
+                LaunchError::new(LaunchErrorKind::Validation, "launcher_config missing")
+            })?;
 
             // ResolveComponentsStage normally always sets one.
-            let client = crate::steam_client::SteamClient::new()
-                .map_err(|e| LaunchError::new(LaunchErrorKind::Environment, "failed to initialize steam client").with_source(e))?;
-            let child = client.internal_legacy_launch_adhoc(
-                app,
-                launch_info,
-                ctx.proton_path.as_deref(),
-                launcher_config,
-                ctx.user_config.as_ref()
-            ).await.map_err(|e| {
-                if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
-                    let dup_info = crate::launch::pipeline::detect_duplicate_instance(ctx);
-                    crate::launch::pipeline::map_io_error(io_err, Some(&dup_info))
-                } else {
-                    LaunchError::new(LaunchErrorKind::Process, "failed to spawn adhoc process").with_source(e)
-                }
+            let client = crate::steam_client::SteamClient::new().map_err(|e| {
+                LaunchError::new(
+                    LaunchErrorKind::Environment,
+                    "failed to initialize steam client",
+                )
+                .with_source(e)
             })?;
+            let child = client
+                .internal_legacy_launch_adhoc(
+                    app,
+                    launch_info,
+                    ctx.proton_path.as_deref(),
+                    launcher_config,
+                    ctx.user_config.as_ref(),
+                )
+                .await
+                .map_err(|e| {
+                    if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
+                        let dup_info = crate::launch::pipeline::detect_duplicate_instance(ctx);
+                        crate::launch::pipeline::map_io_error(io_err, Some(&dup_info))
+                    } else {
+                        LaunchError::new(LaunchErrorKind::Process, "failed to spawn adhoc process")
+                            .with_source(e)
+                    }
+                })?;
             ctx.child = Some(child);
         }
         Ok(())

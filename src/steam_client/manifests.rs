@@ -24,7 +24,10 @@ impl SteamClient {
             .join(file))
     }
 
-    pub(crate) async fn local_manifest_info_for_appid(&self, appid: u32) -> Result<(HashMap<u64, u64>, String)> {
+    pub(crate) async fn local_manifest_info_for_appid(
+        &self,
+        appid: u32,
+    ) -> Result<(HashMap<u64, u64>, String)> {
         let manifest_path = self.appmanifest_path(appid).await?;
         if !manifest_path.exists() {
             return Ok((HashMap::new(), "public".to_string()));
@@ -72,13 +75,19 @@ impl SteamClient {
         }
 
         // Final fallback if no manifest or installdir
-        Ok(PathBuf::from(load_launcher_config().await?.steam_library_path)
-            .join("steamapps")
-            .join("common")
-            .join(appid.to_string()))
+        Ok(
+            PathBuf::from(load_launcher_config().await?.steam_library_path)
+                .join("steamapps")
+                .join("common")
+                .join(appid.to_string()),
+        )
     }
 
-    pub(crate) fn probe_install_dir_by_appid(&self, steamapps: &Path, appid: u32) -> Option<PathBuf> {
+    pub(crate) fn probe_install_dir_by_appid(
+        &self,
+        steamapps: &Path,
+        appid: u32,
+    ) -> Option<PathBuf> {
         crate::library::probe_install_dir_by_appid(steamapps, appid)
     }
 
@@ -87,7 +96,12 @@ impl SteamClient {
         appid: u32,
         branch: &str,
     ) -> Result<HashMap<u64, u64>> {
-        let buffer = pics_app_buffer(connection, appid, "failed requesting appinfo product info for update metadata").await?;
+        let buffer = pics_app_buffer(
+            connection,
+            appid,
+            "failed requesting appinfo product info for update metadata",
+        )
+        .await?;
 
         let mut manifests = HashMap::new();
         if let Ok(vdf) = find_vdf_in_pics(&buffer) {
@@ -97,7 +111,9 @@ impl SteamClient {
                 for (key, value) in depots.iter() {
                     if let Ok(d_id) = key.parse::<u64>() {
                         let m_id = extract_manifest_id_robust(value, branch).or_else(|| {
-                            (branch != "public").then(|| extract_manifest_id_robust(value, "public")).flatten()
+                            (branch != "public")
+                                .then(|| extract_manifest_id_robust(value, "public"))
+                                .flatten()
                         });
                         if let Some(m_id) = m_id {
                             manifests.insert(d_id, m_id);
@@ -116,7 +132,13 @@ impl SteamClient {
         appid: u32,
         branch: &str,
     ) -> Option<String> {
-        let buffer = pics_app_buffer(connection, appid, "failed requesting appinfo product info for update metadata").await.ok()?;
+        let buffer = pics_app_buffer(
+            connection,
+            appid,
+            "failed requesting appinfo product info for update metadata",
+        )
+        .await
+        .ok()?;
         let vdf = find_vdf_in_pics(&buffer).ok()?;
         let depots_val = pics_depots_value(&vdf);
 
@@ -156,7 +178,8 @@ impl SteamClient {
         item_id.set_appid(appid);
         request.ids.push(item_id);
 
-        let response: CStoreBrowse_GetItems_Response = connection.service_method(request).await.ok()?;
+        let response: CStoreBrowse_GetItems_Response =
+            connection.service_method(request).await.ok()?;
         let item = response.store_items.iter().find(|i| i.appid() == appid)?;
         item.related_items
             .as_ref()
@@ -167,7 +190,13 @@ impl SteamClient {
     pub(crate) async fn dlc_parent_from_pics(&self, appid: u32) -> Option<u32> {
         let connection = self.connection.as_ref()?;
 
-        let buffer = pics_app_buffer(connection, appid, "failed requesting appinfo product info for update metadata").await.ok()?;
+        let buffer = pics_app_buffer(
+            connection,
+            appid,
+            "failed requesting appinfo product info for update metadata",
+        )
+        .await
+        .ok()?;
         let vdf = find_vdf_in_pics(&buffer).ok()?;
         let section = pics_app_section(vdf.value());
 
@@ -197,7 +226,13 @@ impl SteamClient {
 
         // PICS is authoritative for both the name and the install directory.
         if let Some(conn) = self.connection.as_ref() {
-            match pics_app_buffer(conn, appid, "failed requesting appinfo product info for update metadata").await {
+            match pics_app_buffer(
+                conn,
+                appid,
+                "failed requesting appinfo product info for update metadata",
+            )
+            .await
+            {
                 Ok(buffer) => match find_vdf_in_pics(&buffer) {
                     Ok(vdf) => {
                         let section = pics_app_section(vdf.value());
@@ -366,7 +401,10 @@ impl SteamClient {
         if !entries.is_empty() {
             if let Some(pos) = content.find("\"InstalledDepots\"") {
                 let rel = content[pos..].find('{').ok_or_else(|| {
-                    anyhow!("malformed InstalledDepots block in {}", base_manifest.display())
+                    anyhow!(
+                        "malformed InstalledDepots block in {}",
+                        base_manifest.display()
+                    )
                 })?;
                 let insert_at = pos + rel + 1;
                 content.insert_str(insert_at, &format!("\n{entries}"));
@@ -374,7 +412,10 @@ impl SteamClient {
                 let last = content
                     .rfind('}')
                     .ok_or_else(|| anyhow!("malformed appmanifest {}", base_manifest.display()))?;
-                content.insert_str(last, &format!("\t\"InstalledDepots\"\n\t{{\n{entries}\t}}\n"));
+                content.insert_str(
+                    last,
+                    &format!("\t\"InstalledDepots\"\n\t{{\n{entries}\t}}\n"),
+                );
             }
             changed = true;
         }
@@ -391,7 +432,10 @@ impl SteamClient {
                 .with_context(|| format!("failed writing {}", base_manifest.display()))?;
             tracing::info!("Enabled DLC {dlc_appid} in {}", base_manifest.display());
         } else {
-            tracing::info!("DLC {dlc_appid} already enabled in {}", base_manifest.display());
+            tracing::info!(
+                "DLC {dlc_appid} already enabled in {}",
+                base_manifest.display()
+            );
         }
         Ok(())
     }
@@ -458,6 +502,4 @@ impl SteamClient {
         }
         Ok(out)
     }
-
 }
-

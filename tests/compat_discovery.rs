@@ -2,8 +2,14 @@
 fn test_version_parsing() {
     use aurelia::core::utils::parse_short_version;
 
-    assert_eq!(parse_short_version("dxvk (v2.7.1-404-g0bf876eb)"), "2.7.1-404");
-    assert_eq!(parse_short_version("vkd3d-proton (v2.11-1-g0bf876eb)"), "2.11-1");
+    assert_eq!(
+        parse_short_version("dxvk (v2.7.1-404-g0bf876eb)"),
+        "2.7.1-404"
+    );
+    assert_eq!(
+        parse_short_version("vkd3d-proton (v2.11-1-g0bf876eb)"),
+        "2.11-1"
+    );
     assert_eq!(parse_short_version("v2.3"), "2.3");
     assert_eq!(parse_short_version("2.3.1-dirty"), "2.3.1-dirty");
     assert_eq!(parse_short_version("dxvk (2.10)"), "2.10");
@@ -12,9 +18,9 @@ fn test_version_parsing() {
 
 #[test]
 fn test_path_discovery_roots() {
+    use aurelia::core::utils::{ComponentSource, detect_runner_components};
     use std::fs;
     use tempfile::tempdir;
-    use aurelia::core::utils::{detect_runner_components, ComponentSource};
 
     let tmp = tempdir().unwrap();
     let runner_root = tmp.path().to_path_buf();
@@ -55,9 +61,9 @@ fn test_path_discovery_roots() {
 /// folders, not just the flat legacy dirs.
 #[test]
 fn test_unified_layout_detection() {
+    use aurelia::core::utils::{ComponentSource, detect_runner_components};
     use std::fs;
     use tempfile::tempdir;
-    use aurelia::core::utils::{detect_runner_components, ComponentSource};
 
     let tmp = tempdir().unwrap();
     let root = tmp.path();
@@ -65,7 +71,13 @@ fn test_unified_layout_detection() {
     // DXVK in the arch-split unified layout.
     let dxvk_arch = root.join("files/lib/wine/dxvk/x86_64-windows");
     fs::create_dir_all(&dxvk_arch).unwrap();
-    for dll in ["d3d11.dll", "dxgi.dll", "d3d9.dll", "d3d8.dll", "d3d10core.dll"] {
+    for dll in [
+        "d3d11.dll",
+        "dxgi.dll",
+        "d3d9.dll",
+        "d3d8.dll",
+        "d3d10core.dll",
+    ] {
         fs::write(dxvk_arch.join(dll), "fake dll").unwrap();
     }
 
@@ -90,11 +102,13 @@ fn test_unified_layout_detection() {
 /// (which carries no `windows` marker and used to leak through the bitness filter).
 #[test]
 fn test_arch_specific_resolution_excludes_64bit_for_32bit_game() {
-    use std::fs;
-    use tempfile::tempdir;
-    use aurelia::launch::dll_provider_resolver::{DllProvider, DllProviderResolver, DllResolveRequest};
     use aurelia::core::models::{D3D12ProviderPolicy, ExecutableArchitecture};
     use aurelia::core::utils::{ComponentInfo, ComponentSource, RunnerComponents};
+    use aurelia::launch::dll_provider_resolver::{
+        DllProvider, DllProviderResolver, DllResolveRequest,
+    };
+    use std::fs;
+    use tempfile::tempdir;
 
     let tmp = tempdir().unwrap();
     let root = tmp.path().to_path_buf();
@@ -135,10 +149,24 @@ fn test_arch_specific_resolution_excludes_64bit_for_32bit_game() {
     });
     let d3d11 = res32.iter().find(|r| r.name == "d3d11").unwrap();
     assert_eq!(d3d11.chosen_provider, DllProvider::Runner);
-    let chosen = d3d11.chosen_path.as_ref().unwrap().to_string_lossy().replace('\\', "/");
-    assert!(chosen.contains("i386-windows"), "expected i386 dir, got {chosen}");
-    assert!(!chosen.contains("x86_64"), "32-bit game leaked into x86_64 dir: {chosen}");
-    assert!(!chosen.contains("lib64"), "32-bit game leaked into lib64 dir: {chosen}");
+    let chosen = d3d11
+        .chosen_path
+        .as_ref()
+        .unwrap()
+        .to_string_lossy()
+        .replace('\\', "/");
+    assert!(
+        chosen.contains("i386-windows"),
+        "expected i386 dir, got {chosen}"
+    );
+    assert!(
+        !chosen.contains("x86_64"),
+        "32-bit game leaked into x86_64 dir: {chosen}"
+    );
+    assert!(
+        !chosen.contains("lib64"),
+        "32-bit game leaked into lib64 dir: {chosen}"
+    );
 
     // 64-bit game: must never resolve the i386 dir.
     let (res64, _) = resolver.resolve(&DllResolveRequest {
@@ -153,6 +181,14 @@ fn test_arch_specific_resolution_excludes_64bit_for_32bit_game() {
     });
     let d3d11_64 = res64.iter().find(|r| r.name == "d3d11").unwrap();
     assert_eq!(d3d11_64.chosen_provider, DllProvider::Runner);
-    let chosen64 = d3d11_64.chosen_path.as_ref().unwrap().to_string_lossy().replace('\\', "/");
-    assert!(!chosen64.contains("i386"), "64-bit game leaked into i386 dir: {chosen64}");
+    let chosen64 = d3d11_64
+        .chosen_path
+        .as_ref()
+        .unwrap()
+        .to_string_lossy()
+        .replace('\\', "/");
+    assert!(
+        !chosen64.contains("i386"),
+        "64-bit game leaked into i386 dir: {chosen64}"
+    );
 }

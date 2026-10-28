@@ -51,7 +51,9 @@ fn avatar_url(hash: &[u8]) -> Option<String> {
         return None;
     }
     let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
-    Some(format!("https://avatars.cloudflare.steamstatic.com/{hex}_full.jpg"))
+    Some(format!(
+        "https://avatars.cloudflare.steamstatic.com/{hex}_full.jpg"
+    ))
 }
 
 impl SteamClient {
@@ -89,14 +91,17 @@ impl SteamClient {
                         profile.visibility = p.visibility_state();
                         profile.is_public = p.visibility_state() == VISIBILITY_PUBLIC;
                         profile.is_limited = p.account_flags() & ACCOUNT_FLAG_LIMITED != 0;
-                        profile.ban_expires = (p.ban_expires_time() > 0).then(|| u64::from(p.ban_expires_time()));
+                        profile.ban_expires =
+                            (p.ban_expires_time() > 0).then(|| u64::from(p.ban_expires_time()));
                     }
                     if let Some(p) = acc.private_data.as_ref() {
                         profile.persona_state = Some(p.persona_state().max(0) as u32);
                         profile.game_app_id = (p.game_id() > 0).then(|| p.game_id() as u32);
                         profile.game_name = nonempty(p.game_extra_info());
-                        profile.last_logoff = (p.last_logoff_time() > 0).then(|| u64::from(p.last_logoff_time()));
-                        profile.created = (p.time_created() > 0).then(|| u64::from(p.time_created()));
+                        profile.last_logoff =
+                            (p.last_logoff_time() > 0).then(|| u64::from(p.last_logoff_time()));
+                        profile.created =
+                            (p.time_created() > 0).then(|| u64::from(p.time_created()));
                     }
                     profile.sources.push("link_details".to_string());
                 }

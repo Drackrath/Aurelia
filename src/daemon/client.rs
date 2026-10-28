@@ -2,12 +2,11 @@
 //! if needed) and relay stdio + exit code. Returns `Ok(None)` to mean "no daemon
 //! available — run the command locally instead".
 
-
 use anyhow::{Context, Result};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use super::transport;
-use super::{proto, Header};
+use super::{Header, proto};
 
 /// How long to wait for an auto-spawned daemon to come up before giving up and
 /// running locally.
@@ -162,7 +161,7 @@ fn detach(cmd: &mut std::process::Command) {
 #[cfg(windows)]
 fn clear_std_handle_inheritance() {
     use windows_sys::Win32::Foundation::{
-        SetHandleInformation, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
+        HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, SetHandleInformation,
     };
     use windows_sys::Win32::System::Console::{
         GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
@@ -244,7 +243,11 @@ where
             Some((proto::C_STDOUT, data)) => write_and_flush(&mut stdout, &data).await,
             Some((proto::C_STDERR, data)) => write_and_flush(&mut stderr, &data).await,
             Some((proto::C_EXIT, data)) => {
-                code = i32::from_be_bytes(data.get(..4).and_then(|b| b.try_into().ok()).unwrap_or([0; 4]));
+                code = i32::from_be_bytes(
+                    data.get(..4)
+                        .and_then(|b| b.try_into().ok())
+                        .unwrap_or([0; 4]),
+                );
                 break;
             }
             Some(_) => Ok(()),

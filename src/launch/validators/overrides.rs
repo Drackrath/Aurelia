@@ -1,11 +1,13 @@
-use std::collections::HashMap;
 use crate::launch::pipeline::PipelineContext;
 use crate::launch::validators::LaunchValidator;
+use std::collections::HashMap;
 
 pub struct OverrideConflictValidator;
 
 impl LaunchValidator for OverrideConflictValidator {
-    fn name(&self) -> &str { "OverrideConflict" }
+    fn name(&self) -> &str {
+        "OverrideConflict"
+    }
 
     fn validate(&self, ctx: &mut PipelineContext) {
         let mut warnings = Vec::new();
@@ -26,7 +28,8 @@ impl LaunchValidator for OverrideConflictValidator {
                     return;
                 }
                 for (dll, mode) in parse() {
-                    if conflicts.contains(&dll.trim().to_lowercase().as_str()) && mode.contains('b') {
+                    if conflicts.contains(&dll.trim().to_lowercase().as_str()) && mode.contains('b')
+                    {
                         warnings.push((
                             code,
                             format!("Manual override '{dll}={mode}' may conflict with enabled {layer} layer."),

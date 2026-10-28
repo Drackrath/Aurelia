@@ -49,7 +49,16 @@ fn test_build_dll_overrides_local_dll_skip() {
     let d3d11_path = tmp.path().join("d3d11.dll");
     std::fs::write(&d3d11_path, "fake dll").unwrap();
 
-    let overrides = build_dll_overrides(true, false, false, true, false, Some(tmp.path()), false, false);
+    let overrides = build_dll_overrides(
+        true,
+        false,
+        false,
+        true,
+        false,
+        Some(tmp.path()),
+        false,
+        false,
+    );
 
     // d3d11 should be skipped because it exists locally
     assert!(!overrides.contains("d3d11=n,b"));
@@ -95,7 +104,16 @@ fn test_build_dll_overrides_strict_dxvk_ignores_local() {
     let d3d11_path = tmp.path().join("d3d11.dll");
     std::fs::write(&d3d11_path, "fake dll").unwrap();
 
-    let overrides = build_dll_overrides(true, false, false, true, false, Some(tmp.path()), true, false);
+    let overrides = build_dll_overrides(
+        true,
+        false,
+        false,
+        true,
+        false,
+        Some(tmp.path()),
+        true,
+        false,
+    );
 
     // In strict mode, even if d3d11.dll exists locally, we should still add the override
     // and it should be 'n' (native only)

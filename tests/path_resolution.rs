@@ -1,9 +1,9 @@
+use aurelia::core::config::LauncherConfig;
+use aurelia::core::models::LibraryGame;
+use aurelia::steam_client::{LaunchInfo, LaunchTarget, SteamClient, sanitize_install_dir};
+use std::collections::HashMap;
 use std::fs;
 use tempfile::tempdir;
-use aurelia::steam_client::{SteamClient, LaunchInfo, LaunchTarget, sanitize_install_dir};
-use aurelia::core::models::LibraryGame;
-use aurelia::core::config::LauncherConfig;
-use std::collections::HashMap;
 
 #[tokio::test]
 async fn test_batman_path_resolution() {
@@ -68,7 +68,9 @@ async fn test_batman_path_resolution() {
     // We expect it to resolve the path correctly even if we "break" the install_path in the app model
     app.install_path = Some(common.join("WRONG_PATH").to_string_lossy().to_string());
 
-    let result: anyhow::Result<std::process::Child> = client.internal_legacy_launch_adhoc(&app, &launch_info, None, &launcher_config, None).await;
+    let result: anyhow::Result<std::process::Child> = client
+        .internal_legacy_launch_adhoc(&app, &launch_info, None, &launcher_config, None)
+        .await;
 
     // It will probably fail to spawn because it's a fake exe and we are on linux, but we want to see if it FOUND it.
     // If it found it, it will try to spawn it.

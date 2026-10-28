@@ -36,13 +36,22 @@ fn vanity_urls_are_rejected() {
 
 #[test]
 fn small_numbers_are_not_steam_ids() {
-    assert_eq!(parse_ident("12345").unwrap_err().kind, ErrorKind::InvalidInput);
-    assert_eq!(parse_ident("   ").unwrap_err().kind, ErrorKind::InvalidInput);
+    assert_eq!(
+        parse_ident("12345").unwrap_err().kind,
+        ErrorKind::InvalidInput
+    );
+    assert_eq!(
+        parse_ident("   ").unwrap_err().kind,
+        ErrorKind::InvalidInput
+    );
 }
 
 #[test]
 fn other_text_is_a_name() {
-    assert_eq!(parse_ident("Rabscuttle").unwrap(), Ident::Name("Rabscuttle".into()));
+    assert_eq!(
+        parse_ident("Rabscuttle").unwrap(),
+        Ident::Name("Rabscuttle".into())
+    );
 }
 
 #[test]
@@ -51,8 +60,13 @@ fn name_matching_prefers_exact_then_prefix() {
     assert_eq!(match_friend_name("alex", &friends).unwrap().steam_id, 1);
     assert_eq!(match_friend_name("bo", &friends).unwrap().steam_id, 3);
     assert_eq!(
-        match_friend_name("al", &[friend(2, "Alexander"), friend(4, "Alma")]).unwrap_err().kind,
+        match_friend_name("al", &[friend(2, "Alexander"), friend(4, "Alma")])
+            .unwrap_err()
+            .kind,
         ErrorKind::InvalidInput
     );
-    assert_eq!(match_friend_name("zed", &friends).unwrap_err().kind, ErrorKind::NotFound);
+    assert_eq!(
+        match_friend_name("zed", &friends).unwrap_err().kind,
+        ErrorKind::NotFound
+    );
 }

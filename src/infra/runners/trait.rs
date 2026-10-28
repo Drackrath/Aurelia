@@ -1,8 +1,8 @@
+use crate::core::config::LauncherConfig;
+use crate::core::models::{LibraryGame, UserAppConfig};
+use crate::steam_client::LaunchInfo;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use crate::core::models::{LibraryGame, UserAppConfig};
-use crate::core::config::LauncherConfig;
-use crate::steam_client::LaunchInfo;
 
 #[derive(Debug, Clone)]
 pub struct LaunchContext {
@@ -33,7 +33,10 @@ unsafe impl Sync for LaunchContext {}
 
 impl LaunchContext {
     /// Run `f` on the verification record.
-    pub fn with_verification(&self, f: impl FnOnce(&mut crate::infra::logging::LaunchVerification)) {
+    pub fn with_verification(
+        &self,
+        f: impl FnOnce(&mut crate::infra::logging::LaunchVerification),
+    ) {
         if self.verification_ptr.is_null() {
             return;
         }
@@ -43,7 +46,8 @@ impl LaunchContext {
     /// Resolve install dir, executable, workingdir.
     pub fn game_paths(
         &self,
-    ) -> std::result::Result<(PathBuf, PathBuf, PathBuf), crate::launch::pipeline::LaunchError> {
+    ) -> std::result::Result<(PathBuf, PathBuf, PathBuf), crate::launch::pipeline::LaunchError>
+    {
         use crate::launch::pipeline::{LaunchError, LaunchErrorKind};
         let install_dir = PathBuf::from(self.app.install_path.clone().ok_or_else(|| {
             LaunchError::new(
@@ -80,8 +84,11 @@ pub fn insert_fake_steam_trap(
         LaunchError::new(LaunchErrorKind::Environment, "failed to get config dir").with_source(e)
     })?;
     let fake_env = crate::core::utils::setup_fake_steam_trap(&config_dir).map_err(|e| {
-        LaunchError::new(LaunchErrorKind::Permission, "failed to setup fake steam trap")
-            .with_source(e)
+        LaunchError::new(
+            LaunchErrorKind::Permission,
+            "failed to setup fake steam trap",
+        )
+        .with_source(e)
     })?;
     env.insert(
         "STEAM_COMPAT_CLIENT_INSTALL_PATH".to_string(),
@@ -101,8 +108,20 @@ pub struct CommandSpec {
 #[async_trait::async_trait]
 pub trait Runner: Send + Sync {
     fn name(&self) -> &str;
-    async fn prepare_prefix(&self, ctx: &LaunchContext) -> std::result::Result<(), crate::launch::pipeline::LaunchError>;
-    async fn build_env(&self, ctx: &LaunchContext) -> std::result::Result<HashMap<String, String>, crate::launch::pipeline::LaunchError>;
-    async fn build_command(&self, ctx: &LaunchContext) -> std::result::Result<CommandSpec, crate::launch::pipeline::LaunchError>;
-    fn launch(&self, spec: &CommandSpec) -> std::result::Result<std::process::Child, crate::launch::pipeline::LaunchError>;
+    async fn prepare_prefix(
+        &self,
+        ctx: &LaunchContext,
+    ) -> std::result::Result<(), crate::launch::pipeline::LaunchError>;
+    async fn build_env(
+        &self,
+        ctx: &LaunchContext,
+    ) -> std::result::Result<HashMap<String, String>, crate::launch::pipeline::LaunchError>;
+    async fn build_command(
+        &self,
+        ctx: &LaunchContext,
+    ) -> std::result::Result<CommandSpec, crate::launch::pipeline::LaunchError>;
+    fn launch(
+        &self,
+        spec: &CommandSpec,
+    ) -> std::result::Result<std::process::Child, crate::launch::pipeline::LaunchError>;
 }

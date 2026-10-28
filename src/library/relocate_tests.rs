@@ -16,12 +16,18 @@ fn moves_entry_between_apps_blocks() {
 
     // Removed from source block.
     let zero_block = &out[..out.find("\"1\"").unwrap()];
-    assert!(!zero_block.contains("\"620\""), "620 should be gone from folder 0");
+    assert!(
+        !zero_block.contains("\"620\""),
+        "620 should be gone from folder 0"
+    );
     // Other source entries are untouched.
     assert!(zero_block.contains("\"228980\""));
     // Added to destination block.
     let one_block = &out[out.find("\"1\"").unwrap()..];
-    assert!(one_block.contains("\"620\"\t\t\"789012\""), "620 should be in folder 1");
+    assert!(
+        one_block.contains("\"620\"\t\t\"789012\""),
+        "620 should be in folder 1"
+    );
     assert!(one_block.contains("\"440\""));
 }
 

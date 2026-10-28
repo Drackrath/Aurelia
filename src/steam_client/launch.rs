@@ -25,17 +25,27 @@ pub fn select_launch_entry(
     prefer_native_target: bool,
 ) -> Option<LaunchInfo> {
     let on_disk = |rel: &str| on_disk_path(app, rel);
-    pick_launch_entry(launch_options, app, prefer_windows_target, prefer_native_target, &on_disk).map(
-        |mut entry| {
-            if let Some(exe) = on_disk(&entry.executable) {
-                entry.executable = exe;
-            }
-            if let Some(wd) = entry.workingdir.as_deref().filter(|wd| !wd.is_empty()).and_then(on_disk) {
-                entry.workingdir = Some(wd);
-            }
-            entry
-        },
+    pick_launch_entry(
+        launch_options,
+        app,
+        prefer_windows_target,
+        prefer_native_target,
+        &on_disk,
     )
+    .map(|mut entry| {
+        if let Some(exe) = on_disk(&entry.executable) {
+            entry.executable = exe;
+        }
+        if let Some(wd) = entry
+            .workingdir
+            .as_deref()
+            .filter(|wd| !wd.is_empty())
+            .and_then(on_disk)
+        {
+            entry.workingdir = Some(wd);
+        }
+        entry
+    })
 }
 
 /// On-disk spelling of `rel`, ignoring case.
@@ -44,15 +54,22 @@ pub fn select_launch_entry(
 fn on_disk_path(app: &LibraryGame, rel: &str) -> Option<String> {
     let dir = std::path::Path::new(app.install_path.as_deref()?);
     let found = crate::core::utils::resolve_path_ignore_case(dir, rel)?;
-    let found = found.strip_prefix(dir).map(|p| p.to_path_buf()).unwrap_or(found);
+    let found = found
+        .strip_prefix(dir)
+        .map(|p| p.to_path_buf())
+        .unwrap_or(found);
     Some(found.to_string_lossy().into_owned())
 }
 
 /// Is `target`'s executable installed?
-fn target_installed(launch_options: &[LaunchInfo], app: &LibraryGame, target: LaunchTarget) -> bool {
-    launch_options
-        .iter()
-        .any(|o| o.target == target && !o.executable.is_empty() && on_disk_path(app, &o.executable).is_some())
+fn target_installed(
+    launch_options: &[LaunchInfo],
+    app: &LibraryGame,
+    target: LaunchTarget,
+) -> bool {
+    launch_options.iter().any(|o| {
+        o.target == target && !o.executable.is_empty() && on_disk_path(app, &o.executable).is_some()
+    })
 }
 
 /// One build plus Steam mode.
@@ -112,13 +129,27 @@ pub fn launch_targets(
         let installed = target_installed(launch_options, app, LaunchTarget::WindowsProton);
         let default_windows = installed && default_entry == Some(LaunchTarget::WindowsProton);
         let modes = [
-            ("windows-runtime", "runtime", SteamMode::InWineRuntime, (!runtime_installed).then_some("steam-runtime")),
-            ("windows-host", "host", SteamMode::HostBridge, (!host_installed).then_some("host-steam")),
+            (
+                "windows-runtime",
+                "runtime",
+                SteamMode::InWineRuntime,
+                (!runtime_installed).then_some("steam-runtime"),
+            ),
+            (
+                "windows-host",
+                "host",
+                SteamMode::HostBridge,
+                (!host_installed).then_some("host-steam"),
+            ),
             ("windows-standalone", "none", SteamMode::Standalone, None),
         ];
         for (id, mode, steam_mode, steam_missing) in modes {
             // Missing build outranks missing Steam.
-            let missing = if installed { steam_missing } else { Some("build") };
+            let missing = if installed {
+                steam_missing
+            } else {
+                Some("build")
+            };
             targets.push(LaunchTargetChoice {
                 id,
                 platform: "windows",
@@ -147,7 +178,8 @@ fn pick_launch_entry(
     prefer_native_target: bool,
     on_disk: &dyn Fn(&str) -> Option<String>,
 ) -> Option<LaunchInfo> {
-    let exe_exists = |o: &LaunchInfo| -> bool { !o.executable.is_empty() && on_disk(&o.executable).is_some() };
+    let exe_exists =
+        |o: &LaunchInfo| -> bool { !o.executable.is_empty() && on_disk(&o.executable).is_some() };
     let installed_target = app.platform.as_deref().and_then(|p| match p {
         "linux" => Some(LaunchTarget::NativeLinux),
         "windows" => Some(LaunchTarget::WindowsProton),
@@ -174,7 +206,11 @@ fn pick_launch_entry(
                     .find(|o| installed_target.is_some_and(|t| o.target == t) && exe_exists(o))
             })
             .or_else(|| launch_options.iter().find(|o| exe_exists(o)))
-            .or_else(|| launch_options.iter().find(|o| o.target == LaunchTarget::WindowsProton))
+            .or_else(|| {
+                launch_options
+                    .iter()
+                    .find(|o| o.target == LaunchTarget::WindowsProton)
+            })
             .or_else(|| launch_options.first())
             .cloned()
     } else {
@@ -232,9 +268,13 @@ impl SteamClient {
         let launch_options = self.get_product_info(app.app_id).await?;
 
         let prefer_windows_target = force_windows || proton_path.is_some();
-        let launch_info =
-            select_launch_entry(&launch_options, app, prefer_windows_target, prefer_native_target)
-                .ok_or_else(|| anyhow!("no launch options"))?;
+        let launch_info = select_launch_entry(
+            &launch_options,
+            app,
+            prefer_windows_target,
+            prefer_native_target,
+        )
+        .ok_or_else(|| anyhow!("no launch options"))?;
 
         let launcher_config = load_launcher_config().await?;
 
@@ -245,10 +285,16 @@ impl SteamClient {
 
         match launch_info.target {
             _ if native_windows => {
-                tracing::info!(app_id = app.app_id, "resolved launch platform: Windows (native)");
+                tracing::info!(
+                    app_id = app.app_id,
+                    "resolved launch platform: Windows (native)"
+                );
             }
             LaunchTarget::NativeLinux => {
-                tracing::info!(app_id = app.app_id, "resolved launch platform: native Linux");
+                tracing::info!(
+                    app_id = app.app_id,
+                    "resolved launch platform: native Linux"
+                );
             }
             LaunchTarget::WindowsProton => {
                 tracing::info!(
@@ -286,22 +332,18 @@ impl SteamClient {
         let mut cloud_specs: Vec<crate::library::cloud_sync::UfsSaveSpec> = Vec::new();
 
         if cloud_enabled {
-            let client = CloudClient::new(
-                self.require_connection_owned()?,
-            );
+            let client = CloudClient::new(self.require_connection_owned()?);
             let remote_root = default_cloud_root(client.steam_id(), app.app_id)?.join("remote");
             // `%Win*%` cloud roots point inside the game's Proton prefix; without it
             // every Auto-Cloud save of a Windows game would be silently skipped.
             let cloud_user_configs = crate::core::config::load_user_configs().await?;
-            let resolver = CloudPathResolver::new(
-                remote_root,
-                app.install_path.as_ref().map(PathBuf::from),
-            )
-            .with_wine_prefix(Some(crate::core::utils::game_save_prefix(
-                &launcher_config,
-                app.app_id,
-                &cloud_user_configs,
-            )));
+            let resolver =
+                CloudPathResolver::new(remote_root, app.install_path.as_ref().map(PathBuf::from))
+                    .with_wine_prefix(Some(crate::core::utils::game_save_prefix(
+                        &launcher_config,
+                        app.app_id,
+                        &cloud_user_configs,
+                    )));
             tracing::info!(appid = app.app_id, "Syncing Cloud...");
             // Conflict-safe: a divergent save is left untouched (never clobbered),
             // so the user can resolve it via `cloud sync` / the Heroic chooser. The
@@ -349,16 +391,32 @@ impl SteamClient {
                 ),
             }
             // UFS rules let sync_up discover brand-new local saves; best-effort.
-            let specs = self.fetch_ufs_save_specs(app.app_id).await.unwrap_or_default();
+            let specs = self
+                .fetch_ufs_save_specs(app.app_id)
+                .await
+                .unwrap_or_default();
             cloud_client = Some(client);
             cloud_resolver = Some(resolver);
             cloud_specs = specs;
         }
 
         let mut child = if native_windows {
-            self.spawn_windows_native(app, &launch_info, user_config).await?
+            self.spawn_windows_native(app, &launch_info, user_config)
+                .await?
         } else {
-            self.spawn_game_process(app, &launch_info, chosen_proton_path, &launcher_config, user_config, force_native_engine, force_umu, launch_script_override, disable_launch_script, steam_enabled).await?
+            self.spawn_game_process(
+                app,
+                &launch_info,
+                chosen_proton_path,
+                &launcher_config,
+                user_config,
+                force_native_engine,
+                force_umu,
+                launch_script_override,
+                disable_launch_script,
+                steam_enabled,
+            )
+            .await?
         };
 
         // Record the launch so a separate `aurelia stop <app_id>` invocation can
@@ -367,7 +425,11 @@ impl SteamClient {
             None
         } else {
             let user_configs = crate::core::config::load_user_configs().await?;
-            let pfx = crate::core::utils::steam_wineprefix_for_game(&launcher_config, app.app_id, &user_configs);
+            let pfx = crate::core::utils::steam_wineprefix_for_game(
+                &launcher_config,
+                app.app_id,
+                &user_configs,
+            );
             // Only record a per-game (compatdata) prefix — sweeping the shared
             // master prefix on stop would also kill the Steam client inside it.
             pfx.to_string_lossy().contains("compatdata").then_some(pfx)
@@ -403,7 +465,8 @@ impl SteamClient {
         wait_result?;
 
         if cloud_enabled {
-            if let (Some(client), Some(resolver)) = (cloud_client.as_ref(), cloud_resolver.as_ref()) {
+            if let (Some(client), Some(resolver)) = (cloud_client.as_ref(), cloud_resolver.as_ref())
+            {
                 // The game has already run and exited, so a cloud-upload failure must not
                 // be surfaced as a launch failure. Log it and continue (this mirrors the
                 // best-effort sync_down before launch).
@@ -415,7 +478,10 @@ impl SteamClient {
                     ),
                     Ok(_) => tracing::info!(appid = app.app_id, "Upload Complete"),
                     Err(e) => {
-                        tracing::warn!(appid = app.app_id, "Cloud upload failed (continuing): {e:#}")
+                        tracing::warn!(
+                            appid = app.app_id,
+                            "Cloud upload failed (continuing): {e:#}"
+                        )
                     }
                 }
             }
@@ -483,7 +549,11 @@ impl SteamClient {
 
             emit_queued(
                 &tx,
-                if verify_mode { "verifying installed chunks" } else { "resolving latest manifest" },
+                if verify_mode {
+                    "verifying installed chunks"
+                } else {
+                    "resolving latest manifest"
+                },
             )
             .await;
 
@@ -608,11 +678,17 @@ impl SteamClient {
             ) {
                 tracing::warn!("failed writing appmanifest for {}: {}", appid, err);
             }
-            emit_completed(&tx, if verify_mode { "verify completed" } else { "update completed" })
-                .await;
+            emit_completed(
+                &tx,
+                if verify_mode {
+                    "verify completed"
+                } else {
+                    "update completed"
+                },
+            )
+            .await;
         });
 
         Ok(rx)
     }
-
 }

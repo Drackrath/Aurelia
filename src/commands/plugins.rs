@@ -6,14 +6,13 @@ use crate::commands::common::*;
 
 use anyhow::{Context, Result};
 use aurelia::compat::plugin::InstalledPlugin;
-use aurelia::core::config::{load_launcher_config, LauncherConfig};
+use aurelia::core::config::{LauncherConfig, load_launcher_config};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
-type InstallFn =
-    for<'a> fn(
-        &'a mut (dyn FnMut(u64, u64) + Send),
-    ) -> Pin<Box<dyn Future<Output = Result<PathBuf>> + Send + 'a>>;
+type InstallFn = for<'a> fn(
+    &'a mut (dyn FnMut(u64, u64) + Send),
+) -> Pin<Box<dyn Future<Output = Result<PathBuf>> + Send + 'a>>;
 
 /// Command-side description of an optional plugin.
 struct PluginCmd {
@@ -113,7 +112,10 @@ async fn plugin_toggle(p: &PluginCmd, enable: bool, json: bool) -> Result<()> {
             cli_println!("Note: {} only runs on Linux.", p.project);
         }
     } else {
-        cli_println!("{} disabled. Pinned games fall back to native/Proton launch.", p.name);
+        cli_println!(
+            "{} disabled. Pinned games fall back to native/Proton launch.",
+            p.name
+        );
     }
     Ok(())
 }
@@ -144,7 +146,10 @@ async fn plugin_install(p: &PluginCmd, json: bool) -> Result<()> {
         .await
         .with_context(|| format!("failed installing {}", p.project))?;
     let installed = (p.installed)(None);
-    let version = installed.as_ref().map(|i| i.version.clone()).unwrap_or_default();
+    let version = installed
+        .as_ref()
+        .map(|i| i.version.clone())
+        .unwrap_or_default();
 
     if json {
         print_json(&serde_json::json!({
@@ -209,7 +214,11 @@ async fn plugin_path(p: &PluginCmd, path: Option<String>, clear: bool, json: boo
     } else if let Some(new_path) = path {
         // Reject paths without a plugin install.
         if (p.installed)(Some(Path::new(&new_path))).is_none() {
-            anyhow::bail!("'{new_path}' is not a {} install ({})", p.slug, p.bad_path_reason);
+            anyhow::bail!(
+                "'{new_path}' is not a {} install ({})",
+                p.slug,
+                p.bad_path_reason
+            );
         }
         (p.set_path)(&mut cfg, Some(new_path));
         cfg.save().await.context("failed saving launcher config")?;
@@ -224,7 +233,10 @@ async fn plugin_path(p: &PluginCmd, path: Option<String>, clear: bool, json: boo
             Some(path) => {
                 cli_println!("Custom {} path: {path} (managed download disabled)", p.slug)
             }
-            None => cli_println!("Custom {} path: (none — using the managed download)", p.slug),
+            None => cli_println!(
+                "Custom {} path: (none — using the managed download)",
+                p.slug
+            ),
         }
     }
     Ok(())
@@ -234,7 +246,9 @@ async fn plugin_path(p: &PluginCmd, path: Option<String>, clear: bool, json: boo
 async fn plugin_uninstall(p: &PluginCmd, json: bool) -> Result<()> {
     let removed = (p.uninstall)().with_context(|| format!("failed removing {}", p.project))?;
     if json {
-        print_json(&serde_json::json!({ "status": if removed { "removed" } else { "not_installed" } }));
+        print_json(
+            &serde_json::json!({ "status": if removed { "removed" } else { "not_installed" } }),
+        );
     } else if removed {
         cli_println!("Removed the {} payload.", p.project);
     } else {
@@ -255,7 +269,11 @@ pub(crate) async fn cmd_luxtorpeda_status(json: bool) -> Result<()> {
     plugin_status(&LUXTORPEDA, json).await
 }
 
-pub(crate) async fn cmd_luxtorpeda_path(path: Option<String>, clear: bool, json: bool) -> Result<()> {
+pub(crate) async fn cmd_luxtorpeda_path(
+    path: Option<String>,
+    clear: bool,
+    json: bool,
+) -> Result<()> {
     plugin_path(&LUXTORPEDA, path, clear, json).await
 }
 

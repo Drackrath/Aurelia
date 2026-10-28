@@ -10,11 +10,10 @@
 //! store, so no extra crate feature is needed for the two values we manage.
 
 use crate::core::error::{ErrorKind, TypedError};
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 /// CDN base for economy item icons (`icon_url` values are relative to this).
-pub const ECON_IMAGE_BASE: &str =
-    "https://community.cloudflare.steamstatic.com/economy/image/";
+pub const ECON_IMAGE_BASE: &str = "https://community.cloudflare.steamstatic.com/economy/image/";
 
 /// An authenticated Steam web session: a `reqwest` client plus the cookies Steam's
 /// web endpoints require.
@@ -76,7 +75,10 @@ impl WebSession {
     /// common failure modes (rate limiting, an expired/invalid session) to clear,
     /// actionable errors.
     pub async fn get_text(&self, url: &str) -> Result<String> {
-        let request = self.http.get(url).header(reqwest::header::COOKIE, &self.cookie);
+        let request = self
+            .http
+            .get(url)
+            .header(reqwest::header::COOKIE, &self.cookie);
         let resp = crate::core::net::send_with_retry(&self.http, request).await?;
         read_checked(resp).await
     }
@@ -130,12 +132,16 @@ async fn read_checked(resp: reqwest::Response) -> Result<String> {
             status.as_u16()
         );
     }
-    resp.text().await.context("failed reading the response body")
+    resp.text()
+        .await
+        .context("failed reading the response body")
 }
 
 /// A random 24-hex-character `sessionid` token.
 fn random_sessionid() -> String {
     use rand::RngExt;
     let mut rng = rand::rng();
-    (0..24).map(|_| char::from_digit(rng.random_range(0..16), 16).unwrap()).collect()
+    (0..24)
+        .map(|_| char::from_digit(rng.random_range(0..16), 16).unwrap())
+        .collect()
 }

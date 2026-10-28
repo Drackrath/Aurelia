@@ -24,8 +24,7 @@ fn is_aurelia_name(name: &str) -> bool {
 /// `aurelia daemon [--socket ...]`; a `daemon stop|list` invocation also contains
 /// "daemon" but carries a further subcommand, so those are excluded.
 fn cmd_is_daemon(cmd: &[String]) -> bool {
-    cmd.get(1).is_some_and(|a| a == "daemon")
-        && !cmd.iter().any(|a| a == "stop" || a == "list")
+    cmd.get(1).is_some_and(|a| a == "daemon") && !cmd.iter().any(|a| a == "stop" || a == "list")
 }
 
 /// Enumerate running `aurelia` processes, excluding the current process.

@@ -5,7 +5,7 @@ use crate::commands::common::*;
 use anyhow::Result;
 use aurelia::core::error::{ErrorKind, TypedError};
 use aurelia::core::locale::normalize_country;
-use aurelia::steam_client::{unix_to_ymd, StoreAppInfo, StorePurchaseOption};
+use aurelia::steam_client::{StoreAppInfo, StorePurchaseOption, unix_to_ymd};
 use std::time::Duration;
 
 /// Spacing between per-region StoreBrowse calls.
@@ -139,7 +139,14 @@ pub(crate) async fn cmd_price(
     }
 
     cli_println!("{}  (app {app_id})", name.unwrap_or_default());
-    cli_println!("{:<8} {:<14} {:<9} {:<14} {}", "Country", "Price", "Discount", "Original", "Ends");
+    cli_println!(
+        "{:<8} {:<14} {:<9} {:<14} {}",
+        "Country",
+        "Price",
+        "Discount",
+        "Original",
+        "Ends"
+    );
     for q in &quotes {
         if !q.available {
             let why = q.error.as_deref().unwrap_or("not sold in this region");
@@ -153,12 +160,24 @@ pub(crate) async fn cmd_price(
             "-".to_string()
         };
         let original = q.original_price.clone().unwrap_or_else(|| "-".to_string());
-        let ends = q.discount_end_date.clone().unwrap_or_else(|| "-".to_string());
-        cli_println!("{:<8} {:<14} {:<9} {:<14} {ends}", q.country, price, discount, original);
+        let ends = q
+            .discount_end_date
+            .clone()
+            .unwrap_or_else(|| "-".to_string());
+        cli_println!(
+            "{:<8} {:<14} {:<9} {:<14} {ends}",
+            q.country,
+            price,
+            discount,
+            original
+        );
     }
 
     // Packages and bundles, for the first priced region.
-    if let Some(q) = quotes.iter().find(|q| q.available && q.purchase_options.len() > 1) {
+    if let Some(q) = quotes
+        .iter()
+        .find(|q| q.available && q.purchase_options.len() > 1)
+    {
         cli_println!("\nPurchase options [{}]:", q.country);
         for o in &q.purchase_options {
             let price = o.price.clone().unwrap_or_else(|| "-".to_string());
@@ -175,7 +194,12 @@ pub(crate) async fn cmd_price(
             if let Some(end) = o.discount_end {
                 note.push_str(&format!("  until {}", unix_to_ymd(end as i64)));
             }
-            cli_println!("  {:<8} {:<44} {:<12}{note}", o.kind, truncate(&o.name, 44), price);
+            cli_println!(
+                "  {:<8} {:<44} {:<12}{note}",
+                o.kind,
+                truncate(&o.name, 44),
+                price
+            );
         }
     }
     Ok(())
@@ -291,7 +315,10 @@ pub(crate) async fn cmd_image_list(app_id: u32, probe: bool, json: bool) -> Resu
         cli_println!("{kind:<14} {status:<4} {url}");
     }
     if probe {
-        let bad = statuses.iter().filter(|s| !matches!(s, Some(200..=299))).count();
+        let bad = statuses
+            .iter()
+            .filter(|s| !matches!(s, Some(200..=299)))
+            .count();
         cli_println!("\n{} of {} URLs failed the probe", bad, entries.len());
     }
     Ok(())
@@ -334,7 +361,13 @@ fn store_row_json(a: &StoreAppInfo) -> serde_json::Value {
 
 /// Human table for listings.
 fn print_store_table(records: &[StoreAppInfo]) {
-    cli_println!("{:>9}  {:<14} {:<9} {:<11} NAME", "APPID", "PRICE", "DISCOUNT", "ENDS");
+    cli_println!(
+        "{:>9}  {:<14} {:<9} {:<11} NAME",
+        "APPID",
+        "PRICE",
+        "DISCOUNT",
+        "ENDS"
+    );
     for a in records {
         let price = a.price.clone().unwrap_or_else(|| "-".to_string());
         let discount = if a.discount_pct > 0 {
@@ -342,13 +375,23 @@ fn print_store_table(records: &[StoreAppInfo]) {
         } else {
             "-".to_string()
         };
-        let ends = a.discount_end.map(|t| unix_to_ymd(t as i64)).unwrap_or_else(|| "-".to_string());
+        let ends = a
+            .discount_end
+            .map(|t| unix_to_ymd(t as i64))
+            .unwrap_or_else(|| "-".to_string());
         let kind = if a.app_type.is_empty() || a.app_type == "Game" {
             String::new()
         } else {
             format!("  [{}]", a.app_type)
         };
-        cli_println!("{:>9}  {:<14} {:<9} {:<11} {}{kind}", a.app_id, price, discount, ends, a.name);
+        cli_println!(
+            "{:>9}  {:<14} {:<9} {:<11} {}{kind}",
+            a.app_id,
+            price,
+            discount,
+            ends,
+            a.name
+        );
     }
 }
 
@@ -422,7 +465,10 @@ pub(crate) async fn cmd_deals(
         cli_println!("No deals matched in {country}.");
         return Ok(());
     }
-    cli_println!("{scope:?} in {country} ({} matching, showing from {start}):", page.total);
+    cli_println!(
+        "{scope:?} in {country} ({} matching, showing from {start}):",
+        page.total
+    );
     print_store_table(&records);
     Ok(())
 }
@@ -482,8 +528,16 @@ pub(crate) async fn cmd_events(country: Option<String>, json: bool) -> Result<()
     }
     cli_println!("{:<12} {:<11} {:<11} TITLE", "TYPE", "START", "END");
     for e in &events {
-        let start = if e.start > 0 { unix_to_ymd(e.start as i64) } else { "-".to_string() };
-        let end = if e.end > 0 { unix_to_ymd(e.end as i64) } else { "-".to_string() };
+        let start = if e.start > 0 {
+            unix_to_ymd(e.start as i64)
+        } else {
+            "-".to_string()
+        };
+        let end = if e.end > 0 {
+            unix_to_ymd(e.end as i64)
+        } else {
+            "-".to_string()
+        };
         let assoc = if e.associated_name.is_empty() {
             String::new()
         } else {
@@ -528,7 +582,7 @@ pub(crate) async fn cmd_reviews(args: crate::cli::ReviewsArgs, json: bool) -> Re
         cursor,
         lang,
     } = args;
-    use aurelia::web::discovery::{fetch_reviews, ReviewQuery};
+    use aurelia::web::discovery::{ReviewQuery, fetch_reviews};
     let language = match lang {
         Some(l) => l,
         None => resolve_steam_language(None).await,
@@ -599,7 +653,10 @@ pub(crate) async fn cmd_wishlist(
     let steam_id = match &user {
         Some(u) => resolve_user_ident(&client, u).await?,
         None => own_id.ok_or_else(|| {
-            TypedError::new(ErrorKind::AuthRequired, "not logged in — run `aurelia login` first")
+            TypedError::new(
+                ErrorKind::AuthRequired,
+                "not logged in — run `aurelia login` first",
+            )
         })?,
     };
     let is_own = own_id == Some(steam_id);
@@ -632,9 +689,9 @@ pub(crate) async fn cmd_wishlist(
         let items: Vec<serde_json::Value> = page
             .iter()
             .map(|e| {
-                let mut v = record_for(e.app_id).map(store_row_json).unwrap_or_else(|| {
-                    serde_json::json!({ "app_id": e.app_id, "name": null })
-                });
+                let mut v = record_for(e.app_id)
+                    .map(store_row_json)
+                    .unwrap_or_else(|| serde_json::json!({ "app_id": e.app_id, "name": null }));
                 v["priority"] = e.priority.into();
                 v["date_added"] = e.date_added.into();
                 v["date_added_date"] = unix_to_ymd(e.date_added as i64).into();
@@ -659,16 +716,35 @@ pub(crate) async fn cmd_wishlist(
         offset + 1,
         offset + page.len()
     );
-    cli_println!("{:>4}  {:>9}  {:<14} {:<9} {:<11} NAME", "#", "APPID", "PRICE", "DISCOUNT", "ADDED");
+    cli_println!(
+        "{:>4}  {:>9}  {:<14} {:<9} {:<11} NAME",
+        "#",
+        "APPID",
+        "PRICE",
+        "DISCOUNT",
+        "ADDED"
+    );
     for e in &page {
-        let rank = if e.priority > 0 { e.priority.to_string() } else { "-".to_string() };
+        let rank = if e.priority > 0 {
+            e.priority.to_string()
+        } else {
+            "-".to_string()
+        };
         let (name, price, discount) = match record_for(e.app_id) {
             Some(r) => (
                 r.name.clone(),
                 r.price.clone().unwrap_or_else(|| "-".to_string()),
-                if r.discount_pct > 0 { format!("-{}%", r.discount_pct) } else { "-".to_string() },
+                if r.discount_pct > 0 {
+                    format!("-{}%", r.discount_pct)
+                } else {
+                    "-".to_string()
+                },
             ),
-            None => ("(not on the store)".to_string(), "-".to_string(), "-".to_string()),
+            None => (
+                "(not on the store)".to_string(),
+                "-".to_string(),
+                "-".to_string(),
+            ),
         };
         cli_println!(
             "{rank:>4}  {:>9}  {price:<14} {discount:<9} {:<11} {name}",
@@ -684,7 +760,9 @@ pub(crate) async fn cmd_wishlist_add(app_id: u32, json: bool) -> Result<()> {
     let client = authed_client().await?;
     let count = client.wishlist_add(app_id).await?;
     if json {
-        print_json(&serde_json::json!({ "app_id": app_id, "status": "added", "wishlist_count": count }));
+        print_json(
+            &serde_json::json!({ "app_id": app_id, "status": "added", "wishlist_count": count }),
+        );
     } else {
         cli_println!("Added app {app_id} to your wishlist ({count} items).");
     }
@@ -696,7 +774,9 @@ pub(crate) async fn cmd_wishlist_remove(app_id: u32, json: bool) -> Result<()> {
     let client = authed_client().await?;
     let count = client.wishlist_remove(app_id).await?;
     if json {
-        print_json(&serde_json::json!({ "app_id": app_id, "status": "removed", "wishlist_count": count }));
+        print_json(
+            &serde_json::json!({ "app_id": app_id, "status": "removed", "wishlist_count": count }),
+        );
     } else {
         cli_println!("Removed app {app_id} from your wishlist ({count} items).");
     }
@@ -717,7 +797,12 @@ pub(crate) async fn cmd_tags(dump: bool, json: bool) -> Result<()> {
     let client = authed_client().await?;
     let tags = client.fetch_tag_list("english").await?;
     if json {
-        print_json(&tags.iter().map(|(id, name)| serde_json::json!({"id": id, "name": name})).collect::<Vec<_>>());
+        print_json(
+            &tags
+                .iter()
+                .map(|(id, name)| serde_json::json!({"id": id, "name": name}))
+                .collect::<Vec<_>>(),
+        );
         return Ok(());
     }
     if !dump {
@@ -730,14 +815,20 @@ pub(crate) async fn cmd_tags(dump: bool, json: bool) -> Result<()> {
     cli_println!("//! Generated by `aurelia tags --dump`; do not edit.\n");
     cli_println!("/// Snapshot date of the vocabulary below.");
     cli_println!("pub const TAGS_GENERATED_AT: &str = \"{today}\";\n");
-    cli_println!("/// One store tag.\npub struct TagDef {{\n    pub id: u32,\n    pub name: &'static str,\n}}\n");
+    cli_println!(
+        "/// One store tag.\npub struct TagDef {{\n    pub id: u32,\n    pub name: &'static str,\n}}\n"
+    );
     cli_println!("/// Sorted by `id`.\npub static TAGS: &[TagDef] = &[");
     for (id, name) in &tags {
         cli_println!("    TagDef {{ id: {id}, name: {:?} }},", name);
     }
     cli_println!("];\n");
-    cli_println!("/// English name for a tag id.\npub fn tag_name(id: u32) -> Option<&'static str> {{");
-    cli_println!("    TAGS.binary_search_by_key(&id, |t| t.id)\n        .ok()\n        .map(|i| TAGS[i].name)\n}}");
+    cli_println!(
+        "/// English name for a tag id.\npub fn tag_name(id: u32) -> Option<&'static str> {{"
+    );
+    cli_println!(
+        "    TAGS.binary_search_by_key(&id, |t| t.id)\n        .ok()\n        .map(|i| TAGS[i].name)\n}}"
+    );
     Ok(())
 }
 

@@ -14,7 +14,7 @@
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
-use tempfile::{tempdir, TempDir};
+use tempfile::{TempDir, tempdir};
 
 const CORRUPT: &str = r#"{
   "steam_library_path": "/mnt/games/SteamLibrary",
@@ -113,7 +113,11 @@ fn missing_config_still_yields_defaults() {
     let tmp = tempdir().unwrap();
     let out = aurelia(tmp.path(), &["config", "show"]);
 
-    assert!(out.status.success(), "fresh install failed: {}", stderr(&out));
+    assert!(
+        out.status.success(),
+        "fresh install failed: {}",
+        stderr(&out)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("steam_library_path"), "got: {stdout}");
 }
@@ -125,5 +129,8 @@ fn missing_config_can_still_be_written() {
     assert!(out.status.success(), "failed: {}", stderr(&out));
 
     let written = fs::read_to_string(tmp.path().join("config.json")).unwrap();
-    assert!(written.contains("\"language\": \"english\""), "got: {written}");
+    assert!(
+        written.contains("\"language\": \"english\""),
+        "got: {written}"
+    );
 }

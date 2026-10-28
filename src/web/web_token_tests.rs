@@ -8,11 +8,14 @@ const EXP: u64 = 4102444800;
 
 /// Minimal base64url encoder (test-side inverse of `b64url_decode`).
 fn b64url_encode(input: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut out = String::new();
     for chunk in input.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
         let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
         let chars = [
             ALPHABET[(n >> 18) as usize & 63],
@@ -89,7 +92,10 @@ fn parses_an_opaque_token_json_paste() {
     let info = parse_web_token(&raw, None).unwrap();
     assert_eq!(info.steam_id, STEAM_ID.parse::<u64>().unwrap());
     assert_eq!(info.account_name.as_deref(), Some("ali_kid"));
-    assert_eq!(info.token, "v+xYapFDu1AAAAAAAAAAAAAAAAAAAAAAAwAf8yFETJ/NcYZuSG9mmAbr");
+    assert_eq!(
+        info.token,
+        "v+xYapFDu1AAAAAAAAAAAAAAAAAAAAAAAwAf8yFETJ/NcYZuSG9mmAbr"
+    );
     assert_eq!(info.expires_at, None);
 }
 
@@ -98,13 +104,19 @@ fn bare_opaque_token_binds_to_the_fallback_identity_or_is_rejected() {
     const OPAQUE: &str = r"v+xYapFDu1AAAAAAAAAAAAAAAAAAAAAAAwAf8yFETJ\/NcYZuSG9mmAbr";
     // Alone it carries no identity — the full JSON is required.
     let err = parse_web_token(OPAQUE, None).unwrap_err();
-    assert!(err.to_string().contains("paste the entire clientjstoken JSON"));
+    assert!(
+        err.to_string()
+            .contains("paste the entire clientjstoken JSON")
+    );
     // With a stored session's SteamID as fallback it binds to that account
     // (and the `\/` raw-JSON escaping is undone).
     let id: u64 = STEAM_ID.parse().unwrap();
     let info = parse_web_token(OPAQUE, Some(id)).unwrap();
     assert_eq!(info.steam_id, id);
-    assert_eq!(info.token, "v+xYapFDu1AAAAAAAAAAAAAAAAAAAAAAAwAf8yFETJ/NcYZuSG9mmAbr");
+    assert_eq!(
+        info.token,
+        "v+xYapFDu1AAAAAAAAAAAAAAAAAAAAAAAwAf8yFETJ/NcYZuSG9mmAbr"
+    );
     assert_eq!(info.expires_at, None);
     // The fallback never overrides an identity named by the paste itself.
     let jwt = fake_jwt(STEAM_ID, EXP);

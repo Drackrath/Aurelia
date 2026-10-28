@@ -12,7 +12,7 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 
 /// Which output stream a chunk belongs to.
 #[derive(Clone, Copy, Debug)]

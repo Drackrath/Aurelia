@@ -43,9 +43,15 @@ fn full_snapshot_populates_relationships() {
 #[test]
 fn full_snapshot_clears_previous_entries() {
     let mut roster = Roster::new();
-    apply_friends_list(&mut roster, &friends_list(false, &[(1, RELATIONSHIP_FRIEND)]));
+    apply_friends_list(
+        &mut roster,
+        &friends_list(false, &[(1, RELATIONSHIP_FRIEND)]),
+    );
     // A second full snapshot without entry 1 should drop it.
-    apply_friends_list(&mut roster, &friends_list(false, &[(2, RELATIONSHIP_FRIEND)]));
+    apply_friends_list(
+        &mut roster,
+        &friends_list(false, &[(2, RELATIONSHIP_FRIEND)]),
+    );
     assert!(!roster.contains_key(&1));
     assert!(roster.contains_key(&2));
 }
@@ -53,7 +59,10 @@ fn full_snapshot_clears_previous_entries() {
 #[test]
 fn persona_state_fills_fields() {
     let mut roster = Roster::new();
-    apply_friends_list(&mut roster, &friends_list(false, &[(10, RELATIONSHIP_FRIEND)]));
+    apply_friends_list(
+        &mut roster,
+        &friends_list(false, &[(10, RELATIONSHIP_FRIEND)]),
+    );
     apply_persona_state(&mut roster, &persona_state(&[(10, "Alice", 1, 440)]));
 
     let f = &roster[&10];
@@ -65,7 +74,10 @@ fn persona_state_fills_fields() {
 #[test]
 fn persona_state_does_not_clobber_known_name_with_empty() {
     let mut roster = Roster::new();
-    apply_friends_list(&mut roster, &friends_list(false, &[(10, RELATIONSHIP_FRIEND)]));
+    apply_friends_list(
+        &mut roster,
+        &friends_list(false, &[(10, RELATIONSHIP_FRIEND)]),
+    );
     apply_persona_state(&mut roster, &persona_state(&[(10, "Alice", 1, 0)]));
     // A later update with an empty name must not overwrite "Alice".
     apply_persona_state(&mut roster, &persona_state(&[(10, "", 0, 0)]));
@@ -79,7 +91,10 @@ fn persona_state_does_not_clobber_known_name_with_empty() {
 #[test]
 fn incremental_relationship_zero_removes_entry() {
     let mut roster = Roster::new();
-    apply_friends_list(&mut roster, &friends_list(false, &[(10, RELATIONSHIP_FRIEND)]));
+    apply_friends_list(
+        &mut roster,
+        &friends_list(false, &[(10, RELATIONSHIP_FRIEND)]),
+    );
     assert!(roster.contains_key(&10));
 
     // Incremental update marking 10 as None (0) removes it without clearing.
@@ -90,7 +105,10 @@ fn incremental_relationship_zero_removes_entry() {
 #[test]
 fn incremental_upsert_preserves_persona_fields() {
     let mut roster = Roster::new();
-    apply_friends_list(&mut roster, &friends_list(false, &[(10, RELATIONSHIP_FRIEND)]));
+    apply_friends_list(
+        &mut roster,
+        &friends_list(false, &[(10, RELATIONSHIP_FRIEND)]),
+    );
     apply_persona_state(&mut roster, &persona_state(&[(10, "Alice", 1, 440)]));
 
     // An incremental relationship change must not wipe the known name/state.

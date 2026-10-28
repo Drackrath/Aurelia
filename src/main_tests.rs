@@ -62,7 +62,10 @@ fn install_positional_and_subcommands_coexist() {
     }
     match parse(&["aurelia", "install", "stop", "945360"]).command {
         Command::Install(args) => {
-            assert!(matches!(args.action, Some(InstallAction::Stop { app_id: 945360 })))
+            assert!(matches!(
+                args.action,
+                Some(InstallAction::Stop { app_id: 945360 })
+            ))
         }
         _ => panic!("expected Install stop"),
     }
@@ -83,9 +86,17 @@ fn interactive_login_runs_locally_not_forwarded() {
 fn daemon_oriented_and_json_login_still_forward() {
     // These need the daemon (or are non-tty), so they must NOT be pinned local.
     assert!(!must_run_locally(&parse(&["aurelia", "login", "--health"])));
-    assert!(!must_run_locally(&parse(&["aurelia", "login", "--reconnect"])));
-    assert!(!must_run_locally(&parse(&["aurelia", "--json", "login", "-u", "me"])));
-    assert!(!must_run_locally(&parse(&["aurelia", "login", "--json", "--qr"])));
+    assert!(!must_run_locally(&parse(&[
+        "aurelia",
+        "login",
+        "--reconnect"
+    ])));
+    assert!(!must_run_locally(&parse(&[
+        "aurelia", "--json", "login", "-u", "me"
+    ])));
+    assert!(!must_run_locally(&parse(&[
+        "aurelia", "login", "--json", "--qr"
+    ])));
 }
 
 #[test]
@@ -97,7 +108,9 @@ fn qr_timeout_parses_and_requires_qr() {
     assert!(Cli::try_parse_from(["aurelia", "login", "--timeout", "90"]).is_err());
     assert!(Cli::try_parse_from(["aurelia", "login", "--qr", "--timeout", "0"]).is_err());
     // Driver QR logins still forward.
-    assert!(!must_run_locally(&parse(&["aurelia", "--json", "login", "--qr", "-t", "5"])));
+    assert!(!must_run_locally(&parse(&[
+        "aurelia", "--json", "login", "--qr", "-t", "5"
+    ])));
 }
 
 #[test]
@@ -106,8 +119,17 @@ fn ordinary_commands_forward_but_local_managers_do_not() {
     assert!(!must_run_locally(&parse(&["aurelia", "logout"])));
     // Process/daemon managers must run in-process.
     assert!(must_run_locally(&parse(&["aurelia", "kill"])));
-    assert!(must_run_locally(&parse(&["aurelia", "--json", "capabilities"])));
-    assert!(must_run_locally(&parse(&["aurelia", "capabilities", "config", "game"])));
+    assert!(must_run_locally(&parse(&[
+        "aurelia",
+        "--json",
+        "capabilities"
+    ])));
+    assert!(must_run_locally(&parse(&[
+        "aurelia",
+        "capabilities",
+        "config",
+        "game"
+    ])));
     assert!(must_run_locally(&parse(&["aurelia", "daemon", "stop"])));
     // Bare `aurelia daemon` (becomes the server) is handled earlier, before the
     // forward gate, so it is not flagged local here.

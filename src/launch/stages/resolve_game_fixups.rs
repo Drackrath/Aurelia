@@ -1,5 +1,5 @@
+use crate::launch::pipeline::{LaunchError, PipelineContext, PipelineStage};
 use async_trait::async_trait;
-use crate::launch::pipeline::{PipelineStage, PipelineContext, LaunchError};
 
 /// Resolves the data-driven per-game fixups (see [`crate::launch::fixups`]) for the
 /// launching app and stashes them on the pipeline context. The runner's `build_env`
@@ -12,7 +12,9 @@ pub struct ResolveGameFixupsStage;
 
 #[async_trait]
 impl PipelineStage for ResolveGameFixupsStage {
-    fn name(&self) -> &str { "ResolveGameFixups" }
+    fn name(&self) -> &str {
+        "ResolveGameFixups"
+    }
 
     async fn execute(&self, ctx: &mut PipelineContext) -> std::result::Result<(), LaunchError> {
         let app_id = ctx.app.as_ref().map(|a| a.app_id).unwrap_or(ctx.app_id);
@@ -28,10 +30,17 @@ impl PipelineStage for ResolveGameFixupsStage {
             let mut metadata = std::collections::HashMap::new();
             metadata.insert("app_id".into(), app_id.to_string());
             metadata.insert("env_count".into(), fixups.env.len().to_string());
-            metadata.insert("dll_override_count".into(), fixups.dll_overrides.len().to_string());
+            metadata.insert(
+                "dll_override_count".into(),
+                fixups.dll_overrides.len().to_string(),
+            );
             ctx.log_info(
                 "game_fixups_resolved",
-                format!("Resolved {} env + {} DLL-override fixups", fixups.env.len(), fixups.dll_overrides.len()),
+                format!(
+                    "Resolved {} env + {} DLL-override fixups",
+                    fixups.env.len(),
+                    fixups.dll_overrides.len()
+                ),
                 Some("ResolveGameFixups".into()),
                 metadata,
             );

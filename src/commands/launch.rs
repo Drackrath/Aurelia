@@ -4,14 +4,14 @@ use crate::proc_admin;
 
 use crate::commands::common::*;
 
-use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
-use anyhow::{bail, Context, Result};
+use crate::cli::{PlatformArg, SteamModeArg};
+use anyhow::{Context, Result, bail};
 use aurelia::core::config::load_launcher_config;
 use aurelia::core::config::load_user_configs;
 use aurelia::core::models::DownloadState;
 use aurelia::steam_client::SteamClient;
-use crate::cli::{PlatformArg, SteamModeArg};
+use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
 
 /// One-off `play` target overrides.
 pub(crate) struct PlayTarget {
@@ -49,16 +49,22 @@ pub(crate) async fn cmd_launch_targets(app_id: u32, steam: bool, json: bool) -> 
         || game_cfg.is_some_and(|c| c.forced_proton_version.is_some());
     let prefer_native = platform_preference == Some("linux") && !cfg!(target_os = "windows");
     let default_entry =
-        aurelia::steam_client::select_launch_entry(&options, &game, prefer_windows, prefer_native).map(|e| e.target);
+        aurelia::steam_client::select_launch_entry(&options, &game, prefer_windows, prefer_native)
+            .map(|e| e.target);
 
     let user_configs = load_user_configs().await?;
     let steam = steam || !game.is_owned;
-    let (default_mode, _) =
-        aurelia::infra::runners::resolve_steam_mode_for(user_configs.get(&app_id), &launcher_config, steam);
+    let (default_mode, _) = aurelia::infra::runners::resolve_steam_mode_for(
+        user_configs.get(&app_id),
+        &launcher_config,
+        steam,
+    );
     let mut targets = aurelia::steam_client::launch_targets(
         &options,
         &game,
-        aurelia::core::utils::get_master_steam_config().steam_exe.is_some(),
+        aurelia::core::utils::get_master_steam_config()
+            .steam_exe
+            .is_some(),
         aurelia::core::utils::host_steam_client_path().is_some(),
         steam,
         default_entry,
@@ -101,7 +107,11 @@ pub(crate) async fn cmd_launch_targets(app_id: u32, steam: bool, json: bool) -> 
     for t in &targets {
         let mark = if t.default { "*" } else { " " };
         match t.missing {
-            None => cli_println!(" {mark} {:<20} aurelia play {app_id} {}", t.id, t.flags.join(" ")),
+            None => cli_println!(
+                " {mark} {:<20} aurelia play {app_id} {}",
+                t.id,
+                t.flags.join(" ")
+            ),
             Some(missing) => cli_println!(" {mark} {:<20} (needs {missing})", t.id),
         }
     }
@@ -143,8 +153,13 @@ pub(crate) async fn cmd_play(
     if linux_target && !cfg!(target_os = "linux") {
         bail!("--platform linux runs the native Linux build, which only runs on Linux");
     }
-    if matches!(target.steam_mode, Some(SteamModeArg::Runtime)) && !aurelia::core::utils::STEAM_RUNTIME_SUPPORTED {
-        bail!("--steam-mode runtime: {}", aurelia::core::utils::steam_runtime_unsupported_msg());
+    if matches!(target.steam_mode, Some(SteamModeArg::Runtime))
+        && !aurelia::core::utils::STEAM_RUNTIME_SUPPORTED
+    {
+        bail!(
+            "--steam-mode runtime: {}",
+            aurelia::core::utils::steam_runtime_unsupported_msg()
+        );
     }
     // `--windows` runs the executable directly with no Proton/Wine layer, which
     // can only work on a Windows host. On Linux a Windows PE can't be exec'd
@@ -200,7 +215,10 @@ pub(crate) async fn cmd_play(
 
     // Otherwise the spawn fails on the missing directory with a raw OS error.
     if !game.is_installed {
-        bail!("{} is not installed — install it with `aurelia install {app_id}`", game.name);
+        bail!(
+            "{} is not installed — install it with `aurelia install {app_id}`",
+            game.name
+        );
     }
 
     // Family-Shared games are pinned to the owner's current build — a stale
@@ -213,7 +231,10 @@ pub(crate) async fn cmd_play(
     // (a failed check/download must not stop the user playing what's installed);
     // for Family-Shared games it is mandatory (see above).
     if game.is_installed && (!no_update || update_required) {
-        if let Err(e) = client.check_for_updates(std::slice::from_mut(&mut game)).await {
+        if let Err(e) = client
+            .check_for_updates(std::slice::from_mut(&mut game))
+            .await
+        {
             if update_required {
                 bail!(
                     "could not verify the latest build for Family-Shared game {} ({e:#}); \
@@ -225,7 +246,11 @@ pub(crate) async fn cmd_play(
         }
         if game.update_available {
             if !json {
-                let kind = if update_required { "Required update" } else { "Update available" };
+                let kind = if update_required {
+                    "Required update"
+                } else {
+                    "Update available"
+                };
                 cli_println!("{kind} for {} — installing ...", game.name);
             }
             let state = Arc::new(RwLock::new(DownloadState::default()));
@@ -311,15 +336,26 @@ pub(crate) async fn cmd_play(
     if !json {
         cli_println!("Launching {} ...", game.name);
     }
-    let announce_target: &(dyn Fn(Option<&str>) + Send + Sync) = &|proton: Option<&str>| {
-        match proton {
+    let announce_target: &(dyn Fn(Option<&str>) + Send + Sync) =
+        &|proton: Option<&str>| match proton {
             Some(p) => cli_println!("Platform: Windows via Proton ({p})"),
             None if cfg!(target_os = "windows") => cli_println!("Platform: Windows (native)"),
             None => cli_println!("Platform: native Linux"),
-        }
-    };
+        };
     client
-        .play_game(&game, proton_path.as_deref(), user_config, force_windows, native_engine, umu, script, no_script, steam, prefers_linux, (!json).then_some(&announce_target))
+        .play_game(
+            &game,
+            proton_path.as_deref(),
+            user_config,
+            force_windows,
+            native_engine,
+            umu,
+            script,
+            no_script,
+            steam,
+            prefers_linux,
+            (!json).then_some(&announce_target),
+        )
         .await
         .with_context(|| format!("failed to launch {}", game.name))?;
     if json {
@@ -391,7 +427,10 @@ pub(crate) fn cmd_kill(json: bool) -> Result<()> {
     } else if pids.is_empty() {
         cli_println!("No other aurelia processes are running.");
     } else {
-        cli_println!("Killed {killed} of {} aurelia process(es) (including the daemon).", pids.len());
+        cli_println!(
+            "Killed {killed} of {} aurelia process(es) (including the daemon).",
+            pids.len()
+        );
     }
     Ok(())
 }

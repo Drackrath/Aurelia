@@ -1,6 +1,6 @@
-use std::path::{Path, PathBuf};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
+use std::path::{Path, PathBuf};
 
 /// Whether a relative discovery path is *unambiguously* 64-bit: it carries an
 /// `x86_64` arch marker (covers `x86_64-windows` and the WOW64 `x86_64-unix` bridge)
@@ -94,7 +94,10 @@ impl DllProviderResolver {
         }
     }
 
-    pub fn resolve(&self, req: &DllResolveRequest<'_>) -> (Vec<DllResolution>, ComponentScanReport) {
+    pub fn resolve(
+        &self,
+        req: &DllResolveRequest<'_>,
+    ) -> (Vec<DllResolution>, ComponentScanReport) {
         tracing::debug!(
             "Resolving DLL providers. ExeDir: {}, Runner: {}",
             req.game_exe_dir.display(),
@@ -112,60 +115,87 @@ impl DllProviderResolver {
         };
 
         if runner_root == PathBuf::from(".") || runner_root.to_string_lossy().is_empty() {
-             report.warnings.push("Runner root derivation failed or resulted in empty path".into());
+            report
+                .warnings
+                .push("Runner root derivation failed or resulted in empty path".into());
         } else {
-             // Derive all potential runner scan roots from the shared unified-layout
-             // constants (component × lib-root × arch, plus bare component dirs).
-             report.scan_roots = crate::compat::proton::COMPONENT_FAMILIES
-                 .iter()
-                 .flat_map(|fam| crate::compat::proton::component_dll_subdirs(fam))
-                 .map(|s| runner_root.join(s))
-                 .collect();
+            // Derive all potential runner scan roots from the shared unified-layout
+            // constants (component × lib-root × arch, plus bare component dirs).
+            report.scan_roots = crate::compat::proton::COMPONENT_FAMILIES
+                .iter()
+                .flat_map(|fam| crate::compat::proton::component_dll_subdirs(fam))
+                .map(|s| runner_root.join(s))
+                .collect();
         }
 
-        let resolutions: Vec<DllResolution> = self.target_dlls
+        let resolutions: Vec<DllResolution> = self
+            .target_dlls
             .iter()
             .map(|dll| self.resolve_single(dll, req))
             .collect();
 
-        let mut record_component = |family: &str, component: &Option<crate::core::utils::ComponentInfo>| {
-            if let Some(c) = component {
-                report.components_found.insert(family.into(), ComponentFoundInfo {
-                    family: family.into(),
-                    version: c.version.clone(),
-                    source: format!("{:?}", c.source),
-                    matched_dll: None,
-                });
-            }
-        };
+        let mut record_component =
+            |family: &str, component: &Option<crate::core::utils::ComponentInfo>| {
+                if let Some(c) = component {
+                    report.components_found.insert(
+                        family.into(),
+                        ComponentFoundInfo {
+                            family: family.into(),
+                            version: c.version.clone(),
+                            source: format!("{:?}", c.source),
+                            matched_dll: None,
+                        },
+                    );
+                }
+            };
         record_component("dxvk", &req.runner_components.dxvk);
         record_component("nvapi", &req.runner_components.nvapi);
         record_component("vkd3d-proton", &req.runner_components.vkd3d_proton);
         record_component("vkd3d", &req.runner_components.vkd3d);
 
         for res in &resolutions {
-            let game_local_count = res.candidates.iter().filter(|c| c.provider == DllProvider::GameLocal && c.exists).count();
-            let runner_count = res.candidates.iter().filter(|c| c.provider == DllProvider::Runner && c.exists).count();
-            let system_count = res.candidates.iter().filter(|c| c.provider == DllProvider::System && c.exists).count();
+            let game_local_count = res
+                .candidates
+                .iter()
+                .filter(|c| c.provider == DllProvider::GameLocal && c.exists)
+                .count();
+            let runner_count = res
+                .candidates
+                .iter()
+                .filter(|c| c.provider == DllProvider::Runner && c.exists)
+                .count();
+            let system_count = res
+                .candidates
+                .iter()
+                .filter(|c| c.provider == DllProvider::System && c.exists)
+                .count();
 
             tracing::debug!(
                 "DLL {}: chosen={:?} (candidates: GameLocal={}, Runner={}, System={})",
-                res.name, res.chosen_provider, game_local_count, runner_count, system_count
+                res.name,
+                res.chosen_provider,
+                game_local_count,
+                runner_count,
+                system_count
             );
 
             if res.chosen_provider == DllProvider::Runner {
                 if let Some(path) = &res.chosen_path {
-                     // Try to match back to component
-                     let family = if res.name.starts_with("d3d12") || res.name.contains("vkd3d") {
-                         if path.to_string_lossy().contains("vkd3d-proton") { "vkd3d-proton" } else { "vkd3d" }
-                     } else if res.name.contains("nvapi") {
-                         "nvapi"
-                     } else {
-                         "dxvk"
-                     };
-                     if let Some(info) = report.components_found.get_mut(family) {
-                         info.matched_dll = Some(path.clone());
-                     }
+                    // Try to match back to component
+                    let family = if res.name.starts_with("d3d12") || res.name.contains("vkd3d") {
+                        if path.to_string_lossy().contains("vkd3d-proton") {
+                            "vkd3d-proton"
+                        } else {
+                            "vkd3d"
+                        }
+                    } else if res.name.contains("nvapi") {
+                        "nvapi"
+                    } else {
+                        "dxvk"
+                    };
+                    if let Some(info) = report.components_found.get_mut(family) {
+                        info.matched_dll = Some(path.clone());
+                    }
                 }
             }
         }
@@ -211,7 +241,13 @@ impl DllProviderResolver {
         }
 
         // 3. Runner Priority
-        if let Some(path) = self.get_runner_dll_path(dll_name, runner_path, runner_components, d3d12_policy, target_arch) {
+        if let Some(path) = self.get_runner_dll_path(
+            dll_name,
+            runner_path,
+            runner_components,
+            d3d12_policy,
+            target_arch,
+        ) {
             candidates.push(DllCandidate {
                 provider: DllProvider::Runner,
                 path: path.clone(),
@@ -222,20 +258,18 @@ impl DllProviderResolver {
         // 3. System Priority
         // For now, we use a simplified check for system paths
         let system_paths = match dll_name {
-            "d3d8" | "d3d9" | "d3d10core" | "d3d11" | "dxgi" => vec![
-                "/usr/lib/dxvk/x64",
-                "/usr/lib/x86_64-linux-gnu/dxvk",
-            ],
+            "d3d8" | "d3d9" | "d3d10core" | "d3d11" | "dxgi" => {
+                vec!["/usr/lib/dxvk/x64", "/usr/lib/x86_64-linux-gnu/dxvk"]
+            }
             "d3d12" | "d3d12core" | "libvkd3d-1" | "libvkd3d-shader-1" => vec![
                 "/usr/lib/vkd3d-proton/x64",
                 "/usr/lib/x86_64-linux-gnu/vkd3d-proton",
                 "/usr/lib/x86_64-linux-gnu", // standard system vkd3d
                 "/usr/lib64",
             ],
-            "nvapi" | "nvapi64" | "nvofapi64" => vec![
-                "/usr/lib/nvapi/x64",
-                "/usr/lib/x86_64-linux-gnu/nvapi",
-            ],
+            "nvapi" | "nvapi64" | "nvofapi64" => {
+                vec!["/usr/lib/nvapi/x64", "/usr/lib/x86_64-linux-gnu/nvapi"]
+            }
             _ => vec![],
         };
 
@@ -249,9 +283,9 @@ impl DllProviderResolver {
         }
 
         let chosen = candidates.iter().find(|c| c.exists).cloned();
-        let fallback_reason = chosen.is_none().then(||
+        let fallback_reason = chosen.is_none().then(|| {
             "no candidate files found in GameLocal, Custom, Runner, or System paths".to_string()
-        );
+        });
 
         DllResolution {
             name: dll_name.to_string(),
@@ -286,21 +320,17 @@ impl DllProviderResolver {
         };
 
         if let Some(root) = custom_root {
-            let mut relative_paths = vec![
-                "x86_64-windows",
-                "i386-windows",
-                "x64",
-                "x32",
-                "",
-            ];
+            let mut relative_paths = vec!["x86_64-windows", "i386-windows", "x64", "x32", ""];
 
             // Strictly filter by architecture
             match target_arch {
                 crate::core::models::ExecutableArchitecture::X86 => {
-                    relative_paths.retain(|p| p.contains("i386") || p.contains("x32") || p.is_empty());
+                    relative_paths
+                        .retain(|p| p.contains("i386") || p.contains("x32") || p.is_empty());
                 }
                 crate::core::models::ExecutableArchitecture::X86_64 => {
-                    relative_paths.retain(|p| p.contains("x86_64") || p.contains("x64") || p.is_empty());
+                    relative_paths
+                        .retain(|p| p.contains("x86_64") || p.contains("x64") || p.is_empty());
                 }
                 _ => {}
             }
@@ -368,37 +398,59 @@ impl DllProviderResolver {
         // × arch, plus bare component dirs), so they cover Proton 11+/GE/CachyOS.
         let is_dxvk = matches!(dll_name, "d3d8" | "d3d9" | "d3d10core" | "d3d11" | "dxgi");
         if is_dxvk && components.dxvk.is_some() {
-            if let Some(p) = Self::find_in_runner_paths(&runner_root, &dll_filename, target_arch,
-                crate::compat::proton::component_dll_subdirs("dxvk")) {
+            if let Some(p) = Self::find_in_runner_paths(
+                &runner_root,
+                &dll_filename,
+                target_arch,
+                crate::compat::proton::component_dll_subdirs("dxvk"),
+            ) {
                 return Some(p);
             }
         }
 
         let is_nvapi = matches!(dll_name, "nvapi" | "nvapi64" | "nvofapi64");
         if is_nvapi && components.nvapi.is_some() {
-            if let Some(p) = Self::find_in_runner_paths(&runner_root, &dll_filename, target_arch,
-                crate::compat::proton::component_dll_subdirs("nvapi")) {
+            if let Some(p) = Self::find_in_runner_paths(
+                &runner_root,
+                &dll_filename,
+                target_arch,
+                crate::compat::proton::component_dll_subdirs("nvapi"),
+            ) {
                 return Some(p);
             }
         }
 
-        let is_vkd3d_any = matches!(dll_name, "d3d12" | "d3d12core" | "libvkd3d-1" | "libvkd3d-shader-1");
+        let is_vkd3d_any = matches!(
+            dll_name,
+            "d3d12" | "d3d12core" | "libvkd3d-1" | "libvkd3d-shader-1"
+        );
         if is_vkd3d_any {
             let use_proton = matches!(
                 d3d12_policy,
-                crate::core::models::D3D12ProviderPolicy::Auto | crate::core::models::D3D12ProviderPolicy::Vkd3dProton
+                crate::core::models::D3D12ProviderPolicy::Auto
+                    | crate::core::models::D3D12ProviderPolicy::Vkd3dProton
             );
 
             if use_proton && components.vkd3d_proton.is_some() {
-                if let Some(p) = Self::find_in_runner_paths(&runner_root, &dll_filename, target_arch,
-                    crate::compat::proton::component_dll_subdirs("vkd3d-proton")) {
+                if let Some(p) = Self::find_in_runner_paths(
+                    &runner_root,
+                    &dll_filename,
+                    target_arch,
+                    crate::compat::proton::component_dll_subdirs("vkd3d-proton"),
+                ) {
                     return Some(p);
                 }
             }
 
-            if (!use_proton || d3d12_policy == &crate::core::models::D3D12ProviderPolicy::Auto) && components.vkd3d.is_some() {
-                if let Some(p) = Self::find_in_runner_paths(&runner_root, &dll_filename, target_arch,
-                    crate::compat::proton::component_dll_subdirs("vkd3d")) {
+            if (!use_proton || d3d12_policy == &crate::core::models::D3D12ProviderPolicy::Auto)
+                && components.vkd3d.is_some()
+            {
+                if let Some(p) = Self::find_in_runner_paths(
+                    &runner_root,
+                    &dll_filename,
+                    target_arch,
+                    crate::compat::proton::component_dll_subdirs("vkd3d"),
+                ) {
                     return Some(p);
                 }
             }

@@ -2,18 +2,18 @@
 
 use crate::daemon;
 
-use std::collections::HashMap;
-use std::io::Write;
-use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use aurelia::core::config::load_launcher_config;
 use aurelia::core::config::load_library_cache;
 use aurelia::core::config::load_session;
 use aurelia::core::error::{ErrorKind, TypedError};
-use aurelia::library::{build_game_library, scan_installed_app_info};
 use aurelia::core::models::{DownloadProgress, DownloadProgressState, DownloadState, LibraryGame};
+use aurelia::library::{build_game_library, scan_installed_app_info};
 use aurelia::steam_client::{SharedApp, SteamClient};
+use std::collections::HashMap;
+use std::io::Write;
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 /// Pretty-print JSON to stdout.
 pub(crate) fn print_json<T: serde::Serialize + ?Sized>(value: &T) {
@@ -83,7 +83,7 @@ pub(crate) async fn restored_client() -> Result<SteamClient> {
 
 /// User argument to SteamID64, CM only.
 pub(crate) async fn resolve_user_ident(client: &SteamClient, input: &str) -> Result<u64> {
-    use aurelia::steam_client::ident::{match_friend_name, parse_ident, Ident};
+    use aurelia::steam_client::ident::{Ident, match_friend_name, parse_ident};
     match parse_ident(input)? {
         Ident::SteamId(id) => Ok(id),
         Ident::Me => client.steam_id().ok_or_else(|| {
@@ -105,11 +105,22 @@ pub(crate) async fn resolve_user_ident(client: &SteamClient, input: &str) -> Res
 }
 
 /// Typed restore failure; unknown kinds mean re-login.
-fn restore_failed(kind: ErrorKind, retry_after: Option<std::time::Duration>, reason: &str) -> anyhow::Error {
-    let kind = if kind == ErrorKind::Unknown { ErrorKind::AuthRequired } else { kind };
-    TypedError::new(kind, format!("could not restore the stored session: {reason}"))
-        .with_retry_after(retry_after)
-        .into()
+fn restore_failed(
+    kind: ErrorKind,
+    retry_after: Option<std::time::Duration>,
+    reason: &str,
+) -> anyhow::Error {
+    let kind = if kind == ErrorKind::Unknown {
+        ErrorKind::AuthRequired
+    } else {
+        kind
+    };
+    TypedError::new(
+        kind,
+        format!("could not restore the stored session: {reason}"),
+    )
+    .with_retry_after(retry_after)
+    .into()
 }
 
 /// Require an authenticated client, erroring out with a helpful message otherwise.
@@ -143,7 +154,11 @@ pub(crate) async fn web_access() -> Result<aurelia::web::web_session::WebSession
         return client.web_session().await;
     }
     let session = load_session().await.unwrap_or_default();
-    let Some(token) = session.web_token.as_deref().filter(|t| !t.trim().is_empty()) else {
+    let Some(token) = session
+        .web_token
+        .as_deref()
+        .filter(|t| !t.trim().is_empty())
+    else {
         bail!(
             "not logged in — run `aurelia login` first, or `aurelia login --web-token` for \
              web-only (inventory/wallet/market) access"
@@ -154,11 +169,7 @@ pub(crate) async fn web_access() -> Result<aurelia::web::web_session::WebSession
     )?;
     // 60 s of leeway so a token about to lapse doesn't fail mid-command. Opaque
     // tokens carry no readable expiry; Steam rejects those server-side instead.
-    aurelia::web::web_token::check_stored_expiry(
-        token,
-        aurelia::web::web_token::now_unix(),
-        60,
-    )?;
+    aurelia::web::web_token::check_stored_expiry(token, aurelia::web::web_token::now_unix(), 60)?;
     aurelia::web::web_session::WebSession::new(steam_id, token, None)
 }
 
@@ -233,7 +244,11 @@ pub(crate) async fn find_game(client: &mut SteamClient, app_id: u32) -> Result<L
         .into_iter()
         .find(|g| g.app_id == app_id)
         .ok_or_else(|| {
-            TypedError::new(ErrorKind::NotFound, format!("app {app_id} is not in your library")).into()
+            TypedError::new(
+                ErrorKind::NotFound,
+                format!("app {app_id} is not in your library"),
+            )
+            .into()
         })
 }
 
@@ -278,17 +293,14 @@ pub(crate) fn persona_state_label(state: Option<u32>) -> &'static str {
 }
 
 pub(crate) fn yesno(b: bool) -> &'static str {
-    if b {
-        "yes"
-    } else {
-        "no"
-    }
+    if b { "yes" } else { "no" }
 }
 
 /// Tracks in-flight installs in this process (the daemon) so `install stop` /
 /// `install list` can reach a running download's shared state across the
 /// separate forwarded connections that the daemon serves.
-pub(crate) static ACTIVE_INSTALLS: OnceLock<Mutex<HashMap<u32, Arc<RwLock<DownloadState>>>>> = OnceLock::new();
+pub(crate) static ACTIVE_INSTALLS: OnceLock<Mutex<HashMap<u32, Arc<RwLock<DownloadState>>>>> =
+    OnceLock::new();
 
 pub(crate) fn active_installs() -> &'static Mutex<HashMap<u32, Arc<RwLock<DownloadState>>>> {
     ACTIVE_INSTALLS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -361,7 +373,11 @@ pub(crate) fn byte_progress_printer(json: bool) -> impl FnMut(u64, u64) {
         let pct = (done.saturating_mul(100) / total) as i64;
         if pct != last_pct {
             last_pct = pct;
-            cli_print!("\r  {pct:>3}%  ({} / {})        ", human_bytes(done), human_bytes(total));
+            cli_print!(
+                "\r  {pct:>3}%  ({} / {})        ",
+                human_bytes(done),
+                human_bytes(total)
+            );
         }
     }
 }
@@ -483,10 +499,12 @@ pub(crate) async fn resolve_steam_country(flag: Option<String>) -> Result<String
 /// Best-effort game-name lookup from the offline library cache, for pretty-printing
 /// in the `scripts` commands. Returns `None` when the id isn't in the cache.
 pub(crate) async fn resolve_game_name(app_id: u32) -> Option<String> {
-    load_library_cache()
-        .await
-        .ok()
-        .and_then(|games| games.into_iter().find(|g| g.app_id == app_id).map(|g| g.name))
+    load_library_cache().await.ok().and_then(|games| {
+        games
+            .into_iter()
+            .find(|g| g.app_id == app_id)
+            .map(|g| g.name)
+    })
 }
 
 /// Format a Unix timestamp (seconds) as `YYYY-MM-DD HH:MM:SS` (UTC).
@@ -614,19 +632,28 @@ pub(crate) fn emit_progress_json(
     }
 }
 
-pub(crate) fn print_progress(phase: &str, p: &DownloadProgress, speed_bps: f64, eta_seconds: Option<u64>) {
+pub(crate) fn print_progress(
+    phase: &str,
+    p: &DownloadProgress,
+    speed_bps: f64,
+    eta_seconds: Option<u64>,
+) {
     let overall = percent_of(p.bytes_downloaded, p.total_bytes);
     let rate = format_rate(speed_bps, eta_seconds);
     if p.depot_id != 0 {
         let depot = percent_of(p.depot_bytes_downloaded, p.depot_total_bytes);
         cli_print!(
             "\r{phase}: {overall:5.1}% overall  {}/{} bytes  | depot {}: {depot:5.1}%{rate}   ",
-            p.bytes_downloaded, p.total_bytes, p.depot_id
+            p.bytes_downloaded,
+            p.total_bytes,
+            p.depot_id
         );
     } else {
         cli_print!(
             "\r{phase}: {overall:5.1}%  {}/{} bytes{rate}  {}   ",
-            p.bytes_downloaded, p.total_bytes, p.current_file
+            p.bytes_downloaded,
+            p.total_bytes,
+            p.current_file
         );
     }
     let _ = std::io::stdout().flush();
@@ -642,7 +669,10 @@ pub(crate) struct RateTracker {
 
 impl RateTracker {
     pub(crate) fn new() -> Self {
-        Self { last: None, speed_bps: 0.0 }
+        Self {
+            last: None,
+            speed_bps: 0.0,
+        }
     }
 
     pub(crate) fn reset(&mut self) {

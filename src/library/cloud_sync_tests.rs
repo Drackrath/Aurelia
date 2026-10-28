@@ -58,38 +58,62 @@ fn cloud(hash: &str, ts: u64) -> CloudFileEntry {
     }
 }
 fn local(hash: &str, ts: u64) -> LocalInfo {
-    LocalInfo { hash: hash.to_string(), size: 10, timestamp: ts }
+    LocalInfo {
+        hash: hash.to_string(),
+        size: 10,
+        timestamp: ts,
+    }
 }
 fn base(hash: &str) -> BaselineEntry {
-    BaselineEntry { hash: hash.to_string(), timestamp: 0, size: 10 }
+    BaselineEntry {
+        hash: hash.to_string(),
+        timestamp: 0,
+        size: 10,
+    }
 }
 
 #[test]
 fn identical_content_is_skipped_regardless_of_timestamp() {
     // Same bytes on both sides but different mtimes must NOT cause a transfer.
     let action = plan_action(None, Some(&local("aaaa", 200)), Some(&cloud("AAAA", 100)));
-    assert_eq!(action, PlannedAction::Skip, "hash match wins over timestamps");
+    assert_eq!(
+        action,
+        PlannedAction::Skip,
+        "hash match wins over timestamps"
+    );
 }
 
 #[test]
 fn only_local_changed_uploads_not_conflicts() {
     // The normal play loop: baseline==cloud, the user played so local advanced.
     // This must be a plain upload, never a conflict prompt.
-    let action = plan_action(Some(&base("cccc")), Some(&local("llll", 300)), Some(&cloud("cccc", 100)));
+    let action = plan_action(
+        Some(&base("cccc")),
+        Some(&local("llll", 300)),
+        Some(&cloud("cccc", 100)),
+    );
     assert_eq!(action, PlannedAction::Upload);
 }
 
 #[test]
 fn only_cloud_changed_downloads() {
     // Played on another machine: baseline==local, cloud advanced. Plain download.
-    let action = plan_action(Some(&base("llll")), Some(&local("llll", 100)), Some(&cloud("cccc", 300)));
+    let action = plan_action(
+        Some(&base("llll")),
+        Some(&local("llll", 100)),
+        Some(&cloud("cccc", 300)),
+    );
     assert_eq!(action, PlannedAction::Download);
 }
 
 #[test]
 fn both_changed_is_a_conflict() {
     // Both sides diverged from the last-synced baseline — the data-loss case.
-    let action = plan_action(Some(&base("oldd")), Some(&local("llll", 300)), Some(&cloud("cccc", 290)));
+    let action = plan_action(
+        Some(&base("oldd")),
+        Some(&local("llll", 300)),
+        Some(&cloud("cccc", 290)),
+    );
     assert_eq!(action, PlannedAction::Conflict);
 }
 
@@ -102,8 +126,14 @@ fn first_sync_with_two_differing_copies_is_a_conflict() {
 
 #[test]
 fn one_sided_presence_moves_the_only_way_it_can() {
-    assert_eq!(plan_action(None, Some(&local("llll", 1)), None), PlannedAction::Upload);
-    assert_eq!(plan_action(None, None, Some(&cloud("cccc", 1))), PlannedAction::Download);
+    assert_eq!(
+        plan_action(None, Some(&local("llll", 1)), None),
+        PlannedAction::Upload
+    );
+    assert_eq!(
+        plan_action(None, None, Some(&cloud("cccc", 1))),
+        PlannedAction::Download
+    );
 }
 
 #[test]
@@ -125,8 +155,7 @@ fn discovers_local_saves_from_ufs_specs() {
     std::fs::write(saves.join("game.sav"), b"data").unwrap();
     std::fs::write(saves.join("ignore.txt"), b"x").unwrap();
 
-    let resolver =
-        CloudPathResolver::new(PathBuf::from("/unused"), Some(tmp.path().to_path_buf()));
+    let resolver = CloudPathResolver::new(PathBuf::from("/unused"), Some(tmp.path().to_path_buf()));
     let specs = [UfsSaveSpec {
         root: "GameInstall".to_string(),
         path: "saves".to_string(),
@@ -139,7 +168,10 @@ fn discovers_local_saves_from_ufs_specs() {
     assert_eq!(found[0].0, "%GameInstall%saves/slot1/game.sav");
     assert_eq!(found[0].1, saves.join("game.sav"));
     // And the produced cloud name round-trips back to the same local path.
-    assert_eq!(resolver.resolve(&found[0].0).unwrap(), saves.join("game.sav"));
+    assert_eq!(
+        resolver.resolve(&found[0].0).unwrap(),
+        saves.join("game.sav")
+    );
 }
 
 #[test]
@@ -150,8 +182,7 @@ fn non_recursive_spec_skips_subdirectories() {
     std::fs::create_dir_all(&sub).unwrap();
     std::fs::write(sub.join("deep.sav"), b"b").unwrap();
 
-    let resolver =
-        CloudPathResolver::new(PathBuf::from("/unused"), Some(tmp.path().to_path_buf()));
+    let resolver = CloudPathResolver::new(PathBuf::from("/unused"), Some(tmp.path().to_path_buf()));
     let specs = [UfsSaveSpec {
         root: "GameInstall".to_string(),
         path: String::new(),
@@ -207,10 +238,12 @@ fn win_token_maps_into_wine_prefix() {
         steamuser.join("Saved Games").join("b.sav"),
     );
     // Linux-native roots keep working and ignore the prefix entirely.
-    assert!(resolver
-        .resolve("%LinuxHome%.local/share/x.sav")
-        .unwrap()
-        .starts_with(std::env::var("HOME").unwrap()));
+    assert!(
+        resolver
+            .resolve("%LinuxHome%.local/share/x.sav")
+            .unwrap()
+            .starts_with(std::env::var("HOME").unwrap())
+    );
 }
 
 #[cfg(not(windows))]

@@ -1,8 +1,8 @@
-use aurelia::launch::pipeline::{LaunchPipeline, PipelineContext, LaunchErrorKind};
+use aurelia::core::models::LibraryGame;
+use aurelia::launch::pipeline::{LaunchErrorKind, LaunchPipeline, PipelineContext};
 use aurelia::launch::stages::resolve_game::ResolveGameStage;
 use aurelia::launch::stages::resolve_profile::ResolveProfileStage;
 use aurelia::launch::stages::spawn_process::SpawnProcessStage;
-use aurelia::core::models::LibraryGame;
 use std::collections::HashMap;
 
 #[tokio::test]
@@ -92,5 +92,8 @@ async fn test_stage_execution_failure_adhoc() {
     // It should fail either during client init or process spawn
     // In our mocked/limited environment, probably process spawn if it gets there.
     // Update: 'NotFound' IO error now maps to LaunchErrorKind::GameData
-    assert!(matches!(err.inner.kind, LaunchErrorKind::Process | LaunchErrorKind::Environment | LaunchErrorKind::GameData));
+    assert!(matches!(
+        err.inner.kind,
+        LaunchErrorKind::Process | LaunchErrorKind::Environment | LaunchErrorKind::GameData
+    ));
 }

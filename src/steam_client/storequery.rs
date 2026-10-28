@@ -9,12 +9,11 @@ use steam_vent_proto_common::{RpcMessage, RpcMethod};
 include!(concat!(env!("OUT_DIR"), "/storequery/mod.rs"));
 
 use service_storequery::{
-    CStoreQueryFilters, CStoreQueryFilters_PriceFilters, CStoreQueryFilters_TypeFilters,
-    CStoreQueryParams, CStoreQuery_MoreLikeThis_Request, CStoreQuery_MoreLikeThis_Response,
-    CStoreQuery_Query_Request, CStoreQuery_Query_Response,
-    CStoreQuery_SearchSuggestions_Request, CStoreQuery_SearchSuggestions_Response,
-    StoreBrowseContext as QueryContext, StoreBrowseItemDataRequest as QueryDataRequest,
-    StoreItemID as QueryItemID,
+    CStoreQuery_MoreLikeThis_Request, CStoreQuery_MoreLikeThis_Response, CStoreQuery_Query_Request,
+    CStoreQuery_Query_Response, CStoreQuery_SearchSuggestions_Request,
+    CStoreQuery_SearchSuggestions_Response, CStoreQueryFilters, CStoreQueryFilters_PriceFilters,
+    CStoreQueryFilters_TypeFilters, CStoreQueryParams, StoreBrowseContext as QueryContext,
+    StoreBrowseItemDataRequest as QueryDataRequest, StoreItemID as QueryItemID,
 };
 
 macro_rules! rpc_message {
@@ -90,11 +89,20 @@ fn games_only() -> CStoreQueryFilters_TypeFilters {
     types
 }
 
-fn page_from(ids: &[QueryItemID], metadata: Option<&service_storequery::CStoreQueryResultMetadata>) -> QueryPage {
+fn page_from(
+    ids: &[QueryItemID],
+    metadata: Option<&service_storequery::CStoreQueryResultMetadata>,
+) -> QueryPage {
     QueryPage {
-        app_ids: ids.iter().map(|i| i.appid()).filter(|&id| id != 0).collect(),
+        app_ids: ids
+            .iter()
+            .map(|i| i.appid())
+            .filter(|&id| id != 0)
+            .collect(),
         total: metadata.map(|m| m.total_matching_records()).unwrap_or(0),
-        suggestions: metadata.map(|m| m.spellcheck_suggestions.clone()).unwrap_or_default(),
+        suggestions: metadata
+            .map(|m| m.spellcheck_suggestions.clone())
+            .unwrap_or_default(),
     }
 }
 

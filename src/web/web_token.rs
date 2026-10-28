@@ -12,7 +12,7 @@
 //! The JWT is decoded here only to read its claims (expiry, subject) — Steam's
 //! servers are the ones verifying its signature when it is used.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 /// Steam's endpoint returning the signed-in browser's web token JSON.
 pub const CLIENTJSTOKEN_URL: &str = "https://steamcommunity.com/chat/clientjstoken";
