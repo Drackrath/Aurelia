@@ -31,6 +31,37 @@ fn rate_tracker_estimates_speed_and_eta() {
 }
 
 #[test]
+fn rate_tracker_averages_bursts_over_the_window() {
+    use std::time::{Duration, Instant};
+    let mut r = RateTracker::new();
+    let t0 = Instant::now();
+    // 10 MB/s, but delivered in 2 s bursts.
+    let mut speeds = Vec::new();
+    for tick in 0..=80u64 {
+        let at = t0 + Duration::from_millis(tick * 250);
+        let bytes = (tick / 8) * 20_000_000;
+        speeds.push(r.sample_at(at, bytes, 10_000_000_000).0);
+    }
+    for s in &speeds[24..] {
+        assert!((6e6..=14e6).contains(s), "speed {s} outside 6-14 MB/s");
+    }
+}
+
+#[test]
+fn rate_tracker_restarts_when_counter_drops() {
+    use std::time::{Duration, Instant};
+    let mut r = RateTracker::new();
+    let t0 = Instant::now();
+    r.sample_at(t0, 5_000_000, 100_000_000);
+    r.sample_at(t0 + Duration::from_secs(1), 6_000_000, 100_000_000);
+    // A retried depot resets the counters.
+    let (s, _) = r.sample_at(t0 + Duration::from_secs(2), 1_000_000, 100_000_000);
+    assert!(s >= 0.0);
+    let (s, _) = r.sample_at(t0 + Duration::from_secs(3), 3_000_000, 100_000_000);
+    assert!((1.9e6..=2.1e6).contains(&s), "{s}");
+}
+
+#[test]
 fn rate_tracker_resets() {
     let mut r = RateTracker::new();
     let _ = r.sample(100, 1000);

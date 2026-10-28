@@ -683,43 +683,52 @@ pub(crate) fn print_progress(
 /// smoothed speed (bytes/sec) and an ETA. Used by `drive_progress` so every
 /// long-running op (download/verify/move) reports speed and time remaining.
 pub(crate) struct RateTracker {
-    last: Option<(std::time::Instant, u64)>,
+    /// `(time, bytes)` within the window.
+    samples: std::collections::VecDeque<(std::time::Instant, u64)>,
     speed_bps: f64,
 }
+
+/// Span the speed is averaged over.
+const RATE_WINDOW: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl RateTracker {
     pub(crate) fn new() -> Self {
         Self {
-            last: None,
+            samples: std::collections::VecDeque::new(),
             speed_bps: 0.0,
         }
     }
 
     pub(crate) fn reset(&mut self) {
-        self.last = None;
+        self.samples.clear();
         self.speed_bps = 0.0;
     }
 
     /// Feed the latest cumulative `bytes` (out of `total`); returns
-    /// `(speed_bps, eta_seconds)`. Samples closer together than 100 ms are folded
-    /// into the next interval to keep the estimate stable.
+    /// `(speed_bps, eta_seconds)`, averaged over the last few seconds.
     pub(crate) fn sample(&mut self, bytes: u64, total: u64) -> (f64, Option<u64>) {
-        let now = std::time::Instant::now();
-        match self.last {
-            Some((t0, b0)) => {
-                let dt = now.duration_since(t0).as_secs_f64();
-                if dt >= 0.10 && bytes >= b0 {
-                    let inst = (bytes - b0) as f64 / dt;
-                    // Exponential moving average to damp jitter.
-                    self.speed_bps = if self.speed_bps <= 0.0 {
-                        inst
-                    } else {
-                        0.6 * self.speed_bps + 0.4 * inst
-                    };
-                    self.last = Some((now, bytes));
-                }
-            }
-            None => self.last = Some((now, bytes)),
+        self.sample_at(std::time::Instant::now(), bytes, total)
+    }
+
+    pub(crate) fn sample_at(
+        &mut self,
+        now: std::time::Instant,
+        bytes: u64,
+        total: u64,
+    ) -> (f64, Option<u64>) {
+        // A counter reset starts over.
+        if self.samples.back().is_some_and(|&(_, b)| bytes < b) {
+            self.samples.clear();
+        }
+        self.samples.push_back((now, bytes));
+        // Keep one point older than the window.
+        while self.samples.len() > 2 && now.duration_since(self.samples[1].0) >= RATE_WINDOW {
+            self.samples.pop_front();
+        }
+        let (t0, b0) = self.samples[0];
+        let dt = now.duration_since(t0).as_secs_f64();
+        if dt >= 0.10 {
+            self.speed_bps = (bytes - b0) as f64 / dt;
         }
         let eta = if self.speed_bps > 1.0 && total > bytes {
             Some(((total - bytes) as f64 / self.speed_bps).round() as u64)

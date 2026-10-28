@@ -202,15 +202,12 @@ impl ManifestFile {
                 }
             }
             let (offset, data) = result??;
+            // Counted by the task on arrival.
             if let Some(data) = data {
-                let len = data.len() as u64;
                 out.seek(tokio::io::SeekFrom::Start(offset))
                     .await
                     .map_err(Error::Io)?;
                 out.write_all(&data).await.map_err(Error::Io)?;
-                if let Some(ref cb) = on_progress {
-                    cb(len, false);
-                }
             }
         }
         out.flush().await.map_err(Error::Io)?;
@@ -318,6 +315,10 @@ impl ChunkJob {
             .inner
             .get_chunk(self.app_id, self.depot_id, self.depot_key, self.id.clone())
             .await?;
+        // On arrival, not in file order.
+        if let Some(cb) = &on_progress {
+            cb(data.len() as u64, false);
+        }
         Ok((self.offset, Some(data)))
     }
 
