@@ -10,4 +10,6 @@ mod utils;
 pub mod web_api;
 
 pub use cdn::CDNClient;
+pub use cdn::download_concurrency;
+pub use cdn::manifest::file::ProgressFn;
 pub use error::Error;

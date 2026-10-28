@@ -5,6 +5,32 @@
 use super::*;
 use crate::core::error::{ErrorKind, TypedError, io_kind, message_kind};
 
+/// CDN hosts tried together.
+const HOST_POOL_SIZE: usize = 4;
+
+/// Content host as CDN server.
+pub(crate) fn cdn_server_for(
+    host: &str,
+    cell_id: u32,
+    auth_token: Option<String>,
+) -> steam_cdn::web_api::content_service::CDNServer {
+    let (host_name, port) = match host.rsplit_once(':') {
+        Some((name, port)) => (name, port.parse::<u16>().unwrap_or(80)),
+        None => (host, 80),
+    };
+    steam_cdn::web_api::content_service::CDNServer {
+        r#type: "CDN".to_string(),
+        https: port == 443,
+        host: host_name.to_string(),
+        vhost: host_name.to_string(),
+        port,
+        cell_id,
+        load: 0,
+        weighted_load: 0,
+        auth_token,
+    }
+}
+
 /// Typed stop for a depot download.
 fn aborted_error() -> anyhow::Error {
     anyhow!(TypedError::new(ErrorKind::Cancelled, "download aborted"))
@@ -605,42 +631,45 @@ impl SteamClient {
         let mut depot_success = false;
         let mut last_error: Option<steam_cdn::Error> = None;
 
-        for host in hosts {
-            let token = match self.get_cdn_auth_token(app_id, depot_id, host).await {
-                Ok(t) => Some(t),
-                Err(e) => {
-                    tracing::warn!("Failed to get auth token for host {}: {}", host, e);
-                    None
-                }
-            };
+        // Counters before this depot, per attempt.
+        let (base_downloaded, base_reused) = shared_state
+            .read()
+            .map(|s| (s.downloaded_bytes, s.reused_bytes))
+            .unwrap_or_default();
 
-            let (host_name, port) = if let Some(pos) = host.find(':') {
-                (&host[..pos], host[pos + 1..].parse::<u16>().unwrap_or(80))
-            } else {
-                (host.as_str(), 80)
-            };
+        for pool in hosts.chunks(HOST_POOL_SIZE) {
+            let mut servers = Vec::with_capacity(pool.len());
+            for host in pool {
+                let token = match self.get_cdn_auth_token(app_id, depot_id, host).await {
+                    Ok(t) => Some(t),
+                    Err(e) => {
+                        tracing::warn!("Failed to get auth token for host {}: {}", host, e);
+                        None
+                    }
+                };
+                servers.push(cdn_server_for(host, connection.cell_id(), token));
+            }
+            let host = pool.join(", ");
 
-            let cdn_server = steam_cdn::web_api::content_service::CDNServer {
-                r#type: "CDN".to_string(),
-                https: port == 443,
-                host: host_name.to_string(),
-                vhost: host_name.to_string(),
-                port,
-                cell_id: connection.cell_id(),
-                load: 0,
-                weighted_load: 0,
-                auth_token: token,
-            };
+            // A retry re-verifies from disk.
+            if let Ok(mut state) = shared_state.write() {
+                state.downloaded_bytes = base_downloaded;
+                state.reused_bytes = base_reused;
+                state.depot_downloaded_bytes = 0;
+            }
 
             let cdn_client =
-                steam_cdn::CDNClient::with_server(Arc::new(connection.clone()), cdn_server);
+                steam_cdn::CDNClient::with_servers(Arc::new(connection.clone()), servers);
 
             let state_for_closure = shared_state.clone();
-            let on_progress = Arc::new(move |bytes: u64| {
+            let on_progress: steam_cdn::ProgressFn = Arc::new(move |bytes: u64, reused: bool| {
                 if let Ok(mut state) = state_for_closure.write() {
                     // Overall (whole app) and current-depot counters.
                     state.downloaded_bytes += bytes;
                     state.depot_downloaded_bytes += bytes;
+                    if reused {
+                        state.reused_bytes += bytes;
+                    }
                 }
             });
 

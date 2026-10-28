@@ -803,3 +803,18 @@ fn cdn_errors_map_to_kinds() {
     let status = steam_cdn::Error::HttpStatus(reqwest::StatusCode::NOT_FOUND);
     assert_eq!(cdn_error_kind(&status), None);
 }
+
+#[test]
+fn cdn_server_parses_host_and_port() {
+    let s = install::cdn_server_for("cache1.steamcontent.com", 7, Some("t".into()));
+    assert_eq!(
+        (s.host.as_str(), s.port, s.https),
+        ("cache1.steamcontent.com", 80, false)
+    );
+    assert_eq!(s.auth_token.as_deref(), Some("t"));
+    let s = install::cdn_server_for("cdn.example:443", 7, None);
+    assert_eq!(
+        (s.host.as_str(), s.port, s.https),
+        ("cdn.example", 443, true)
+    );
+}

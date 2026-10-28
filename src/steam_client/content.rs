@@ -16,12 +16,16 @@ impl SteamClient {
             .await
             .context("failed calling ContentServerDirectory.GetServersForSteamPipe")?;
 
-        let hosts: Vec<String> = response
+        let mut servers: Vec<_> = response
             .servers
             .iter()
             .filter(|server| matches!(server.type_(), "SteamCache" | "CDN"))
-            .map(|server| server.host().to_string())
+            // Unusable here: China-only, proxies.
+            .filter(|server| !server.steam_china_only() && !server.use_as_proxy())
             .collect();
+        // Least-loaded first, as Steam does.
+        servers.sort_by(|a, b| a.weighted_load().total_cmp(&b.weighted_load()));
+        let hosts: Vec<String> = servers.iter().map(|s| s.host().to_string()).collect();
 
         if hosts.is_empty() {
             tracing::error!("ContentServerDirectory returned 0 valid CDN servers");

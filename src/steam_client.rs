@@ -1741,6 +1741,7 @@ pub(crate) fn spawn_progress_reporter(
                 Ok(s) => Some((
                     s.is_downloading,
                     s.downloaded_bytes,
+                    s.reused_bytes,
                     s.total_bytes,
                     s.status_text.clone(),
                     s.depot_id,
@@ -1752,6 +1753,7 @@ pub(crate) fn spawn_progress_reporter(
             let Some((
                 downloading,
                 downloaded,
+                reused,
                 total,
                 status,
                 depot_id,
@@ -1769,6 +1771,7 @@ pub(crate) fn spawn_progress_reporter(
                 .send(DownloadProgress {
                     state: report_state,
                     bytes_downloaded: downloaded,
+                    reused_bytes: reused,
                     total_bytes: total,
                     current_file: status,
                     depot_id,

@@ -557,7 +557,11 @@ pub(crate) async fn drive_progress_until(
                     DownloadProgressState::Moving => ("moving", "Moving"),
                     _ => ("downloading", "Downloading"),
                 };
-                let (speed, eta) = rate.sample(p.bytes_downloaded, p.total_bytes);
+                // Disk reuse isn't network speed.
+                let (speed, eta) = rate.sample(
+                    p.bytes_downloaded.saturating_sub(p.reused_bytes),
+                    p.total_bytes.saturating_sub(p.reused_bytes),
+                );
                 if json {
                     emit_progress_json(state, &p, speed, eta, &mut last);
                 } else {
@@ -627,6 +631,8 @@ pub(crate) fn emit_progress_json(
         "state": state,
         // Whole-app (all depots) progress.
         "bytes_downloaded": p.bytes_downloaded,
+        // Part of it verified from disk.
+        "reused_bytes": p.reused_bytes,
         "total_bytes": p.total_bytes,
         "percent": percent_of(p.bytes_downloaded, p.total_bytes),
         // Current depot progress.

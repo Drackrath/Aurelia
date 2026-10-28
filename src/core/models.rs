@@ -293,6 +293,8 @@ pub struct DownloadProgress {
     pub depot_bytes_downloaded: u64,
     /// Total bytes for the current depot only.
     pub depot_total_bytes: u64,
+    /// Bytes reused from disk (resume).
+    pub reused_bytes: u64,
     /// `Failed` only: why, when known.
     pub error_kind: Option<crate::core::error::ErrorKind>,
 }
@@ -351,6 +353,8 @@ pub struct DownloadState {
     pub total_bytes: u64,
     /// Bytes downloaded across the whole app (all depots).
     pub downloaded_bytes: u64,
+    /// Part of that reused from disk.
+    pub reused_bytes: u64,
     pub status_text: String,
     /// Depot currently being downloaded.
     pub depot_id: u32,
@@ -370,6 +374,7 @@ impl DownloadState {
         self.app_id = app_id;
         self.app_name = app_name;
         self.downloaded_bytes = 0;
+        self.reused_bytes = 0;
         self.total_bytes = total_bytes;
         self.depot_id = 0;
         self.depot_downloaded_bytes = 0;
