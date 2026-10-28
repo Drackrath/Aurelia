@@ -151,3 +151,62 @@ jobs:
         run: |
           deb=$(ls target/debian/*.deb | head -n1)
           gh release upload "$GITHUB_REF_NAME" "$deb" --repo "$GITHUB_REPOSITORY" --clobber
+
+  checksums:
+    name: Generate release checksums
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Download release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p release-assets
+          gh release download "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir release-assets
+
+      - name: Generate SHA256SUMS
+        shell: bash
+        run: |
+          rm -f release-assets/SHA256SUMS
+          (
+            cd release-assets
+            find . -maxdepth 1 -type f -printf '%f\0' \
+              | sort -z \
+              | while IFS= read -r -d '' asset; do
+                  sha256sum -- "$asset"
+                done
+          ) > SHA256SUMS
+          test -s SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign SHA256SUMS
+        shell: bash
+        run: |
+          cosign sign-blob SHA256SUMS \
+            --yes \
+            --output-signature SHA256SUMS.sig \
+            --output-certificate SHA256SUMS.pem
+          test -s SHA256SUMS.sig
+          test -s SHA256SUMS.pem
+
+      - name: Publish checksums and signatures
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" \
+            SHA256SUMS \
+            SHA256SUMS.sig \
+            SHA256SUMS.pem \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
