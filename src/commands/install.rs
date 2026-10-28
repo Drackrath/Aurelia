@@ -128,10 +128,8 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
     // Share this install's state via a process-global registry so `install stop`
     // / `install list` (served on other daemon connections) can reach it. The
     // guard removes the entry when this function returns (success, error, abort).
+    // Verified chunks count themselves; don't seed.
     let state = Arc::new(RwLock::new(DownloadState::default()));
-    if let Ok(mut state) = state.write() {
-        state.initial_downloaded_bytes = on_disk;
-    }
     let _install_guard = InstallGuard::register(app_id, Arc::clone(&state))?;
 
     // Recorded first, so a crash stays resumable.

@@ -351,8 +351,6 @@ pub struct DownloadState {
     pub total_bytes: u64,
     /// Bytes downloaded across the whole app (all depots).
     pub downloaded_bytes: u64,
-    /// Bytes already present when a download is resumed.
-    pub initial_downloaded_bytes: u64,
     pub status_text: String,
     /// Depot currently being downloaded.
     pub depot_id: u32,
@@ -371,7 +369,7 @@ impl DownloadState {
         self.is_downloading = true;
         self.app_id = app_id;
         self.app_name = app_name;
-        self.downloaded_bytes = self.initial_downloaded_bytes;
+        self.downloaded_bytes = 0;
         self.total_bytes = total_bytes;
         self.depot_id = 0;
         self.depot_downloaded_bytes = 0;
