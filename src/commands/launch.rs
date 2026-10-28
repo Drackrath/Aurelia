@@ -19,6 +19,115 @@ pub(crate) struct PlayTarget {
     pub(crate) steam_mode: Option<SteamModeArg>,
 }
 
+/// `play` options for start-up waits.
+pub(crate) struct PlayWait {
+    pub(crate) skip_shaders: bool,
+    pub(crate) launch_timeout: Option<u64>,
+}
+
+/// Default in-Wine Steam launch wait.
+const DEFAULT_LAUNCH_TIMEOUT_SECS: u64 = 300;
+
+/// Prints shader replay progress.
+fn shader_reporter(json: bool, in_play: bool) -> aurelia::launch::shaders::ShaderProgressFn {
+    use aurelia::launch::shaders::ShaderEvent;
+    // Four updates a second at most.
+    let last = std::sync::Mutex::new(None::<std::time::Instant>);
+    Arc::new(move |event: ShaderEvent| {
+        if let ShaderEvent::Progress { .. } = event {
+            let mut last = last.lock().unwrap_or_else(|p| p.into_inner());
+            let now = std::time::Instant::now();
+            if last.is_some_and(|t| now.duration_since(t).as_millis() < 250) {
+                return;
+            }
+            *last = Some(now);
+        }
+        if json {
+            let value = match &event {
+                ShaderEvent::Started { databases } => {
+                    serde_json::json!({ "event": "shaders", "state": "started", "databases": databases })
+                }
+                ShaderEvent::Progress { done, total } => serde_json::json!({
+                    "event": "shaders", "state": "processing", "done": done, "total": total,
+                    "percent": percent_of(*done, *total),
+                }),
+                ShaderEvent::Finished { done, total } => serde_json::json!({
+                    "event": "shaders", "state": "finished", "done": done, "total": total,
+                }),
+                ShaderEvent::Skipped(reason) => {
+                    serde_json::json!({ "event": "shaders", "state": "skipped", "reason": reason })
+                }
+            };
+            eprint_json_line(&value);
+            return;
+        }
+        match event {
+            ShaderEvent::Started { databases } => cli_eprintln!(
+                "Processing Vulkan shaders ({databases} pipeline cache{}){}",
+                if databases == 1 { "" } else { "s" },
+                if in_play {
+                    " — use --skip-shaders to skip"
+                } else {
+                    ""
+                }
+            ),
+            ShaderEvent::Progress { done, total } => cli_eprint!(
+                "\r  Processing Vulkan shaders: {done} / {total} ({:.1}%)   ",
+                percent_of(done, total)
+            ),
+            ShaderEvent::Finished { .. } => cli_eprintln!("\r  Vulkan shaders processed.{:30}", ""),
+            // Quiet unless asked.
+            ShaderEvent::Skipped(reason) => tracing::info!("shader pre-caching skipped: {reason}"),
+        }
+    })
+}
+
+/// `aurelia shaders <app_id>`: replay on demand.
+pub(crate) async fn cmd_shaders(app_id: u32, force: bool, json: bool) -> Result<()> {
+    use aurelia::launch::shaders::{self, ShaderEvent};
+    if !cfg!(target_os = "linux") {
+        bail!("Vulkan shader pre-caching is only needed on Linux");
+    }
+    let mut client = authed_client().await?;
+    let game = find_game(&mut client, app_id).await?;
+    let Some(install) = game.install_path.as_deref().filter(|_| game.is_installed) else {
+        bail!(
+            "{} is not installed — install it with `aurelia install {app_id}`",
+            game.name
+        );
+    };
+    let Some(dir) = shaders::shader_cache_dir(std::path::Path::new(install), app_id) else {
+        bail!(
+            "{} isn't in a Steam library, so it has no shader cache",
+            game.name
+        );
+    };
+    let env = shaders::cache_env(&dir)
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), std::env::var(k).unwrap_or(v)))
+        .collect();
+    let reporter = shader_reporter(json, false);
+    let outcome = shaders::precache(&dir, &env, force, Some(&reporter)).await?;
+    let (status, done, total, reason) = match &outcome {
+        ShaderEvent::Finished { done, total } => ("processed", *done, *total, None),
+        ShaderEvent::Skipped(reason) => ("skipped", 0, 0, Some(reason.as_str())),
+        _ => ("processed", 0, 0, None),
+    };
+    if json {
+        print_result_line(serde_json::json!({
+            "app_id": app_id,
+            "status": status,
+            "done": done,
+            "total": total,
+            "reason": reason,
+            "cache": dir.to_string_lossy(),
+        }));
+    } else if let Some(reason) = reason {
+        cli_println!("Nothing to do for {}: {reason}.", game.name);
+    }
+    Ok(())
+}
+
 /// Force a Steam mode via policy.
 fn apply_steam_mode(cfg: &mut aurelia::core::models::UserAppConfig, mode: SteamModeArg) {
     use aurelia::core::models::SteamRuntimePolicy;
@@ -128,6 +237,7 @@ pub(crate) async fn cmd_play(
     no_script: bool,
     steam: bool,
     target: PlayTarget,
+    wait: PlayWait,
     no_update: bool,
     json: bool,
 ) -> Result<()> {
@@ -193,10 +303,20 @@ pub(crate) async fn cmd_play(
             );
             cli_println!("Launching {} via the in-Wine Steam ...", game.name);
         }
+        let status = |message: &str| {
+            if json {
+                eprint_json_line(&serde_json::json!({ "event": "message", "message": message }));
+            } else {
+                cli_println!("{message}");
+            }
+        };
+        let timeout = wait.launch_timeout.unwrap_or(DEFAULT_LAUNCH_TIMEOUT_SECS);
         aurelia::launch::launch_game_via_master_steam(
             &launcher_config,
             app_id,
             std::path::Path::new(&install_path),
+            std::time::Duration::from_secs(timeout),
+            Some(&status),
         )
         .await
         .with_context(|| format!("failed to launch {} via the in-Wine Steam", game.name))?;
@@ -355,6 +475,10 @@ pub(crate) async fn cmd_play(
             steam,
             prefers_linux,
             (!json).then_some(&announce_target),
+            aurelia::launch::shaders::ShaderLaunch {
+                skip: wait.skip_shaders,
+                on_event: Some(shader_reporter(json, true)),
+            },
         )
         .await
         .with_context(|| format!("failed to launch {}", game.name))?;

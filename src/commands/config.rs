@@ -283,6 +283,30 @@ pub(crate) async fn cmd_config_steam_runtime_runner(
 /// Steam-integration policy applied when a game's own policy is `auto`. Governs how
 /// `aurelia play --steam` provides Steam DRM/Steamworks (host client vs the in-Wine
 /// Steam runtime). See [`crate::cli::ConfigCommand::SteamRuntimePolicy`].
+/// `config shader-precache [auto|off]`.
+pub(crate) async fn cmd_config_shader_precache(
+    mode: Option<ShaderPrecacheArg>,
+    json: bool,
+) -> Result<()> {
+    use aurelia::launch::shaders::ShaderPrecache;
+    let (config, changed) = view_or_set(mode, |c, m| c.shader_precache = m.into()).await?;
+    if json {
+        print_json(&serde_json::json!({ "shader_precache": config.shader_precache }));
+        return Ok(());
+    }
+    let label = match config.shader_precache {
+        ShaderPrecache::Auto => {
+            "auto (replay the Steam pipeline cache before launch and share Steam's shader caches)"
+        }
+        ShaderPrecache::Off => "off (shaders compile while the game runs)",
+    };
+    cli_println!("Shader pre-caching: {label}");
+    if changed {
+        cli_println!("Saved. Applies to the next launch.");
+    }
+    Ok(())
+}
+
 /// `config install-resume [manual|auto]`.
 pub(crate) async fn cmd_config_install_resume(
     mode: Option<InstallResumeArg>,

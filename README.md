@@ -297,6 +297,8 @@ aurelia launch-targets 1245620       # installed builds + Steam modes, and the `
 aurelia play 1245620 --platform linux        # Linux: run the native build (or `windows` via Proton)
 aurelia play 1245620 --steam-mode host       # one launch: `runtime` (in-Wine), `host` or `none`
 aurelia play 1245620 -v              # also log progress/debug output (-vv/-vvv: Steam networking)
+aurelia play 1245620 --skip-shaders  # Linux: launch without pre-compiling Vulkan shaders first
+aurelia shaders 1245620              # Linux: pre-compile a game's Vulkan shaders now (--force to redo)
 aurelia running                      # list games Aurelia is currently running
 aurelia stop 1245620                 # stop a running game (--force to kill a hung one)
 
@@ -341,6 +343,7 @@ aurelia config language german       # default language for info and achievement
 aurelia config country DE            # default store region for prices (unset: system locale, else US)
 aurelia config game 1245620 --proton GE-Proton9-20  # pin a Proton version for one game
 aurelia config install-resume auto   # let the daemon resume interrupted installs when it starts
+aurelia config shader-precache off   # Linux: don't pre-compile Vulkan shaders before play (default: auto)
 
 # Proton and Wine runtimes (download manager)
 aurelia proton list                  # installable runtimes (Valve + GE + CachyOS) and what's installed
@@ -475,6 +478,17 @@ a command seems stuck. Commands run through the session daemon show the same log
 `AURELIA_LOG` or `RUST_LOG` override the level for a command run locally. A launched game's
 own output is saved per launch under `~/.config/Aurelia/logs/` (Proton's stderr in
 `wine_<appid>.log`).
+
+On Linux, `play` pre-compiles a game's Vulkan shaders before it starts, like Steam's
+"Processing Vulkan shaders" step. It replays the game's Steam pipeline cache
+(`steamapps/shadercache/<appid>`) with Steam's `fossilize_replay` and points the NVIDIA, Mesa
+and DXVK caches at the same folder Steam uses, so the game finds them warm. A replay runs again
+only when the cache or the graphics driver changed. It needs a pipeline cache (Steam downloads
+one for most Vulkan and DXVK games) and `fossilize_replay` (shipped with Steam, or set
+`AURELIA_FOSSILIZE_REPLAY`); without them the game simply compiles its shaders as it runs. Skip
+it once with `--skip-shaders`, or always with `config shader-precache off`. A game started
+through the in-Wine Steam waits up to 5 minutes to appear (`--launch-timeout`), not counting
+time that Steam spends processing shaders, and fails with `timeout` if it never starts.
 
 On Windows, games run natively and the Linux-only parts are switched off: `proton install`,
 `steam-runtime install|repair|login`, and `umu`/`luxtorpeda install` refuse with an

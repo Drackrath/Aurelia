@@ -2,6 +2,7 @@ pub mod apply_launch_script;
 pub mod build_command;
 pub mod build_environment;
 pub mod finalize;
+pub mod precache_shaders;
 pub mod preflight;
 pub mod prepare_prefix;
 pub mod resolve_components;

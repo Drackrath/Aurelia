@@ -2,11 +2,16 @@ pub mod dll_provider_resolver;
 pub mod fixups;
 pub mod launch_script;
 pub mod pipeline;
+pub mod shaders;
 pub mod stages;
 pub mod validators;
 
 #[cfg(test)]
 mod verification_tests;
+
+#[cfg(test)]
+#[path = "wait_tests.rs"]
+mod wait_tests;
 
 use crate::core::config::{LauncherConfig, config_dir};
 use crate::core::utils::MasterSteamConfig;
@@ -398,6 +403,8 @@ pub async fn launch_game_via_master_steam(
     config: &LauncherConfig,
     app_id: u32,
     install_path: &Path,
+    timeout: std::time::Duration,
+    on_status: Option<&(dyn Fn(&str) + Send + Sync)>,
 ) -> Result<()> {
     let base_dir = config_dir()?;
     let steam_cfg = crate::core::utils::get_master_steam_config();
@@ -453,28 +460,72 @@ pub async fn launch_game_via_master_steam(
         return Ok(());
     };
 
-    // Wait (bounded) for the game to appear, then block until it exits. If it never
-    // appears (client showed an error, game is updating, or it exited instantly), don't
-    // hang the caller.
-    let mut appeared = false;
-    for _ in 0..30 {
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        if SteamClient::is_game_running_in_prefix(&steam_cfg.wine_prefix, &installdir) {
-            appeared = true;
-            break;
-        }
-    }
-    if !appeared {
-        tracing::warn!(
-            "game process for app {app_id} did not appear within 30s of -applaunch; \
-             the in-Wine Steam may still be starting it, updating, or showing a prompt"
-        );
-        return Ok(());
-    }
+    // Shader processing doesn't use the timeout.
+    let prefix = steam_cfg.wine_prefix.clone();
+    wait_for_launch(
+        timeout,
+        std::time::Duration::from_secs(1),
+        || SteamClient::is_game_running_in_prefix(&prefix, &installdir),
+        || SteamClient::is_shader_processing_in_prefix(&prefix),
+        |message| {
+            if let Some(cb) = on_status {
+                cb(message);
+            }
+        },
+    )
+    .await
+    .map_err(|waited| {
+        anyhow!(crate::core::error::TypedError::new(
+            crate::core::error::ErrorKind::Timeout,
+            format!(
+                "app {app_id} did not start within {}s of -applaunch; the in-Wine Steam may \
+                 be updating it or showing a prompt (check its window), or raise \
+                 --launch-timeout",
+                waited.as_secs()
+            ),
+        ))
+    })?;
     while SteamClient::is_game_running_in_prefix(&steam_cfg.wine_prefix, &installdir) {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
     Ok(())
+}
+
+/// Wait until `game_running`, pausing during shaders.
+///
+/// `Err` carries the time counted against `timeout`.
+pub(crate) async fn wait_for_launch(
+    timeout: std::time::Duration,
+    poll: std::time::Duration,
+    mut game_running: impl FnMut() -> bool,
+    mut shaders_busy: impl FnMut() -> bool,
+    status: impl Fn(&str),
+) -> std::result::Result<(), std::time::Duration> {
+    let mut waited = std::time::Duration::ZERO;
+    let mut processing = false;
+    loop {
+        tokio::time::sleep(poll).await;
+        if game_running() {
+            return Ok(());
+        }
+        if shaders_busy() {
+            if !processing {
+                status(
+                    "The in-Wine Steam is processing Vulkan shaders; waiting for it to finish ...",
+                );
+                processing = true;
+            }
+            continue;
+        }
+        if processing {
+            processing = false;
+            status("Shader processing finished; waiting for the game to start ...");
+        }
+        waited += poll;
+        if waited >= timeout {
+            return Err(waited);
+        }
+    }
 }
 
 /// True when `path` looks like a real Windows executable.

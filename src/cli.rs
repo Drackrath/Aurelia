@@ -252,6 +252,24 @@ pub(crate) enum Command {
         /// Skip the automatic update check and install before launching.
         #[arg(short = 'N', long = "no-update", alias = "noupdate")]
         no_update: bool,
+        /// Launch without pre-compiling Vulkan shaders first (like Steam's "Skip").
+        /// Shaders then compile while the game runs.
+        #[arg(short = 'k', long)]
+        skip_shaders: bool,
+        /// How long to wait for a game started through the in-Wine Steam to appear,
+        /// in seconds (default 300). Time Steam spends processing Vulkan shaders
+        /// doesn't count.
+        #[arg(short = 'L', long, value_name = "SECS", value_parser = clap::value_parser!(u64).range(1..))]
+        launch_timeout: Option<u64>,
+    },
+    /// Pre-compile a game's Vulkan shaders from its Steam pipeline cache
+    /// (`steamapps/shadercache/<appid>`), as Steam's "Processing Vulkan shaders"
+    /// does. `play` does this automatically unless `config shader-precache off`.
+    Shaders {
+        app_id: u32,
+        /// Replay again even if nothing changed since the last run.
+        #[arg(short, long)]
+        force: bool,
     },
     /// List the ways an installed game can be launched: each installed build
     /// (native Linux / Windows) and, for Windows, each available Steam mode, with
@@ -561,6 +579,14 @@ pub(crate) enum ConfigCommand {
     InstallResume {
         /// `manual` or `auto`. Omit to print the current setting.
         mode: Option<InstallResumeArg>,
+    },
+    /// View or set Vulkan shader pre-caching before `play` (Linux). `auto` (default)
+    /// replays the game's Steam pipeline cache with `fossilize_replay` and points the
+    /// driver caches at `steamapps/shadercache/<appid>`, like Steam; `off` leaves
+    /// shaders to the game.
+    ShaderPrecache {
+        /// `auto` or `off`. Omit to print the current setting.
+        mode: Option<ShaderPrecacheArg>,
     },
     /// View or set the network proxy used for all HTTP(S) communication.
     ///
@@ -1101,6 +1127,24 @@ pub(crate) enum SteamModeArg {
     Host,
     /// Standalone, no Steam client.
     None,
+}
+
+/// `config shader-precache` choices.
+#[derive(Clone, Copy, ValueEnum)]
+pub(crate) enum ShaderPrecacheArg {
+    /// Replay pipelines before launch.
+    Auto,
+    /// Leave shaders to the game.
+    Off,
+}
+
+impl From<ShaderPrecacheArg> for aurelia::launch::shaders::ShaderPrecache {
+    fn from(value: ShaderPrecacheArg) -> Self {
+        match value {
+            ShaderPrecacheArg::Auto => Self::Auto,
+            ShaderPrecacheArg::Off => Self::Off,
+        }
+    }
 }
 
 /// `config install-resume` choices.

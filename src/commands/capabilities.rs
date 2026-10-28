@@ -25,6 +25,7 @@ pub(crate) const EVENTS: &[&str] = &[
     "qr_scanned",
     "ready",
     "result",
+    "shaders",
     "stopping",
     "typing",
     "web_token_required",
@@ -36,6 +37,8 @@ pub(crate) const FEATURES: &[&str] = &[
     "login.qr.result_line",
     // stdin `cancel` or EOF ends it.
     "login.qr.stdin_control",
+    // Vulkan pipelines replayed before launch.
+    "play.shader_precache",
     // `result` lines carry `schema`.
     "result.schema",
 ];

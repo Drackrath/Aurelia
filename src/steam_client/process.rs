@@ -281,6 +281,30 @@ impl SteamClient {
         }
     }
 
+    /// Whether Steam replays shaders in `wineprefix`.
+    pub fn is_shader_processing_in_prefix(wineprefix: &Path) -> bool {
+        #[cfg(unix)]
+        {
+            let prefix_str = wineprefix.to_string_lossy().to_string();
+            Self::scan_proc_pids(|pid_path, _pid_str| {
+                // `bin\fossilize-replay64.exe` in Windows Steam.
+                let cmdline = Self::proc_cmdline(pid_path)?.to_lowercase();
+                if !(cmdline.contains("fossilize-replay") || cmdline.contains("fossilize_replay")) {
+                    return None;
+                }
+                Self::proc_environ(pid_path)?
+                    .contains(&prefix_str)
+                    .then_some(true)
+            })
+            .unwrap_or(false)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = wineprefix;
+            false
+        }
+    }
+
     /// Scans /proc to find a wine process running steam.exe inside the given WINEPREFIX.
     pub fn is_steam_running_in_prefix(wineprefix: &Path) -> bool {
         #[cfg(unix)]
@@ -451,6 +475,7 @@ NoSavePersonalInfo=1
         launch_script_override: Option<PathBuf>,
         disable_launch_script: bool,
         steam_enabled: bool,
+        shaders: crate::launch::shaders::ShaderLaunch,
     ) -> Result<std::process::Child> {
         use crate::infra::logging::{EventLogger, LaunchSession};
         use crate::launch::pipeline::{LaunchPipeline, PipelineContext};
@@ -466,6 +491,8 @@ NoSavePersonalInfo=1
         ctx.launch_script_override = launch_script_override;
         ctx.disable_launch_script = disable_launch_script;
         ctx.steam_enabled = steam_enabled;
+        ctx.skip_shaders = shaders.skip;
+        ctx.on_shader_event = shaders.on_event;
 
         if let Ok(config_dir) = crate::core::config::config_dir() {
             let session = LaunchSession::new(&config_dir.join("logs"));
