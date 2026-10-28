@@ -139,17 +139,20 @@ impl ManifestFile {
         Ok(buffer)
     }
 
+    /// Download into `target_path`, reusing matching chunks.
+    ///
+    /// `on_progress(bytes, reused)` fires per chunk.
     pub async fn download(
         &self,
         depot_key: [u8; 32],
         target_path: &std::path::Path,
         verify_mode: bool,
         abort_signal: Option<Arc<AtomicBool>>,
-        max_tasks: Option<usize>,
-        on_progress: Option<Arc<dyn Fn(u64) + Send + Sync + 'static>>,
+        limit: Option<Arc<Semaphore>>,
+        on_progress: Option<ProgressFn>,
     ) -> Result<(), Error> {
-        let max_tasks = max_tasks.unwrap_or(4);
-        let semaphore = Arc::new(Semaphore::new(max_tasks));
+        let _ = verify_mode;
+        let semaphore = limit.unwrap_or_else(|| Arc::new(Semaphore::new(4)));
 
         let metadata_before = tokio::fs::metadata(target_path).await;
         let file_exists_before = metadata_before.is_ok();
@@ -163,9 +166,7 @@ impl ManifestFile {
             .map_err(Error::Io)?;
 
         if current_len_before != self.size {
-            out.set_len(self.size)
-                .await
-                .map_err(Error::Io)?;
+            out.set_len(self.size).await.map_err(Error::Io)?;
         }
 
         let mut tasks = self
@@ -173,67 +174,24 @@ impl ManifestFile {
             .iter()
             .sorted_by(|&a, &b| a.offset.cmp(&b.offset))
             .map(|chunk_data| {
-                let semaphore_owned = semaphore.clone();
-                let verify_mode = verify_mode;
-                let abort_signal = abort_signal.clone();
-                let target_path = target_path.to_path_buf();
-                let file_exists_before = file_exists_before;
-                let current_len_before = current_len_before;
-                let on_progress = on_progress.clone();
-                async move {
-                    // Cancellation check
-                    if let Some(signal) = &abort_signal {
-                        if signal.load(Ordering::Relaxed) {
-                            return Ok((chunk_data.offset, None));
-                        }
-                    }
-
-                    let permit = semaphore_owned.acquire_owned().await?;
-
-                    // Resume-skip only on hash match.
-                    let _ = (verify_mode, current_len_before);
-
-                    let metadata = tokio::fs::metadata(&target_path).await;
-                    let file_exists = metadata.is_ok();
-                    let current_len = metadata.map(|m| m.len()).unwrap_or(0);
-
-                    // Task 1: Deep Check
-                    if file_exists_before && file_exists {
-                        let mut file = tokio::fs::File::open(&target_path)
-                            .await
-                            .map_err(Error::Io)?;
-                        if current_len >= chunk_data.offset + chunk_data.original_size as u64 {
-                            file.seek(tokio::io::SeekFrom::Start(chunk_data.offset))
-                                .await
-                                .map_err(Error::Io)?;
-
-                            let mut buffer = vec![0u8; chunk_data.original_size as usize];
-                            if file.read_exact(&mut buffer).await.is_ok() {
-                                let mut hasher = sha1::Sha1::new();
-                                hasher.update(&buffer);
-                                let hash = hasher.finalize().to_vec();
-
-                                if hash == chunk_data.sha {
-                                    tracing::debug!("Verified chunk {}", chunk_data.id());
-                                    if let Some(ref cb) = on_progress {
-                                        cb(chunk_data.original_size as u64);
-                                    }
-                                    drop(permit);
-                                    return Ok((chunk_data.offset, None));
-                                } else {
-                                    tracing::warn!("Corruption detected in chunk {}", chunk_data.id());
-                                }
-                            }
-                        }
-                    }
-
-                    let result = self
-                        .inner
-                        .get_chunk(self.app_id, self.depot_id, depot_key, chunk_data.id())
-                        .await;
-                    drop(permit);
-                    result.map(|data| (chunk_data.offset, Some(data)))
-                }
+                let job = ChunkJob {
+                    inner: self.inner.clone(),
+                    app_id: self.app_id,
+                    depot_id: self.depot_id,
+                    depot_key,
+                    id: chunk_data.id(),
+                    sha: chunk_data.sha.clone(),
+                    offset: chunk_data.offset,
+                    size: chunk_data.original_size,
+                    target_path: target_path.to_path_buf(),
+                    // Only existing files hold chunks.
+                    check_disk: file_exists_before,
+                };
+                AbortOnDrop(tokio::spawn(job.run(
+                    semaphore.clone(),
+                    abort_signal.clone(),
+                    on_progress.clone(),
+                )))
             })
             .collect::<FuturesOrdered<_>>();
 
@@ -243,18 +201,13 @@ impl ManifestFile {
                     break;
                 }
             }
-            let (offset, data) = result?;
+            let (offset, data) = result??;
+            // Counted by the task on arrival.
             if let Some(data) = data {
-                let len = data.len() as u64;
                 out.seek(tokio::io::SeekFrom::Start(offset))
                     .await
                     .map_err(Error::Io)?;
-                out.write_all(&data)
-                    .await
-                    .map_err(Error::Io)?;
-                if let Some(ref cb) = on_progress {
-                    cb(len);
-                }
+                out.write_all(&data).await.map_err(Error::Io)?;
             }
         }
         out.flush().await.map_err(Error::Io)?;
@@ -295,5 +248,100 @@ impl ManifestFile {
             .await
             .map_err(Error::Io)?;
         Ok(())
+    }
+}
+
+/// `(bytes, reused_from_disk)` progress callback.
+pub type ProgressFn = Arc<dyn Fn(u64, bool) + Send + Sync + 'static>;
+
+/// Spawned task, aborted when dropped.
+struct AbortOnDrop<T>(tokio::task::JoinHandle<T>);
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+impl<T> std::future::Future for AbortOnDrop<T> {
+    type Output = Result<T, tokio::task::JoinError>;
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        std::pin::Pin::new(&mut self.0).poll(cx)
+    }
+}
+
+/// One chunk: reuse or fetch.
+struct ChunkJob {
+    inner: Arc<InnerClient>,
+    app_id: u32,
+    depot_id: u32,
+    depot_key: [u8; 32],
+    id: String,
+    sha: Vec<u8>,
+    offset: u64,
+    size: u32,
+    target_path: std::path::PathBuf,
+    check_disk: bool,
+}
+
+impl ChunkJob {
+    /// `(offset, None)` when reused or aborted.
+    async fn run(
+        self,
+        semaphore: Arc<Semaphore>,
+        abort_signal: Option<Arc<AtomicBool>>,
+        on_progress: Option<ProgressFn>,
+    ) -> Result<(u64, Option<Vec<u8>>), Error> {
+        let aborted = || abort_signal.as_ref().is_some_and(|s| s.load(Ordering::Relaxed));
+        if aborted() {
+            return Ok((self.offset, None));
+        }
+        let _permit = semaphore.acquire_owned().await?;
+        if aborted() {
+            return Ok((self.offset, None));
+        }
+        if self.check_disk && self.on_disk().await? {
+            tracing::debug!("Verified chunk {}", self.id);
+            if let Some(cb) = &on_progress {
+                cb(self.size as u64, true);
+            }
+            return Ok((self.offset, None));
+        }
+        let data = self
+            .inner
+            .get_chunk(self.app_id, self.depot_id, self.depot_key, self.id.clone())
+            .await?;
+        // On arrival, not in file order.
+        if let Some(cb) = &on_progress {
+            cb(data.len() as u64, false);
+        }
+        Ok((self.offset, Some(data)))
+    }
+
+    /// Whether the bytes on disk match.
+    async fn on_disk(&self) -> Result<bool, Error> {
+        let Ok(mut file) = tokio::fs::File::open(&self.target_path).await else {
+            return Ok(false);
+        };
+        let len = file.metadata().await.map(|m| m.len()).unwrap_or(0);
+        if len < self.offset + self.size as u64 {
+            return Ok(false);
+        }
+        file.seek(tokio::io::SeekFrom::Start(self.offset))
+            .await
+            .map_err(Error::Io)?;
+        let mut buffer = vec![0u8; self.size as usize];
+        if file.read_exact(&mut buffer).await.is_err() {
+            return Ok(false);
+        }
+        let matches = sha1::Sha1::digest(&buffer).as_slice() == self.sha.as_slice();
+        if !matches {
+            tracing::warn!("Corruption detected in chunk {}", self.id);
+        }
+        Ok(matches)
     }
 }

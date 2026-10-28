@@ -96,3 +96,16 @@ fn deletable_dir_guards() {
     std::fs::write(lib.path().join("steamapps").join("appmanifest_7.acf"), "").unwrap();
     assert_eq!(deletable_dir(&e), None);
 }
+
+#[test]
+fn early_failures_still_use_up_auto_attempts() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("install_backlog.json");
+    update_at(&path, |e| upsert_in(e, entry(1, BacklogState::Interrupted))).unwrap();
+    for expected in 1..=MAX_AUTO_ATTEMPTS {
+        let bumped = update_at(&path, |e| bump_in(e, 1)).unwrap();
+        assert_eq!(bumped, Some(expected));
+    }
+    assert!(auto_resumable(&load_from(&path).unwrap()).is_empty());
+    assert_eq!(update_at(&path, |e| bump_in(e, 2)).unwrap(), None);
+}

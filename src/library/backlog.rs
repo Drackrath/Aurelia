@@ -133,6 +133,18 @@ pub fn remove(app_id: u32) -> Result<bool> {
     })
 }
 
+/// Count an auto-resume before it runs.
+pub fn bump_auto_attempts(app_id: u32) -> Result<Option<u32>> {
+    update(|entries| bump_in(entries, app_id))
+}
+
+pub(crate) fn bump_in(entries: &mut [BacklogEntry], app_id: u32) -> Option<u32> {
+    let entry = entries.iter_mut().find(|e| e.app_id == app_id)?;
+    entry.auto_attempts += 1;
+    entry.updated_at = now();
+    Some(entry.auto_attempts)
+}
+
 /// Set state; whether `app_id` exists.
 pub fn set_state(app_id: u32, state: BacklogState) -> Result<bool> {
     update(|entries| {
