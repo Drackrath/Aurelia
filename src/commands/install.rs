@@ -120,8 +120,7 @@ pub(crate) async fn cmd_install(
     }
 
     if json {
-        print_json_line(&serde_json::json!({
-            "event": "result",
+        print_result_line(serde_json::json!({
             "app_id": app_id,
             "status": "installed",
             "dlc": is_dlc,

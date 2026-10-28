@@ -16,6 +16,7 @@ pub(crate) mod scripts;
 pub(crate) mod runtimes;
 pub(crate) mod cloud;
 pub(crate) mod workshop;
+pub(crate) mod capabilities;
 
 pub(crate) use self::common::*;
 pub(crate) use self::auth::*;
@@ -33,3 +34,4 @@ pub(crate) use self::scripts::*;
 pub(crate) use self::runtimes::*;
 pub(crate) use self::cloud::*;
 pub(crate) use self::workshop::*;
+pub(crate) use self::capabilities::cmd_capabilities;

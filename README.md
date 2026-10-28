@@ -411,6 +411,15 @@ aurelia scripts remove 2270           # delete the dir-based script
 Add `--json` to any command for machine-readable output (errors included). It's a global
 flag, so `aurelia --json <command>` and `aurelia <command> --json` are equivalent.
 
+Drivers can feature-detect with `aurelia --json capabilities`: one line listing the version,
+the JSON `schema` number, every command with its flags, arguments and subcommands, all `event`
+names, every error `type` with its exit code and hint, and behaviour `features` that flags
+don't reveal. Add a command path (`aurelia capabilities config game`) for one command's
+arguments, subcommands and every flag with its short form, value, allowed values and help.
+It runs offline and never starts the daemon. Every `{"event":"result",...}` line
+also carries `"schema"`, which goes up only when an existing field changes meaning or is
+removed; added fields don't bump it.
+
 `login --qr --json` streams `qr_challenge` and `qr_scanned` events on stderr and ends with
 exactly one `{"event":"result",...}` line on stdout. On success a one-line `{"logged_in":true,...}`
 object comes just before it. stdin is the driver's control channel: send a `cancel` line to
