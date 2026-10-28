@@ -42,17 +42,99 @@ pub(crate) fn cmd_capabilities(json: bool) {
     let report = capabilities();
     if json {
         print_json_line(&report);
-        return;
+    } else {
+        cli_print!("{}", render_report(&report, terminal_width()));
     }
-    let commands = report["commands"].as_object().map_or(0, Map::len);
-    cli_println!(
-        "aurelia {} ({} {}), JSON schema {JSON_SCHEMA}",
-        env!("CARGO_PKG_VERSION"),
-        std::env::consts::OS,
-        std::env::consts::ARCH,
-    );
-    cli_println!("Features: {}", FEATURES.join(", "));
-    cli_println!("Commands: {commands} (run `aurelia --json capabilities` for flags, events and errors)");
+}
+
+/// Labels for the list view.
+const LIST_FIELDS: &[(&str, &str)] = &[
+    ("Name", "name"),
+    ("Version", "version"),
+    ("Schema", "schema"),
+    ("OS", "os"),
+    ("Arch", "arch"),
+    ("GlobalFlags", "global_flags"),
+    ("Features", "features"),
+    ("Events", "events"),
+    ("Commands", "commands"),
+];
+
+/// `$COLUMNS`, else a safe default.
+fn terminal_width() -> usize {
+    std::env::var("COLUMNS")
+        .ok()
+        .and_then(|c| c.parse().ok())
+        .filter(|&c: &usize| c >= 40)
+        .unwrap_or(120)
+}
+
+/// PowerShell-style list, then error table.
+pub(crate) fn render_report(report: &Value, width: usize) -> String {
+    let pad = LIST_FIELDS.iter().map(|(l, _)| l.len()).max().unwrap_or(0);
+    let mut out = String::from("\n");
+    for (label, key) in LIST_FIELDS {
+        let value = match &report[*key] {
+            Value::Object(map) => braces(map.keys().map(String::as_str)),
+            Value::Array(items) => braces(items.iter().map(|v| v.as_str().unwrap_or_default())),
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        out.push_str(&wrap_field(&format!("{label:<pad$} : "), &value, width));
+    }
+    out.push_str("\n");
+    out.push_str(&error_table(report["errors"].as_array().map_or(&[][..], Vec::as_slice)));
+    out.push_str("\n");
+    out
+}
+
+/// `{a, b, c}` like PowerShell.
+fn braces<'a>(items: impl Iterator<Item = &'a str>) -> String {
+    format!("{{{}}}", items.collect::<Vec<_>>().join(", "))
+}
+
+/// Wrap at commas under the value.
+fn wrap_field(prefix: &str, value: &str, width: usize) -> String {
+    let indent = " ".repeat(prefix.len());
+    let room = width.saturating_sub(prefix.len()).max(20);
+    let mut out = String::new();
+    let mut line = String::new();
+    for word in value.split_inclusive(", ") {
+        if !line.is_empty() && line.len() + word.trim_end().len() > room {
+            out.push_str(if out.is_empty() { prefix } else { &indent });
+            out.push_str(line.trim_end());
+            out.push('\n');
+            line.clear();
+        }
+        line.push_str(word);
+    }
+    out.push_str(if out.is_empty() { prefix } else { &indent });
+    out.push_str(line.trim_end());
+    out.push('\n');
+    out
+}
+
+/// Errors as a `Format-Table`.
+fn error_table(errors: &[Value]) -> String {
+    let rows: Vec<(&str, String, &str)> = errors
+        .iter()
+        .map(|e| {
+            (
+                e["type"].as_str().unwrap_or_default(),
+                e["exit_code"].to_string(),
+                e["hint"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect();
+    let tw = rows.iter().map(|r| r.0.len()).max().unwrap_or(0).max("Type".len());
+    let cw = "ExitCode".len();
+    let mut out = format!("{:<tw$} {:>cw$} Hint\n", "Type", "ExitCode");
+    out.push_str(&format!("{:<tw$} {:>cw$} ----\n", "----", "--------"));
+    for (ty, code, hint) in rows {
+        out.push_str(format!("{ty:<tw$} {code:>cw$} {hint}").trim_end());
+        out.push('\n');
+    }
+    out
 }
 
 /// The full capability document.

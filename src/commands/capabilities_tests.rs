@@ -69,3 +69,38 @@ fn errors_list_types_and_exit_codes() {
     assert_eq!(denied["exit_code"], 80);
     assert!(denied["hint"].is_string());
 }
+
+#[test]
+fn list_view_is_padded_and_braced() {
+    let text = render_report(&capabilities(), 120);
+    let name = text.lines().find(|l| l.starts_with("Name ")).unwrap();
+    assert_eq!(name, "Name        : aurelia");
+    assert!(text.contains("GlobalFlags : {--json, --verbose}"));
+    assert!(text.contains("Features    : {login.qr.result_line,"));
+}
+
+#[test]
+fn long_values_wrap_under_the_value() {
+    let text = render_report(&capabilities(), 60);
+    let lines: Vec<&str> = text.lines().collect();
+    let at = lines.iter().position(|l| l.starts_with("Commands")).unwrap();
+    assert!(lines[at + 1].starts_with(&" ".repeat("Commands    : ".len())));
+    let list = &lines[..lines.iter().position(|l| l.starts_with("Type ")).unwrap()];
+    assert!(list.iter().all(|l| l.len() <= 60), "{text}");
+}
+
+#[test]
+fn errors_render_as_a_table() {
+    let text = render_report(&capabilities(), 120);
+    let lines: Vec<&str> = text.lines().collect();
+    let head = lines.iter().position(|l| l.starts_with("Type ")).unwrap();
+    assert!(lines[head].ends_with("ExitCode Hint"));
+    assert!(lines[head + 1].starts_with("---- ") && lines[head + 1].ends_with("-------- ----"));
+    // Codes right-align under ExitCode.
+    let code_end = lines[head].find("ExitCode").unwrap() + "ExitCode".len();
+    let denied = lines.iter().find(|l| l.starts_with("login_denied ")).unwrap();
+    assert_eq!(&denied[code_end - 2..code_end], "80");
+    assert!(denied[code_end..].starts_with(" the sign-in was declined"));
+    let unknown = lines.iter().find(|l| l.starts_with("unknown ")).unwrap();
+    assert_eq!(unknown.len(), code_end, "no trailing hint padding");
+}
