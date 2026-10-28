@@ -5,8 +5,11 @@ use crate::output;
 
 use crate::commands::common::*;
 
-use anyhow::{bail, Context, Result};
+use std::time::Duration;
+
+use anyhow::{anyhow, bail, Context, Result};
 use aurelia::core::config::{experimental_enabled, load_session, save_session};
+use aurelia::core::error::{classify, ErrorKind, Reported, TypedError};
 use aurelia::core::models::QrEvent;
 use aurelia::steam_client::SteamClient;
 
@@ -126,6 +129,7 @@ pub(crate) async fn cmd_login(args: crate::cli::LoginArgs, json: bool) -> Result
         password,
         guard,
         qr,
+        timeout,
         code,
         openid,
         web_token,
@@ -139,7 +143,7 @@ pub(crate) async fn cmd_login(args: crate::cli::LoginArgs, json: bool) -> Result
         return cmd_login_reconnect(json).await;
     }
     if qr {
-        return cmd_login_qr(json).await;
+        return cmd_login_qr(timeout, json).await;
     }
     if openid {
         require_experimental("login --openid").await?;
@@ -222,36 +226,104 @@ pub(crate) async fn cmd_login(args: crate::cli::LoginArgs, json: bool) -> Result
 /// In `--json` mode the challenge URL is streamed as `{event:"qr_challenge",url}`
 /// (re-emitted whenever Steam rotates the code) so a driver like Heroic can render
 /// the QR itself; otherwise it's drawn to stderr as a terminal QR.
-pub(crate) async fn cmd_login_qr(json: bool) -> Result<()> {
+///
+/// `--json`: exactly one typed result line.
+pub(crate) async fn cmd_login_qr(timeout: Option<u64>, json: bool) -> Result<()> {
+    let timeout = Duration::from_secs(timeout.unwrap_or(QR_DEFAULT_TIMEOUT_SECS));
     let mut client = SteamClient::new()?;
-    // Remember the challenge that got scanned.
-    let mut last_url = String::new();
-    let result = if json {
-        client
-            .login_qr(|e| {
-                if let QrEvent::Challenge(url) = &e {
-                    last_url = url.to_string();
-                }
-                emit_qr_challenge_json(e)
-            })
+    if !json {
+        let session = client
+            .login_qr(timeout, render_login_qr)
             .await
-    } else {
-        client
-            .login_qr(|e| {
-                if let QrEvent::Challenge(url) = &e {
-                    last_url = url.to_string();
-                }
-                render_login_qr(e)
-            })
-            .await
-    };
-    let session = result.context("QR login failed")?;
-    let account = session.account_name.clone().unwrap_or_default();
-    let _ = last_url;
+            .context("QR login failed")?;
+        secure_session(&client).await;
+        report_login_success(&session.account_name.unwrap_or_default(), false);
+        return Ok(());
+    }
 
-    secure_session(&client).await;
-    report_login_success(&account, json);
-    Ok(())
+    let outcome = race_control(
+        client.login_qr(timeout, emit_qr_challenge_json),
+        watch_control(output::read_line_opt),
+    )
+    .await;
+    match outcome {
+        Ok(session) => {
+            secure_session(&client).await;
+            let account = session.account_name.clone().unwrap_or_default();
+            report_login_success(&account, true);
+            print_json_line(&qr_result_ok(&account, session.steam_id));
+            Ok(())
+        }
+        Err(err) => {
+            let err = err.context("QR login failed");
+            print_json_line(&qr_result_err(&err));
+            Err(anyhow!(Reported(err)))
+        }
+    }
+}
+
+/// Seconds a QR login waits by default.
+const QR_DEFAULT_TIMEOUT_SECS: u64 = 600;
+
+/// Run `work` unless the driver stops first.
+async fn race_control<T>(
+    work: impl std::future::Future<Output = Result<T>>,
+    control: impl std::future::Future<Output = ErrorKind>,
+) -> Result<T> {
+    // Dropping the future closes its connection.
+    tokio::select! {
+        r = work => r,
+        kind = control => Err(anyhow!(TypedError::new(kind, match kind {
+            ErrorKind::Cancelled => "QR login cancelled by the driver",
+            _ => "stdin closed; QR login abandoned",
+        }))),
+    }
+}
+
+/// Resolve when the driver cancels or leaves.
+async fn watch_control<F, Fut>(mut next_line: F) -> ErrorKind
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = std::io::Result<Option<String>>>,
+{
+    loop {
+        match next_line().await {
+            Ok(Some(line)) if is_cancel_line(&line) => return ErrorKind::Cancelled,
+            Ok(Some(_)) => continue,
+            Ok(None) | Err(_) => return ErrorKind::InputClosed,
+        }
+    }
+}
+
+/// Whether a stdin line requests cancellation.
+fn is_cancel_line(line: &str) -> bool {
+    line.trim().eq_ignore_ascii_case("cancel")
+}
+
+/// The approved QR login's result line.
+fn qr_result_ok(account: &str, steam_id: Option<u64>) -> serde_json::Value {
+    serde_json::json!({
+        "event": "result",
+        "ok": true,
+        "type": "approved",
+        "account": account,
+        "steam_id": steam_id,
+    })
+}
+
+/// A failed QR login's result line.
+fn qr_result_err(err: &anyhow::Error) -> serde_json::Value {
+    let kind = classify(err).kind;
+    let mut value = serde_json::json!({
+        "event": "result",
+        "ok": false,
+        "type": kind,
+        "error": format!("{err:#}"),
+    });
+    if let Some(hint) = kind.hint() {
+        value["hint"] = hint.into();
+    }
+    value
 }
 
 /// Verify the user's identity on the official Steam sign-in page in the browser
@@ -577,7 +649,8 @@ pub(crate) fn render_login_qr(event: QrEvent) {
 
 pub(crate) fn report_login_success(account: &str, json: bool) {
     if json {
-        print_json(&serde_json::json!({ "logged_in": true, "account": account }));
+        // One line for NDJSON drivers.
+        print_json_line(&serde_json::json!({ "logged_in": true, "account": account }));
     } else {
         cli_println!("Login successful.");
     }
@@ -665,3 +738,7 @@ pub(crate) fn report_session_status(status: &daemon::SessionStatus, via_daemon: 
         );
     }
 }
+
+#[cfg(test)]
+#[path = "auth_tests.rs"]
+mod tests;
