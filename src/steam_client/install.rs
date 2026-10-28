@@ -3,6 +3,20 @@
 //! Split out of `steam_client.rs` for readability; the struct, shared imports
 //! and free helpers live in the parent module (in scope via `use super::*`).
 use super::*;
+use crate::core::error::{ErrorKind, TypedError, io_kind, message_kind};
+
+/// Typed stop for a depot download.
+fn aborted_error() -> anyhow::Error {
+    anyhow!(TypedError::new(ErrorKind::Cancelled, "download aborted"))
+}
+
+/// Kind for a CDN client error.
+pub(crate) fn cdn_error_kind(err: &steam_cdn::Error) -> Option<ErrorKind> {
+    match err {
+        steam_cdn::Error::Io(io) => io_kind(io),
+        other => message_kind(&other.to_string()),
+    }
+}
 
 /// Optional knobs for `SteamClient::install_game`.
 #[derive(Default)]
@@ -220,6 +234,9 @@ impl SteamClient {
 
         std::fs::create_dir_all(&install_dir)
             .with_context(|| format!("failed creating {}", install_dir.display()))?;
+        if let Ok(mut state) = shared_state.write() {
+            state.install_dir = Some(install_dir.clone());
+        }
 
         let (tx, rx) = tokio::sync::mpsc::channel(128);
         let client_clone = self.clone();
@@ -243,7 +260,7 @@ impl SteamClient {
                         &appinfo_vdf_bytes_owned
                     }
                     Err(e) => {
-                        emit_failed(&tx, format!("{e:#}")).await;
+                        emit_failed_err(&tx, "appinfo", &e).await;
                         return;
                     }
                 }
@@ -586,6 +603,7 @@ impl SteamClient {
 
         let depot_size = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let mut depot_success = false;
+        let mut last_error: Option<steam_cdn::Error> = None;
 
         for host in hosts {
             let token = match self.get_cdn_auth_token(app_id, depot_id, host).await {
@@ -662,7 +680,7 @@ impl SteamClient {
             {
                 Ok(_) => {
                     if download_aborted(&shared_state) {
-                        anyhow::bail!("download aborted");
+                        return Err(aborted_error());
                     }
 
                     tracing::info!("Depot {} download complete from {}!", depot_id, host);
@@ -671,6 +689,17 @@ impl SteamClient {
                 }
                 Err(e) => {
                     tracing::error!("CDN Error from {}: {}", host, e);
+                    if download_aborted(&shared_state) {
+                        return Err(aborted_error());
+                    }
+                    // Another host won't fix this.
+                    if cdn_error_kind(&e) == Some(ErrorKind::DiskFull) {
+                        return Err(anyhow!(TypedError::new(
+                            ErrorKind::DiskFull,
+                            format!("writing depot {depot_id} to {}: {e}", dest.display()),
+                        )));
+                    }
+                    last_error = Some(e);
                 }
             }
         }
@@ -678,10 +707,16 @@ impl SteamClient {
         if depot_success {
             Ok(depot_size.load(std::sync::atomic::Ordering::SeqCst))
         } else {
-            anyhow::bail!(
-                "Failed to download depot {} from all available servers",
-                depot_id
-            );
+            let detail = last_error
+                .as_ref()
+                .map(|e| format!(" (last: {e})"))
+                .unwrap_or_default();
+            let message =
+                format!("Failed to download depot {depot_id} from all available servers{detail}");
+            match last_error.as_ref().and_then(cdn_error_kind) {
+                Some(kind) => Err(anyhow!(TypedError::new(kind, message))),
+                None => Err(anyhow!(message)),
+            }
         }
     }
 }

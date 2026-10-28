@@ -160,12 +160,12 @@ impl ManifestFile {
             .create(true)
             .open(target_path)
             .await
-            .map_err(|e| Error::Unexpected(e.to_string()))?;
+            .map_err(Error::Io)?;
 
         if current_len_before != self.size {
             out.set_len(self.size)
                 .await
-                .map_err(|e| Error::Unexpected(e.to_string()))?;
+                .map_err(Error::Io)?;
         }
 
         let mut tasks = self
@@ -201,11 +201,11 @@ impl ManifestFile {
                     if file_exists_before && file_exists {
                         let mut file = tokio::fs::File::open(&target_path)
                             .await
-                            .map_err(|e| Error::Unexpected(e.to_string()))?;
+                            .map_err(Error::Io)?;
                         if current_len >= chunk_data.offset + chunk_data.original_size as u64 {
                             file.seek(tokio::io::SeekFrom::Start(chunk_data.offset))
                                 .await
-                                .map_err(|e| Error::Unexpected(e.to_string()))?;
+                                .map_err(Error::Io)?;
 
                             let mut buffer = vec![0u8; chunk_data.original_size as usize];
                             if file.read_exact(&mut buffer).await.is_ok() {
@@ -248,16 +248,16 @@ impl ManifestFile {
                 let len = data.len() as u64;
                 out.seek(tokio::io::SeekFrom::Start(offset))
                     .await
-                    .map_err(|e| Error::Unexpected(e.to_string()))?;
+                    .map_err(Error::Io)?;
                 out.write_all(&data)
                     .await
-                    .map_err(|e| Error::Unexpected(e.to_string()))?;
+                    .map_err(Error::Io)?;
                 if let Some(ref cb) = on_progress {
                     cb(len);
                 }
             }
         }
-        out.flush().await.map_err(|e| Error::Unexpected(e.to_string()))?;
+        out.flush().await.map_err(Error::Io)?;
 
         #[cfg(unix)]
         self.apply_unix_mode(target_path).await?;
@@ -285,7 +285,7 @@ impl ManifestFile {
         }
         let metadata = tokio::fs::metadata(target_path)
             .await
-            .map_err(|e| Error::Unexpected(e.to_string()))?;
+            .map_err(Error::Io)?;
         let mut permissions = metadata.permissions();
         if permissions.mode() & 0o111 != 0 {
             return Ok(());
@@ -293,7 +293,7 @@ impl ManifestFile {
         permissions.set_mode(permissions.mode() | 0o755);
         tokio::fs::set_permissions(target_path, permissions)
             .await
-            .map_err(|e| Error::Unexpected(e.to_string()))?;
+            .map_err(Error::Io)?;
         Ok(())
     }
 }

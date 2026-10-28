@@ -159,11 +159,11 @@ impl CDNClient {
             let full_path = target_dir.as_ref().join(file.full_path());
 
             if file.flags() & manifest::file::FLAG_DIRECTORY != 0 {
-                std::fs::create_dir_all(&full_path).map_err(|e| Error::Unexpected(e.to_string()))?;
+                std::fs::create_dir_all(&full_path).map_err(Error::Io)?;
                 continue;
             }
             if let Some(parent) = full_path.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| Error::Unexpected(e.to_string()))?;
+                std::fs::create_dir_all(parent).map_err(Error::Io)?;
             }
 
             let linktarget = file.linktarget();
@@ -194,7 +194,7 @@ impl CDNClient {
                     if !points_there {
                         let _ = std::fs::remove_file(&full_path);
                         std::os::unix::fs::symlink(&target, &full_path)
-                            .map_err(|e| Error::Unexpected(e.to_string()))?;
+                            .map_err(Error::Io)?;
                     }
                 }
                 continue;
@@ -212,7 +212,7 @@ impl CDNClient {
                 .await?;
             } else {
                 if !full_path.is_file() {
-                    std::fs::File::create(&full_path).map_err(|e| Error::Unexpected(e.to_string()))?;
+                    std::fs::File::create(&full_path).map_err(Error::Io)?;
                 }
                 #[cfg(unix)]
                 file.apply_unix_mode(&full_path).await?;

@@ -524,9 +524,17 @@ pub(crate) fn format_unix_timestamp(secs: u64) -> String {
 /// In JSON mode each update is emitted as a compact NDJSON line (one object per
 /// line) on stdout; the caller still prints the final result object afterward.
 pub(crate) async fn drive_progress(
-    mut rx: tokio::sync::mpsc::Receiver<DownloadProgress>,
+    rx: tokio::sync::mpsc::Receiver<DownloadProgress>,
     json: bool,
 ) -> Result<()> {
+    drive_progress_until(rx, json).await.map(|_| ())
+}
+
+/// Like [`drive_progress`]; `false` if never completed.
+pub(crate) async fn drive_progress_until(
+    mut rx: tokio::sync::mpsc::Receiver<DownloadProgress>,
+    json: bool,
+) -> Result<bool> {
     // De-duplicate identical consecutive JSON events (the reporter ticks on a timer,
     // so it would otherwise repeat e.g. "0/0" lines while a manifest is being fetched).
     let mut last: Option<(u8, u64, u64)> = None;
@@ -561,17 +569,23 @@ pub(crate) async fn drive_progress(
                 if !json {
                     cli_println!("\nDone.");
                 }
-                return Ok(());
+                return Ok(true);
             }
             DownloadProgressState::Failed => {
                 if !json {
                     cli_println!();
                 }
-                bail!("operation failed: {}", p.current_file);
+                let message = format!("operation failed: {}", p.current_file);
+                return Err(match p.error_kind {
+                    Some(kind) => {
+                        anyhow::anyhow!(aurelia::core::error::TypedError::new(kind, message))
+                    }
+                    None => anyhow::anyhow!(message),
+                });
             }
         }
     }
-    Ok(())
+    Ok(false)
 }
 
 /// Percentage (one decimal) of `done` out of `total`, 0 when total is unknown.
@@ -761,3 +775,7 @@ pub(crate) fn prompt_line(prompt: &str) -> Result<String> {
         .context("failed reading input")?;
     Ok(input.trim().to_string())
 }
+
+#[cfg(test)]
+#[path = "common_tests.rs"]
+mod tests;

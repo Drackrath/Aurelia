@@ -761,3 +761,45 @@ fn qr_poll_unscanned_session_end_regenerates() {
 fn qr_poll_other_results_pass_through() {
     assert!(client::qr_poll_step(steam_vent::EResult::Busy, true).is_none());
 }
+
+#[test]
+fn failed_progress_keeps_error_kind() {
+    use crate::core::error::{ErrorKind, TypedError};
+    use crate::core::models::DownloadProgress;
+    let io = std::io::Error::from(std::io::ErrorKind::StorageFull);
+    let p = DownloadProgress::failed_with("depot 1", &anyhow::Error::new(io));
+    assert_eq!(p.error_kind, Some(ErrorKind::DiskFull));
+    assert!(p.current_file.starts_with("depot 1: "));
+    let stop = anyhow::anyhow!(TypedError::new(ErrorKind::Cancelled, "stopped"));
+    assert_eq!(
+        DownloadProgress::failed_with("x", &stop).error_kind,
+        Some(ErrorKind::Cancelled)
+    );
+    // Unknown stays unset.
+    assert_eq!(
+        DownloadProgress::failed_with("x", &anyhow::anyhow!("odd")).error_kind,
+        None
+    );
+    assert_eq!(
+        DownloadProgress::failed("No space left on device (os error 28)").error_kind,
+        Some(ErrorKind::DiskFull)
+    );
+    assert_eq!(
+        DownloadProgress::failed("No matching depots").error_kind,
+        None
+    );
+}
+
+#[test]
+fn cdn_errors_map_to_kinds() {
+    use crate::core::error::ErrorKind;
+    use install::cdn_error_kind;
+    let full = steam_cdn::Error::Io(std::io::Error::from(std::io::ErrorKind::StorageFull));
+    assert_eq!(cdn_error_kind(&full), Some(ErrorKind::DiskFull));
+    let dns = steam_cdn::Error::Request(
+        "error sending request: client error (Connect): dns error: failed to lookup address".into(),
+    );
+    assert_eq!(cdn_error_kind(&dns), Some(ErrorKind::Offline));
+    let status = steam_cdn::Error::HttpStatus(reqwest::StatusCode::NOT_FOUND);
+    assert_eq!(cdn_error_kind(&status), None);
+}

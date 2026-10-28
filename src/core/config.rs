@@ -161,6 +161,9 @@ pub struct LauncherConfig {
     /// `Disabled` never does. Set with `aurelia config steam-runtime-policy`.
     #[serde(default)]
     pub steam_runtime_policy: crate::core::models::SteamRuntimePolicy,
+    /// Whether the daemon resumes interrupted installs on start.
+    #[serde(default)]
+    pub install_resume: crate::library::backlog::InstallResume,
     /// Opt-in gate for experimental features. Off by default. Currently gates the
     /// browser/OpenID identity check (`login --openid`) and web-token auth
     /// (`login --web-token`), which prove identity / enable web-surface commands
@@ -215,6 +218,7 @@ impl Default for LauncherConfig {
             country: None,
             proxy: ProxyConfig::default(),
             steam_runtime_policy: crate::core::models::SteamRuntimePolicy::default(),
+            install_resume: crate::library::backlog::InstallResume::default(),
             experimental: false,
             encrypt_session: false,
         }

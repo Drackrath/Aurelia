@@ -270,7 +270,7 @@ impl SteamClient {
                     let _ = tx.blocking_send(DownloadProgress::completed(""));
                 }
                 Err(e) => {
-                    let _ = tx.blocking_send(DownloadProgress::failed(format!("{e:#}")));
+                    let _ = tx.blocking_send(DownloadProgress::failed_with("move", &e));
                 }
             }
         });

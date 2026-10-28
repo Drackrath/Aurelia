@@ -1531,12 +1531,26 @@ pub(crate) async fn emit_failed(
     tx: &tokio::sync::mpsc::Sender<DownloadProgress>,
     msg: impl Into<String>,
 ) {
+    let _ = tx.send(DownloadProgress::failed(msg)).await;
+}
+
+/// Send `Failed`, keeping the error's kind.
+pub(crate) async fn emit_failed_err(
+    tx: &tokio::sync::mpsc::Sender<DownloadProgress>,
+    context: &str,
+    err: &anyhow::Error,
+) {
+    let _ = tx.send(DownloadProgress::failed_with(context, err)).await;
+}
+
+/// Send `Failed` as a user stop.
+pub(crate) async fn emit_cancelled(tx: &tokio::sync::mpsc::Sender<DownloadProgress>) {
+    let err = anyhow!(crate::core::error::TypedError::new(
+        crate::core::error::ErrorKind::Cancelled,
+        "stopped by request",
+    ));
     let _ = tx
-        .send(DownloadProgress {
-            state: DownloadProgressState::Failed,
-            current_file: msg.into(),
-            ..Default::default()
-        })
+        .send(DownloadProgress::failed_with("download", &err))
         .await;
 }
 
@@ -1562,7 +1576,7 @@ pub(crate) async fn fetch_content_hosts(
     match client.get_content_servers(connection.cell_id()).await {
         Ok(h) => Some(h),
         Err(e) => {
-            emit_failed(tx, format!("Failed to fetch content servers: {}", e)).await;
+            emit_failed_err(tx, "Failed to fetch content servers", &e).await;
             None
         }
     }
@@ -1684,13 +1698,12 @@ pub(crate) async fn run_depot_loop(
             }
             Err(e) => {
                 if download_aborted(shared_state) {
+                    // Else a stop looked like success.
+                    emit_cancelled(tx).await;
                     return None;
                 }
-                emit_failed(
-                    tx,
-                    format!("Failed to {fail_verb} depot {}: {}", selection.depot_id, e),
-                )
-                .await;
+                let context = format!("Failed to {fail_verb} depot {}", selection.depot_id);
+                emit_failed_err(tx, &context, &e).await;
                 return None;
             }
         }
@@ -1761,6 +1774,7 @@ pub(crate) fn spawn_progress_reporter(
                     depot_id,
                     depot_bytes_downloaded: depot_downloaded,
                     depot_total_bytes: depot_total,
+                    error_kind: None,
                 })
                 .await
                 .is_err()
