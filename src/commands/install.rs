@@ -575,6 +575,19 @@ pub(crate) async fn resume_entries(ids: &[u32], auto: bool, json: bool) -> Resul
             };
             cli_println!("Resuming {name} ({}) ...", entry.state.as_str());
         }
+        // Counted now, so early failures count.
+        let auto_attempts = if auto {
+            match backlog::bump_auto_attempts(app_id) {
+                Ok(Some(n)) => n,
+                Ok(None) => continue,
+                Err(e) => {
+                    tracing::warn!("install backlog not updated: {e:#}");
+                    continue;
+                }
+            }
+        } else {
+            0
+        };
         let request = InstallRequest {
             app_id,
             platform: Some(if entry.platform == "linux" {
@@ -585,7 +598,7 @@ pub(crate) async fn resume_entries(ids: &[u32], auto: bool, json: bool) -> Resul
             restart_steam: entry.restart_steam,
             library: Some(entry.library.clone()),
             on_disk: entry.downloaded_bytes,
-            auto_attempts: if auto { entry.auto_attempts + 1 } else { 0 },
+            auto_attempts,
         };
         if let Err(e) = run_install(request, json).await {
             if ids.len() == 1 {
