@@ -3,6 +3,7 @@
 //! Split out of `steam_client.rs` for readability; the struct, shared imports
 //! and free helpers live in the parent module (in scope via `use super::*`).
 use super::*;
+use crate::core::error::{ErrorKind, TypedError};
 use steam_vent_proto::steammessages_clientserver_friends::CMsgClientPersonaState;
 use tokio_stream::StreamExt;
 
@@ -419,7 +420,9 @@ impl SteamClient {
     /// and again whenever Steam rotates or regenerates the code — plus a one-shot
     /// [`QrEvent::Scanned`] once the user scans the code, so the caller can swap the
     /// QR for a "waiting for approval" spinner.
-    pub async fn login_qr<F>(&mut self, mut on_event: F) -> Result<SessionState>
+    ///
+    /// Fails typed: see [`qr_poll_step`].
+    pub async fn login_qr<F>(&mut self, timeout: Duration, mut on_event: F) -> Result<SessionState>
     where
         F: FnMut(QrEvent),
     {
@@ -448,12 +451,18 @@ impl SteamClient {
         // begin a fresh session and re-emit its challenge URL — mirroring the official
         // Steam client, which silently regenerates the code — so the QR stays scannable
         // for as long as the dialog is open (or until the caller aborts).
-        let deadline = Instant::now() + Duration::from_secs(600);
+        let deadline = Instant::now() + timeout;
+        let timed_out = || {
+            anyhow!(TypedError::new(
+                ErrorKind::Timeout,
+                format!("QR login timed out after {}s without approval", timeout.as_secs()),
+            ))
+        };
         let mut last_emitted_url = String::new();
         let mut scanned = false;
         'session: loop {
             if Instant::now() >= deadline {
-                bail!("QR login timed out without approval");
+                return Err(timed_out());
             }
 
             let mut begin = CAuthentication_BeginAuthSessionViaQR_Request::new();
@@ -480,10 +489,12 @@ impl SteamClient {
             tracing::info!("Login method awaited: QR code — scan it with the Steam Mobile app");
 
             loop {
+                // Never sleep past the deadline.
+                tokio::time::sleep(poll_interval.min(deadline.saturating_duration_since(Instant::now())))
+                    .await;
                 if Instant::now() >= deadline {
-                    bail!("QR login timed out without approval");
+                    return Err(timed_out());
                 }
-                tokio::time::sleep(poll_interval).await;
 
                 let mut poll = CAuthentication_PollAuthSessionStatus_Request::new();
                 poll.set_client_id(client_id);
@@ -492,18 +503,18 @@ impl SteamClient {
                 let resp: CAuthentication_PollAuthSessionStatus_Response =
                     match tokio::time::timeout(CM_CONNECT_TIMEOUT, anon.service_method(poll)).await {
                         Ok(Ok(resp)) => resp,
-                        // The auth session expired — begin a fresh one instead of failing.
-                        Ok(Err(steam_vent::NetworkError::ApiError(steam_vent::EResult::Expired))) => {
-                            tracing::info!("QR auth session expired; regenerating code");
-                            continue 'session;
-                        }
-                        // The session was cancelled or invalidated (e.g. superseded by
-                        // another sign-in attempt) — surface a clean cancellation rather
-                        // than a raw Steam error code.
-                        Ok(Err(steam_vent::NetworkError::ApiError(
-                            steam_vent::EResult::FileNotFound | steam_vent::EResult::Cancelled,
-                        ))) => {
-                            bail!("QR sign-in was cancelled");
+                        Ok(Err(steam_vent::NetworkError::ApiError(result))) => {
+                            match qr_poll_step(result, scanned) {
+                                Some(QrPollStep::Regenerate) => {
+                                    tracing::info!(?result, "QR auth session ended unscanned; regenerating code");
+                                    continue 'session;
+                                }
+                                Some(QrPollStep::Fail(e)) => return Err(anyhow!(e)),
+                                None => {
+                                    return Err(anyhow!(steam_vent::NetworkError::ApiError(result)))
+                                        .context("Authentication.PollAuthSessionStatus failed");
+                                }
+                            }
                         }
                         Ok(Err(e)) => {
                             return Err(anyhow!(e))
@@ -573,6 +584,34 @@ impl SteamClient {
         })
     }
 
+}
+
+/// What a failed QR status poll means.
+#[derive(Debug)]
+pub(crate) enum QrPollStep {
+    /// Begin a fresh auth session.
+    Regenerate,
+    /// End the login with this outcome.
+    Fail(TypedError),
+}
+
+/// Next step for a poll EResult.
+pub(crate) fn qr_poll_step(result: steam_vent::EResult, scanned: bool) -> Option<QrPollStep> {
+    use steam_vent::EResult;
+    Some(match result {
+        EResult::Expired if scanned => QrPollStep::Fail(TypedError::new(
+            ErrorKind::LoginExpired,
+            "QR code was scanned but not approved before it expired",
+        )),
+        // An in-app deny looks like this.
+        EResult::FileNotFound | EResult::Cancelled if scanned => QrPollStep::Fail(TypedError::new(
+            ErrorKind::LoginDenied,
+            "QR sign-in was declined or cancelled by Steam",
+        )),
+        // Unscanned sessions regenerate silently.
+        EResult::Expired | EResult::FileNotFound | EResult::Cancelled => QrPollStep::Regenerate,
+        _ => return None,
+    })
 }
 
 /// Whole serialized envelope; consumers need it.

@@ -89,6 +89,18 @@ fn daemon_oriented_and_json_login_still_forward() {
 }
 
 #[test]
+fn qr_timeout_parses_and_requires_qr() {
+    match parse(&["aurelia", "login", "--qr", "--timeout", "90"]).command {
+        Command::Login(args) => assert_eq!(args.timeout, Some(90)),
+        _ => panic!("expected Login"),
+    }
+    assert!(Cli::try_parse_from(["aurelia", "login", "--timeout", "90"]).is_err());
+    assert!(Cli::try_parse_from(["aurelia", "login", "--qr", "--timeout", "0"]).is_err());
+    // Driver QR logins still forward.
+    assert!(!must_run_locally(&parse(&["aurelia", "--json", "login", "--qr", "-t", "5"])));
+}
+
+#[test]
 fn ordinary_commands_forward_but_local_managers_do_not() {
     assert!(!must_run_locally(&parse(&["aurelia", "list"])));
     assert!(!must_run_locally(&parse(&["aurelia", "logout"])));

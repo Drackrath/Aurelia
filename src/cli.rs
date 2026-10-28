@@ -1005,6 +1005,10 @@ pub(crate) struct LoginArgs {
     /// Log in via Steam Mobile QR code.
     #[arg(short = 'q', long, conflicts_with_all = ["username", "password", "guard", "code"])]
     pub(crate) qr: bool,
+    /// With `--qr`: give up after this many seconds without approval (default 600).
+    /// With `--json`, a `cancel` line or EOF on stdin also ends the wait.
+    #[arg(short = 't', long, value_name = "SECS", requires = "qr", value_parser = clap::value_parser!(u64).range(1..))]
+    pub(crate) timeout: Option<u64>,
     /// Type the Guard code instead of app approval.
     #[arg(short = 'c', long, visible_alias = "pin", conflicts_with = "guard")]
     pub(crate) code: bool,

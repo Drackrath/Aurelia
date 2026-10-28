@@ -17,6 +17,16 @@ pub enum ErrorKind {
     NetworkTimeout,
     SourceChanged,
     AuthRequired,
+    /// Sign-in declined or dropped by Steam.
+    LoginDenied,
+    /// Scanned code expired before approval.
+    LoginExpired,
+    /// Caller's time limit reached.
+    Timeout,
+    /// Driver asked to stop.
+    Cancelled,
+    /// Driver closed stdin.
+    InputClosed,
     Unknown,
 }
 
@@ -29,6 +39,10 @@ impl ErrorKind {
             Self::PrivacyRestricted => Some("the profile or list is private or friends-only"),
             Self::NetworkTimeout => Some("check connectivity and retry"),
             Self::SourceChanged => Some("Steam changed a response shape; update Aurelia"),
+            Self::LoginDenied => Some("the sign-in was declined; run `aurelia login` again"),
+            Self::LoginExpired => Some("approve sooner after scanning; run `aurelia login` again"),
+            Self::Timeout => Some("raise --timeout or retry"),
+            Self::InputClosed => Some("keep stdin open while a --json command waits"),
             _ => None,
         }
     }
@@ -38,6 +52,11 @@ impl ErrorKind {
         match self {
             Self::RateLimited => 75,
             Self::AuthRequired => 77,
+            Self::LoginDenied => 80,
+            Self::LoginExpired => 81,
+            Self::Timeout => 82,
+            Self::Cancelled => 83,
+            Self::InputClosed => 84,
             _ => 1,
         }
     }
@@ -78,6 +97,18 @@ impl fmt::Display for TypedError {
 
 impl std::error::Error for TypedError {}
 
+/// Failure the command already printed.
+#[derive(Debug)]
+pub struct Reported(pub anyhow::Error);
+
+impl fmt::Display for Reported {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:#}", self.0)
+    }
+}
+
+impl std::error::Error for Reported {}
+
 /// Outcome of classifying an error chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Classified {
@@ -88,6 +119,9 @@ pub struct Classified {
 /// Walk the cause chain, outermost first.
 pub fn classify(err: &anyhow::Error) -> Classified {
     for cause in err.chain() {
+        if let Some(r) = cause.downcast_ref::<Reported>() {
+            return classify(&r.0);
+        }
         if let Some(t) = cause.downcast_ref::<TypedError>() {
             return Classified {
                 kind: t.kind,

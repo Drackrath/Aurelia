@@ -607,3 +607,48 @@ fn reg_dword_parses_hex_and_decimal() {
     assert_eq!(parse_reg_dword("0xzz"), None);
     assert_eq!(parse_reg_dword(""), None);
 }
+
+#[test]
+fn qr_poll_unscanned_expiry_regenerates() {
+    use client::{qr_poll_step, QrPollStep};
+    assert!(matches!(
+        qr_poll_step(steam_vent::EResult::Expired, false),
+        Some(QrPollStep::Regenerate)
+    ));
+}
+
+#[test]
+fn qr_poll_scanned_expiry_is_expired() {
+    use client::{qr_poll_step, QrPollStep};
+    match qr_poll_step(steam_vent::EResult::Expired, true) {
+        Some(QrPollStep::Fail(e)) => assert_eq!(e.kind, crate::core::error::ErrorKind::LoginExpired),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn qr_poll_scanned_cancel_is_denied() {
+    use client::{qr_poll_step, QrPollStep};
+    for r in [steam_vent::EResult::FileNotFound, steam_vent::EResult::Cancelled] {
+        match qr_poll_step(r, true) {
+            Some(QrPollStep::Fail(e)) => {
+                assert_eq!(e.kind, crate::core::error::ErrorKind::LoginDenied)
+            }
+            other => panic!("{r:?}: {other:?}"),
+        }
+    }
+}
+
+// Seen live: ~10 min unscanned.
+#[test]
+fn qr_poll_unscanned_session_end_regenerates() {
+    use client::{qr_poll_step, QrPollStep};
+    for r in [steam_vent::EResult::FileNotFound, steam_vent::EResult::Cancelled] {
+        assert!(matches!(qr_poll_step(r, false), Some(QrPollStep::Regenerate)), "{r:?}");
+    }
+}
+
+#[test]
+fn qr_poll_other_results_pass_through() {
+    assert!(client::qr_poll_step(steam_vent::EResult::Busy, true).is_none());
+}

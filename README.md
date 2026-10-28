@@ -204,6 +204,7 @@ of subcommands, or `aurelia <command> --help` for a specific one.
 ```bash
 # Account
 aurelia login                        # authenticate (prompts for credentials and Steam Guard)
+aurelia login --qr --timeout 120     # scan a QR code with the Steam Mobile app; give up after 120 s
 aurelia logout                       # clear the stored session
 aurelia account                      # show account details
 
@@ -409,6 +410,22 @@ aurelia scripts remove 2270           # delete the dir-based script
 
 Add `--json` to any command for machine-readable output (errors included). It's a global
 flag, so `aurelia --json <command>` and `aurelia <command> --json` are equivalent.
+
+`login --qr --json` streams `qr_challenge` and `qr_scanned` events on stderr and ends with
+exactly one `{"event":"result",...}` line on stdout. On success a one-line `{"logged_in":true,...}`
+object comes just before it. stdin is the driver's control channel: send a `cancel` line to
+stop, and keep stdin open while waiting, because EOF ends the login. Outcomes:
+
+| `type` | Meaning | Exit code |
+|---|---|---|
+| `approved` | Signed in (`ok: true`, with `account` and `steam_id`) | 0 |
+| `login_denied` | Declined in the app, or the session was dropped by Steam | 80 |
+| `login_expired` | The code was scanned but not approved before it expired | 81 |
+| `timeout` | No approval within `--timeout` (default 600 s) | 82 |
+| `cancelled` | The driver sent `cancel` | 83 |
+| `input_closed` | stdin reached EOF | 84 |
+
+Other failures carry the usual error `type` (for example `network_timeout`) and exit code.
 
 Logs go to stderr. By default only warnings and errors are shown. `-v` adds Aurelia's
 progress and debug logs, and `-vv`/`-vvv` unmute the Steam networking stack, which helps when

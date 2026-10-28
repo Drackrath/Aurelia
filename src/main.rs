@@ -222,7 +222,12 @@ async fn run_and_report(cli: Cli) -> i32 {
         Ok(()) => 0,
         Err(err) => {
             let classified = aurelia::core::error::classify(&err);
-            if json {
+            let reported = err
+                .chain()
+                .any(|c| c.is::<aurelia::core::error::Reported>());
+            if reported {
+                // Its own result line said it.
+            } else if json {
                 // Single line so it stays valid in the NDJSON streams (e.g. `install`).
                 let mut value = serde_json::json!({
                     "error": format!("{err:#}"),
