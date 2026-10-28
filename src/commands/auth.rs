@@ -251,12 +251,12 @@ pub(crate) async fn cmd_login_qr(timeout: Option<u64>, json: bool) -> Result<()>
             secure_session(&client).await;
             let account = session.account_name.clone().unwrap_or_default();
             report_login_success(&account, true);
-            print_json_line(&qr_result_ok(&account, session.steam_id));
+            print_result_line(qr_result_ok(&account, session.steam_id));
             Ok(())
         }
         Err(err) => {
             let err = err.context("QR login failed");
-            print_json_line(&qr_result_err(&err));
+            print_result_line(qr_result_err(&err));
             Err(anyhow!(Reported(err)))
         }
     }

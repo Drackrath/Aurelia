@@ -34,6 +34,9 @@ pub(crate) struct Cli {
 pub(crate) enum Command {
     /// Authenticate with Steam and persist the session.
     Login(LoginArgs),
+    /// Describe this build for drivers: commands, flags, JSON events, error types
+    /// and exit codes, and the `--json` schema version. Offline; use with `--json`.
+    Capabilities,
     /// List games in your library.
     List {
         /// Only show installed games.

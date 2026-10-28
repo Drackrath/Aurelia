@@ -191,8 +191,7 @@ pub(crate) async fn cmd_workshop_install(ids: Vec<u64>, no_recurse: bool, json: 
         }
         install_one_workshop_item(&client, item, json).await?;
         if json {
-            print_json_line(&serde_json::json!({
-                "event": "result",
+            print_result_line(serde_json::json!({
                 "id": item.id,
                 "app_id": item.app_id,
                 "status": "installed",

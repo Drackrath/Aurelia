@@ -34,6 +34,16 @@ pub(crate) fn print_json_line(value: &serde_json::Value) {
     }
 }
 
+/// Version of the `--json` contract.
+pub(crate) const JSON_SCHEMA: u32 = 1;
+
+/// Print a `result` event, schema-stamped.
+pub(crate) fn print_result_line(mut value: serde_json::Value) {
+    value["event"] = "result".into();
+    value["schema"] = JSON_SCHEMA.into();
+    print_json_line(&value);
+}
+
 /// Emit an intermediate NDJSON *event* (progress ticks, login challenges) to
 /// **stderr**, keeping stdout reserved for the single terminal result object so
 /// a driver like Heroic can `JSON.parse` stdout without scanning for the last

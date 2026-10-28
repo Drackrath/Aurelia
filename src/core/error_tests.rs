@@ -50,3 +50,30 @@ fn kind_serializes_snake_case() {
         "\"privacy_restricted\""
     );
 }
+
+// Adding a variant breaks this match.
+fn ordinal(kind: ErrorKind) -> usize {
+    match kind {
+        ErrorKind::InvalidInput => 0,
+        ErrorKind::NotFound => 1,
+        ErrorKind::RateLimited => 2,
+        ErrorKind::AccessDenied => 3,
+        ErrorKind::PrivacyRestricted => 4,
+        ErrorKind::NetworkTimeout => 5,
+        ErrorKind::SourceChanged => 6,
+        ErrorKind::AuthRequired => 7,
+        ErrorKind::LoginDenied => 8,
+        ErrorKind::LoginExpired => 9,
+        ErrorKind::Timeout => 10,
+        ErrorKind::Cancelled => 11,
+        ErrorKind::InputClosed => 12,
+        ErrorKind::Unknown => 13,
+    }
+}
+
+#[test]
+fn all_lists_every_kind_once() {
+    let mut seen: Vec<usize> = ErrorKind::ALL.iter().map(|k| ordinal(*k)).collect();
+    seen.sort_unstable();
+    assert_eq!(seen, (0..=13).collect::<Vec<_>>());
+}

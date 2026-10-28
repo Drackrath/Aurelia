@@ -120,7 +120,8 @@ fn must_run_locally(cli: &Cli) -> bool {
         || local_disk_scan
         || matches!(
             cli.command,
-            Command::Kill | Command::Daemon { command: Some(_), .. }
+            // `capabilities` describes this binary.
+            Command::Kill | Command::Capabilities | Command::Daemon { command: Some(_), .. }
         )
 }
 
@@ -571,6 +572,10 @@ async fn run(cli: Cli) -> Result<()> {
             ScriptsCommand::Remove { app_id } => cmd_scripts_remove(app_id, json).await,
         },
         Command::Kill => cmd_kill(json),
+        Command::Capabilities => {
+            cmd_capabilities(json);
+            Ok(())
+        }
         Command::Daemon {
             command: Some(sub), ..
         } => match sub {

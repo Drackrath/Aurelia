@@ -106,6 +106,7 @@ fn ordinary_commands_forward_but_local_managers_do_not() {
     assert!(!must_run_locally(&parse(&["aurelia", "logout"])));
     // Process/daemon managers must run in-process.
     assert!(must_run_locally(&parse(&["aurelia", "kill"])));
+    assert!(must_run_locally(&parse(&["aurelia", "--json", "capabilities"])));
     assert!(must_run_locally(&parse(&["aurelia", "daemon", "stop"])));
     // Bare `aurelia daemon` (becomes the server) is handled earlier, before the
     // forward gate, so it is not flagged local here.

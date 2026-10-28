@@ -31,6 +31,24 @@ pub enum ErrorKind {
 }
 
 impl ErrorKind {
+    /// Every kind, for capability reports.
+    pub const ALL: &'static [ErrorKind] = &[
+        Self::InvalidInput,
+        Self::NotFound,
+        Self::RateLimited,
+        Self::AccessDenied,
+        Self::PrivacyRestricted,
+        Self::NetworkTimeout,
+        Self::SourceChanged,
+        Self::AuthRequired,
+        Self::LoginDenied,
+        Self::LoginExpired,
+        Self::Timeout,
+        Self::Cancelled,
+        Self::InputClosed,
+        Self::Unknown,
+    ];
+
     /// Driver guidance; `None` when message suffices.
     pub fn hint(self) -> Option<&'static str> {
         match self {
