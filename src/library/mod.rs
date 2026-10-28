@@ -1,3 +1,4 @@
+pub mod backlog;
 pub mod cloud_sync;
 pub mod collections;
 pub mod depot_browser;

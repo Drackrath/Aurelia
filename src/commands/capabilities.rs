@@ -20,6 +20,7 @@ pub(crate) const EVENTS: &[&str] = &[
     "not_found",
     "openid_challenge",
     "progress",
+    "pausing",
     "qr_challenge",
     "qr_scanned",
     "ready",

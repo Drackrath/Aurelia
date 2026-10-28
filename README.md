@@ -111,7 +111,7 @@ sync, and Proton or Wine launching all work today.
 |---|---|---|
 | **Authentication** | ✅ | Password, Steam Guard (email and device codes), Mobile App confirmation, refresh-token session restore |
 | **Library** | ✅ | Fetch owned games, scan local installs, search & filter, Family Sharing |
-| **Install & updates** | ✅ | 4-phase download pipeline (manifest → security → chunks), updates, uninstall, integrity verification, and moving installs between library folders, with Steam's `appmanifest` and `libraryfolders.vdf` kept in sync. Installs run in the background daemon and can be listed and cancelled (`install list`, `install stop`) |
+| **Install & updates** | ✅ | 4-phase download pipeline (manifest → security → chunks), updates, uninstall, integrity verification, and moving installs between library folders, with Steam's `appmanifest` and `libraryfolders.vdf` kept in sync. Installs run in the background daemon, can be listed, paused, resumed, cancelled, and kept across restarts (`install list`, `install pause`, `install resume`, `install stop`) |
 | **Version pinning and downgrade** | ✅ | Install & pin a specific depot manifest (`downgrade`, `manifests`, `pin`, `unpin`), holding a game at an older build |
 | **Localized metadata** | ✅ | Store text (`info`) and achievement names and descriptions follow a `--lang` flag or the `config language` default, used by the Heroic Steam integration |
 | **DLC** | ✅ | Install, enable or disable, and per-DLC ownership and install status |
@@ -238,7 +238,13 @@ aurelia install 1245620              # download & install a game by app id
 aurelia install 1245620 --library D:\SteamLibrary  # install onto a specific drive or library
 aurelia libraries                    # list Steam library folders (one per drive) + free space
 aurelia install list                 # show installs running in the daemon (with progress)
-aurelia install stop 1245620         # cancel a running install
+aurelia install pause 1245620        # pause a running install; keep its partial files
+aurelia install resume 1245620       # resume a paused/interrupted install
+aurelia install resume --all         # resume every backlog entry, one at a time
+aurelia install stop 1245620         # cancel a running install; keep it in the backlog
+aurelia install forget 1245620       # remove an entry without deleting partial files
+aurelia install forget 1245620 --delete-files
+                                      # remove the entry and safe partial files
 aurelia update 1245620               # download the latest manifest
 aurelia verify 1245620               # verify installed files
 aurelia uninstall 1245620            # remove a game (--delete-prefix wipes its prefix)

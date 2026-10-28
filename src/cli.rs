@@ -555,6 +555,13 @@ pub(crate) enum ConfigCommand {
         /// `auto`, `on`, or `off`. Omit to print the current setting.
         policy: Option<SteamRuntimeArg>,
     },
+    /// View or set whether the daemon resumes interrupted installs when it starts.
+    /// `manual` (default) waits for `install resume`; `auto` resumes `interrupted`
+    /// backlog entries, never paused or stopped ones.
+    InstallResume {
+        /// `manual` or `auto`. Omit to print the current setting.
+        mode: Option<InstallResumeArg>,
+    },
     /// View or set the network proxy used for all HTTP(S) communication.
     ///
     /// Applies to the Steam web endpoints, depot downloads, and Proton/plugin
@@ -961,10 +968,30 @@ pub(crate) struct InstallArgs {
 
 #[derive(clap::Subcommand)]
 pub(crate) enum InstallAction {
-    /// List in-flight installs (use --json for tooling).
+    /// List running installs and the backlog (paused, aborted, interrupted).
     List,
-    /// Stop a running install by app id.
+    /// Stop a running install by app id. It stays in the backlog as `aborted`.
     Stop { app_id: u32 },
+    /// Pause a running install, keeping what's on disk. Resume it with
+    /// `install resume`; automatic resume never picks it up.
+    Pause { app_id: u32 },
+    /// Resume a backlog install with the options it was started with, reusing
+    /// the files already on disk.
+    Resume {
+        /// App id to resume.
+        #[arg(required_unless_present = "all", conflicts_with = "all")]
+        app_id: Option<u32>,
+        /// Resume every backlog entry, one after another.
+        #[arg(short, long)]
+        all: bool,
+    },
+    /// Remove an install from the backlog.
+    Forget {
+        app_id: u32,
+        /// Also delete its partial files (never a DLC's or a finished game's folder).
+        #[arg(short, long)]
+        delete_files: bool,
+    },
 }
 
 /// `aurelia downgrade`: install specific depot manifests (an older version) and
@@ -1074,6 +1101,24 @@ pub(crate) enum SteamModeArg {
     Host,
     /// Standalone, no Steam client.
     None,
+}
+
+/// `config install-resume` choices.
+#[derive(Clone, Copy, ValueEnum)]
+pub(crate) enum InstallResumeArg {
+    /// Wait for `install resume`.
+    Manual,
+    /// Daemon resumes interrupted installs.
+    Auto,
+}
+
+impl From<InstallResumeArg> for aurelia::library::backlog::InstallResume {
+    fn from(value: InstallResumeArg) -> Self {
+        match value {
+            InstallResumeArg::Manual => Self::Manual,
+            InstallResumeArg::Auto => Self::Auto,
+        }
+    }
 }
 
 /// `--steam-runtime auto|on|off`: per-game policy for the self-contained Windows Steam

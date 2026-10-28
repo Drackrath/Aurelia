@@ -104,7 +104,10 @@ pub async fn run_server() -> Result<()> {
     // Establish the shared session in the background (one logon if a token exists),
     // then keep it alive: the liveness loop reconnects if the socket later dies.
     let state = super::init_state();
-    tokio::spawn(async move { state.ensure_session().await });
+    tokio::spawn(async move {
+        state.ensure_session().await;
+        auto_resume_installs().await;
+    });
     tokio::spawn(async move { state.liveness_loop().await });
 
     // Self-restart on binary upgrade so the daemon never serves stale code.
@@ -121,6 +124,40 @@ pub async fn run_server() -> Result<()> {
             }
             Err(e) => tracing::warn!("daemon: accept error: {e:#}"),
         }
+    }
+}
+
+/// Resume interrupted installs when configured.
+async fn auto_resume_installs() {
+    use aurelia::library::backlog;
+    let auto = aurelia::core::config::load_launcher_config()
+        .await
+        .is_ok_and(|c| c.install_resume == backlog::InstallResume::Auto);
+    if !auto {
+        return;
+    }
+    let ids = match backlog::load() {
+        Ok(entries) => backlog::auto_resumable(&entries),
+        Err(e) => {
+            tracing::warn!("daemon: install backlog unreadable: {e:#}");
+            return;
+        }
+    };
+    if ids.is_empty() {
+        return;
+    }
+    tracing::info!(
+        "daemon: auto-resuming {} interrupted install(s): {ids:?}",
+        ids.len()
+    );
+    // Counts as busy for upgrade restarts.
+    let _busy = InflightGuard::new();
+    // No client: discard output, stdin at EOF.
+    let (out_tx, _) = tokio::sync::mpsc::unbounded_channel();
+    let (_, in_rx) = tokio::sync::mpsc::unbounded_channel();
+    let resume = crate::commands::resume_entries(&ids, true, true);
+    if let Err(e) = crate::output::scoped(OutputCtx::new(out_tx, in_rx), resume).await {
+        tracing::warn!("daemon: auto-resume: {e:#}");
     }
 }
 

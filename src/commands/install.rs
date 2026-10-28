@@ -5,7 +5,9 @@ use crate::commands::common::*;
 
 use anyhow::{Context, Result, bail};
 use aurelia::core::config::load_launcher_config;
+use aurelia::core::error::{ErrorKind, TypedError, classify};
 use aurelia::core::models::{DepotPlatform, DownloadState, LibraryGame};
+use aurelia::library::backlog;
 use aurelia::steam_client::{InstallOptions, SteamClient};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -33,13 +35,45 @@ pub(crate) async fn cmd_install(
     library: Option<String>,
     json: bool,
 ) -> Result<()> {
-    let mut client = authed_client().await?;
-
     // `--dry-run` reports the size estimate and stops — it never touches Steam or
     // downloads anything.
     if dry_run {
+        let mut client = authed_client().await?;
         return cmd_install_dry_run(&mut client, app_id, platform, json).await;
     }
+    let request = InstallRequest {
+        app_id,
+        platform,
+        restart_steam,
+        library,
+        on_disk: 0,
+        auto_attempts: 0,
+    };
+    run_install(request, json).await
+}
+
+/// One install, fresh or resumed.
+pub(crate) struct InstallRequest {
+    pub(crate) app_id: u32,
+    pub(crate) platform: Option<PlatformArg>,
+    pub(crate) restart_steam: bool,
+    pub(crate) library: Option<String>,
+    /// Bytes a resume already has.
+    pub(crate) on_disk: u64,
+    pub(crate) auto_attempts: u32,
+}
+
+/// Install, keeping the backlog in step.
+pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<()> {
+    let InstallRequest {
+        app_id,
+        platform,
+        restart_steam,
+        library,
+        on_disk,
+        auto_attempts,
+    } = request;
+    let mut client = authed_client().await?;
 
     // Note whether this is a DLC so we can refresh Steam's view afterward.
     let is_dlc = client.resolve_dlc_parent(app_id).await.is_some();
@@ -66,17 +100,18 @@ pub(crate) async fn cmd_install(
     // Refuse to start if the target drive can't hold the game. (DLC installs go
     // into the base game's library and aren't covered by the base-game estimate,
     // so they're skipped here.)
+    let library_root = match &library {
+        Some(lib) => lib.clone(),
+        None => load_launcher_config().await?.steam_library_path,
+    };
     if !is_dlc {
         let est = client
             .estimate_install_size(app_id, platform)
             .await
             .with_context(|| format!("failed to estimate install size for app {app_id}"))?;
-        let library_root = match &library {
-            Some(lib) => lib.clone(),
-            None => load_launcher_config().await?.steam_library_path,
-        };
         if let Some(free) = available_space_for(std::path::Path::new(&library_root)) {
-            if est.disk_size > free {
+            // A resume's partial files already count.
+            if est.disk_size.saturating_sub(on_disk) > free {
                 return Err(aurelia::core::error::TypedError::new(
                     aurelia::core::error::ErrorKind::DiskFull,
                     format!(
@@ -94,23 +129,81 @@ pub(crate) async fn cmd_install(
     // / `install list` (served on other daemon connections) can reach it. The
     // guard removes the entry when this function returns (success, error, abort).
     let state = Arc::new(RwLock::new(DownloadState::default()));
+    if let Ok(mut state) = state.write() {
+        state.initial_downloaded_bytes = on_disk;
+    }
     let _install_guard = InstallGuard::register(app_id, Arc::clone(&state))?;
-    let rx = client
+
+    // Recorded first, so a crash stays resumable.
+    let platform_name = format!("{platform:?}").to_lowercase();
+    let started = backlog::now();
+    let mut record = backlog::BacklogEntry {
+        app_id,
+        name: String::new(),
+        state: backlog::BacklogState::Interrupted,
+        platform: platform_name,
+        library: library_root.clone(),
+        install_dir: None,
+        is_dlc,
+        restart_steam,
+        downloaded_bytes: on_disk,
+        total_bytes: 0,
+        reason: Some("install did not finish".into()),
+        error_type: None,
+        auto_attempts,
+        added_at: started,
+        updated_at: started,
+    };
+    note_backlog(backlog::upsert(record.clone()));
+
+    let outcome = match client
         .install_game(
             app_id,
             platform,
             InstallOptions {
                 cached_vdf,
-                library_override: library,
+                library_override: Some(library_root.clone()),
                 ..Default::default()
             },
-            state,
+            Arc::clone(&state),
         )
         .await
-        .with_context(|| format!("failed to start install for app {app_id}"))?;
-    drive_progress(rx, json).await?;
-
-    steam_guard_restart(manage_steam, json)?;
+    {
+        Ok(rx) => {
+            // `install_game` resolves and creates the target before returning.
+            // Persist it now so a daemon crash still leaves `forget --delete-files`
+            // with enough information to safely clean up the partial directory.
+            if let Ok(s) = state.read() {
+                record.name = s.app_name.clone();
+                record.install_dir = s.install_dir.clone();
+                record.total_bytes = s.total_bytes;
+            }
+            note_backlog(backlog::upsert(record.clone()));
+            match drive_progress_until(rx, json).await {
+                Ok(true) => Ok(()),
+                Ok(false) if stop_requested(&state) => Err(anyhow::anyhow!(TypedError::new(
+                    ErrorKind::Cancelled,
+                    "download stopped"
+                ))),
+                Ok(false) => bail!("install of app {app_id} ended without a result"),
+                Err(err) => Err(err),
+            }
+        }
+        Err(err) => Err(err).with_context(|| format!("failed to start install for app {app_id}")),
+    };
+    // Always restore a Steam client that we stopped, including when the download
+    // failed or was cancelled. Otherwise a failed DLC install can leave Steam
+    // stopped and hide the original install error behind cleanup failure.
+    let settled = finish_backlog(app_id, record, &state, outcome);
+    let restart = steam_guard_restart(manage_steam, json);
+    if let Err(restart_err) = restart {
+        if settled.is_err() {
+            tracing::error!("failed restarting Steam after an install error: {restart_err:#}");
+        } else {
+            return Err(restart_err);
+        }
+    }
+    settled?;
     let steam_restarted = manage_steam;
 
     // A newly installed DLC is invisible to an already-running Steam client until it
@@ -137,6 +230,70 @@ pub(crate) async fn cmd_install(
         }));
     }
     Ok(())
+}
+
+/// Log, never fail on, backlog writes.
+fn note_backlog<T>(result: Result<T>) {
+    if let Err(e) = result {
+        tracing::warn!("install backlog not updated: {e:#}");
+    }
+}
+
+/// Whether pause or stop was asked.
+fn stop_requested(state: &Arc<RwLock<DownloadState>>) -> bool {
+    state
+        .read()
+        .map(|s| s.abort_signal.load(Ordering::SeqCst))
+        .unwrap_or(false)
+}
+
+/// Settle the backlog entry from `outcome`.
+fn finish_backlog(
+    app_id: u32,
+    mut record: backlog::BacklogEntry,
+    state: &Arc<RwLock<DownloadState>>,
+    outcome: Result<()>,
+) -> Result<()> {
+    let Err(err) = outcome else {
+        note_backlog(backlog::remove(app_id));
+        return Ok(());
+    };
+    let paused = state.read().map(|s| s.is_paused).unwrap_or(false);
+    if let Ok(s) = state.read() {
+        record.name = s.app_name.clone();
+        record.install_dir = s.install_dir.clone();
+        record.downloaded_bytes = record.downloaded_bytes.max(s.downloaded_bytes);
+        record.total_bytes = s.total_bytes;
+    }
+    let kind = classify(&err).kind;
+    record.updated_at = backlog::now();
+    let err = if kind == ErrorKind::Cancelled {
+        record.reason = None;
+        record.error_type = None;
+        if paused {
+            record.state = backlog::BacklogState::Paused;
+            anyhow::anyhow!(TypedError::new(
+                ErrorKind::Cancelled,
+                format!(
+                    "install of app {app_id} paused; continue with `aurelia install resume {app_id}`"
+                ),
+            ))
+        } else {
+            record.state = backlog::BacklogState::Aborted;
+            err.context(format!(
+                "install of app {app_id} stopped; it stays in the backlog"
+            ))
+        }
+    } else {
+        record.state = backlog::BacklogState::Interrupted;
+        record.reason = Some(format!("{err:#}"));
+        record.error_type = serde_json::to_value(kind)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_string));
+        err
+    };
+    note_backlog(backlog::upsert(record));
+    Err(err)
 }
 
 /// Report the estimated download/disk size for installing `app_id` without
@@ -184,12 +341,42 @@ pub(crate) async fn cmd_install_dry_run(
 /// `aurelia install stop <app_id>`: signal a running install (tracked in this
 /// process's registry) to abort. The download loops poll `abort_signal`.
 pub(crate) async fn cmd_install_stop(app_id: u32, json: bool) -> Result<()> {
+    signal_install(app_id, false, json)
+}
+
+/// `aurelia install pause <app_id>`: stop, but stay `paused`.
+pub(crate) async fn cmd_install_pause(app_id: u32, json: bool) -> Result<()> {
+    signal_install(app_id, true, json)
+}
+
+/// Stop or pause a running or queued install.
+fn signal_install(app_id: u32, pause: bool, json: bool) -> Result<()> {
     let state = active_installs()
         .lock()
         .ok()
         .and_then(|map| map.get(&app_id).cloned());
+    let target = if pause {
+        backlog::BacklogState::Paused
+    } else {
+        backlog::BacklogState::Aborted
+    };
 
     let Some(state) = state else {
+        // Not running: just relabel its entry.
+        if backlog::set_state(app_id, target)? {
+            if json {
+                print_result_line(serde_json::json!({
+                    "app_id": app_id,
+                    "state": target.as_str(),
+                }));
+            } else {
+                cli_println!(
+                    "App {app_id} is not downloading; marked {} in the backlog.",
+                    target.as_str()
+                );
+            }
+            return Ok(());
+        }
         if json {
             print_json(&serde_json::json!({
                 "event": "not_found",
@@ -203,56 +390,105 @@ pub(crate) async fn cmd_install_stop(app_id: u32, json: bool) -> Result<()> {
         return Ok(());
     };
 
-    // The abort flag is an `Arc<AtomicBool>` inside the struct; we only need to
-    // read the struct to flip it (no write lock required).
-    if let Ok(guard) = state.read() {
+    // Pause first; the abort reads it.
+    if let Ok(mut guard) = state.write() {
+        guard.is_paused = pause;
         guard.abort_signal.store(true, Ordering::SeqCst);
     }
 
     if json {
-        print_json(&serde_json::json!({
-            "event": "stopping",
-            "app_id": app_id,
-        }));
+        if pause {
+            print_json(&serde_json::json!({
+                "event": "pausing",
+                "app_id": app_id,
+            }));
+        } else {
+            print_json(&serde_json::json!({
+                "event": "stopping",
+                "app_id": app_id,
+            }));
+        }
+    } else if pause {
+        cli_println!("Pausing install of app {app_id} ...");
     } else {
         cli_println!("Stopping install of app {app_id} ...");
     }
     Ok(())
 }
 
-/// `aurelia install list`: report the installs in flight in this process.
+/// One `install list` row.
+struct ListRow {
+    app_id: u32,
+    name: String,
+    total: u64,
+    done: u64,
+    status: String,
+    downloading: bool,
+    state: &'static str,
+    entry: Option<backlog::BacklogEntry>,
+}
+
+/// `aurelia install list`: running installs, then the backlog.
 pub(crate) async fn cmd_install_list(json: bool) -> Result<()> {
     // Snapshot under the lock, then release it before printing.
-    let mut rows: Vec<(u32, String, u64, u64, String, bool)> = Vec::new();
+    let mut rows: Vec<ListRow> = Vec::new();
     if let Ok(map) = active_installs().lock() {
         for state in map.values() {
             if let Ok(s) = state.read() {
-                rows.push((
-                    s.app_id,
-                    s.app_name.clone(),
-                    s.total_bytes,
-                    s.downloaded_bytes,
-                    s.status_text.clone(),
-                    s.is_downloading,
-                ));
+                rows.push(ListRow {
+                    app_id: s.app_id,
+                    name: s.app_name.clone(),
+                    total: s.total_bytes,
+                    done: s.downloaded_bytes,
+                    status: s.status_text.clone(),
+                    downloading: s.is_downloading,
+                    state: "running",
+                    entry: None,
+                });
             }
         }
     }
-    rows.sort_by_key(|r| r.0);
+    rows.sort_by_key(|r| r.app_id);
+    // A running install's entry is itself.
+    let running: Vec<u32> = rows.iter().map(|r| r.app_id).collect();
+    for entry in backlog::load()? {
+        if running.contains(&entry.app_id) {
+            continue;
+        }
+        rows.push(ListRow {
+            app_id: entry.app_id,
+            name: entry.name.clone(),
+            total: entry.total_bytes,
+            done: entry.downloaded_bytes,
+            status: entry.reason.clone().unwrap_or_default(),
+            downloading: false,
+            state: entry.state.as_str(),
+            entry: Some(entry),
+        });
+    }
 
     if json {
         let arr: Vec<_> = rows
             .iter()
-            .map(|(app_id, name, total, done, status, downloading)| {
-                serde_json::json!({
-                    "app_id": app_id,
-                    "name": name,
-                    "downloaded_bytes": done,
-                    "total_bytes": total,
-                    "percent": percent_of(*done, *total),
-                    "status": status,
-                    "is_downloading": downloading,
-                })
+            .map(|r| {
+                let mut v = serde_json::json!({
+                    "app_id": r.app_id,
+                    "name": r.name,
+                    "downloaded_bytes": r.done,
+                    "total_bytes": r.total,
+                    "percent": percent_of(r.done, r.total),
+                    "status": r.status,
+                    "is_downloading": r.downloading,
+                    "state": r.state,
+                });
+                if let Some(e) = &r.entry {
+                    v["platform"] = e.platform.clone().into();
+                    v["library"] = e.library.clone().into();
+                    v["error_type"] = e.error_type.clone().into();
+                    v["added_at"] = e.added_at.into();
+                    v["updated_at"] = e.updated_at.into();
+                }
+                v
             })
             .collect();
         print_json(&serde_json::Value::Array(arr));
@@ -260,25 +496,172 @@ pub(crate) async fn cmd_install_list(json: bool) -> Result<()> {
     }
 
     if rows.is_empty() {
-        cli_println!("No installs in progress.");
+        cli_println!("No installs in progress or in the backlog.");
         return Ok(());
     }
 
     cli_println!(
-        "{:>9}  {:>20}  {:>9}  NAME / STATUS",
+        "{:>9}  {:<11}  {:>20}  {:>6}  NAME / STATUS",
         "APPID",
+        "STATE",
         "PROGRESS",
         ""
     );
-    for (app_id, name, total, done, status, _) in &rows {
-        let progress = format!("{} / {}", human_bytes(*done), human_bytes(*total));
+    for r in &rows {
+        let progress = format!("{} / {}", human_bytes(r.done), human_bytes(r.total));
+        let label = match (r.name.is_empty(), r.status.is_empty()) {
+            (false, true) => r.name.clone(),
+            (true, _) => r.status.clone(),
+            (false, false) if r.state == "running" => r.name.clone(),
+            (false, false) => format!("{} ({})", r.name, r.status),
+        };
         cli_println!(
-            "{:>9}  {:>20}  {:>5.1}%  {}",
-            app_id,
+            "{:>9}  {:<11}  {:>20}  {:>5.1}%  {}",
+            r.app_id,
+            r.state,
             progress,
-            percent_of(*done, *total),
-            if name.is_empty() { status } else { name }
+            percent_of(r.done, r.total),
+            label
         );
+    }
+    Ok(())
+}
+
+/// `aurelia install resume <app_id>|--all`.
+pub(crate) async fn cmd_install_resume(app_id: Option<u32>, all: bool, json: bool) -> Result<()> {
+    let entries = backlog::load()?;
+    let ids: Vec<u32> = if all {
+        entries.iter().map(|e| e.app_id).collect()
+    } else {
+        let id = app_id.unwrap_or_default();
+        if !entries.iter().any(|e| e.app_id == id) {
+            return Err(TypedError::new(
+                ErrorKind::NotFound,
+                format!("app {id} is not in the install backlog (see `aurelia install list`)"),
+            )
+            .into());
+        }
+        vec![id]
+    };
+    if ids.is_empty() {
+        if !json {
+            cli_println!("The install backlog is empty.");
+        }
+        return Ok(());
+    }
+    resume_entries(&ids, false, json).await
+}
+
+/// Resume `ids` one after another.
+///
+/// `auto` counts attempts; manual resets them.
+pub(crate) async fn resume_entries(ids: &[u32], auto: bool, json: bool) -> Result<()> {
+    let mut failures: Vec<(u32, anyhow::Error)> = Vec::new();
+    for &app_id in ids {
+        let Some(entry) = backlog::get(app_id)? else {
+            continue;
+        };
+        if active_installs()
+            .lock()
+            .is_ok_and(|m| m.contains_key(&app_id))
+        {
+            continue;
+        }
+        if !json {
+            let name = if entry.name.is_empty() {
+                format!("app {app_id}")
+            } else {
+                entry.name.clone()
+            };
+            cli_println!("Resuming {name} ({}) ...", entry.state.as_str());
+        }
+        let request = InstallRequest {
+            app_id,
+            platform: Some(if entry.platform == "linux" {
+                PlatformArg::Linux
+            } else {
+                PlatformArg::Windows
+            }),
+            restart_steam: entry.restart_steam,
+            library: Some(entry.library.clone()),
+            on_disk: entry.downloaded_bytes,
+            auto_attempts: if auto { entry.auto_attempts + 1 } else { 0 },
+        };
+        if let Err(e) = run_install(request, json).await {
+            if ids.len() == 1 {
+                return Err(e);
+            }
+            // Report it and keep going.
+            let kind = classify(&e).kind;
+            if json {
+                print_result_line(serde_json::json!({
+                    "app_id": app_id,
+                    "ok": false,
+                    "type": kind,
+                    "error": format!("{e:#}"),
+                }));
+            } else {
+                cli_eprintln!("App {app_id}: {e:#}");
+            }
+            failures.push((app_id, e));
+        }
+    }
+    let Some((_, last)) = failures.last() else {
+        return Ok(());
+    };
+    let kind = classify(last).kind;
+    let summary = anyhow::anyhow!(TypedError::new(
+        kind,
+        format!("{} of {} resumes did not finish", failures.len(), ids.len()),
+    ));
+    if json {
+        // Each failure printed its own line.
+        return Err(anyhow::anyhow!(aurelia::core::error::Reported(summary)));
+    }
+    Err(summary)
+}
+
+/// `aurelia install forget <app_id> [--delete-files]`.
+pub(crate) async fn cmd_install_forget(app_id: u32, delete_files: bool, json: bool) -> Result<()> {
+    if active_installs()
+        .lock()
+        .is_ok_and(|m| m.contains_key(&app_id))
+    {
+        bail!("app {app_id} is downloading; stop it first with `aurelia install stop {app_id}`");
+    }
+    let Some(entry) = backlog::get(app_id)? else {
+        return Err(TypedError::new(
+            ErrorKind::NotFound,
+            format!("app {app_id} is not in the install backlog"),
+        )
+        .into());
+    };
+    let mut deleted: Option<PathBuf> = None;
+    if delete_files {
+        let Some(dir) = backlog::deletable_dir(&entry) else {
+            bail!(
+                "won't delete files for app {app_id}: its folder is unknown, shared with a base \
+                 game, or belongs to a finished install. Remove it by hand if needed."
+            );
+        };
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir)
+                .with_context(|| format!("failed deleting {}", dir.display()))?;
+        }
+        deleted = Some(dir);
+    }
+    backlog::remove(app_id)?;
+    if json {
+        print_result_line(serde_json::json!({
+            "app_id": app_id,
+            "status": "forgotten",
+            "deleted": deleted.as_ref().map(|d| d.to_string_lossy().into_owned()),
+        }));
+    } else {
+        cli_println!("Removed app {app_id} from the install backlog.");
+        if let Some(dir) = deleted {
+            cli_println!("Deleted {}", dir.display());
+        }
     }
     Ok(())
 }

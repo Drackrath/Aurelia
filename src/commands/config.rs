@@ -283,6 +283,30 @@ pub(crate) async fn cmd_config_steam_runtime_runner(
 /// Steam-integration policy applied when a game's own policy is `auto`. Governs how
 /// `aurelia play --steam` provides Steam DRM/Steamworks (host client vs the in-Wine
 /// Steam runtime). See [`crate::cli::ConfigCommand::SteamRuntimePolicy`].
+/// `config install-resume [manual|auto]`.
+pub(crate) async fn cmd_config_install_resume(
+    mode: Option<InstallResumeArg>,
+    json: bool,
+) -> Result<()> {
+    use aurelia::library::backlog::InstallResume;
+    let (config, changed) = view_or_set(mode, |c, m| c.install_resume = m.into()).await?;
+    if json {
+        print_json(&serde_json::json!({ "install_resume": config.install_resume }));
+        return Ok(());
+    }
+    let label = match config.install_resume {
+        InstallResume::Manual => "manual (backlog installs wait for `aurelia install resume`)",
+        InstallResume::Auto => {
+            "auto (the daemon resumes interrupted installs when it starts; paused and stopped ones wait)"
+        }
+    };
+    cli_println!("Install resume: {label}");
+    if changed {
+        cli_println!("Saved. Applies the next time the daemon starts.");
+    }
+    Ok(())
+}
+
 pub(crate) async fn cmd_config_steam_runtime_policy(
     policy: Option<SteamRuntimeArg>,
     json: bool,

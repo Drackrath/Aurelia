@@ -69,6 +69,39 @@ fn install_positional_and_subcommands_coexist() {
         }
         _ => panic!("expected Install stop"),
     }
+    match parse(&["aurelia", "install", "pause", "945360"]).command {
+        Command::Install(args) => {
+            assert!(matches!(
+                args.action,
+                Some(InstallAction::Pause { app_id: 945360 })
+            ))
+        }
+        _ => panic!("expected Install pause"),
+    }
+    match parse(&["aurelia", "install", "resume", "--all"]).command {
+        Command::Install(args) => {
+            assert!(matches!(
+                args.action,
+                Some(InstallAction::Resume {
+                    app_id: None,
+                    all: true
+                })
+            ))
+        }
+        _ => panic!("expected Install resume"),
+    }
+    match parse(&["aurelia", "install", "forget", "945360", "--delete-files"]).command {
+        Command::Install(args) => {
+            assert!(matches!(
+                args.action,
+                Some(InstallAction::Forget {
+                    app_id: 945360,
+                    delete_files: true
+                })
+            ))
+        }
+        _ => panic!("expected Install forget"),
+    }
 }
 
 #[test]

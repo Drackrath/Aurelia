@@ -351,6 +351,8 @@ pub struct DownloadState {
     pub total_bytes: u64,
     /// Bytes downloaded across the whole app (all depots).
     pub downloaded_bytes: u64,
+    /// Bytes already present when a download is resumed.
+    pub initial_downloaded_bytes: u64,
     pub status_text: String,
     /// Depot currently being downloaded.
     pub depot_id: u32,
@@ -359,16 +361,17 @@ pub struct DownloadState {
     /// Bytes downloaded for the current depot.
     pub depot_downloaded_bytes: u64,
     pub abort_signal: Arc<AtomicBool>,
+    /// Where the files land, once known.
+    pub install_dir: Option<std::path::PathBuf>,
 }
 
 impl DownloadState {
     /// Reset counters for a new operation.
     pub fn begin(&mut self, app_id: u32, app_name: String, total_bytes: u64, status_text: String) {
         self.is_downloading = true;
-        self.is_paused = false;
         self.app_id = app_id;
         self.app_name = app_name;
-        self.downloaded_bytes = 0;
+        self.downloaded_bytes = self.initial_downloaded_bytes;
         self.total_bytes = total_bytes;
         self.depot_id = 0;
         self.depot_downloaded_bytes = 0;

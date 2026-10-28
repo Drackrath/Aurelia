@@ -321,6 +321,14 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Install(args) => match args.action {
             Some(InstallAction::List) => cmd_install_list(json).await,
             Some(InstallAction::Stop { app_id }) => cmd_install_stop(app_id, json).await,
+            Some(InstallAction::Pause { app_id }) => cmd_install_pause(app_id, json).await,
+            Some(InstallAction::Resume { app_id, all }) => {
+                cmd_install_resume(app_id, all, json).await
+            }
+            Some(InstallAction::Forget {
+                app_id,
+                delete_files,
+            }) => cmd_install_forget(app_id, delete_files, json).await,
             None => {
                 let Some(app_id) = args.app_id else {
                     bail!("an app id is required, e.g. `aurelia install 945360`");
@@ -497,6 +505,7 @@ async fn run(cli: Cli) -> Result<()> {
             ConfigCommand::SteamRuntimePolicy { policy } => {
                 cmd_config_steam_runtime_policy(policy, json).await
             }
+            ConfigCommand::InstallResume { mode } => cmd_config_install_resume(mode, json).await,
             ConfigCommand::SteamRuntimeRunner { runner } => {
                 cmd_config_steam_runtime_runner(runner, json).await
             }

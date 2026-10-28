@@ -234,6 +234,9 @@ impl SteamClient {
 
         std::fs::create_dir_all(&install_dir)
             .with_context(|| format!("failed creating {}", install_dir.display()))?;
+        if let Ok(mut state) = shared_state.write() {
+            state.install_dir = Some(install_dir.clone());
+        }
 
         let (tx, rx) = tokio::sync::mpsc::channel(128);
         let client_clone = self.clone();
