@@ -111,7 +111,7 @@ sync, and Proton or Wine launching all work today.
 |---|---|---|
 | **Authentication** | ✅ | Password, Steam Guard (email and device codes), Mobile App confirmation, refresh-token session restore |
 | **Library** | ✅ | Fetch owned games, scan local installs, search & filter, Family Sharing |
-| **Install & updates** | ✅ | 4-phase download pipeline (manifest → security → chunks), updates, uninstall, integrity verification, and moving installs between library folders, with Steam's `appmanifest` and `libraryfolders.vdf` kept in sync. Installs run in the background daemon, can be listed, paused, resumed, cancelled, and kept across restarts (`install list`, `install pause`, `install resume`, `install stop`) |
+| **Install & updates** | ✅ | 4-phase download pipeline (manifest → security → chunks) that downloads files in parallel from a pool of the least-loaded CDN servers, retries failed chunks on another server and times out stalled requests, plus updates, uninstall, integrity verification, and moving installs between library folders, with Steam's `appmanifest` and `libraryfolders.vdf` kept in sync. Installs run in the background daemon, can be listed, paused, resumed, cancelled, and kept across restarts in an install backlog that resumes from the files already on disk (`install list`, `install pause`, `install resume`, `install stop`, `install forget`, optional automatic resume with `config install-resume auto`) |
 | **Version pinning and downgrade** | ✅ | Install & pin a specific depot manifest (`downgrade`, `manifests`, `pin`, `unpin`), holding a game at an older build |
 | **Localized metadata** | ✅ | Store text (`info`) and achievement names and descriptions follow a `--lang` flag or the `config language` default, used by the Heroic Steam integration |
 | **DLC** | ✅ | Install, enable or disable, and per-DLC ownership and install status |
@@ -162,6 +162,21 @@ See the [releases page](https://github.com/Drackrath/Aurelia/releases/latest).
 curl -LO https://github.com/Drackrath/Aurelia/releases/latest/download/aurelia_linux_x86_64
 chmod +x aurelia_linux_x86_64 && sudo mv aurelia_linux_x86_64 /usr/local/bin/aurelia
 aurelia --help
+```
+
+Each release also publishes `SHA256SUMS`, signed with [Sigstore](https://www.sigstore.dev/)
+by the release workflow (`SHA256SUMS.sig`, `SHA256SUMS.pem`). To check a download before
+installing it:
+
+```bash
+for f in SHA256SUMS SHA256SUMS.sig SHA256SUMS.pem; do
+  curl -LO "https://github.com/Drackrath/Aurelia/releases/latest/download/$f"
+done
+sha256sum --ignore-missing -c SHA256SUMS          # the binary matches the published hash
+cosign verify-blob SHA256SUMS \
+  --signature SHA256SUMS.sig --certificate SHA256SUMS.pem \
+  --certificate-identity-regexp '^https://github\.com/Drackrath/Aurelia/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
 ---
@@ -237,7 +252,7 @@ aurelia image 1245620 --list --probe # every store asset URL (art, screenshots, 
 aurelia install 1245620              # download & install a game by app id
 aurelia install 1245620 --library D:\SteamLibrary  # install onto a specific drive or library
 aurelia libraries                    # list Steam library folders (one per drive) + free space
-aurelia install list                 # show installs running in the daemon (with progress)
+aurelia install list                 # running installs and the backlog (paused, stopped, interrupted)
 aurelia install pause 1245620        # pause a running install; keep its partial files
 aurelia install resume 1245620       # resume a paused/interrupted install
 aurelia install resume --all         # resume every backlog entry, one at a time
@@ -325,6 +340,7 @@ aurelia config presence online       # appear online for chat (default: invisibl
 aurelia config language german       # default language for info and achievements text
 aurelia config country DE            # default store region for prices (unset: system locale, else US)
 aurelia config game 1245620 --proton GE-Proton9-20  # pin a Proton version for one game
+aurelia config install-resume auto   # let the daemon resume interrupted installs when it starts
 
 # Proton and Wine runtimes (download manager)
 aurelia proton list                  # installable runtimes (Valve + GE + CachyOS) and what's installed
@@ -442,6 +458,11 @@ stop, and keep stdin open while waiting, because EOF ends the login. Outcomes:
 
 Other failures carry the usual error `type` (for example `network_timeout`) and exit code.
 
+`install`, `update` and `verify` stream `progress` events on stderr. `bytes_downloaded`
+includes `reused_bytes`, the data found intact on disk (a resume or verify), while
+`speed_bps` and `eta_seconds` count network bytes only, averaged over 5 seconds. Install
+results, backlog changes and QR logins end with a `{"event":"result",...}` line on stdout.
+
 Two error types apply to every command. `disk_full` (exit 85): no space or quota left, including
 `install`'s free-space check before it starts. `offline` (exit 86): no network route or DNS,
 or Steam is unreachable and Aurelia is using its cached library. A stopped install
@@ -475,8 +496,15 @@ a standalone install.
   resolved configuration with `aurelia config show`.
 - **Session.** Refresh tokens are persisted in `session.json` so subsequent invocations
   log in automatically.
-- **Unified download pipeline.** Installs, updates, and verifications all run through a
-  single, robust engine for reliability and speed.
+- **Download engine.** Installs, updates, verifications and Workshop downloads share one
+  engine. It picks the least-loaded content servers, spreads chunk requests over a pool of
+  them, retries a failed chunk on another server, and keeps 16 chunk requests in flight per
+  depot. Set **`AURELIA_CDN_CONCURRENCY`** (1–64) to change that, e.g. lower on a shared
+  connection.
+- **Install backlog.** Unfinished installs are kept in `install_backlog.json` until they
+  finish or you `install forget` them. See the
+  [installation page](https://github.com/Drackrath/Aurelia/wiki/Usage-Installation-and-Maintenance#install-backlog)
+  on the wiki.
 
 ---
 
