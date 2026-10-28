@@ -306,7 +306,7 @@ impl SteamClient {
 
         self.connect().await?;
         if self.is_offline() {
-            bail!("offline mode: using cached library");
+            return Err(offline_error("offline mode: using cached library"));
         }
         self.state = LoginState::AwaitingAccessTokenLogon;
 
@@ -341,7 +341,7 @@ impl SteamClient {
     ) -> Result<SessionState> {
         self.connect().await?;
         if self.is_offline() {
-            bail!("offline mode: using cached library");
+            return Err(offline_error("offline mode: using cached library"));
         }
 
         self.state = LoginState::AwaitingCredentialSession;
@@ -441,7 +441,7 @@ impl SteamClient {
 
         self.connect().await?;
         if self.is_offline() {
-            bail!("offline mode: cannot start QR login");
+            return Err(offline_error("offline mode: cannot start QR login"));
         }
         let server_list = self.resolve_server_list().await?;
 
@@ -600,6 +600,11 @@ impl SteamClient {
             web_token: None,
         })
     }
+}
+
+/// Steam unreachable; cached data only.
+fn offline_error(message: &str) -> anyhow::Error {
+    anyhow!(TypedError::new(ErrorKind::Offline, message))
 }
 
 /// What a failed QR status poll means.

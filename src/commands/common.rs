@@ -567,7 +567,13 @@ pub(crate) async fn drive_progress(
                 if !json {
                     cli_println!();
                 }
-                bail!("operation failed: {}", p.current_file);
+                let message = format!("operation failed: {}", p.current_file);
+                return Err(match p.error_kind {
+                    Some(kind) => {
+                        anyhow::anyhow!(aurelia::core::error::TypedError::new(kind, message))
+                    }
+                    None => anyhow::anyhow!(message),
+                });
             }
         }
     }
@@ -761,3 +767,7 @@ pub(crate) fn prompt_line(prompt: &str) -> Result<String> {
         .context("failed reading input")?;
     Ok(input.trim().to_string())
 }
+
+#[cfg(test)]
+#[path = "common_tests.rs"]
+mod tests;

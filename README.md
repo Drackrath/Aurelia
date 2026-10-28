@@ -436,6 +436,11 @@ stop, and keep stdin open while waiting, because EOF ends the login. Outcomes:
 
 Other failures carry the usual error `type` (for example `network_timeout`) and exit code.
 
+Two error types apply to every command. `disk_full` (exit 85): no space or quota left, including
+`install`'s free-space check before it starts. `offline` (exit 86): no network route or DNS,
+or Steam is unreachable and Aurelia is using its cached library. A stopped install
+(`install stop`) ends as `cancelled` (83). `aurelia capabilities` lists every type with its code.
+
 Logs go to stderr. By default only warnings and errors are shown. `-v` adds Aurelia's
 progress and debug logs, and `-vv`/`-vvv` unmute the Steam networking stack, which helps when
 a command seems stuck. Commands run through the session daemon show the same logs at your

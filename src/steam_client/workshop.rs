@@ -478,11 +478,10 @@ impl SteamClient {
                         app_id,
                         record,
                     ) {
-                        emit_failed(
+                        emit_failed_err(
                             &tx,
-                            format!(
-                                "content downloaded but failed updating workshop manifest: {e:#}"
-                            ),
+                            "content downloaded but failed updating workshop manifest",
+                            &e,
                         )
                         .await;
                         return;
@@ -490,11 +489,8 @@ impl SteamClient {
                     emit_completed(&tx, "").await;
                 }
                 Err(e) => {
-                    emit_failed(
-                        &tx,
-                        format!("failed downloading Workshop item {published_file_id}: {e:#}"),
-                    )
-                    .await;
+                    let context = format!("failed downloading Workshop item {published_file_id}");
+                    emit_failed_err(&tx, &context, &e).await;
                 }
             }
         });

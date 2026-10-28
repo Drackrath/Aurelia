@@ -51,7 +51,15 @@ impl From<LzmaError> for Error {
 
 impl From<reqwest::Error> for Error {
     fn from(err: reqwest::Error) -> Self {
-        Self::Request(err.to_string())
+        // Keep causes (DNS, OS) for callers.
+        let mut text = err.to_string();
+        let mut source = std::error::Error::source(&err);
+        while let Some(cause) = source {
+            text.push_str(": ");
+            text.push_str(&cause.to_string());
+            source = cause.source();
+        }
+        Self::Request(text)
     }
 }
 

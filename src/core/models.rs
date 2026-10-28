@@ -293,6 +293,8 @@ pub struct DownloadProgress {
     pub depot_bytes_downloaded: u64,
     /// Total bytes for the current depot only.
     pub depot_total_bytes: u64,
+    /// `Failed` only: why, when known.
+    pub error_kind: Option<crate::core::error::ErrorKind>,
 }
 
 impl DownloadProgress {
@@ -318,9 +320,22 @@ impl DownloadProgress {
 
     /// Terminal `Failed` message.
     pub fn failed(msg: impl Into<String>) -> Self {
+        let msg = msg.into();
         Self {
             state: DownloadProgressState::Failed,
-            current_file: msg.into(),
+            error_kind: crate::core::error::message_kind(&msg),
+            current_file: msg,
+            ..Default::default()
+        }
+    }
+
+    /// Terminal `Failed` for an error.
+    pub fn failed_with(context: &str, err: &anyhow::Error) -> Self {
+        let kind = crate::core::error::classify(err).kind;
+        Self {
+            state: DownloadProgressState::Failed,
+            current_file: format!("{context}: {err:#}"),
+            error_kind: (kind != crate::core::error::ErrorKind::Unknown).then_some(kind),
             ..Default::default()
         }
     }

@@ -27,6 +27,10 @@ pub enum ErrorKind {
     Cancelled,
     /// Driver closed stdin.
     InputClosed,
+    /// No space or quota left.
+    DiskFull,
+    /// No network route or DNS.
+    Offline,
     Unknown,
 }
 
@@ -46,6 +50,8 @@ impl ErrorKind {
         Self::Timeout,
         Self::Cancelled,
         Self::InputClosed,
+        Self::DiskFull,
+        Self::Offline,
         Self::Unknown,
     ];
 
@@ -61,6 +67,8 @@ impl ErrorKind {
             Self::LoginExpired => Some("approve sooner after scanning; run `aurelia login` again"),
             Self::Timeout => Some("raise --timeout or retry"),
             Self::InputClosed => Some("keep stdin open while a --json command waits"),
+            Self::DiskFull => Some("free space on the target drive or pick another `--library`"),
+            Self::Offline => Some("no network connection; reconnect and retry"),
             _ => None,
         }
     }
@@ -75,6 +83,8 @@ impl ErrorKind {
             Self::Timeout => 82,
             Self::Cancelled => 83,
             Self::InputClosed => 84,
+            Self::DiskFull => 85,
+            Self::Offline => 86,
             _ => 1,
         }
     }
@@ -165,27 +175,75 @@ pub fn classify(err: &anyhow::Error) -> Classified {
         if let Some(r) = cause.downcast_ref::<reqwest::Error>() {
             if r.is_timeout() || r.is_connect() {
                 return Classified {
-                    kind: ErrorKind::NetworkTimeout,
+                    kind: reqwest_kind(r),
                     retry_after: None,
                 };
             }
         }
-        if let Some(io) = cause.downcast_ref::<std::io::Error>() {
-            if matches!(
-                io.kind(),
-                std::io::ErrorKind::TimedOut | std::io::ErrorKind::ConnectionRefused
-            ) {
-                return Classified {
-                    kind: ErrorKind::NetworkTimeout,
-                    retry_after: None,
-                };
-            }
+        if let Some(kind) = cause.downcast_ref::<std::io::Error>().and_then(io_kind) {
+            return Classified {
+                kind,
+                retry_after: None,
+            };
         }
     }
+    // Text-only errors (e.g. CDN strings).
     Classified {
-        kind: ErrorKind::Unknown,
+        kind: message_kind(&format!("{err:#}")).unwrap_or(ErrorKind::Unknown),
         retry_after: None,
     }
+}
+
+/// Kind for an OS I/O error.
+pub fn io_kind(err: &std::io::Error) -> Option<ErrorKind> {
+    use std::io::ErrorKind as Io;
+    Some(match err.kind() {
+        Io::StorageFull | Io::QuotaExceeded => ErrorKind::DiskFull,
+        Io::NetworkUnreachable | Io::HostUnreachable | Io::NetworkDown => ErrorKind::Offline,
+        Io::TimedOut | Io::ConnectionRefused => ErrorKind::NetworkTimeout,
+        _ => return None,
+    })
+}
+
+/// Offline when DNS or routing failed.
+fn reqwest_kind(err: &reqwest::Error) -> ErrorKind {
+    let mut source = std::error::Error::source(err);
+    while let Some(cause) = source {
+        let kind = cause
+            .downcast_ref::<std::io::Error>()
+            .and_then(io_kind)
+            .or_else(|| message_kind(&cause.to_string()));
+        if kind == Some(ErrorKind::Offline) {
+            return ErrorKind::Offline;
+        }
+        source = cause.source();
+    }
+    ErrorKind::NetworkTimeout
+}
+
+/// OS messages for disk-full and offline.
+const MESSAGE_KINDS: &[(&str, ErrorKind)] = &[
+    ("no space left on device", ErrorKind::DiskFull),
+    ("disk quota exceeded", ErrorKind::DiskFull),
+    // Windows ERROR_DISK_FULL, also via Wine.
+    ("not enough space on the disk", ErrorKind::DiskFull),
+    ("dns error", ErrorKind::Offline),
+    ("failed to lookup address", ErrorKind::Offline),
+    ("name or service not known", ErrorKind::Offline),
+    ("temporary failure in name resolution", ErrorKind::Offline),
+    ("no such host is known", ErrorKind::Offline),
+    ("network is unreachable", ErrorKind::Offline),
+    ("network is down", ErrorKind::Offline),
+    ("no route to host", ErrorKind::Offline),
+];
+
+/// Kind from an error's text.
+pub fn message_kind(text: &str) -> Option<ErrorKind> {
+    let text = text.to_ascii_lowercase();
+    MESSAGE_KINDS
+        .iter()
+        .find(|(needle, _)| text.contains(needle))
+        .map(|(_, kind)| *kind)
 }
 
 /// Kind for a Steam `EResult`, if any.

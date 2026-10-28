@@ -77,11 +77,15 @@ pub(crate) async fn cmd_install(
         };
         if let Some(free) = available_space_for(std::path::Path::new(&library_root)) {
             if est.disk_size > free {
-                bail!(
-                    "not enough space on {library_root}: needs {} but only {} free",
-                    human_bytes(est.disk_size),
-                    human_bytes(free)
-                );
+                return Err(aurelia::core::error::TypedError::new(
+                    aurelia::core::error::ErrorKind::DiskFull,
+                    format!(
+                        "not enough space on {library_root}: needs {} but only {} free",
+                        human_bytes(est.disk_size),
+                        human_bytes(free)
+                    ),
+                )
+                .into());
             }
         }
     }
