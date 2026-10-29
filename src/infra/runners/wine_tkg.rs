@@ -321,6 +321,8 @@ impl Runner for WineTkgRunner {
                     .env("STEAM_DISABLE_BROWSER", "1")
                     .env("STEAM_NO_BROWSER", "1")
                     .env("STEAMCMD", "1") // tells Steam it's running as a cmd tool
+                    // One wineserver: sync must match.
+                    .envs(proton_sync_env(ctx))
                     .stdout(std::process::Stdio::null()) // silence CEF log spam
                     .stderr(std::process::Stdio::null());
 
@@ -1149,6 +1151,33 @@ impl Runner for WineTkgRunner {
 ///
 /// Wraps this game's per-app config (if any) in a single-entry `UserConfigStore`
 /// and resolves the prefix the same way the launcher does globally.
+/// Proton's esync/fsync choice for this launch.
+///
+/// Shared-prefix Steam must match.
+pub(crate) fn proton_sync_env(ctx: &LaunchContext) -> [(&'static str, &'static str); 2] {
+    let opted_out = |key: &str| {
+        let value = ctx
+            .user_config
+            .as_ref()
+            .and_then(|c| c.env_variables.get(key).cloned())
+            .or_else(|| {
+                ctx.game_fixups
+                    .env
+                    .iter()
+                    .find(|(k, _)| k == key)
+                    .map(|(_, v)| v.clone())
+            })
+            .or_else(|| std::env::var(key).ok());
+        // Proton: set and not "0".
+        value.is_some_and(|v| !v.is_empty() && v != "0")
+    };
+    let flag = |off: bool| if off { "0" } else { "1" };
+    [
+        ("WINEESYNC", flag(opted_out("PROTON_NO_ESYNC"))),
+        ("WINEFSYNC", flag(opted_out("PROTON_NO_FSYNC"))),
+    ]
+}
+
 /// Stand-in UI, signed in as Aurelia.
 async fn enable_wine_headless(steam_dir: &Path) -> bool {
     let session = crate::core::config::load_session()

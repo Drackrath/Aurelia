@@ -171,6 +171,33 @@ mod tests {
         );
     }
 
+    #[test]
+    fn background_steam_sync_follows_proton() {
+        use crate::core::models::UserAppConfig;
+        let mut ctx = mock_context();
+        assert_eq!(
+            crate::infra::runners::wine_tkg::proton_sync_env(&ctx),
+            [("WINEESYNC", "1"), ("WINEFSYNC", "1")]
+        );
+        // Fixup opts out of esync.
+        ctx.game_fixups.env = vec![("PROTON_NO_ESYNC".into(), "1".into())];
+        assert_eq!(
+            crate::infra::runners::wine_tkg::proton_sync_env(&ctx)[0],
+            ("WINEESYNC", "0")
+        );
+        // User "0" re-enables; fsync off.
+        let mut user = UserAppConfig::default();
+        user.env_variables
+            .insert("PROTON_NO_ESYNC".into(), "0".into());
+        user.env_variables
+            .insert("PROTON_NO_FSYNC".into(), "1".into());
+        ctx.user_config = Some(user);
+        assert_eq!(
+            crate::infra::runners::wine_tkg::proton_sync_env(&ctx),
+            [("WINEESYNC", "1"), ("WINEFSYNC", "0")]
+        );
+    }
+
     #[tokio::test]
     async fn test_user_env_wins_over_fixup() {
         use crate::core::models::UserAppConfig;
