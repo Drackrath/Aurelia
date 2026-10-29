@@ -1,7 +1,10 @@
 //! Host Steam without its CEF UI.
 //!
 //! Bind-mounts a stand-in `steamui/index.html`.
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
+#[cfg(target_os = "linux")]
+use anyhow::{Context, bail};
+#[cfg(target_os = "linux")]
 use std::path::{Path, PathBuf};
 
 /// Who the stand-in page signs in.
@@ -19,7 +22,10 @@ pub fn frontend_page(account_name: &str, token_url: Option<&str>) -> String {
         .replace("__TOKEN_URL__", &token_url)
 }
 
-const PAGE: &str = r#"<!doctype html><html><head><title>SharedJSContext</title><meta charset="utf-8"></head><body><script>
+/// Marks our page, not Valve's.
+pub const PAGE_MARKER: &str = "<!-- aurelia-headless -->";
+
+const PAGE: &str = r#"<!doctype html><!-- aurelia-headless --><html><head><title>SharedJSContext</title><meta charset="utf-8"></head><body><script>
 const log = (m) => console.log("[aurelia-headless] " + m);
 const ACCOUNT = __ACCOUNT__;
 const TOKEN_URL = __TOKEN_URL__;
@@ -64,6 +70,7 @@ main();
 </script></body></html>
 "#;
 
+#[cfg(target_os = "linux")]
 /// Chromium switches for a windowless helper.
 ///
 /// Helper PSS: 465 to 249 MB.
@@ -85,8 +92,10 @@ const CEF_FLAGS: &[&str] = &[
     "--js-flags=--lite-mode",
 ];
 
+#[cfg(target_os = "linux")]
 const HELPER_EXEC: &str = r#"exec ./steamwebhelper "$@""#;
 
+#[cfg(target_os = "linux")]
 /// Valve's wrapper with our flags.
 ///
 /// `None` if its exec line changed.
@@ -111,6 +120,7 @@ fn trimmed_wrapper(original: &str, flags: &[&str]) -> Option<String> {
     )
 }
 
+#[cfg(target_os = "linux")]
 /// Whether headless mode can run here.
 pub fn available(steam_root: &Path) -> bool {
     steam_root.join("steamui/index.html").is_file()
@@ -118,6 +128,7 @@ pub fn available(steam_root: &Path) -> bool {
         && which("bwrap").is_some()
 }
 
+#[cfg(target_os = "linux")]
 fn which(bin: &str) -> Option<PathBuf> {
     std::env::var_os("PATH")?
         .to_str()?
@@ -126,6 +137,7 @@ fn which(bin: &str) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
+#[cfg(target_os = "linux")]
 /// Private dir for the page.
 fn page_dir() -> Result<PathBuf> {
     let base = std::env::var_os("XDG_RUNTIME_DIR")
@@ -141,6 +153,7 @@ fn page_dir() -> Result<PathBuf> {
     Ok(dir)
 }
 
+#[cfg(target_os = "linux")]
 /// Start host Steam headless.
 ///
 /// The token is served in the background.
@@ -148,15 +161,8 @@ pub async fn start(steam_root: &Path, login: HeadlessLogin) -> Result<()> {
     if !available(steam_root) {
         bail!("headless Steam needs bwrap and a Steam install with steamui/");
     }
-    let server = match login.refresh_token {
-        Some(token) => Some(TokenServer::start(token, login.account_name.clone()).await?),
-        None => None,
-    };
     let page = page_dir()?.join("index.html");
-    std::fs::write(
-        &page,
-        frontend_page(&login.account_name, server.as_ref().map(|s| s.url.as_str())),
-    )?;
+    std::fs::write(&page, page_for(login).await?)?;
 
     let mut cmd = std::process::Command::new("bwrap");
     cmd.args(["--dev-bind", "/", "/", "--bind"])
@@ -195,10 +201,21 @@ pub async fn start(steam_root: &Path, login: HeadlessLogin) -> Result<()> {
     cmd.spawn().context("starting headless Steam under bwrap")?;
     tracing::info!("Launched headless Steam client (stand-in UI)");
 
-    if let Some(server) = server {
-        tokio::spawn(server.serve_once(std::time::Duration::from_secs(120)));
-    }
     Ok(())
+}
+
+/// Page for `login`; serves its token.
+pub async fn page_for(login: HeadlessLogin) -> Result<String> {
+    let url = match login.refresh_token {
+        Some(token) => {
+            let server = TokenServer::start(token, login.account_name.clone()).await?;
+            let url = server.url.clone();
+            tokio::spawn(server.serve_once(std::time::Duration::from_secs(120)));
+            Some(url)
+        }
+        None => None,
+    };
+    Ok(frontend_page(&login.account_name, url.as_deref()))
 }
 
 /// One-shot loopback token endpoint.
@@ -290,6 +307,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn wrapper_gets_flags_on_exec_line() {
         let valve = "export LD_LIBRARY_PATH=.\necho hi\nexec ./steamwebhelper \"$@\"\n";
         let ours = trimmed_wrapper(valve, &["--a", "--b"]).unwrap();

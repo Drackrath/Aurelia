@@ -4,6 +4,7 @@ pub mod launch_script;
 pub mod pipeline;
 pub mod stages;
 pub mod validators;
+pub mod wine_steam_headless;
 
 #[cfg(test)]
 mod verification_tests;
@@ -157,6 +158,12 @@ fn launch_master_steam(
     steam_cfg: &MasterSteamConfig,
     base_dir: &Path,
 ) -> Result<()> {
+    // Login needs Valve's real UI.
+    if let Some(steam_dir) = steam_exe.parent() {
+        if let Err(e) = wine_steam_headless::disable(steam_dir) {
+            tracing::warn!("could not restore Steam's UI files: {e:#}");
+        }
+    }
     let mut cmd = Command::new(wine);
     cmd.arg(steam_exe);
     // Steam *client* flags tuned for running under Wine. Steam's CEF UI

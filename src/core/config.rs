@@ -171,7 +171,7 @@ pub struct LauncherConfig {
     /// Enable with `aurelia config experimental true` or `AURELIA_EXPERIMENTAL=1`.
     #[serde(default)]
     pub experimental: bool,
-    /// Start host Steam without its CEF UI.
+    /// Start Steam clients without their UI.
     #[serde(default)]
     pub host_steam_headless: bool,
     /// Keep `session.json` encrypted with the OS-keyring key.

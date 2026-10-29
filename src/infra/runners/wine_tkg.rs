@@ -285,6 +285,14 @@ impl Runner for WineTkgRunner {
             if steam_running {
                 println!("✅ Steam already running in prefix — skipping spawn");
             } else {
+                // Headless or Valve's UI, per config.
+                let headless = ctx.launcher_config.host_steam_headless
+                    && enable_wine_headless(&prefix_steam_dir).await;
+                if !headless {
+                    if let Err(e) = crate::launch::wine_steam_headless::disable(&prefix_steam_dir) {
+                        tracing::warn!("could not restore Steam's UI files: {e:#}");
+                    }
+                }
                 // Background Steam is hosted on a DEDICATED Steam-runtime runner —
                 // NOT the game runner's `proton run` wrapper. It must run under a
                 // bare wine so `steam.exe` starts as a plain Windows process.
@@ -1141,6 +1149,36 @@ impl Runner for WineTkgRunner {
 ///
 /// Wraps this game's per-app config (if any) in a single-entry `UserConfigStore`
 /// and resolves the prefix the same way the launcher does globally.
+/// Stand-in UI, signed in as Aurelia.
+async fn enable_wine_headless(steam_dir: &Path) -> bool {
+    let session = crate::core::config::load_session()
+        .await
+        .unwrap_or_default();
+    let Some(account_name) = session.account_name else {
+        tracing::warn!("headless Wine Steam needs an Aurelia login; using Steam's UI");
+        return false;
+    };
+    let login = crate::core::headless_steam::HeadlessLogin {
+        account_name,
+        refresh_token: session.refresh_token,
+    };
+    let result = match crate::core::headless_steam::page_for(login).await {
+        Ok(page) => crate::launch::wine_steam_headless::enable(steam_dir, &page),
+        Err(e) => Err(e),
+    };
+    match result {
+        Ok(()) => {
+            tracing::info!("In-Wine Steam starts headless (stand-in UI, trimmed CEF)");
+            true
+        }
+        Err(e) => {
+            tracing::warn!("headless Wine Steam unavailable ({e:#}); using Steam's UI");
+            let _ = crate::launch::wine_steam_headless::disable(steam_dir);
+            false
+        }
+    }
+}
+
 fn effective_game_prefix(ctx: &LaunchContext) -> PathBuf {
     crate::core::utils::wineprefix_for_game(
         &ctx.launcher_config,

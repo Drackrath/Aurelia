@@ -143,17 +143,14 @@ pub(crate) async fn cmd_config_experimental(enabled: Option<bool>, json: bool) -
     Ok(())
 }
 
-/// `config host-steam-headless`: view or set it.
-pub(crate) async fn cmd_config_host_steam_headless(
-    enabled: Option<bool>,
-    json: bool,
-) -> Result<()> {
+/// `config steam-headless`: view or set it.
+pub(crate) async fn cmd_config_steam_headless(enabled: Option<bool>, json: bool) -> Result<()> {
     let (config, changed) = view_or_set(enabled, |c, value| c.host_steam_headless = value).await?;
     if json {
         print_json(&serde_json::json!({ "host_steam_headless": config.host_steam_headless }));
     } else {
         cli_println!(
-            "Headless host Steam: {}",
+            "Headless Steam: {}",
             if config.host_steam_headless {
                 "enabled"
             } else {
