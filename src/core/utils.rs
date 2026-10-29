@@ -648,6 +648,14 @@ fn read_tail(path: &Path, max_bytes: u64) -> Option<String> {
     Some(String::from_utf8_lossy(&buf).into_owned())
 }
 
+/// Steam under `root` is logged on.
+#[cfg(target_os = "linux")]
+pub fn steam_logged_on_at(root: &Path) -> bool {
+    read_tail(&root.join("logs/connection_log.txt"), 64 * 1024)
+        .and_then(|text| connection_log_logged_on(&text))
+        .unwrap_or(false)
+}
+
 /// Host Steam finished logging on.
 #[cfg(target_os = "linux")]
 pub fn steam_is_logged_on() -> bool {

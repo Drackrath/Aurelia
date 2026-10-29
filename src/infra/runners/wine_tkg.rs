@@ -261,6 +261,7 @@ impl Runner for WineTkgRunner {
             }
 
             let steam_running = SteamClient::is_steam_running_in_prefix(&steam_wineprefix);
+            let steam_check_started = std::time::SystemTime::now();
 
             ctx.with_verification(|v| {
                 v.steam_running_before_launch = steam_running;
@@ -483,6 +484,22 @@ impl Runner for WineTkgRunner {
                         "Background Steam crashed before the game could start",
                     ));
                 }
+            }
+
+            // Proton breaks the real steamclient64.
+            let fresh_since = (!steam_running).then_some(steam_check_started);
+            if let Err(e) = redirect_steamclient64(
+                ctx,
+                &library_root,
+                &prefix_steam_dir,
+                &steam_wineprefix,
+                fresh_since,
+            )
+            .await
+            {
+                tracing::warn!(
+                    "steamclient64 redirect failed; 64-bit games may not see Steam: {e:#}"
+                );
             }
         }
 
@@ -1151,6 +1168,69 @@ impl Runner for WineTkgRunner {
 ///
 /// Wraps this game's per-app config (if any) in a single-entry `UserConfigStore`
 /// and resolves the prefix the same way the launcher does globally.
+/// Name of our steamclient64.dll copy.
+const STEAMCLIENT64_COPY: &str = "steamclient64_aurelia.dll";
+
+/// Point 64-bit games at a renamed copy.
+///
+/// Proton maps its deps to ntdll.
+async fn redirect_steamclient64(
+    ctx: &LaunchContext,
+    library_root: &Path,
+    steam_dir: &Path,
+    wineprefix: &Path,
+    fresh_since: Option<std::time::SystemTime>,
+) -> anyhow::Result<()> {
+    let original = steam_dir.join("steamclient64.dll");
+    if !original.is_file() {
+        return Ok(());
+    }
+    // Steam rewrites ActiveProcess at logon.
+    let log = steam_dir.join("logs/connection_log.txt");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+    loop {
+        let fresh = fresh_since.is_none_or(|t| {
+            std::fs::metadata(&log)
+                .and_then(|m| m.modified())
+                .is_ok_and(|m| m >= t)
+        });
+        if fresh && crate::core::utils::steam_logged_on_at(steam_dir) {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            anyhow::bail!("in-Wine Steam did not log on within 90s");
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+
+    let bytes = std::fs::read(&original)?;
+    let copy = steam_dir.join(STEAMCLIENT64_COPY);
+    if std::fs::read(&copy).ok().as_deref() != Some(bytes.as_slice()) {
+        std::fs::write(&copy, &bytes)?;
+    }
+    let mut reg = resolve_background_steam_command(ctx, library_root)?;
+    reg.args([
+        "reg",
+        "add",
+        r"HKCU\Software\Valve\Steam\ActiveProcess",
+        "/v",
+        "SteamClientDll64",
+        "/t",
+        "REG_SZ",
+        "/d",
+        &format!(r"C:\Program Files (x86)\Steam\{STEAMCLIENT64_COPY}"),
+        "/f",
+    ])
+    .env("WINEPREFIX", wineprefix)
+    .envs(proton_sync_env(ctx))
+    .stdout(std::process::Stdio::null())
+    .stderr(std::process::Stdio::null());
+    let status = tokio::task::spawn_blocking(move || reg.status()).await??;
+    anyhow::ensure!(status.success(), "wine reg add failed: {status}");
+    tracing::info!("64-bit games load {STEAMCLIENT64_COPY}");
+    Ok(())
+}
+
 /// Proton's esync/fsync choice for this launch.
 ///
 /// Shared-prefix Steam must match.
