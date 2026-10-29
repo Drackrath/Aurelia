@@ -502,6 +502,9 @@ async fn run(cli: Cli) -> Result<()> {
             ConfigCommand::Language { lang } => cmd_config_language(lang, json).await,
             ConfigCommand::Country { country } => cmd_config_country(country, json).await,
             ConfigCommand::Experimental { enabled } => cmd_config_experimental(enabled, json).await,
+            ConfigCommand::HostSteamHeadless { enabled } => {
+                cmd_config_host_steam_headless(enabled, json).await
+            }
             ConfigCommand::SteamRuntimePolicy { policy } => {
                 cmd_config_steam_runtime_policy(policy, json).await
             }

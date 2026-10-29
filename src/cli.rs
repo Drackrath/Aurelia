@@ -532,6 +532,17 @@ pub(crate) enum ConfigCommand {
         /// `true` or `false`. Omit to print the current setting.
         enabled: Option<bool>,
     },
+    /// View or set headless host Steam (Linux).
+    ///
+    /// When Aurelia has to start the host Steam client, it runs it without the
+    /// CEF/React UI: inside a bubblewrap mount namespace a stand-in page replaces
+    /// `steamui/index.html`, signs the client in with Aurelia's own session and
+    /// confirms harmless launch prompts. Nothing in the Steam install is modified.
+    /// Needs `bwrap`. Omit the value to print the setting.
+    HostSteamHeadless {
+        /// `true` or `false`. Omit to print the current setting.
+        enabled: Option<bool>,
+    },
     /// View or set the Wine/Proton runner that hosts the Windows Steam runtime.
     ///
     /// Used by `steam-runtime install`/`repair` to drive `SteamSetup.exe` and the

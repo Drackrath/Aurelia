@@ -1,5 +1,7 @@
 pub mod acf;
 pub mod config;
+#[cfg(target_os = "linux")]
+pub mod headless_steam;
 pub mod error;
 pub mod locale;
 pub mod models;

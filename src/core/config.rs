@@ -171,6 +171,9 @@ pub struct LauncherConfig {
     /// Enable with `aurelia config experimental true` or `AURELIA_EXPERIMENTAL=1`.
     #[serde(default)]
     pub experimental: bool,
+    /// Start host Steam without its CEF UI.
+    #[serde(default)]
+    pub host_steam_headless: bool,
     /// Keep `session.json` encrypted with the OS-keyring key.
     /// Enabled automatically by the first successful login.
     #[serde(default)]
@@ -220,6 +223,7 @@ impl Default for LauncherConfig {
             steam_runtime_policy: crate::core::models::SteamRuntimePolicy::default(),
             install_resume: crate::library::backlog::InstallResume::default(),
             experimental: false,
+            host_steam_headless: false,
             encrypt_session: false,
         }
     }

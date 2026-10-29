@@ -4,6 +4,53 @@
 //! and free helpers live in the parent module (in scope via `use super::*`).
 use super::*;
 
+/// Start host Steam; wait for logon.
+#[cfg(target_os = "linux")]
+async fn ensure_host_steam_ready() {
+    let headless = !crate::core::utils::is_steam_running()
+        && load_launcher_config()
+            .await
+            .is_ok_and(|c| c.host_steam_headless)
+        && start_headless_steam().await;
+    if !headless {
+        crate::core::utils::ensure_steam_running();
+    }
+    // Cold headless start takes longer.
+    let timeout = std::time::Duration::from_secs(if headless { 90 } else { 30 });
+    if crate::core::utils::wait_for_steam_logged_on(timeout).await {
+        tracing::info!("Host Steam logged on. Proceeding with launch");
+    } else {
+        tracing::warn!(
+            "Host Steam not logged on within {}s. Launching anyway (Steamworks may fail)",
+            timeout.as_secs()
+        );
+    }
+}
+
+/// Headless host Steam, signed in as Aurelia.
+#[cfg(target_os = "linux")]
+async fn start_headless_steam() -> bool {
+    let Some(root) = crate::core::config::detect_steam_path() else {
+        return false;
+    };
+    let session = load_session().await.unwrap_or_default();
+    let Some(account_name) = session.account_name else {
+        tracing::warn!("headless Steam needs an Aurelia login; starting normal Steam");
+        return false;
+    };
+    let login = crate::core::headless_steam::HeadlessLogin {
+        account_name,
+        refresh_token: session.refresh_token,
+    };
+    match crate::core::headless_steam::start(&root, login).await {
+        Ok(()) => true,
+        Err(e) => {
+            tracing::warn!("headless Steam unavailable ({e:#}); starting normal Steam");
+            false
+        }
+    }
+}
+
 /// Pick the launch entry to run.
 ///
 /// Only one platform's depot is installed, so a launch entry is only usable if its
@@ -252,17 +299,7 @@ impl SteamClient {
         }
         #[cfg(target_os = "linux")]
         if steam_enabled {
-            crate::core::utils::ensure_steam_running();
-            // Avoid racing a cold client.
-            let timeout = std::time::Duration::from_secs(30);
-            if crate::core::utils::wait_for_steam_logged_on(timeout).await {
-                tracing::info!("host Steam logged on; proceeding with launch");
-            } else {
-                tracing::warn!(
-                    "host Steam not logged on within {}s; launching anyway (Steamworks auth may fail)",
-                    timeout.as_secs()
-                );
-            }
+            ensure_host_steam_ready().await;
         }
 
         let launch_options = self.get_product_info(app.app_id).await?;
