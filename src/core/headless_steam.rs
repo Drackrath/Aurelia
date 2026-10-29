@@ -64,6 +64,53 @@ main();
 </script></body></html>
 "#;
 
+/// Chromium switches for a windowless helper.
+///
+/// Helper PSS: 465 to 249 MB.
+const CEF_FLAGS: &[&str] = &[
+    "--single-process",
+    "--ozone-platform=headless",
+    "--use-gl=disabled",
+    "--disable-gpu",
+    "--disable-gpu-compositing",
+    "--disable-software-rasterizer",
+    "--in-process-gpu",
+    "--no-zygote",
+    // Only our local page loads.
+    "--no-sandbox",
+    "--disable-extensions",
+    "--disable-background-networking",
+    "--disable-component-update",
+    "--mute-audio",
+    "--js-flags=--lite-mode",
+];
+
+const HELPER_EXEC: &str = r#"exec ./steamwebhelper "$@""#;
+
+/// Valve's wrapper with our flags.
+///
+/// `None` if its exec line changed.
+fn trimmed_wrapper(original: &str, flags: &[&str]) -> Option<String> {
+    if original.lines().filter(|l| l.trim() == HELPER_EXEC).count() != 1 {
+        return None;
+    }
+    let exec = format!("{HELPER_EXEC} {}", flags.join(" "));
+    Some(
+        original
+            .lines()
+            .map(|l| {
+                if l.trim() == HELPER_EXEC {
+                    exec.as_str()
+                } else {
+                    l
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n",
+    )
+}
+
 /// Whether headless mode can run here.
 pub fn available(steam_root: &Path) -> bool {
     steam_root.join("steamui/index.html").is_file()
@@ -114,8 +161,22 @@ pub async fn start(steam_root: &Path, login: HeadlessLogin) -> Result<()> {
     let mut cmd = std::process::Command::new("bwrap");
     cmd.args(["--dev-bind", "/", "/", "--bind"])
         .arg(&page)
-        .arg(steam_root.join("steamui/index.html"))
-        .arg("--")
+        .arg(steam_root.join("steamui/index.html"));
+    let wrap_path = steam_root.join("ubuntu12_64/steamwebhelper_sniper_wrap.sh");
+    let trimmed = std::fs::read_to_string(&wrap_path)
+        .ok()
+        .and_then(|w| trimmed_wrapper(&w, CEF_FLAGS));
+    match trimmed {
+        Some(wrapper) => {
+            let ours = page.with_file_name("steamwebhelper_sniper_wrap.sh");
+            std::fs::write(&ours, wrapper)?;
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&ours, std::fs::Permissions::from_mode(0o700))?;
+            cmd.arg("--bind").arg(&ours).arg(&wrap_path);
+        }
+        None => tracing::warn!("steamwebhelper wrapper changed; running CEF untrimmed"),
+    }
+    cmd.arg("--")
         .arg(steam_root.join("steam.sh"))
         .arg("-silent")
         .stdin(std::process::Stdio::null())
@@ -227,6 +288,16 @@ fn respond(request: &str, secret: &str, body: &str) -> (String, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wrapper_gets_flags_on_exec_line() {
+        let valve = "export LD_LIBRARY_PATH=.\necho hi\nexec ./steamwebhelper \"$@\"\n";
+        let ours = trimmed_wrapper(valve, &["--a", "--b"]).unwrap();
+        assert!(ours.contains("export LD_LIBRARY_PATH=.\necho hi\n"));
+        assert!(ours.contains(r#"exec ./steamwebhelper "$@" --a --b"#));
+        // Changed upstream: leave untrimmed.
+        assert!(trimmed_wrapper("exec ./steamwebhelper --new \"$@\"", &["--a"]).is_none());
+    }
 
     #[test]
     fn page_embeds_escaped_values() {
