@@ -341,6 +341,82 @@ pub fn stop_master_steam() -> bool {
     was_running
 }
 
+/// Outcome of starting a Steam client.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct SteamStart {
+    pub already_running: bool,
+    pub headless: bool,
+    pub logged_on: bool,
+}
+
+/// Start the in-Wine Steam, no game.
+///
+/// Same setup as a game launch.
+pub async fn start_background_master_steam(config: &LauncherConfig) -> Result<SteamStart> {
+    use crate::infra::runners::wine_tkg;
+    let steam_cfg = crate::core::utils::get_master_steam_config();
+    let steam_exe = require_steam_exe(&steam_cfg)?;
+    let steam_dir = steam_exe
+        .parent()
+        .context("steam.exe has no parent directory")?
+        .to_path_buf();
+    let wine = resolve_runtime_wine(config)?;
+    let prefix = steam_cfg.wine_prefix.clone();
+    let sync = wine_tkg::default_sync_env();
+
+    let already_running = SteamClient::is_steam_running_in_prefix(&prefix);
+    let started = std::time::SystemTime::now();
+    let headless = if already_running {
+        wine_steam_headless::is_enabled(&steam_dir)
+    } else {
+        SteamClient::write_headless_steam_cfg(&steam_dir);
+        let headless =
+            config.host_steam_headless && wine_tkg::enable_wine_headless(&steam_dir).await;
+        if !headless {
+            if let Err(e) = wine_steam_headless::disable(&steam_dir) {
+                tracing::warn!("could not restore Steam's UI files: {e:#}");
+            }
+        }
+        crate::core::utils::ensure_steam_runtime_prefix_libs(&wine, &prefix);
+        let (tray_wine, tray_prefix) = (wine.clone(), prefix.clone());
+        let tray = tokio::task::spawn_blocking(move || {
+            wine_steam_headless::set_tray_hidden(&tray_wine, &tray_prefix, &sync, headless)
+        })
+        .await?;
+        if let Err(e) = tray {
+            tracing::warn!("could not set Steam's tray icon: {e:#}");
+        }
+
+        let mut cmd = Command::new(&wine);
+        cmd.current_dir(&steam_dir)
+            .arg(r"C:\Program Files (x86)\Steam\steam.exe")
+            .args(wine_tkg::background_steam_args(
+                &crate::core::models::SteamLaunchConfig::default(),
+            ));
+        wine_tkg::apply_background_steam_env(&mut cmd, &prefix, sync);
+        cmd.spawn().context("failed to start the in-Wine Steam")?;
+        headless
+    };
+
+    // Waits for logon, like a launch.
+    let fresh_since = (!already_running).then_some(started);
+    let logged_on =
+        match wine_tkg::redirect_steamclient64(&wine, sync, &steam_dir, &prefix, fresh_since)
+            .await
+        {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::warn!("in-Wine Steam not ready: {e:#}");
+                false
+            }
+        };
+    Ok(SteamStart {
+        already_running,
+        headless,
+        logged_on,
+    })
+}
+
 /// Remove the master Windows Steam prefix entirely — the opposite of
 /// [`install_master_steam`]. Stops any Steam still running in the prefix first (so no
 /// files are held open), then deletes the whole master Steam root (the prefix **and**

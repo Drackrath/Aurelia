@@ -622,7 +622,6 @@ pub fn ensure_steam_running() {
 }
 
 /// Latest logged-on state in connection-log text.
-#[cfg(target_os = "linux")]
 fn connection_log_logged_on(text: &str) -> Option<bool> {
     let mut state = None;
     for line in text.lines() {
@@ -636,7 +635,6 @@ fn connection_log_logged_on(text: &str) -> Option<bool> {
 }
 
 /// Read the final `max_bytes` of a file.
-#[cfg(target_os = "linux")]
 fn read_tail(path: &Path, max_bytes: u64) -> Option<String> {
     use std::io::{Read, Seek, SeekFrom};
     let mut f = std::fs::File::open(path).ok()?;
@@ -649,7 +647,6 @@ fn read_tail(path: &Path, max_bytes: u64) -> Option<String> {
 }
 
 /// Steam under `root` is logged on.
-#[cfg(target_os = "linux")]
 pub fn steam_logged_on_at(root: &Path) -> bool {
     read_tail(&root.join("logs/connection_log.txt"), 64 * 1024)
         .and_then(|text| connection_log_logged_on(&text))

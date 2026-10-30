@@ -325,6 +325,74 @@ pub(crate) async fn cmd_steam_runtime_login(json: bool) -> Result<()> {
     Ok(())
 }
 
+/// `steam-runtime start`: background in-Wine Steam.
+pub(crate) async fn cmd_steam_runtime_start(json: bool) -> Result<()> {
+    let config = steam_runtime_config("starting Steam").await?;
+    let start = aurelia::launch::start_background_master_steam(&config).await?;
+    report_steam_start("in-Wine Steam", start, json);
+    Ok(())
+}
+
+/// `host-steam start`.
+pub(crate) async fn cmd_host_steam_start(json: bool) -> Result<()> {
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    {
+        let start = aurelia::steam_client::start_host_steam().await;
+        report_steam_start("host Steam", start, json);
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        let _ = json;
+        bail!("host Steam control is not supported on this platform")
+    }
+}
+
+/// `host-steam stop`.
+pub(crate) async fn cmd_host_steam_stop(json: bool) -> Result<()> {
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    {
+        let was_running = aurelia::steam_client::stop_host_steam().await?;
+        if json {
+            print_json(&serde_json::json!({
+                "status": if was_running { "stopped" } else { "not_running" },
+            }));
+        } else if was_running {
+            cli_println!("Stopped the host Steam client.");
+        } else {
+            cli_println!("The host Steam client is not running.");
+        }
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        let _ = json;
+        bail!("host Steam control is not supported on this platform")
+    }
+}
+
+fn report_steam_start(what: &str, start: aurelia::launch::SteamStart, json: bool) {
+    if json {
+        print_json(&serde_json::json!({
+            "status": if start.already_running { "already_running" } else { "started" },
+            "headless": start.headless,
+            "logged_on": start.logged_on,
+        }));
+        return;
+    }
+    let mode = if start.headless { "headless" } else { "with its UI" };
+    if start.already_running {
+        cli_println!("The {what} is already running ({mode}).");
+    } else {
+        cli_println!("Started the {what} ({mode}).");
+    }
+    if start.logged_on {
+        cli_println!("It is signed in.");
+    } else {
+        cli_println!("It has not signed in yet; check its login.");
+    }
+}
+
 /// `steam-runtime stop`: kill the in-Wine Steam client running in the master prefix.
 pub(crate) async fn cmd_steam_runtime_stop(json: bool) -> Result<()> {
     let was_running = aurelia::launch::stop_master_steam();

@@ -104,8 +104,9 @@ fn must_run_locally(cli: &Cli) -> bool {
                 | SteamRuntimeCommand::Repair
                 | SteamRuntimeCommand::Uninstall
                 | SteamRuntimeCommand::Login
+                | SteamRuntimeCommand::Start
                 | SteamRuntimeCommand::Stop,
-        }
+        } | Command::HostSteam { .. }
     );
 
     // `duplicates` only reads appmanifests off disk — no Steam session, nothing the
@@ -577,8 +578,13 @@ async fn run(cli: Cli) -> Result<()> {
             SteamRuntimeCommand::Repair => cmd_steam_runtime_repair(json).await,
             SteamRuntimeCommand::Uninstall => cmd_steam_runtime_uninstall(json).await,
             SteamRuntimeCommand::Login => cmd_steam_runtime_login(json).await,
+            SteamRuntimeCommand::Start => cmd_steam_runtime_start(json).await,
             SteamRuntimeCommand::Stop => cmd_steam_runtime_stop(json).await,
             SteamRuntimeCommand::Status => cmd_steam_runtime_status(json).await,
+        },
+        Command::HostSteam { command } => match command {
+            HostSteamCommand::Start => cmd_host_steam_start(json).await,
+            HostSteamCommand::Stop => cmd_host_steam_stop(json).await,
         },
         Command::Luxtorpeda { command } => match command {
             LuxtorpedaCommand::Enable => cmd_luxtorpeda_toggle(true, json).await,

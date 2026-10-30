@@ -73,6 +73,12 @@ pub fn enable(steam_dir: &Path, page: &str) -> Result<()> {
     Ok(())
 }
 
+/// Whether the stand-in page is installed.
+pub fn is_enabled(steam_dir: &Path) -> bool {
+    std::fs::read_to_string(paths(steam_dir).page)
+        .is_ok_and(|page| page.contains(crate::core::headless_steam::PAGE_MARKER))
+}
+
 /// Put Valve's files back.
 pub fn disable(steam_dir: &Path) -> Result<()> {
     let p = paths(steam_dir);

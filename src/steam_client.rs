@@ -499,6 +499,8 @@ mod launch;
 mod library;
 mod manage;
 pub use launch::{LaunchTargetChoice, launch_targets, select_launch_entry};
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+pub use launch::{start_host_steam, stop_host_steam};
 mod cloudconfig;
 mod collections;
 mod manifests;

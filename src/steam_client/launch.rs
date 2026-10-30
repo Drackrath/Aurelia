@@ -7,7 +7,18 @@ use super::*;
 /// Start host Steam; wait for logon.
 #[cfg(target_os = "linux")]
 async fn ensure_host_steam_ready() {
-    let headless = !crate::core::utils::is_steam_running()
+    if start_host_steam().await.logged_on {
+        tracing::info!("Host Steam logged on. Proceeding with launch");
+    } else {
+        tracing::warn!("Host Steam not logged on in time. Launching anyway (Steamworks may fail)");
+    }
+}
+
+/// Start host Steam, per config.
+#[cfg(target_os = "linux")]
+pub async fn start_host_steam() -> crate::launch::SteamStart {
+    let already_running = crate::core::utils::is_steam_running();
+    let headless = !already_running
         && load_launcher_config()
             .await
             .is_ok_and(|c| c.host_steam_headless)
@@ -17,14 +28,59 @@ async fn ensure_host_steam_ready() {
     }
     // Cold headless start takes longer.
     let timeout = std::time::Duration::from_secs(if headless { 90 } else { 30 });
-    if crate::core::utils::wait_for_steam_logged_on(timeout).await {
-        tracing::info!("Host Steam logged on. Proceeding with launch");
-    } else {
-        tracing::warn!(
-            "Host Steam not logged on within {}s. Launching anyway (Steamworks may fail)",
-            timeout.as_secs()
-        );
+    let logged_on = crate::core::utils::wait_for_steam_logged_on(timeout).await;
+    crate::launch::SteamStart {
+        already_running,
+        headless,
+        logged_on,
     }
+}
+
+/// Start host Steam (tray).
+#[cfg(target_os = "windows")]
+pub async fn start_host_steam() -> crate::launch::SteamStart {
+    let already_running = SteamClient::steam_is_running();
+    SteamClient::ensure_host_steam_ready(std::time::Duration::from_secs(30)).await;
+    crate::launch::SteamStart {
+        already_running,
+        headless: false,
+        logged_on: SteamClient::steam_is_running() && SteamClient::steam_is_logged_on(),
+    }
+}
+
+/// Shut host Steam down.
+///
+/// False when it wasn't running.
+#[cfg(target_os = "linux")]
+pub async fn stop_host_steam() -> Result<bool> {
+    use crate::core::utils::is_steam_running;
+    // `-shutdown` would start a stopped Steam.
+    if !is_steam_running() {
+        return Ok(false);
+    }
+    let mut cmd = std::process::Command::new("steam");
+    cmd.arg("-shutdown")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    tokio::task::spawn_blocking(move || cmd.status())
+        .await?
+        .context("running steam -shutdown")?;
+    for _ in 0..60 {
+        if !is_steam_running() {
+            return Ok(true);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    bail!("host Steam did not shut down within 30s")
+}
+
+/// Shut host Steam down.
+#[cfg(target_os = "windows")]
+pub async fn stop_host_steam() -> Result<bool> {
+    let was_running = SteamClient::steam_is_running();
+    tokio::task::spawn_blocking(SteamClient::shutdown_steam).await??;
+    Ok(was_running)
 }
 
 /// Headless host Steam, signed in as Aurelia.

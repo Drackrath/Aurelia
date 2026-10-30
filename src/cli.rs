@@ -420,6 +420,11 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: SteamRuntimeCommand,
     },
+    /// Start or stop the host Steam.
+    HostSteam {
+        #[command(subcommand)]
+        command: HostSteamCommand,
+    },
     /// Manage the optional luxtorpeda native-engine plugin.
     Luxtorpeda {
         #[command(subcommand)]
@@ -651,6 +656,8 @@ pub(crate) enum SteamRuntimeCommand {
     /// login`). Requires `steam_runtime_runner` and an installed runtime.
     #[command(visible_alias = "relogin")]
     Login,
+    /// Start the background in-Wine Steam.
+    Start,
     /// Stop the in-Wine Steam client running in the master prefix (kills its Wine
     /// session), without uninstalling. Use to shut down a Steam started by `login`
     /// or one left running after a game launch.
@@ -658,6 +665,14 @@ pub(crate) enum SteamRuntimeCommand {
     /// Show the resolved master prefix, layout, whether steam.exe is present, and
     /// whether a Steam-runtime runner is configured.
     Status,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum HostSteamCommand {
+    /// Start host Steam, headless if configured.
+    Start,
+    /// Shut the host Steam client down.
+    Stop,
 }
 
 #[derive(Subcommand)]

@@ -232,33 +232,7 @@ impl Runner for WineTkgRunner {
                 .map(|c| c.steam_launch_config.clone())
                 .unwrap_or_default();
 
-            let mut steam_args = vec![
-                "-silent".to_string(),
-                "-tcp".to_string(),
-                "-noverifyfiles".to_string(),
-                "-noreactlogin".to_string(),
-                "-cef-disable-gpu".to_string(),
-                "-cef-disable-sandbox".to_string(),
-            ];
-
-            if slc.no_friends_ui {
-                steam_args.push("-nofriendsui".to_string());
-            }
-            if slc.no_chat_ui {
-                steam_args.push("-nochatui".to_string());
-            }
-            if slc.no_browser {
-                steam_args.push("-no-browser".to_string());
-            }
-            if slc.no_overlay {
-                steam_args.push("-disable-overlay".to_string());
-            }
-            if slc.no_vr {
-                steam_args.push("-noopenvr".to_string());
-            }
-            if slc.big_picture {
-                steam_args.push("-bigpicture".to_string());
-            }
+            let steam_args = background_steam_args(&slc);
 
             let steam_running = SteamClient::is_steam_running_in_prefix(&steam_wineprefix);
             let steam_check_started = std::time::SystemTime::now();
@@ -323,24 +297,7 @@ impl Runner for WineTkgRunner {
                 steam_cmd
                     .arg("C:\\Program Files (x86)\\Steam\\steam.exe")
                     .args(&steam_args);
-                steam_cmd
-                    .env("WINEPREFIX", &steam_wineprefix)
-                    .env(
-                        "WINEDLLOVERRIDES",
-                        "vstdlib_s=n,b;tier0_s=n,b;steamclient=n,b;steamclient64=n,b;\
-                                 steam_api=n,b;steam_api64=n,b;lsteamclient=;\
-                                 GameOverlayRenderer=n;GameOverlayRenderer64=n",
-                    )
-                    .env("WINEPATH", "C:\\Program Files (x86)\\Steam")
-                    .env("STEAM_DISABLE_BROWSER", "1")
-                    .env("STEAM_NO_BROWSER", "1")
-                    .env("STEAMCMD", "1") // tells Steam it's running as a cmd tool
-                    // Else steamclient64 init fails.
-                    .env("PROTON_DISABLE_LSTEAMCLIENT", "1")
-                    // One wineserver: sync must match.
-                    .envs(proton_sync_env(ctx))
-                    .stdout(std::process::Stdio::null()) // silence CEF log spam
-                    .stderr(std::process::Stdio::null());
+                apply_background_steam_env(&mut steam_cmd, &steam_wineprefix, proton_sync_env(ctx));
 
                 tracing::debug!(
                     program = ?steam_cmd.get_program(),
@@ -503,13 +460,19 @@ impl Runner for WineTkgRunner {
 
             // Proton breaks the real steamclient64.
             let fresh_since = (!steam_running).then_some(steam_check_started);
-            if let Err(e) = redirect_steamclient64(
-                ctx,
-                &library_root,
-                &prefix_steam_dir,
-                &steam_wineprefix,
-                fresh_since,
-            )
+            let redirect = resolve_background_steam_command(ctx, &library_root).map(|c| {
+                PathBuf::from(c.get_program())
+            });
+            if let Err(e) = async {
+                redirect_steamclient64(
+                    &redirect?,
+                    proton_sync_env(ctx),
+                    &prefix_steam_dir,
+                    &steam_wineprefix,
+                    fresh_since,
+                )
+                .await
+            }
             .await
             {
                 tracing::warn!(
@@ -1189,9 +1152,9 @@ const STEAMCLIENT64_COPY: &str = "steamclient64_aurelia.dll";
 /// Point 64-bit games at a renamed copy.
 ///
 /// Proton maps its deps to ntdll.
-async fn redirect_steamclient64(
-    ctx: &LaunchContext,
-    library_root: &Path,
+pub(crate) async fn redirect_steamclient64(
+    wine: &Path,
+    sync: SyncEnv,
     steam_dir: &Path,
     wineprefix: &Path,
     fresh_since: Option<std::time::SystemTime>,
@@ -1223,7 +1186,7 @@ async fn redirect_steamclient64(
     if std::fs::read(&copy).ok().as_deref() != Some(bytes.as_slice()) {
         std::fs::write(&copy, &bytes)?;
     }
-    let mut reg = resolve_background_steam_command(ctx, library_root)?;
+    let mut reg = Command::new(wine);
     reg.args([
         "reg",
         "add",
@@ -1237,7 +1200,7 @@ async fn redirect_steamclient64(
         "/f",
     ])
     .env("WINEPREFIX", wineprefix)
-    .envs(proton_sync_env(ctx))
+    .envs(sync)
     .stdout(std::process::Stdio::null())
     .stderr(std::process::Stdio::null());
     let status = tokio::task::spawn_blocking(move || reg.status()).await??;
@@ -1249,10 +1212,9 @@ async fn redirect_steamclient64(
 /// Proton's esync/fsync choice for this launch.
 ///
 /// Shared-prefix Steam must match.
-pub(crate) fn proton_sync_env(ctx: &LaunchContext) -> [(&'static str, &'static str); 2] {
-    let opted_out = |key: &str| {
-        let value = ctx
-            .user_config
+pub(crate) fn proton_sync_env(ctx: &LaunchContext) -> SyncEnv {
+    sync_env_with(|key| {
+        ctx.user_config
             .as_ref()
             .and_then(|c| c.env_variables.get(key).cloned())
             .or_else(|| {
@@ -1262,10 +1224,21 @@ pub(crate) fn proton_sync_env(ctx: &LaunchContext) -> [(&'static str, &'static s
                     .find(|(k, _)| k == key)
                     .map(|(_, v)| v.clone())
             })
-            .or_else(|| std::env::var(key).ok());
-        // Proton: set and not "0".
-        value.is_some_and(|v| !v.is_empty() && v != "0")
-    };
+            .or_else(|| std::env::var(key).ok())
+    })
+}
+
+/// Sync choice without a game.
+pub(crate) fn default_sync_env() -> SyncEnv {
+    sync_env_with(|key| std::env::var(key).ok())
+}
+
+/// WINEESYNC/WINEFSYNC pair.
+pub(crate) type SyncEnv = [(&'static str, &'static str); 2];
+
+fn sync_env_with(lookup: impl Fn(&str) -> Option<String>) -> SyncEnv {
+    // Proton: set and not "0".
+    let opted_out = |key: &str| lookup(key).is_some_and(|v| !v.is_empty() && v != "0");
     let flag = |off: bool| if off { "0" } else { "1" };
     [
         ("WINEESYNC", flag(opted_out("PROTON_NO_ESYNC"))),
@@ -1273,8 +1246,58 @@ pub(crate) fn proton_sync_env(ctx: &LaunchContext) -> [(&'static str, &'static s
     ]
 }
 
+/// Flags for the background Steam.
+pub(crate) fn background_steam_args(
+    slc: &crate::core::models::SteamLaunchConfig,
+) -> Vec<String> {
+    let mut args: Vec<String> = [
+        "-silent",
+        "-tcp",
+        "-noverifyfiles",
+        "-noreactlogin",
+        "-cef-disable-gpu",
+        "-cef-disable-sandbox",
+    ]
+    .map(String::from)
+    .to_vec();
+    for (on, flag) in [
+        (slc.no_friends_ui, "-nofriendsui"),
+        (slc.no_chat_ui, "-nochatui"),
+        (slc.no_browser, "-no-browser"),
+        (slc.no_overlay, "-disable-overlay"),
+        (slc.no_vr, "-noopenvr"),
+        (slc.big_picture, "-bigpicture"),
+    ] {
+        if on {
+            args.push(flag.to_string());
+        }
+    }
+    args
+}
+
+/// Env for the background Steam.
+pub(crate) fn apply_background_steam_env(cmd: &mut Command, wineprefix: &Path, sync: SyncEnv) {
+    cmd.env("WINEPREFIX", wineprefix)
+        .env(
+            "WINEDLLOVERRIDES",
+            "vstdlib_s=n,b;tier0_s=n,b;steamclient=n,b;steamclient64=n,b;\
+                     steam_api=n,b;steam_api64=n,b;lsteamclient=;\
+                     GameOverlayRenderer=n;GameOverlayRenderer64=n",
+        )
+        .env("WINEPATH", "C:\\Program Files (x86)\\Steam")
+        .env("STEAM_DISABLE_BROWSER", "1")
+        .env("STEAM_NO_BROWSER", "1")
+        .env("STEAMCMD", "1") // tells Steam it's running as a cmd tool
+        // Else steamclient64 init fails.
+        .env("PROTON_DISABLE_LSTEAMCLIENT", "1")
+        // One wineserver: sync must match.
+        .envs(sync)
+        .stdout(std::process::Stdio::null()) // silence CEF log spam
+        .stderr(std::process::Stdio::null());
+}
+
 /// Stand-in UI, signed in as Aurelia.
-async fn enable_wine_headless(steam_dir: &Path) -> bool {
+pub(crate) async fn enable_wine_headless(steam_dir: &Path) -> bool {
     let session = crate::core::config::load_session()
         .await
         .unwrap_or_default();
