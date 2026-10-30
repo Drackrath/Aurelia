@@ -537,16 +537,17 @@ pub(crate) enum ConfigCommand {
         /// `true` or `false`. Omit to print the current setting.
         enabled: Option<bool>,
     },
-    /// View or set headless Steam (Linux): host client and in-Wine runtime.
+    /// View or set headless Steam: host client and in-Wine runtime.
     ///
     /// When Aurelia starts a Steam client, it runs it without the React UI: a
     /// stand-in page replaces `steamui/index.html`, signs the client in with
     /// Aurelia's own session and confirms harmless launch prompts, and the CEF
-    /// helper runs trimmed (single process, no GPU). The host client is wrapped
-    /// in a bubblewrap mount namespace, so its install is untouched (needs
-    /// `bwrap`); the in-Wine Steam is Aurelia's own, so its files are swapped and
-    /// restored when this is turned off or `steam-runtime login` needs the real
-    /// UI. Omit the value to print the setting.
+    /// helper runs trimmed (single process, no GPU). On Linux the host client is
+    /// wrapped in a bubblewrap mount namespace, so its install is untouched
+    /// (needs `bwrap`). The in-Wine Steam, and Steam on Windows, have their
+    /// files swapped; Valve's originals are restored when this is turned off
+    /// (or when `steam-runtime login` needs the real UI). Omit the value to
+    /// print the setting.
     #[command(alias = "host-steam-headless")]
     SteamHeadless {
         /// `true` or `false`. Omit to print the current setting.
