@@ -322,6 +322,8 @@ impl Runner for WineTkgRunner {
                     .env("STEAM_DISABLE_BROWSER", "1")
                     .env("STEAM_NO_BROWSER", "1")
                     .env("STEAMCMD", "1") // tells Steam it's running as a cmd tool
+                    // Else steamclient64 init fails.
+                    .env("PROTON_DISABLE_LSTEAMCLIENT", "1")
                     // One wineserver: sync must match.
                     .envs(proton_sync_env(ctx))
                     .stdout(std::process::Stdio::null()) // silence CEF log spam

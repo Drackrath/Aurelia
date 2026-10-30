@@ -201,6 +201,8 @@ fn apply_master_steam_env(
     cmd.env("WINEPREFIX", &steam_cfg.wine_prefix);
     cmd.env("STEAM_COMPAT_DATA_PATH", &steam_cfg.root_dir);
     cmd.env("WINEPATH", "C:\\Program Files (x86)\\Steam");
+    // Else steamclient64 init fails.
+    cmd.env("PROTON_DISABLE_LSTEAMCLIENT", "1");
 
     let fake_env = crate::core::utils::setup_fake_steam_trap(base_dir)?;
     cmd.env("STEAM_COMPAT_CLIENT_INSTALL_PATH", &fake_env);
