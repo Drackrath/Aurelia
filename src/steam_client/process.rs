@@ -50,6 +50,7 @@ impl SteamClient {
     /// failure or timeout the game launches anyway and the reason is logged.
     #[cfg(target_os = "windows")]
     pub async fn ensure_host_steam_ready(timeout: std::time::Duration) {
+        let mut started_at = None;
         if SteamClient::steam_is_running() {
             tracing::info!("Steam client already running; not starting it");
         } else {
@@ -58,9 +59,26 @@ impl SteamClient {
                 tracing::warn!("could not start Steam client: {e:#}");
                 return;
             }
+            started_at = Some(std::time::SystemTime::now());
         }
+        // ActiveUser can be stale; check the log.
+        let fresh_logon = || {
+            let Some(since) = started_at else {
+                return true;
+            };
+            let Some(root) = steam_exe_path().and_then(|e| e.parent().map(Path::to_path_buf))
+            else {
+                return true;
+            };
+            let log = root.join("logs/connection_log.txt");
+            std::fs::metadata(&log)
+                .and_then(|m| m.modified())
+                .is_ok_and(|t| t >= since)
+                && crate::core::utils::steam_logged_on_at(&root)
+        };
         let start = std::time::Instant::now();
-        while !(SteamClient::steam_is_running() && SteamClient::steam_is_logged_on()) {
+        while !(SteamClient::steam_is_running() && SteamClient::steam_is_logged_on() && fresh_logon())
+        {
             if start.elapsed() >= timeout {
                 tracing::warn!(
                     "Steam not logged on within {}s; launching anyway (Steamworks auth may fail)",
