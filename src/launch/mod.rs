@@ -164,6 +164,9 @@ fn launch_master_steam(
             tracing::warn!("could not restore Steam's UI files: {e:#}");
         }
     }
+    if let Err(e) = wine_steam_headless::set_tray_hidden(wine, &steam_cfg.wine_prefix, &[], false) {
+        tracing::warn!("could not restore Steam's tray icon: {e:#}");
+    }
     let mut cmd = Command::new(wine);
     cmd.arg(steam_exe);
     // Steam *client* flags tuned for running under Wine. Steam's CEF UI

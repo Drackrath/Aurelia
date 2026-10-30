@@ -306,6 +306,19 @@ impl Runner for WineTkgRunner {
                     &PathBuf::from(steam_cmd.get_program()),
                     &steam_wineprefix,
                 );
+                // Headless icon only crashes Steam.
+                let wine = PathBuf::from(steam_cmd.get_program());
+                let prefix = steam_wineprefix.clone();
+                let sync = proton_sync_env(ctx);
+                let tray = tokio::task::spawn_blocking(move || {
+                    crate::launch::wine_steam_headless::set_tray_hidden(
+                        &wine, &prefix, &sync, headless,
+                    )
+                })
+                .await;
+                if let Ok(Err(e)) = tray {
+                    tracing::warn!("could not set Steam's tray icon: {e:#}");
+                }
                 steam_cmd.current_dir(&prefix_steam_dir);
                 steam_cmd
                     .arg("C:\\Program Files (x86)\\Steam\\steam.exe")

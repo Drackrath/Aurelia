@@ -104,6 +104,75 @@ pub fn disable(steam_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Wine reads this at desktop start.
+const TRAY_POLICY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer";
+
+/// Whether `user.reg` hides tray icons.
+pub fn tray_hidden(wineprefix: &Path) -> bool {
+    std::fs::read_to_string(wineprefix.join("user.reg")).is_ok_and(|reg| {
+        reg.split("\n[").any(|section| {
+            section
+                .starts_with(r"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer]")
+                && section.contains("\"NoTrayItemsDisplay\"=dword:00000001")
+        })
+    })
+}
+
+/// Hide or show the prefix's tray.
+///
+/// Steam's headless icon is dead.
+pub fn set_tray_hidden(
+    wine: &Path,
+    wineprefix: &Path,
+    envs: &[(&str, &str)],
+    hide: bool,
+) -> Result<()> {
+    if tray_hidden(wineprefix) == hide {
+        return Ok(());
+    }
+    let mut reg = std::process::Command::new(wine);
+    if hide {
+        reg.args(["reg", "add", TRAY_POLICY, "/v", "NoTrayItemsDisplay"])
+            .args(["/t", "REG_DWORD", "/d", "1", "/f"]);
+    } else {
+        reg.args([
+            "reg",
+            "delete",
+            TRAY_POLICY,
+            "/v",
+            "NoTrayItemsDisplay",
+            "/f",
+        ]);
+    }
+    reg.env("WINEPREFIX", wineprefix)
+        .envs(envs.iter().copied())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let status = reg.status().context("running wine reg")?;
+    anyhow::ensure!(status.success(), "wine reg failed: {status}");
+
+    // Our boot's desktop must exit.
+    let mut wait = std::process::Command::new(wine.with_file_name("wineserver"));
+    wait.arg("-w")
+        .env("WINEPREFIX", wineprefix)
+        .envs(envs.iter().copied())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    if let Ok(mut child) = wait.spawn() {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while child.try_wait().ok().flatten().is_none() {
+            if std::time::Instant::now() >= deadline {
+                // Prefix busy; applies next boot.
+                let _ = child.kill();
+                let _ = child.wait();
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,6 +225,19 @@ mod tests {
         assert_eq!(std::fs::read(&p.helper).unwrap(), b"MZvalve-helper-v2");
         assert_eq!(std::fs::read(&p.page).unwrap(), b"<html>valve v2</html>");
         assert!(!p.real.exists() && !p.page_orig.exists());
+    }
+
+    #[test]
+    fn reads_tray_policy_from_user_reg() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!tray_hidden(dir.path()));
+        std::fs::write(
+            dir.path().join("user.reg"),
+            "WINE REGISTRY Version 2\n\n[Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Policies\\\\Explorer] 1793343370\n\
+             #time=1dc\n\"NoTrayItemsDisplay\"=dword:00000001\n\n[Software\\\\Wine] 1\n",
+        )
+        .unwrap();
+        assert!(tray_hidden(dir.path()));
     }
 
     #[test]
