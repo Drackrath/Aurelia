@@ -185,6 +185,8 @@ pub async fn start(steam_root: &Path, login: HeadlessLogin) -> Result<()> {
     cmd.arg("--")
         .arg(steam_root.join("steam.sh"))
         .arg("-silent")
+        // Bound files fail verify; reinstall loops.
+        .arg("-noverifyfiles")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
