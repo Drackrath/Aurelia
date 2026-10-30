@@ -164,6 +164,58 @@ pub(crate) async fn cmd_config_steam_headless(enabled: Option<bool>, json: bool)
     Ok(())
 }
 
+/// `config steamrt3 [host|wine|both] [true|false]`: view or set it.
+pub(crate) async fn cmd_config_steamrt3(
+    target: Option<Steamrt3Target>,
+    enabled: Option<bool>,
+    json: bool,
+) -> Result<()> {
+    if enabled.is_some() && target.is_none() {
+        anyhow::bail!("name the client: `config steamrt3 host|wine|both <true|false>`");
+    }
+    let set_host = enabled.filter(|_| {
+        matches!(target, Some(Steamrt3Target::Host | Steamrt3Target::Both))
+    });
+    #[cfg(target_os = "linux")]
+    let host = {
+        use aurelia::core::headless_steam::{rt3_client, set_rt3_client};
+        let host_root = aurelia::core::config::detect_steam_path();
+        if let Some(on) = set_host {
+            let root = host_root.as_deref().context("no host Steam install found")?;
+            set_rt3_client(root, on)?;
+        }
+        host_root.as_deref().map(rt3_client)
+    };
+    #[cfg(not(target_os = "linux"))]
+    let host: Option<bool> = {
+        if set_host.is_some() {
+            anyhow::bail!("steamrt3 for the host Steam is Linux-only");
+        }
+        None
+    };
+    let wine = enabled.filter(|_| {
+        matches!(target, Some(Steamrt3Target::Wine | Steamrt3Target::Both))
+    });
+    let (config, changed) = view_or_set(wine, |c, value| c.wine_steam_rt3 = value).await?;
+    let state = |on: bool| if on { "enabled" } else { "disabled" };
+    if json {
+        print_json(&serde_json::json!({
+            "host_steam_rt3": host,
+            "wine_steam_rt3": config.wine_steam_rt3,
+        }));
+    } else {
+        match host {
+            Some(on) => cli_println!("Host Steam steamrt3c client: {}", state(on)),
+            None => cli_println!("Host Steam steamrt3c client: no host Steam found"),
+        }
+        cli_println!("In-Wine Steam in steamrt3: {}", state(config.wine_steam_rt3));
+        if changed || enabled.is_some() {
+            cli_println!("Saved. Takes effect when Steam next starts.");
+        }
+    }
+    Ok(())
+}
+
 /// `config proxy [<url>] [--no-proxy <list>] [--clear]`: view or set the network
 /// proxy used for all HTTP(S) communication (Steam web endpoints, depot downloads, and
 /// Proton/plugin release lookups). With no arguments, prints the current setting.

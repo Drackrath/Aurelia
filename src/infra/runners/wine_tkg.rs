@@ -294,6 +294,10 @@ impl Runner for WineTkgRunner {
                 if let Ok(Err(e)) = tray {
                     tracing::warn!("could not set Steam's tray icon: {e:#}");
                 }
+                steam_cmd = wine_command(
+                    &PathBuf::from(steam_cmd.get_program()),
+                    ctx.launcher_config.wine_steam_rt3,
+                );
                 steam_cmd.current_dir(&prefix_steam_dir);
                 steam_cmd
                     .arg("C:\\Program Files (x86)\\Steam\\steam.exe")
@@ -1274,6 +1278,31 @@ pub(crate) fn background_steam_args(
         }
     }
     args
+}
+
+/// Steam Linux Runtime 3 (sniper) entry point.
+pub(crate) fn steamrt3_entry_point() -> Option<PathBuf> {
+    crate::library::steam_root_candidates()
+        .into_iter()
+        .map(|root| root.join("steamapps/common/SteamLinuxRuntime_sniper/_v2-entry-point"))
+        .find(|p| p.is_file())
+}
+
+/// Command running `wine`, in steamrt3 if asked.
+pub(crate) fn wine_command(wine: &Path, steamrt3: bool) -> Command {
+    if steamrt3 && cfg!(target_os = "linux") {
+        match steamrt3_entry_point() {
+            Some(entry) => {
+                let mut cmd = Command::new(entry);
+                cmd.arg("--verb=run").arg("--").arg(wine);
+                return cmd;
+            }
+            None => tracing::warn!(
+                "steamrt3 enabled but SteamLinuxRuntime_sniper is missing; running Wine directly"
+            ),
+        }
+    }
+    Command::new(wine)
 }
 
 /// Env for the background Steam.

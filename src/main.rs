@@ -507,6 +507,9 @@ async fn run(cli: Cli) -> Result<()> {
             ConfigCommand::SteamHeadless { enabled } => {
                 cmd_config_steam_headless(enabled, json).await
             }
+            ConfigCommand::Steamrt3 { target, enabled } => {
+                cmd_config_steamrt3(target, enabled, json).await
+            }
             ConfigCommand::SteamRuntimePolicy { policy } => {
                 cmd_config_steam_runtime_policy(policy, json).await
             }

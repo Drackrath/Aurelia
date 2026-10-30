@@ -121,6 +121,32 @@ fn trimmed_wrapper(original: &str, flags: &[&str]) -> Option<String> {
 }
 
 #[cfg(target_os = "linux")]
+const RT3_FLAG: &str = ".steam-enable-steamrt64-client";
+
+#[cfg(target_os = "linux")]
+/// Whether host Steam runs the steamrt3c client.
+pub fn rt3_client(steam_root: &Path) -> bool {
+    steam_root.join(RT3_FLAG).exists() && steam_root.join("steamrt64/steam").is_file()
+}
+
+#[cfg(target_os = "linux")]
+/// Switch host Steam's steamrt3c client.
+///
+/// Steam's own opt-in file; `steam.sh` reads it.
+pub fn set_rt3_client(steam_root: &Path, on: bool) -> Result<()> {
+    let flag = steam_root.join(RT3_FLAG);
+    if on {
+        if !steam_root.join("steamrt64/steam").is_file() {
+            bail!("this Steam install has no steamrt3c client (steamrt64/steam)");
+        }
+        std::fs::write(&flag, b"").with_context(|| format!("writing {}", flag.display()))?;
+    } else if flag.exists() {
+        std::fs::remove_file(&flag).with_context(|| format!("removing {}", flag.display()))?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
 /// Whether headless mode can run here.
 pub fn available(steam_root: &Path) -> bool {
     steam_root.join("steamui/index.html").is_file()
@@ -168,13 +194,18 @@ pub async fn start(steam_root: &Path, login: HeadlessLogin) -> Result<()> {
     cmd.args(["--dev-bind", "/", "/", "--bind"])
         .arg(&page)
         .arg(steam_root.join("steamui/index.html"));
-    let wrap_path = steam_root.join("ubuntu12_64/steamwebhelper_sniper_wrap.sh");
+    // steamrt3c starts its own helper script.
+    let wrap_path = if rt3_client(steam_root) {
+        steam_root.join("steamrt64/steamwebhelper.sh")
+    } else {
+        steam_root.join("ubuntu12_64/steamwebhelper_sniper_wrap.sh")
+    };
     let trimmed = std::fs::read_to_string(&wrap_path)
         .ok()
         .and_then(|w| trimmed_wrapper(&w, CEF_FLAGS));
     match trimmed {
         Some(wrapper) => {
-            let ours = page.with_file_name("steamwebhelper_sniper_wrap.sh");
+            let ours = page.with_file_name("steamwebhelper_wrap.sh");
             std::fs::write(&ours, wrapper)?;
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&ours, std::fs::Permissions::from_mode(0o700))?;

@@ -177,6 +177,9 @@ pub struct LauncherConfig {
     /// In-Wine Steam tray icon.
     #[serde(default)]
     pub wine_steam_tray: crate::core::models::TrayIcon,
+    /// Run the in-Wine Steam in steamrt3.
+    #[serde(default)]
+    pub wine_steam_rt3: bool,
     /// Keep `session.json` encrypted with the OS-keyring key.
     /// Enabled automatically by the first successful login.
     #[serde(default)]
@@ -228,6 +231,7 @@ impl Default for LauncherConfig {
             experimental: false,
             host_steam_headless: false,
             wine_steam_tray: crate::core::models::TrayIcon::default(),
+            wine_steam_rt3: false,
             encrypt_session: false,
         }
     }

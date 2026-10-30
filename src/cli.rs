@@ -552,6 +552,19 @@ pub(crate) enum ConfigCommand {
         /// `true` or `false`. Omit to print the current setting.
         enabled: Option<bool>,
     },
+    /// View or set Steam Linux Runtime 3 (Linux), per Steam client.
+    ///
+    /// `host` switches the host Steam to Valve's steamrt3c client (the same
+    /// opt-in file `steam.sh` reads). `wine` runs the in-Wine Steam's Wine inside
+    /// the SteamLinuxRuntime_sniper container. Takes effect on the next start.
+    /// Omit both arguments to print the settings.
+    #[command(name = "steamrt3", alias = "steam-rt3")]
+    Steamrt3 {
+        /// `host`, `wine` or `both`.
+        target: Option<Steamrt3Target>,
+        /// `true` or `false`. Omit to print the current setting.
+        enabled: Option<bool>,
+    },
     /// View or set the Wine/Proton runner that hosts the Windows Steam runtime.
     ///
     /// Used by `steam-runtime install`/`repair` to drive `SteamSetup.exe` and the
@@ -1126,6 +1139,17 @@ pub(crate) struct ReviewsArgs {
 pub(crate) enum PlatformArg {
     Windows,
     Linux,
+}
+
+/// `config steamrt3` clients.
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum Steamrt3Target {
+    /// The host Linux Steam.
+    Host,
+    /// The in-Wine Steam runtime.
+    Wine,
+    /// Both clients.
+    Both,
 }
 
 /// `steam-runtime tray` choices.

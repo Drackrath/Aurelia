@@ -90,7 +90,7 @@ pub async fn install_master_steam(config: &LauncherConfig) -> Result<()> {
     // needs (see ensure_steam_runtime_prefix_libs) — sync them before launching.
     crate::core::utils::ensure_steam_runtime_prefix_libs(&wine, &steam_cfg.wine_prefix);
 
-    launch_master_steam(&wine, &steam_exe, &steam_cfg, &base_dir, config.wine_steam_tray)
+    launch_master_steam(&wine, &steam_exe, &steam_cfg, &base_dir, config)
 }
 
 /// Download (if needed) and run `SteamSetup.exe` to completion under `wine`.
@@ -167,8 +167,9 @@ fn launch_master_steam(
     steam_exe: &Path,
     steam_cfg: &MasterSteamConfig,
     base_dir: &Path,
-    tray: crate::core::models::TrayIcon,
+    config: &LauncherConfig,
 ) -> Result<()> {
+    let tray = config.wine_steam_tray;
     // Login needs Valve's real UI.
     if let Some(steam_dir) = steam_exe.parent() {
         if let Err(e) = wine_steam_headless::disable(steam_dir) {
@@ -180,7 +181,7 @@ fn launch_master_steam(
     {
         tracing::warn!("could not restore Steam's tray icon: {e:#}");
     }
-    let mut cmd = Command::new(wine);
+    let mut cmd = crate::infra::runners::wine_tkg::wine_command(wine, config.wine_steam_rt3);
     cmd.arg(steam_exe);
     // Steam *client* flags tuned for running under Wine. Steam's CEF UI
     // (steamwebhelper) is fragile under Wine: with GPU/sandbox left on it flashes
@@ -406,7 +407,7 @@ pub async fn start_background_master_steam(config: &LauncherConfig) -> Result<St
             tracing::warn!("could not set Steam's tray icon: {e:#}");
         }
 
-        let mut cmd = Command::new(&wine);
+        let mut cmd = wine_tkg::wine_command(&wine, config.wine_steam_rt3);
         cmd.current_dir(&steam_dir)
             .arg(r"C:\Program Files (x86)\Steam\steam.exe")
             .args(wine_tkg::background_steam_args(
@@ -514,7 +515,7 @@ pub async fn relogin_master_steam(config: &LauncherConfig) -> Result<()> {
     // bare-wine prefix misses them and the UI crash-loops invisibly).
     crate::core::utils::ensure_steam_runtime_prefix_libs(&wine, &steam_cfg.wine_prefix);
 
-    launch_master_steam(&wine, &steam_exe, &steam_cfg, &base_dir, config.wine_steam_tray)
+    launch_master_steam(&wine, &steam_exe, &steam_cfg, &base_dir, config)
 }
 
 /// Launch a game that lives **only** in the in-Wine Steam runtime's own library by
@@ -551,7 +552,7 @@ pub async fn launch_game_via_master_steam(
     // isn't, start it silently and wait for it to come up before dispatching.
     if !SteamClient::is_steam_running_in_prefix(&steam_cfg.wine_prefix) {
         tracing::info!("in-Wine Steam not running; starting it before -applaunch");
-        launch_master_steam(&wine, &steam_exe, &steam_cfg, &base_dir, config.wine_steam_tray)?;
+        launch_master_steam(&wine, &steam_exe, &steam_cfg, &base_dir, config)?;
         let mut ready = false;
         for _ in 0..40 {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
