@@ -42,6 +42,14 @@ fn paths(steam_dir: &Path) -> Paths {
     }
 }
 
+/// Any build of our wrapper.
+///
+/// Bytes differ between builds.
+fn is_wrapper(exe: &[u8]) -> bool {
+    const MARK: &[u8] = b"AURELIA_CEF_WRAPPER";
+    exe.windows(MARK.len()).any(|w| w == MARK)
+}
+
 /// Turn headless on with `page`.
 ///
 /// Needs the embedded wrapper.
@@ -54,8 +62,10 @@ pub fn enable(steam_dir: &Path, page: &str) -> Result<()> {
     // Steam may have updated the helper.
     let current =
         std::fs::read(&p.helper).with_context(|| format!("reading {}", p.helper.display()))?;
-    if current != wrapper {
+    if !is_wrapper(&current) {
         std::fs::rename(&p.helper, &p.real)?;
+    }
+    if current != wrapper {
         std::fs::write(&p.helper, wrapper)?;
     }
     std::fs::write(&p.flags, CEF_FLAGS)?;
@@ -84,7 +94,7 @@ pub fn disable(steam_dir: &Path) -> Result<()> {
     let p = paths(steam_dir);
     if p.real.is_file() {
         let current = std::fs::read(&p.helper).unwrap_or_default();
-        if WRAPPER.is_some_and(|w| current == w) || current.is_empty() {
+        if is_wrapper(&current) || current.is_empty() {
             std::fs::rename(&p.real, &p.helper)?;
         } else {
             // Steam updated it; keep that.
@@ -234,6 +244,18 @@ mod tests {
         assert_eq!(std::fs::read(&p.helper).unwrap(), b"MZvalve-helper-v2");
         assert_eq!(std::fs::read(&p.page).unwrap(), b"<html>valve v2</html>");
         assert!(!p.real.exists() && !p.page_orig.exists());
+    }
+
+    #[test]
+    #[cfg(embedded_cef_wrapper)]
+    fn older_wrapper_build_keeps_valve_original() {
+        let (dir, p) = steam();
+        enable(dir.path(), &page()).unwrap();
+        // A rebuild differs only in timestamps.
+        std::fs::write(&p.helper, b"MZold AURELIA_CEF_WRAPPER build").unwrap();
+        enable(dir.path(), &page()).unwrap();
+        assert_eq!(std::fs::read(&p.real).unwrap(), b"MZvalve-helper");
+        assert_eq!(std::fs::read(&p.helper).unwrap(), WRAPPER.unwrap());
     }
 
     #[test]
