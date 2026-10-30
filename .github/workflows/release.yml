@@ -146,10 +146,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           asset="dist/${{ matrix.asset }}"
+          # rc/beta/alpha/pre/experimental tags: prereleases.
+          # Hotfixes like v0.1.37-2 stay releases.
+          pre=()
+          case "$GITHUB_REF_NAME" in
+            *-rc*|*-beta*|*-alpha*|*-pre*|*-experimental*) pre=(--prerelease) ;;
+          esac
           gh release create "$GITHUB_REF_NAME" "$asset" \
             --repo "$GITHUB_REPOSITORY" \
             --title "Aurelia $GITHUB_REF_NAME" \
-            --generate-notes 2>/dev/null \
+            --generate-notes "${pre[@]}" 2>/dev/null \
           || gh release upload "$GITHUB_REF_NAME" "$asset" --repo "$GITHUB_REPOSITORY" --clobber
 
       # Attach the .deb (built above) to the same release. Runs after the step
