@@ -79,13 +79,25 @@ jobs:
             libegl1-mesa-dev \
             libgles2-mesa-dev
 
+      # Headless Wine Steam wrapper needs mingw.
+      - name: Install CEF wrapper cross toolchain (Linux x86_64)
+        if: matrix.name == 'linux-x86_64'
+        run: sudo apt-get install -y gcc-mingw-w64-x86-64
+
       - name: Install Rust toolchain
         if: matrix.builder != 'nix'
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.name == 'linux-x86_64' && 'x86_64-pc-windows-gnu' || '' }}
 
       - name: Build Aurelia (release)
         if: matrix.builder != 'nix'
         run: cargo build --release
+
+      # Fail if the wrapper went missing.
+      - name: Check embedded CEF wrapper (Linux x86_64)
+        if: matrix.name == 'linux-x86_64'
+        run: ls target/release/build/aurelia-*/out/cef-wrapper.exe
 
       - name: Install Nix
         if: matrix.builder == 'nix'
