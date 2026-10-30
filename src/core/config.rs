@@ -174,6 +174,9 @@ pub struct LauncherConfig {
     /// Start Steam clients without their UI.
     #[serde(default)]
     pub host_steam_headless: bool,
+    /// In-Wine Steam tray icon.
+    #[serde(default)]
+    pub wine_steam_tray: crate::core::models::TrayIcon,
     /// Keep `session.json` encrypted with the OS-keyring key.
     /// Enabled automatically by the first successful login.
     #[serde(default)]
@@ -224,6 +227,7 @@ impl Default for LauncherConfig {
             install_resume: crate::library::backlog::InstallResume::default(),
             experimental: false,
             host_steam_headless: false,
+            wine_steam_tray: crate::core::models::TrayIcon::default(),
             encrypt_session: false,
         }
     }

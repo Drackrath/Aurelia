@@ -20,7 +20,17 @@ use std::process::Command;
 fn stop_prefix_processes(wine_prefix: &Path) {
     SteamClient::kill_steam_in_prefix(wine_prefix);
     #[cfg(unix)]
-    SteamClient::kill_wine_processes_in_prefix(wine_prefix, true);
+    {
+        // wineserver saves the registry on exit.
+        SteamClient::kill_wine_clients_in_prefix(wine_prefix);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while SteamClient::wineserver_running_in_prefix(wine_prefix)
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        SteamClient::kill_wine_processes_in_prefix(wine_prefix, true);
+    }
 }
 
 /// Resolve the runner's wine binary, failing on platforms that can't run it.
@@ -80,7 +90,7 @@ pub async fn install_master_steam(config: &LauncherConfig) -> Result<()> {
     // needs (see ensure_steam_runtime_prefix_libs) — sync them before launching.
     crate::core::utils::ensure_steam_runtime_prefix_libs(&wine, &steam_cfg.wine_prefix);
 
-    launch_master_steam(&wine, &steam_exe, &steam_cfg, &base_dir)
+    launch_master_steam(&wine, &steam_exe, &steam_cfg, &base_dir, config.wine_steam_tray)
 }
 
 /// Download (if needed) and run `SteamSetup.exe` to completion under `wine`.
@@ -157,6 +167,7 @@ fn launch_master_steam(
     steam_exe: &Path,
     steam_cfg: &MasterSteamConfig,
     base_dir: &Path,
+    tray: crate::core::models::TrayIcon,
 ) -> Result<()> {
     // Login needs Valve's real UI.
     if let Some(steam_dir) = steam_exe.parent() {
@@ -164,7 +175,9 @@ fn launch_master_steam(
             tracing::warn!("could not restore Steam's UI files: {e:#}");
         }
     }
-    if let Err(e) = wine_steam_headless::set_tray_hidden(wine, &steam_cfg.wine_prefix, &[], false) {
+    if let Err(e) =
+        wine_steam_headless::set_tray_hidden(wine, &steam_cfg.wine_prefix, &[], tray.hidden(false))
+    {
         tracing::warn!("could not restore Steam's tray icon: {e:#}");
     }
     let mut cmd = Command::new(wine);
@@ -379,8 +392,14 @@ pub async fn start_background_master_steam(config: &LauncherConfig) -> Result<St
         }
         crate::core::utils::ensure_steam_runtime_prefix_libs(&wine, &prefix);
         let (tray_wine, tray_prefix) = (wine.clone(), prefix.clone());
+        let hide_tray = config.wine_steam_tray.hidden(headless);
         let tray = tokio::task::spawn_blocking(move || {
-            wine_steam_headless::set_tray_hidden(&tray_wine, &tray_prefix, &sync, headless)
+            wine_steam_headless::set_tray_hidden(
+                &tray_wine,
+                &tray_prefix,
+                &sync,
+                hide_tray,
+            )
         })
         .await?;
         if let Err(e) = tray {
@@ -415,6 +434,37 @@ pub async fn start_background_master_steam(config: &LauncherConfig) -> Result<St
         headless,
         logged_on,
     })
+}
+
+/// Store the tray setting and apply it.
+///
+/// True when Steam must restart.
+pub async fn set_master_steam_tray(
+    config: &mut LauncherConfig,
+    tray: crate::core::models::TrayIcon,
+) -> Result<bool> {
+    config.wine_steam_tray = tray;
+    crate::core::config::save_launcher_config(config).await?;
+    let steam_cfg = crate::core::utils::get_master_steam_config();
+    let Some(steam_dir) = steam_cfg.steam_exe.as_deref().and_then(Path::parent) else {
+        return Ok(false);
+    };
+    let wine = resolve_runtime_wine(config)?;
+    let hide = tray.hidden(wine_steam_headless::is_enabled(steam_dir));
+    let prefix = steam_cfg.wine_prefix.clone();
+    let running = SteamClient::is_steam_running_in_prefix(&prefix);
+    let sync = crate::infra::runners::wine_tkg::default_sync_env();
+    tokio::task::spawn_blocking(move || {
+        if running {
+            // user.reg is stale while running.
+            wine_steam_headless::write_tray_policy(&wine, &prefix, &sync, hide)
+        } else {
+            wine_steam_headless::set_tray_hidden(&wine, &prefix, &sync, hide)
+        }
+    })
+    .await??;
+    // Wine reads it at desktop start.
+    Ok(running)
 }
 
 /// Remove the master Windows Steam prefix entirely — the opposite of
@@ -464,7 +514,7 @@ pub async fn relogin_master_steam(config: &LauncherConfig) -> Result<()> {
     // bare-wine prefix misses them and the UI crash-loops invisibly).
     crate::core::utils::ensure_steam_runtime_prefix_libs(&wine, &steam_cfg.wine_prefix);
 
-    launch_master_steam(&wine, &steam_exe, &steam_cfg, &base_dir)
+    launch_master_steam(&wine, &steam_exe, &steam_cfg, &base_dir, config.wine_steam_tray)
 }
 
 /// Launch a game that lives **only** in the in-Wine Steam runtime's own library by
@@ -501,7 +551,7 @@ pub async fn launch_game_via_master_steam(
     // isn't, start it silently and wait for it to come up before dispatching.
     if !SteamClient::is_steam_running_in_prefix(&steam_cfg.wine_prefix) {
         tracing::info!("in-Wine Steam not running; starting it before -applaunch");
-        launch_master_steam(&wine, &steam_exe, &steam_cfg, &base_dir)?;
+        launch_master_steam(&wine, &steam_exe, &steam_cfg, &base_dir, config.wine_steam_tray)?;
         let mut ready = false;
         for _ in 0..40 {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;

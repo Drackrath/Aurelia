@@ -658,6 +658,12 @@ pub(crate) enum SteamRuntimeCommand {
     Login,
     /// Start the background in-Wine Steam.
     Start,
+    /// Show or set the tray icon.
+    Tray {
+        /// auto hides it when headless.
+        #[arg(value_enum)]
+        mode: Option<TrayArg>,
+    },
     /// Stop the in-Wine Steam client running in the master prefix (kills its Wine
     /// session), without uninstalling. Use to shut down a Steam started by `login`
     /// or one left running after a game launch.
@@ -1120,6 +1126,17 @@ pub(crate) struct ReviewsArgs {
 pub(crate) enum PlatformArg {
     Windows,
     Linux,
+}
+
+/// `steam-runtime tray` choices.
+#[derive(Clone, Copy, ValueEnum)]
+pub(crate) enum TrayArg {
+    /// Hidden only when headless.
+    Auto,
+    /// Always show it.
+    Show,
+    /// Always hide it.
+    Hide,
 }
 
 /// `play --steam-mode` choices.

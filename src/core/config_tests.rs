@@ -85,3 +85,19 @@ fn proxy_config_omits_empty_and_round_trips() {
     let back: ProxyConfig = serde_json::from_str(&serde_json::to_string(&proxy).unwrap()).unwrap();
     assert_eq!(back, proxy);
 }
+
+#[test]
+fn wine_steam_tray_defaults_and_decides() {
+    use crate::core::models::TrayIcon;
+    let mut raw = serde_json::to_value(LauncherConfig::default()).unwrap();
+    // Older configs lack the field.
+    raw.as_object_mut().unwrap().remove("wine_steam_tray");
+    let cfg: LauncherConfig = serde_json::from_value(raw.clone()).unwrap();
+    assert_eq!(cfg.wine_steam_tray, TrayIcon::Auto);
+    raw["wine_steam_tray"] = "show".into();
+    let cfg: LauncherConfig = serde_json::from_value(raw).unwrap();
+    assert_eq!(cfg.wine_steam_tray, TrayIcon::Show);
+    // Auto follows headless; others override.
+    assert!(TrayIcon::Auto.hidden(true) && !TrayIcon::Auto.hidden(false));
+    assert!(!TrayIcon::Show.hidden(true) && TrayIcon::Hide.hidden(false));
+}

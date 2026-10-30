@@ -260,6 +260,33 @@ impl SteamClient {
         });
     }
 
+    /// SIGKILL a prefix's clients, not wineserver.
+    #[cfg(unix)]
+    pub fn kill_wine_clients_in_prefix(wineprefix: &Path) {
+        let prefix_str = wineprefix.to_string_lossy().to_string();
+        Self::sweep_proc_pids(libc::SIGKILL, |pid_path| {
+            !Self::is_wineserver(pid_path)
+                && Self::proc_environ(pid_path).is_some_and(|env| env.contains(&prefix_str))
+        });
+    }
+
+    /// The prefix's wineserver still runs.
+    #[cfg(unix)]
+    pub fn wineserver_running_in_prefix(wineprefix: &Path) -> bool {
+        let prefix_str = wineprefix.to_string_lossy().to_string();
+        Self::scan_proc_pids(|pid_path, _| {
+            (Self::is_wineserver(pid_path)
+                && Self::proc_environ(pid_path).is_some_and(|env| env.contains(&prefix_str)))
+            .then_some(())
+        })
+        .is_some()
+    }
+
+    #[cfg(unix)]
+    fn is_wineserver(pid_path: &Path) -> bool {
+        std::fs::read_to_string(pid_path.join("comm")).is_ok_and(|c| c.trim() == "wineserver")
+    }
+
     pub fn kill_steam_in_prefix(wineprefix: &Path) {
         #[cfg(unix)]
         {

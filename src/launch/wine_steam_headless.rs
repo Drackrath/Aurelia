@@ -136,26 +136,7 @@ pub fn set_tray_hidden(
     if tray_hidden(wineprefix) == hide {
         return Ok(());
     }
-    let mut reg = std::process::Command::new(wine);
-    if hide {
-        reg.args(["reg", "add", TRAY_POLICY, "/v", "NoTrayItemsDisplay"])
-            .args(["/t", "REG_DWORD", "/d", "1", "/f"]);
-    } else {
-        reg.args([
-            "reg",
-            "delete",
-            TRAY_POLICY,
-            "/v",
-            "NoTrayItemsDisplay",
-            "/f",
-        ]);
-    }
-    reg.env("WINEPREFIX", wineprefix)
-        .envs(envs.iter().copied())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    let status = reg.status().context("running wine reg")?;
-    anyhow::ensure!(status.success(), "wine reg failed: {status}");
+    write_tray_policy(wine, wineprefix, envs, hide)?;
 
     // Our boot's desktop must exit.
     let mut wait = std::process::Command::new(wine.with_file_name("wineserver"));
@@ -176,6 +157,28 @@ pub fn set_tray_hidden(
             std::thread::sleep(std::time::Duration::from_millis(200));
         }
     }
+    Ok(())
+}
+
+/// Write the policy, no checks.
+///
+/// Running prefixes keep it in memory.
+pub fn write_tray_policy(
+    wine: &Path,
+    wineprefix: &Path,
+    envs: &[(&str, &str)],
+    hide: bool,
+) -> Result<()> {
+    let mut reg = std::process::Command::new(wine);
+    // 0 shows; delete fails when absent.
+    reg.args(["reg", "add", TRAY_POLICY, "/v", "NoTrayItemsDisplay"])
+        .args(["/t", "REG_DWORD", "/d", if hide { "1" } else { "0" }, "/f"]);
+    reg.env("WINEPREFIX", wineprefix)
+        .envs(envs.iter().copied())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let status = reg.status().context("running wine reg")?;
+    anyhow::ensure!(status.success(), "wine reg failed: {status}");
     Ok(())
 }
 

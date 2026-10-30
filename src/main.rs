@@ -105,6 +105,7 @@ fn must_run_locally(cli: &Cli) -> bool {
                 | SteamRuntimeCommand::Uninstall
                 | SteamRuntimeCommand::Login
                 | SteamRuntimeCommand::Start
+                | SteamRuntimeCommand::Tray { .. }
                 | SteamRuntimeCommand::Stop,
         } | Command::HostSteam { .. }
     );
@@ -579,6 +580,7 @@ async fn run(cli: Cli) -> Result<()> {
             SteamRuntimeCommand::Uninstall => cmd_steam_runtime_uninstall(json).await,
             SteamRuntimeCommand::Login => cmd_steam_runtime_login(json).await,
             SteamRuntimeCommand::Start => cmd_steam_runtime_start(json).await,
+            SteamRuntimeCommand::Tray { mode } => cmd_steam_runtime_tray(mode, json).await,
             SteamRuntimeCommand::Stop => cmd_steam_runtime_stop(json).await,
             SteamRuntimeCommand::Status => cmd_steam_runtime_status(json).await,
         },

@@ -281,12 +281,13 @@ impl Runner for WineTkgRunner {
                     &steam_wineprefix,
                 );
                 // Headless icon only crashes Steam.
+                let hide_tray = ctx.launcher_config.wine_steam_tray.hidden(headless);
                 let wine = PathBuf::from(steam_cmd.get_program());
                 let prefix = steam_wineprefix.clone();
                 let sync = proton_sync_env(ctx);
                 let tray = tokio::task::spawn_blocking(move || {
                     crate::launch::wine_steam_headless::set_tray_hidden(
-                        &wine, &prefix, &sync, headless,
+                        &wine, &prefix, &sync, hide_tray,
                     )
                 })
                 .await;

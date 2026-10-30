@@ -11,6 +11,36 @@ pub enum SteamPrefixMode {
     PerGame, // copy/symlink Steam into game's own compatdata prefix
 }
 
+/// In-Wine Steam's tray icon.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TrayIcon {
+    /// Hidden only when headless.
+    #[default]
+    Auto,
+    Show,
+    Hide,
+}
+
+impl TrayIcon {
+    /// Hide it for this start?
+    pub fn hidden(self, headless: bool) -> bool {
+        match self {
+            Self::Auto => headless,
+            Self::Show => false,
+            Self::Hide => true,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Show => "show",
+            Self::Hide => "hide",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum SteamRuntimePolicy {
     #[default]

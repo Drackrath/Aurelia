@@ -1,5 +1,6 @@
 //! `runtimes` command handlers.
 
+use crate::TrayArg;
 use crate::commands::common::*;
 
 use anyhow::{Context, Result, bail};
@@ -330,6 +331,44 @@ pub(crate) async fn cmd_steam_runtime_start(json: bool) -> Result<()> {
     let config = steam_runtime_config("starting Steam").await?;
     let start = aurelia::launch::start_background_master_steam(&config).await?;
     report_steam_start("in-Wine Steam", start, json);
+    Ok(())
+}
+
+/// `steam-runtime tray [auto|show|hide]`.
+pub(crate) async fn cmd_steam_runtime_tray(mode: Option<TrayArg>, json: bool) -> Result<()> {
+    use aurelia::core::models::TrayIcon;
+    let mut config = load_launcher_config().await?;
+    let restart = match mode {
+        Some(mode) => {
+            let tray = match mode {
+                TrayArg::Auto => TrayIcon::Auto,
+                TrayArg::Show => TrayIcon::Show,
+                TrayArg::Hide => TrayIcon::Hide,
+            };
+            aurelia::launch::set_master_steam_tray(&mut config, tray).await?
+        }
+        None => false,
+    };
+    let tray = config.wine_steam_tray;
+    if json {
+        print_json(&serde_json::json!({
+            "wine_steam_tray": tray.as_str(),
+            "restart_required": restart,
+        }));
+        return Ok(());
+    }
+    let meaning = match tray {
+        TrayIcon::Auto => "hidden when headless, shown with Valve's UI",
+        TrayIcon::Show => "always shown",
+        TrayIcon::Hide => "always hidden",
+    };
+    cli_println!("In-Wine Steam tray icon: {} ({meaning})", tray.as_str());
+    if mode.is_some() {
+        cli_println!("Saved.");
+    }
+    if restart {
+        cli_println!("Restart the in-Wine Steam to apply it (`steam-runtime stop`, then `start`).");
+    }
     Ok(())
 }
 
