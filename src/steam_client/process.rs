@@ -108,9 +108,16 @@ impl SteamClient {
     #[cfg(target_os = "windows")]
     pub fn start_steam() -> Result<()> {
         let exe = steam_exe_path().context("could not locate steam.exe to start Steam")?;
-        Command::new(&exe)
-            .arg("-silent")
-            .spawn()
+        let mut cmd = Command::new(&exe);
+        cmd.arg("-silent");
+        // Verify would restore Valve's files.
+        if exe
+            .parent()
+            .is_some_and(crate::launch::wine_steam_headless::is_enabled)
+        {
+            cmd.arg("-noverifyfiles");
+        }
+        cmd.spawn()
             .context("failed to start Steam")?;
         Ok(())
     }

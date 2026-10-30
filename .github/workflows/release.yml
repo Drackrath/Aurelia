@@ -95,8 +95,9 @@ jobs:
         run: cargo build --release
 
       # Fail if the wrapper went missing.
-      - name: Check embedded CEF wrapper (Linux x86_64)
-        if: matrix.name == 'linux-x86_64'
+      - name: Check embedded CEF wrapper (Linux x86_64, Windows)
+        if: matrix.name == 'linux-x86_64' || runner.os == 'Windows'
+        shell: bash
         run: ls target/release/build/aurelia-*/out/cef-wrapper.exe
 
       - name: Install Nix

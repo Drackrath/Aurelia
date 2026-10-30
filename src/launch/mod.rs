@@ -385,7 +385,7 @@ pub async fn start_background_master_steam(config: &LauncherConfig) -> Result<St
     } else {
         SteamClient::write_headless_steam_cfg(&steam_dir);
         let headless =
-            config.host_steam_headless && wine_tkg::enable_wine_headless(&steam_dir).await;
+            config.host_steam_headless && wine_steam_headless::enable_signed_in(&steam_dir).await;
         if !headless {
             if let Err(e) = wine_steam_headless::disable(&steam_dir) {
                 tracing::warn!("could not restore Steam's UI files: {e:#}");

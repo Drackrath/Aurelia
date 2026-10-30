@@ -1,7 +1,7 @@
-//! Headless mode for the in-Wine Steam.
+//! Headless mode for Windows Steam clients.
 //!
-//! Aurelia owns the prefix; swaps files.
-//! Originals are kept beside them.
+//! The in-Wine Steam, or Steam on Windows.
+//! Swaps files; originals are kept beside them.
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
@@ -81,6 +81,38 @@ pub fn enable(steam_dir: &Path, page: &str) -> Result<()> {
     }
     std::fs::write(&p.page, page)?;
     Ok(())
+}
+
+/// Stand-in UI, signed in as Aurelia.
+///
+/// False leaves Valve's files.
+pub async fn enable_signed_in(steam_dir: &Path) -> bool {
+    let session = crate::core::config::load_session()
+        .await
+        .unwrap_or_default();
+    let Some(account_name) = session.account_name else {
+        tracing::warn!("headless Steam needs an Aurelia login; using Steam's UI");
+        return false;
+    };
+    let login = crate::core::headless_steam::HeadlessLogin {
+        account_name,
+        refresh_token: session.refresh_token,
+    };
+    let result = match crate::core::headless_steam::page_for(login).await {
+        Ok(page) => enable(steam_dir, &page),
+        Err(e) => Err(e),
+    };
+    match result {
+        Ok(()) => {
+            tracing::info!("Steam starts headless (stand-in UI, trimmed CEF)");
+            true
+        }
+        Err(e) => {
+            tracing::warn!("headless Steam unavailable ({e:#}); using Steam's UI");
+            let _ = disable(steam_dir);
+            false
+        }
+    }
 }
 
 /// Whether the stand-in page is installed.

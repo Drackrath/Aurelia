@@ -18,23 +18,34 @@ fn main() {
     embed_cef_wrapper();
 }
 
-// Headless in-Wine Steam's helper wrapper.
+// Headless Steam's helper wrapper.
 fn embed_cef_wrapper() {
     println!("cargo::rustc-check-cfg=cfg(embedded_cef_wrapper)");
     println!("cargo:rerun-if-changed=crates/cef-wrapper");
     let env = |k: &str| std::env::var(k).unwrap_or_default();
-    // Only Linux hosts run Wine Steam.
-    if env("CARGO_CFG_TARGET_OS") != "linux" || env("CARGO_CFG_TARGET_ARCH") != "x86_64" {
-        return;
-    }
+    let mingw = "x86_64-w64-mingw32-gcc";
+    let cross = !env("HOST").contains("windows");
+    // Wine Steam on Linux; Steam on Windows.
+    let (target, linker) = match env("CARGO_CFG_TARGET_OS").as_str() {
+        "linux" if env("CARGO_CFG_TARGET_ARCH") == "x86_64" => {
+            ("x86_64-pc-windows-gnu".to_string(), Some(mingw))
+        }
+        "windows" => {
+            let gnu = env("CARGO_CFG_TARGET_ENV") == "gnu";
+            (env("TARGET"), (gnu && cross).then_some(mingw))
+        }
+        _ => return,
+    };
     let wrapper = std::path::PathBuf::from(env("OUT_DIR")).join("cef-wrapper.exe");
-    let linker = "x86_64-w64-mingw32-gcc";
-    let built = std::process::Command::new(env("RUSTC"))
+    let mut rustc = std::process::Command::new(env("RUSTC"));
+    rustc
         .args(["--edition", "2024", "--crate-type", "bin"])
-        .args(["--crate-name", "steamwebhelper", "--target", "x86_64-pc-windows-gnu"])
-        .args(["-C", "opt-level=3", "-C", "strip=symbols"])
-        .arg("-C")
-        .arg(format!("linker={linker}"))
+        .args(["--crate-name", "steamwebhelper", "--target", &target])
+        .args(["-C", "opt-level=3", "-C", "strip=symbols"]);
+    if let Some(linker) = linker {
+        rustc.arg("-C").arg(format!("linker={linker}"));
+    }
+    let built = rustc
         .arg("-o")
         .arg(&wrapper)
         .arg("crates/cef-wrapper/main.rs")
@@ -47,8 +58,9 @@ fn embed_cef_wrapper() {
         println!("cargo:rustc-cfg=embedded_cef_wrapper");
     } else {
         println!(
-            "cargo:warning=headless Wine Steam: cef-wrapper.exe not built \
-             (needs `rustup target add x86_64-pc-windows-gnu` and {linker})"
+            "cargo:warning=headless Steam: cef-wrapper.exe not built \
+             (needs the {target} Rust target{})",
+            linker.map(|l| format!(" and {l}")).unwrap_or_default()
         );
     }
 }

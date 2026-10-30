@@ -39,11 +39,31 @@ pub async fn start_host_steam() -> crate::launch::SteamStart {
 /// Start host Steam (tray).
 #[cfg(target_os = "windows")]
 pub async fn start_host_steam() -> crate::launch::SteamStart {
+    use crate::launch::wine_steam_headless;
     let already_running = SteamClient::steam_is_running();
-    SteamClient::ensure_host_steam_ready(std::time::Duration::from_secs(30)).await;
+    let steam_dir = steam_exe_path().and_then(|exe| exe.parent().map(Path::to_path_buf));
+    let headless = match &steam_dir {
+        Some(dir) if already_running => wine_steam_headless::is_enabled(dir),
+        Some(dir) => {
+            let wanted = load_launcher_config()
+                .await
+                .is_ok_and(|c| c.host_steam_headless);
+            let on = wanted && wine_steam_headless::enable_signed_in(dir).await;
+            if !on {
+                if let Err(e) = wine_steam_headless::disable(dir) {
+                    tracing::warn!("could not restore Steam's UI files: {e:#}");
+                }
+            }
+            on
+        }
+        None => false,
+    };
+    // Cold headless start takes longer.
+    let timeout = if headless && !already_running { 90 } else { 30 };
+    SteamClient::ensure_host_steam_ready(std::time::Duration::from_secs(timeout)).await;
     crate::launch::SteamStart {
         already_running,
-        headless: false,
+        headless,
         logged_on: SteamClient::steam_is_running() && SteamClient::steam_is_logged_on(),
     }
 }
@@ -350,8 +370,8 @@ impl SteamClient {
         // one is running (start it silently if not) so Steamworks/Family-Sharing can
         // initialise. Best-effort.
         #[cfg(target_os = "windows")]
-        if steam_enabled {
-            SteamClient::ensure_host_steam_ready(std::time::Duration::from_secs(30)).await;
+        if steam_enabled && !start_host_steam().await.logged_on {
+            tracing::warn!("Host Steam not logged on in time. Launching anyway (Steamworks may fail)");
         }
         #[cfg(target_os = "linux")]
         if steam_enabled {
