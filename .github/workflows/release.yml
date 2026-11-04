@@ -210,3 +210,38 @@ jobs:
             SHA256SUMS.pem \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
+
+  crates-io:
+    name: Publish to crates.io
+    # Stable tags only; prereleases skip crates.io.
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libdbus-1-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check tag matches crate version
+        shell: bash
+        run: |
+          version="$(cargo pkgid | sed 's/.*[#@]//')"
+          test "$GITHUB_REF_NAME" = "v$version"
+
+      - name: Authenticate with crates.io
+        id: crates-io-auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish crate
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
+        run: cargo publish --locked

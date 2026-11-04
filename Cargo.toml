@@ -5,6 +5,7 @@ edition = "2024"
 description = "Aurelia CLI Steam launcher"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/Drackrath/Aurelia"
+exclude = [".github/", "scripts/", "flake.nix", "flake.lock"]
 
 # Crate name "aurelia" is taken.
 [lib]
