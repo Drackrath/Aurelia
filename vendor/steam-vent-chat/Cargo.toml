@@ -13,9 +13,7 @@ rust-version = "1.85.0"
 # Aurelia pins). Ported to steam-vent 0.5: the proto crate is no longer
 # re-exported as `steam_vent::proto`, so we depend on `steam-vent-proto`
 # directly, and `steamid-ng` is bumped to 3.x to match steam-vent so `SteamID`
-# is the same type Aurelia hands us. The root manifest's `[patch.crates-io]`
-# entry redirects this `steam-vent` to the same git tag Aurelia uses, unifying
-# the shared `Connection`.
+# is the same type Aurelia hands us.
 [dependencies]
 steam-vent = "0.5"
 steam-vent-proto = "=0.5.2"

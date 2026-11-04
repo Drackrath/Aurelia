@@ -40,10 +40,6 @@
 
           cargoLock = {
             lockFile = ./Cargo.lock;
-            # steam-vent is a git dependency pinned to a tag. Fetching it by the
-            # revision already recorded in Cargo.lock avoids carrying a second
-            # hash that has to be updated by hand on every bump.
-            allowBuiltinFetchGit = true;
           };
 
           # cmake and bindgen are for aws-lc-sys, the crypto backend rustls pulls
