@@ -333,6 +333,7 @@ aurelia play 1245620 --steam         # run with Steam online features (Family Sh
 aurelia launch-targets 1245620       # installed builds + Steam modes, and the `play` flags for each
 aurelia play 1245620 --platform linux        # Linux: run the native build (or `windows` via Proton)
 aurelia play 1245620 --steam-mode host       # one launch: `runtime` (in-Wine), `host` or `none`
+aurelia play 1245620 --launch-option 3       # one launch: an entry from `launch-options`, by id
 aurelia play 1245620 -v              # also log progress/debug output (-vv/-vvv: Steam networking)
 aurelia running                      # list games Aurelia is currently running
 aurelia stop 1245620                 # stop a running game (--force to kill a hung one)

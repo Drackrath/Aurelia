@@ -249,6 +249,10 @@ pub(crate) enum Command {
         /// Overrides the configured Steam-runtime policy.
         #[arg(short = 'm', long)]
         steam_mode: Option<SteamModeArg>,
+        /// Start this entry from `aurelia launch-options`, by its id, instead of
+        /// the default one.
+        #[arg(long, value_name = "ID")]
+        launch_option: Option<String>,
         /// Skip the automatic update check and install before launching.
         #[arg(short = 'N', long = "no-update", alias = "noupdate")]
         no_update: bool,

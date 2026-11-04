@@ -498,7 +498,10 @@ mod content;
 mod launch;
 mod library;
 mod manage;
-pub use launch::{LaunchTargetChoice, launch_targets, select_launch_entry};
+pub use launch::{
+    LaunchTargetChoice, check_launch_option_target, find_launch_option, launch_targets,
+    select_launch_entry,
+};
 mod cloudconfig;
 mod collections;
 mod manifests;

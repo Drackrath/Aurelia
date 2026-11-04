@@ -17,6 +17,7 @@ use std::sync::{Arc, RwLock};
 pub(crate) struct PlayTarget {
     pub(crate) platform: Option<PlatformArg>,
     pub(crate) steam_mode: Option<SteamModeArg>,
+    pub(crate) launch_option: Option<String>,
 }
 
 /// Force a Steam mode via policy.
@@ -182,6 +183,11 @@ pub(crate) async fn cmd_play(
     // does. Its updates are the in-Wine Steam's responsibility, so skip Aurelia's
     // pre-launch update flow (the game isn't in Aurelia's library to update anyway).
     if game.from_windows_steam {
+        if target.launch_option.is_some() {
+            tracing::warn!(
+                "in-Wine Steam picks the launch option itself; ignoring --launch-option"
+            );
+        }
         let launcher_config = load_launcher_config().await?;
         let install_path = game.install_path.clone().unwrap_or_default();
         if !json {
@@ -219,6 +225,26 @@ pub(crate) async fn cmd_play(
             "{} is not installed — install it with `aurelia install {app_id}`",
             game.name
         );
+    }
+
+    // Reject bad entries before any update.
+    if let Some(id) = target.launch_option.as_deref() {
+        use aurelia::steam_client::LaunchTarget;
+        let required = match target.platform {
+            Some(PlatformArg::Linux) => Some((LaunchTarget::NativeLinux, "--platform linux")),
+            Some(PlatformArg::Windows) => Some((LaunchTarget::WindowsProton, "--platform windows")),
+            None if proton.is_some() => Some((LaunchTarget::WindowsProton, "--proton")),
+            None if cfg!(target_os = "windows") => {
+                Some((LaunchTarget::WindowsProton, "a Windows host"))
+            }
+            None => None,
+        };
+        let options = client
+            .get_product_info(app_id)
+            .await
+            .with_context(|| format!("failed to load launch options for app {app_id}"))?;
+        let entry = aurelia::steam_client::find_launch_option(&options, id)?;
+        aurelia::steam_client::check_launch_option_target(entry, required)?;
     }
 
     // Family-Shared games are pinned to the owner's current build — a stale
@@ -354,6 +380,7 @@ pub(crate) async fn cmd_play(
             no_script,
             steam,
             prefers_linux,
+            target.launch_option.as_deref(),
             (!json).then_some(&announce_target),
         )
         .await

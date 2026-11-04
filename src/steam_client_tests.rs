@@ -426,6 +426,95 @@ fn select_launch_entry_prefers_installed_platform() {
     assert_eq!(picked.id, "0");
 }
 
+fn launch_option(id: &str, executable: &str, target: LaunchTarget) -> LaunchInfo {
+    LaunchInfo {
+        app_id: 312200,
+        id: id.to_string(),
+        description: String::new(),
+        executable: executable.to_string(),
+        arguments: String::new(),
+        workingdir: None,
+        target,
+    }
+}
+
+#[test]
+fn find_launch_option_returns_the_requested_entry() {
+    let options = vec![
+        launch_option("0", "Chasm.exe", LaunchTarget::WindowsProton),
+        launch_option("3", "Chasm.exe", LaunchTarget::WindowsProton),
+    ];
+
+    assert_eq!(launch::find_launch_option(&options, "3").unwrap().id, "3");
+
+    let error = launch::find_launch_option(&options, "9")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("macOS-only"), "{error}");
+    assert!(error.contains("available: 0, 3"), "{error}");
+}
+
+#[test]
+fn launch_option_target_conflicts_are_rejected() {
+    let linux = launch_option("1", "game.sh", LaunchTarget::NativeLinux);
+    let windows = launch_option("0", "game.exe", LaunchTarget::WindowsProton);
+
+    // No explicit flag: stored preferences lose.
+    assert!(launch::check_launch_option_target(&linux, None).is_ok());
+    assert!(launch::check_launch_option_target(&windows, None).is_ok());
+
+    let matching = Some((LaunchTarget::NativeLinux, "--platform linux"));
+    assert!(launch::check_launch_option_target(&linux, matching).is_ok());
+
+    let error = launch::check_launch_option_target(&windows, matching)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("--platform linux"), "{error}");
+    assert!(error.contains("starts the Windows build"), "{error}");
+
+    let proton = Some((LaunchTarget::WindowsProton, "--proton"));
+    let error = launch::check_launch_option_target(&linux, proton)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("--proton"), "{error}");
+    assert!(error.contains("starts the native Linux build"), "{error}");
+}
+
+#[test]
+fn launch_option_must_be_installed() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("Game.exe"), b"").unwrap();
+    let app = LibraryGame {
+        app_id: 312200,
+        name: "Chasm".to_string(),
+        install_path: Some(tmp.path().to_string_lossy().into_owned()),
+        is_installed: true,
+        playtime_forever_minutes: None,
+        active_branch: "public".to_string(),
+        update_available: false,
+        update_queued: false,
+        local_manifest_ids: HashMap::new(),
+        is_owned: true,
+        is_family_shared: false,
+        online_required: None,
+        platform: Some("windows".to_string()),
+        from_windows_steam: false,
+    };
+
+    let installed = launch_option("0", "game.exe", LaunchTarget::WindowsProton);
+    assert!(launch::require_launch_option_installed(&installed, &app).is_ok());
+
+    let missing = launch_option("1", "game.sh", LaunchTarget::NativeLinux);
+    let error = launch::require_launch_option_installed(&missing, &app)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("isn't installed"), "{error}");
+    assert!(error.contains("launch-targets 312200"), "{error}");
+
+    let empty = launch_option("2", "", LaunchTarget::WindowsProton);
+    assert!(launch::require_launch_option_installed(&empty, &app).is_err());
+}
+
 #[test]
 fn select_launch_entry_matches_executable_case_insensitively() {
     let tmp = tempfile::tempdir().unwrap();

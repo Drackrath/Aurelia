@@ -388,11 +388,13 @@ async fn run(cli: Cli) -> Result<()> {
             steam,
             platform,
             steam_mode,
+            launch_option,
             no_update,
         } => {
             let target = PlayTarget {
                 platform,
                 steam_mode,
+                launch_option,
             };
             cmd_play(
                 app_id,
