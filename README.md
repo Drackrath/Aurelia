@@ -8,6 +8,7 @@
 [![Built with Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
 [![Status: Beta](https://img.shields.io/badge/status-experimental%20beta-yellow.svg)](#project-status)
 [![AUR](https://img.shields.io/badge/AUR-aurelia-1793d1.svg)](https://aur.archlinux.org/packages/aurelia)
+[![crates.io](https://img.shields.io/crates/v/aurelia-steam.svg)](https://crates.io/crates/aurelia-steam)
 
 <br clear="left" />
 
@@ -52,6 +53,7 @@ aurelia play 1245620
 - [Project status](#project-status)
 - [Install](#install)
 - [Build from source](#build-from-source)
+- [Published crates](#published-crates)
 - [Usage](#usage)
 - [Configuration](#configuration)
 - [Documentation](#documentation)
@@ -143,6 +145,15 @@ nix run github:Drackrath/Aurelia          # run it once
 nix profile install github:Drackrath/Aurelia   # install it
 ```
 
+### crates.io (Cargo)
+
+Needs the [build prerequisites](#prerequisites). The crate is called `aurelia-steam`, and the
+command it installs is `aurelia`:
+
+```bash
+cargo install aurelia-steam
+```
+
 ### Debian and Ubuntu (.deb)
 
 Grab the `.deb` for your architecture from the
@@ -208,6 +219,32 @@ cargo build --release
 ```
 
 The binary is produced at `target/release/aurelia` (`aurelia.exe` on Windows).
+
+---
+
+## Published crates
+
+Aurelia is published on crates.io as three crates, all licensed under GPL-3.0-or-later:
+
+| Crate | What it is | Source |
+| --- | --- | --- |
+| [`aurelia-steam`](https://crates.io/crates/aurelia-steam) | The `aurelia` command and its library | [Drackrath/Aurelia](https://github.com/Drackrath/Aurelia) |
+| [`aurelia-steam-cdn`](https://crates.io/crates/aurelia-steam-cdn) | Depot downloads, forked from [steam-cdn](https://github.com/OccamyLab/steam-cdn) | [Drackrath/aurelia-steam-cdn](https://github.com/Drackrath/aurelia-steam-cdn) |
+| [`aurelia-steam-vent-chat`](https://crates.io/crates/aurelia-steam-vent-chat) | Friend chat, forked from [steam-vent-chat](https://codeberg.org/steam-vent/chat) | [Drackrath/aurelia-steam-vent-chat](https://codeberg.org/Drackrath/aurelia-steam-vent-chat) |
+
+To use Aurelia as a library, add `aurelia-steam` to your project and import it as `aurelia`:
+
+```bash
+cargo add aurelia-steam
+```
+
+```rust
+use aurelia::core::utils::is_safe_dir_name;
+
+assert!(!is_safe_dir_name("../x"));
+```
+
+The library is pre-1.0, so its API may change between releases.
 
 ---
 
@@ -603,14 +640,15 @@ thanks to its author: SteamFlow did the hard groundwork that made Aurelia possib
 
 It stands, in turn, on **[steam-vent](https://codeberg.org/steam-vent/steam-vent)** and
 **[steam-vent-chat](https://codeberg.org/steam-vent/chat)**, whose reverse-engineering and
-protocol work let Aurelia speak Steam's real network protocols, and on a vendored, modified
-`steam-cdn` (plus the `zip` crate) for the content pipeline.
+protocol work let Aurelia speak Steam's real network protocols, and on a modified fork of
+[`steam-cdn`](https://github.com/OccamyLab/steam-cdn) (plus the `zip` crate) for the content
+pipeline.
 
 ### Credits
 
 - [SteamFlow](https://github.com/weter11/SteamFlow): the project Aurelia is derived from. Its groundwork is the base everything here is built on. Thank you!
 - [steam-vent](https://codeberg.org/steam-vent/steam-vent): Steam network protocol implementation
-- [steam-vent-chat](https://codeberg.org/steam-vent/chat): Steam Chat protocol implementation
+- [steam-vent-chat](https://codeberg.org/steam-vent/chat): Steam Chat protocol implementation (forked & modified as [aurelia-steam-vent-chat](https://codeberg.org/Drackrath/aurelia-steam-vent-chat))
 - [steam-cdn](https://github.com/OccamyLab/steam-cdn): content-delivery and depot download engine (forked & modified as [aurelia-steam-cdn](https://github.com/Drackrath/aurelia-steam-cdn))
 - [SteamKit2](https://github.com/SteamRE/SteamKit): Steam .NET research code
 - [SteamHelper-rs](https://github.com/saskenuba/SteamHelper-rs): SteamKit Rust port
