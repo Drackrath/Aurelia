@@ -8,6 +8,7 @@ name: Aurelia Release
 #
 # Triggers on a pushed v* tag (creates the release); workflow_dispatch just
 # builds the artifacts so you can test the matrix without tagging.
+# Schedule only warms main's cache.
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -17,6 +18,9 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+  # Unused caches expire after 7 days.
+  schedule:
+    - cron: "0 3 * * 1,5"
 
 permissions:
   contents: write
@@ -82,6 +86,14 @@ jobs:
       - name: Install Rust toolchain
         if: matrix.builder != 'nix'
         uses: dtolnay/rust-toolchain@stable
+
+      # After the toolchain: rustc is keyed.
+      - name: Cache Rust build
+        if: matrix.builder != 'nix'
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.name }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build Aurelia (release)
         if: matrix.builder != 'nix'
