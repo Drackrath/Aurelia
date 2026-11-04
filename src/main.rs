@@ -390,11 +390,17 @@ async fn run(cli: Cli) -> Result<()> {
             steam_mode,
             launch_option,
             no_update,
+            skip_shaders,
+            launch_timeout,
         } => {
             let target = PlayTarget {
                 platform,
                 steam_mode,
                 launch_option,
+            };
+            let wait = PlayWait {
+                skip_shaders,
+                launch_timeout,
             };
             cmd_play(
                 app_id,
@@ -406,11 +412,13 @@ async fn run(cli: Cli) -> Result<()> {
                 no_script,
                 steam,
                 target,
+                wait,
                 no_update,
                 json,
             )
             .await
         }
+        Command::Shaders { app_id, force } => cmd_shaders(app_id, force, json).await,
         Command::LaunchTargets { app_id, steam } => cmd_launch_targets(app_id, steam, json).await,
         Command::Running => cmd_running(json),
         Command::Stop { app_id, force } => cmd_stop(app_id, force, json).await,
@@ -508,6 +516,7 @@ async fn run(cli: Cli) -> Result<()> {
                 cmd_config_steam_runtime_policy(policy, json).await
             }
             ConfigCommand::InstallResume { mode } => cmd_config_install_resume(mode, json).await,
+            ConfigCommand::ShaderPrecache { mode } => cmd_config_shader_precache(mode, json).await,
             ConfigCommand::SteamRuntimeRunner { runner } => {
                 cmd_config_steam_runtime_runner(runner, json).await
             }

@@ -164,6 +164,9 @@ pub struct LauncherConfig {
     /// Whether the daemon resumes interrupted installs on start.
     #[serde(default)]
     pub install_resume: crate::library::backlog::InstallResume,
+    /// Vulkan shader pre-caching before launch.
+    #[serde(default)]
+    pub shader_precache: crate::launch::shaders::ShaderPrecache,
     /// Opt-in gate for experimental features. Off by default. Currently gates the
     /// browser/OpenID identity check (`login --openid`) and web-token auth
     /// (`login --web-token`), which prove identity / enable web-surface commands
@@ -219,6 +222,7 @@ impl Default for LauncherConfig {
             proxy: ProxyConfig::default(),
             steam_runtime_policy: crate::core::models::SteamRuntimePolicy::default(),
             install_resume: crate::library::backlog::InstallResume::default(),
+            shader_precache: crate::launch::shaders::ShaderPrecache::default(),
             experimental: false,
             encrypt_session: false,
         }

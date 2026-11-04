@@ -98,6 +98,10 @@ pub struct PipelineContext {
     pub umu_run: Option<std::path::PathBuf>,
     /// Run the game with real Steam integration
     pub steam_enabled: bool,
+    /// `play --skip-shaders`: no replay.
+    pub skip_shaders: bool,
+    /// Shader replay progress for the caller.
+    pub on_shader_event: Option<crate::launch::shaders::ShaderProgressFn>,
 
     pub resolved_install_dir: Option<std::path::PathBuf>,
     pub resolved_executable_path: Option<std::path::PathBuf>,
@@ -213,6 +217,8 @@ impl PipelineContext {
             use_umu: false,
             umu_run: None,
             steam_enabled: false,
+            skip_shaders: false,
+            on_shader_event: None,
             resolved_install_dir: None,
             resolved_executable_path: None,
             executable_exists: false,
@@ -645,6 +651,9 @@ impl LaunchPipeline {
         ));
         pipeline.add_stage(Box::new(
             crate::launch::stages::build_command::BuildCommandStage,
+        ));
+        pipeline.add_stage(Box::new(
+            crate::launch::stages::precache_shaders::PrecacheShadersStage,
         ));
         pipeline.add_stage(Box::new(crate::launch::stages::preflight::PreflightStage));
         pipeline.add_stage(Box::new(

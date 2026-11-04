@@ -285,6 +285,7 @@ impl SteamClient {
         prefer_native_target: bool,
         launch_option: Option<&str>,
         on_target_resolved: Option<&(dyn Fn(Option<&str>) + Send + Sync)>,
+        shaders: crate::launch::shaders::ShaderLaunch,
     ) -> Result<LaunchInfo> {
         // A Family-Shared game (licensed to another account) can only be authorised
         // by a running Steam client, so it always needs Steam integration regardless
@@ -472,6 +473,7 @@ impl SteamClient {
                 launch_script_override,
                 disable_launch_script,
                 steam_enabled,
+                shaders,
             )
             .await?
         };
