@@ -1,8 +1,8 @@
 //! Friend chat: send and receive direct messages over the shared Steam
 //! connection, and fetch recent message history.
 //!
-//! The live send/receive path wraps the vendored `steam-vent-chat` `ChatClient`
-//! (see `vendor/steam-vent-chat`); history uses the `FriendMessages`
+//! The live send/receive path wraps the `ChatClient` from our
+//! `aurelia-steam-vent-chat` fork; history uses the `FriendMessages`
 //! `GetRecentMessages` service method directly. As with the other `SteamClient`
 //! submodules, the struct and shared imports live in the parent module and are
 //! pulled in via `use super::*`.

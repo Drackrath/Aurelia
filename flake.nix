@@ -17,8 +17,7 @@
 
         # `target/` is a local build artefact, not input: including it would make
         # the source hash change on every cargo run and copy gigabytes into the
-        # store. The vendored crates under `vendor/` *are* path dependencies and
-        # must stay.
+        # store.
         src = lib.cleanSourceWith {
           name = "aurelia-source";
           src = ./.;

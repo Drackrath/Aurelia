@@ -285,6 +285,8 @@ dependencies = [
  "anyhow",
  "argon2",
  "async-trait",
+ "aurelia-steam-cdn",
+ "aurelia-steam-vent-chat",
  "cbc",
  "chacha20poly1305",
  "clap",
@@ -306,10 +308,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1",
- "steam-cdn",
  "steam-vdf-parser",
  "steam-vent",
- "steam-vent-chat",
  "steam-vent-proto",
  "steam-vent-proto-common",
  "steamid-ng",
@@ -324,6 +324,46 @@ dependencies = [
  "windows-sys 0.59.0",
  "xz2",
  "zip",
+]
+
+[[package]]
+name = "aurelia-steam-cdn"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3b70a7b540fd55df964858ca7a2d6ab2a91ae9014e6afcd2c16aaf68007778d"
+dependencies = [
+ "aes",
+ "base64",
+ "bytes",
+ "cbc",
+ "crc32fast",
+ "futures",
+ "itertools",
+ "keyvalues-parser",
+ "lzma-rs",
+ "protobuf",
+ "reqwest",
+ "ruzstd",
+ "serde",
+ "sha1",
+ "steam-vent",
+ "steam-vent-proto",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "zip",
+]
+
+[[package]]
+name = "aurelia-steam-vent-chat"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d54f635f36e6ab2964b1ee087e6a797bd720258dab14332b060d62d7039ab6c"
+dependencies = [
+ "steam-vent",
+ "steam-vent-proto",
+ "steamid-ng",
+ "tokio-stream",
 ]
 
 [[package]]
@@ -2982,32 +3022,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
-name = "steam-cdn"
-version = "1.0.0"
-dependencies = [
- "aes",
- "base64",
- "bytes",
- "cbc",
- "crc32fast",
- "futures",
- "itertools",
- "keyvalues-parser",
- "lzma-rs",
- "protobuf",
- "reqwest",
- "ruzstd",
- "serde",
- "sha1",
- "steam-vent",
- "steam-vent-proto",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "zip",
-]
-
-[[package]]
 name = "steam-vdf-parser"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3058,16 +3072,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "webpki-roots 1.0.6",
-]
-
-[[package]]
-name = "steam-vent-chat"
-version = "0.5.0"
-dependencies = [
- "steam-vent",
- "steam-vent-proto",
- "steamid-ng",
- "tokio-stream",
 ]
 
 [[package]]

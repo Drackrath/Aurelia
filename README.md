@@ -611,7 +611,7 @@ protocol work let Aurelia speak Steam's real network protocols, and on a vendore
 - [SteamFlow](https://github.com/weter11/SteamFlow): the project Aurelia is derived from. Its groundwork is the base everything here is built on. Thank you!
 - [steam-vent](https://codeberg.org/steam-vent/steam-vent): Steam network protocol implementation
 - [steam-vent-chat](https://codeberg.org/steam-vent/chat): Steam Chat protocol implementation
-- [steam-cdn](https://crates.io/crates/steam-cdn): content-delivery and depot download engine (vendored & modified)
+- [steam-cdn](https://github.com/OccamyLab/steam-cdn): content-delivery and depot download engine (forked & modified as [aurelia-steam-cdn](https://github.com/Drackrath/aurelia-steam-cdn))
 - [SteamKit2](https://github.com/SteamRE/SteamKit): Steam .NET research code
 - [SteamHelper-rs](https://github.com/saskenuba/SteamHelper-rs): SteamKit Rust port
 
