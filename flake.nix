@@ -68,7 +68,7 @@
           meta = {
             inherit (manifest) description;
             homepage = "https://github.com/Drackrath/Aurelia";
-            license = lib.licenses.gpl3Only;
+            license = lib.licenses.gpl3Plus;
             mainProgram = "aurelia";
             platforms = lib.platforms.unix;
           };

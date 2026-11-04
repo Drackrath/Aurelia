@@ -3,7 +3,7 @@ name = "aurelia"
 version = "0.1.41"
 edition = "2024"
 description = "Aurelia CLI Steam launcher"
-license = "GPL 3.0"
+license = "GPL-3.0-or-later"
 
 [dependencies]
 anyhow = "1"

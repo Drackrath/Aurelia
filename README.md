@@ -4,7 +4,7 @@
 
 **A fast, lightweight, headless Steam launcher and library manager written in Rust. Install, update and play your Steam games entirely from the terminal.**
 
-[![License: GPL-3.0](https://img.shields.io/badge/License-GPL%203.0-blue.svg)](LICENSE)
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](LICENSE)
 [![Built with Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
 [![Status: Beta](https://img.shields.io/badge/status-experimental%20beta-yellow.svg)](#project-status)
 [![AUR](https://img.shields.io/badge/AUR-aurelia-1793d1.svg)](https://aur.archlinux.org/packages/aurelia)
@@ -74,7 +74,7 @@ aurelia play 1245620
 - **Deep Steam integration.** PICS metadata, the content CDN, Steam Cloud, app ownership
   tickets, depot browsing, DLC management, and Steam Workshop, all built on open, documented
   protocols.
-- **Open source.** GPL-3.0 licensed, with no dependency on opaque 32-bit legacy Steam binaries.
+- **Open source.** GPL-3.0-or-later licensed, with no dependency on opaque 32-bit legacy Steam binaries.
 
 ### How it compares
 
@@ -88,7 +88,7 @@ aurelia play 1245620
 | **Authentication** | Full | Core | Full (+ anonymous) | Full (tokens, mobile app, Guard) |
 | **Steam integration** | Native | Partial | Content only | Deep (PICS, CDN, Cloud, tickets) |
 | **Platforms** | Windows, Linux, macOS | Windows, Linux | Windows, Linux, macOS | Linux (first), Windows |
-| **Open source** | No | Yes | No | Yes (GPL-3.0) |
+| **Open source** | No | Yes | No | Yes (GPL-3.0-or-later) |
 
 **vs. SteamCMD.** [SteamCMD](https://developer.valvesoftware.com/wiki/SteamCMD) is Valve's
 official command-line tool and the closest analog to Aurelia, but it is **content-only**: it
@@ -97,7 +97,7 @@ little else. Aurelia is a full launcher and library manager. On top of installin
 updating, it lists and searches your library, **launches** games (natively or via
 Proton or Wine), syncs Steam Cloud saves, manages DLC and Workshop subscriptions, reads
 achievements, and does friends & chat, with every command scriptable via `--json`. SteamCMD is
-proprietary and ships only as a prebuilt binary. Aurelia is open source (GPL-3.0).
+proprietary and ships only as a prebuilt binary. Aurelia is open source (GPL-3.0-or-later).
 
 ---
 
@@ -544,7 +544,7 @@ but it is content-only: it downloads and updates app and Workshop files and litt
 Aurelia is a full launcher and library manager. It lists and searches your library, launches
 games natively or through Proton and Wine, syncs Steam Cloud saves, manages DLC and Workshop
 subscriptions, reads achievements, and does friends & chat. SteamCMD is proprietary and ships
-as a prebuilt binary. Aurelia is open source under GPL-3.0.
+as a prebuilt binary. Aurelia is open source under GPL-3.0-or-later.
 
 ### Is Aurelia an OpenSteamClient alternative?
 
@@ -653,4 +653,4 @@ proton launcher cli, steam library manager, rust steam client.*
 
 ## License
 
-Aurelia is released under the [GPL-3.0 License](LICENSE).
+Aurelia is released under the [GPL-3.0-or-later License](LICENSE).
