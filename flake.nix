@@ -33,7 +33,7 @@
         packages.default = self.packages.${system}.aurelia;
 
         packages.aurelia = pkgs.rustPlatform.buildRustPackage {
-          pname = manifest.name;
+          pname = "aurelia";
           inherit (manifest) version;
           inherit src;
 

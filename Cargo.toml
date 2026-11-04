@@ -1,9 +1,19 @@
 [package]
-name = "aurelia"
+name = "aurelia-steam"
 version = "0.1.41"
 edition = "2024"
 description = "Aurelia CLI Steam launcher"
 license = "GPL-3.0-or-later"
+repository = "https://github.com/Drackrath/Aurelia"
+
+# Crate name "aurelia" is taken.
+[lib]
+name = "aurelia"
+path = "src/lib.rs"
+
+[[bin]]
+name = "aurelia"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
