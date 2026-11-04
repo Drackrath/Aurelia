@@ -388,6 +388,7 @@ async fn run(cli: Cli) -> Result<()> {
             steam,
             platform,
             steam_mode,
+            launch_option,
             no_update,
             skip_shaders,
             launch_timeout,
@@ -395,6 +396,7 @@ async fn run(cli: Cli) -> Result<()> {
             let target = PlayTarget {
                 platform,
                 steam_mode,
+                launch_option,
             };
             let wait = PlayWait {
                 skip_shaders,

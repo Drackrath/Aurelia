@@ -77,6 +77,28 @@ fn parse(args: &[&str]) -> Cli {
 }
 
 #[test]
+fn play_accepts_a_launch_option_id() {
+    // Heroic combines it with target flags.
+    let argv = [
+        "aurelia",
+        "play",
+        "312200",
+        "--platform",
+        "windows",
+        "--launch-option",
+        "3",
+    ];
+    match parse(&argv).command {
+        Command::Play { launch_option, .. } => assert_eq!(launch_option.as_deref(), Some("3")),
+        _ => panic!("expected play"),
+    }
+    match parse(&["aurelia", "play", "312200"]).command {
+        Command::Play { launch_option, .. } => assert!(launch_option.is_none()),
+        _ => panic!("expected play"),
+    }
+}
+
+#[test]
 fn install_positional_and_subcommands_coexist() {
     // Positional install (Heroic depends on this form).
     match parse(&["aurelia", "install", "945360"]).command {

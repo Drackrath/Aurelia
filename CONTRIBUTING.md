@@ -93,4 +93,4 @@ We track bugs through [GitHub issues](https://github.com/Drackrath/Aurelia/issue
 ## License
 
 By contributing, you agree that your contributions will be licensed under the project's
-[GPL-3.0 License](LICENSE), the same license that covers Aurelia.
+[GPL-3.0-or-later License](LICENSE), the same license that covers Aurelia.

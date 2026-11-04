@@ -17,8 +17,7 @@
 
         # `target/` is a local build artefact, not input: including it would make
         # the source hash change on every cargo run and copy gigabytes into the
-        # store. The vendored crates under `vendor/` *are* path dependencies and
-        # must stay.
+        # store.
         src = lib.cleanSourceWith {
           name = "aurelia-source";
           src = ./.;
@@ -34,16 +33,12 @@
         packages.default = self.packages.${system}.aurelia;
 
         packages.aurelia = pkgs.rustPlatform.buildRustPackage {
-          pname = manifest.name;
+          pname = "aurelia";
           inherit (manifest) version;
           inherit src;
 
           cargoLock = {
             lockFile = ./Cargo.lock;
-            # steam-vent is a git dependency pinned to a tag. Fetching it by the
-            # revision already recorded in Cargo.lock avoids carrying a second
-            # hash that has to be updated by hand on every bump.
-            allowBuiltinFetchGit = true;
           };
 
           # cmake and bindgen are for aws-lc-sys, the crypto backend rustls pulls
@@ -73,7 +68,7 @@
           meta = {
             inherit (manifest) description;
             homepage = "https://github.com/Drackrath/Aurelia";
-            license = lib.licenses.gpl3Only;
+            license = lib.licenses.gpl3Plus;
             mainProgram = "aurelia";
             platforms = lib.platforms.unix;
           };

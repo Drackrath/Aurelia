@@ -48,6 +48,53 @@ pub fn select_launch_entry(
     })
 }
 
+/// Find a launch entry by id.
+pub fn find_launch_option<'a>(options: &'a [LaunchInfo], id: &str) -> Result<&'a LaunchInfo> {
+    options.iter().find(|o| o.id == id).ok_or_else(|| {
+        let known: Vec<&str> = options.iter().map(|o| o.id.as_str()).collect();
+        anyhow!(
+            "launch option {id} can't be started: it doesn't exist or is macOS-only (available: {})",
+            known.join(", ")
+        )
+    })
+}
+
+/// Reject entries conflicting with explicit flags.
+///
+/// `required` names the demanded target and source.
+pub fn check_launch_option_target(
+    entry: &LaunchInfo,
+    required: Option<(LaunchTarget, &str)>,
+) -> Result<()> {
+    let Some((target, source)) = required else {
+        return Ok(());
+    };
+    if entry.target != target {
+        let (build, needed) = match entry.target {
+            LaunchTarget::NativeLinux => ("native Linux", "Windows"),
+            LaunchTarget::WindowsProton => ("Windows", "native Linux"),
+        };
+        bail!(
+            "launch option {} starts the {build} build, but {source} requires the {needed} build",
+            entry.id
+        );
+    }
+    Ok(())
+}
+
+/// Require the entry's executable on disk.
+pub(super) fn require_launch_option_installed(entry: &LaunchInfo, app: &LibraryGame) -> Result<()> {
+    if entry.executable.is_empty() || on_disk_path(app, &entry.executable).is_none() {
+        bail!(
+            "launch option {} needs {:?}, which isn't installed; see `aurelia launch-targets {}`",
+            entry.id,
+            entry.executable,
+            app.app_id
+        );
+    }
+    Ok(())
+}
+
 /// On-disk spelling of `rel`, ignoring case.
 ///
 /// Windows manifests ignore path case.
@@ -236,6 +283,7 @@ impl SteamClient {
         disable_launch_script: bool,
         steam_enabled: bool,
         prefer_native_target: bool,
+        launch_option: Option<&str>,
         on_target_resolved: Option<&(dyn Fn(Option<&str>) + Send + Sync)>,
         shaders: crate::launch::shaders::ShaderLaunch,
     ) -> Result<LaunchInfo> {
@@ -243,6 +291,17 @@ impl SteamClient {
         // by a running Steam client, so it always needs Steam integration regardless
         // of the user's preference.
         let steam_enabled = steam_enabled || !app.is_owned;
+
+        // Reject bad entries before starting Steam.
+        let launch_options = self.get_product_info(app.app_id).await?;
+        let launch_options = match launch_option {
+            Some(id) => {
+                let entry = find_launch_option(&launch_options, id)?;
+                require_launch_option_installed(entry, app)?;
+                vec![entry.clone()]
+            }
+            None => launch_options,
+        };
 
         // With Steam integration the game talks to the host Steam client; make sure
         // one is running (start it silently if not) so Steamworks/Family-Sharing can
@@ -265,8 +324,6 @@ impl SteamClient {
                 );
             }
         }
-
-        let launch_options = self.get_product_info(app.app_id).await?;
 
         let prefer_windows_target = force_windows || proton_path.is_some();
         let launch_info = select_launch_entry(

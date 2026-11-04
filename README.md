@@ -4,10 +4,11 @@
 
 **A fast, lightweight, headless Steam launcher and library manager written in Rust. Install, update and play your Steam games entirely from the terminal.**
 
-[![License: GPL-3.0](https://img.shields.io/badge/License-GPL%203.0-blue.svg)](LICENSE)
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](LICENSE)
 [![Built with Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
 [![Status: Beta](https://img.shields.io/badge/status-experimental%20beta-yellow.svg)](#project-status)
 [![AUR](https://img.shields.io/badge/AUR-aurelia-1793d1.svg)](https://aur.archlinux.org/packages/aurelia)
+[![crates.io](https://img.shields.io/crates/v/aurelia-steam.svg)](https://crates.io/crates/aurelia-steam)
 
 <br clear="left" />
 
@@ -52,6 +53,7 @@ aurelia play 1245620
 - [Project status](#project-status)
 - [Install](#install)
 - [Build from source](#build-from-source)
+- [Published crates](#published-crates)
 - [Usage](#usage)
 - [Configuration](#configuration)
 - [Documentation](#documentation)
@@ -74,7 +76,7 @@ aurelia play 1245620
 - **Deep Steam integration.** PICS metadata, the content CDN, Steam Cloud, app ownership
   tickets, depot browsing, DLC management, and Steam Workshop, all built on open, documented
   protocols.
-- **Open source.** GPL-3.0 licensed, with no dependency on opaque 32-bit legacy Steam binaries.
+- **Open source.** GPL-3.0-or-later licensed, with no dependency on opaque 32-bit legacy Steam binaries.
 
 ### How it compares
 
@@ -88,7 +90,7 @@ aurelia play 1245620
 | **Authentication** | Full | Core | Full (+ anonymous) | Full (tokens, mobile app, Guard) |
 | **Steam integration** | Native | Partial | Content only | Deep (PICS, CDN, Cloud, tickets) |
 | **Platforms** | Windows, Linux, macOS | Windows, Linux | Windows, Linux, macOS | Linux (first), Windows |
-| **Open source** | No | Yes | No | Yes (GPL-3.0) |
+| **Open source** | No | Yes | No | Yes (GPL-3.0-or-later) |
 
 **vs. SteamCMD.** [SteamCMD](https://developer.valvesoftware.com/wiki/SteamCMD) is Valve's
 official command-line tool and the closest analog to Aurelia, but it is **content-only**: it
@@ -97,7 +99,7 @@ little else. Aurelia is a full launcher and library manager. On top of installin
 updating, it lists and searches your library, **launches** games (natively or via
 Proton or Wine), syncs Steam Cloud saves, manages DLC and Workshop subscriptions, reads
 achievements, and does friends & chat, with every command scriptable via `--json`. SteamCMD is
-proprietary and ships only as a prebuilt binary. Aurelia is open source (GPL-3.0).
+proprietary and ships only as a prebuilt binary. Aurelia is open source (GPL-3.0-or-later).
 
 ---
 
@@ -141,6 +143,15 @@ yay -S aurelia          # or: paru -S aurelia
 ```bash
 nix run github:Drackrath/Aurelia          # run it once
 nix profile install github:Drackrath/Aurelia   # install it
+```
+
+### crates.io (Cargo)
+
+Needs the [build prerequisites](#prerequisites). The crate is called `aurelia-steam`, and the
+command it installs is `aurelia`:
+
+```bash
+cargo install aurelia-steam
 ```
 
 ### Debian and Ubuntu (.deb)
@@ -208,6 +219,32 @@ cargo build --release
 ```
 
 The binary is produced at `target/release/aurelia` (`aurelia.exe` on Windows).
+
+---
+
+## Published crates
+
+Aurelia is published on crates.io as three crates, all licensed under GPL-3.0-or-later:
+
+| Crate | What it is | Source |
+| --- | --- | --- |
+| [`aurelia-steam`](https://crates.io/crates/aurelia-steam) | The `aurelia` command and its library | [Drackrath/Aurelia](https://github.com/Drackrath/Aurelia) |
+| [`aurelia-steam-cdn`](https://crates.io/crates/aurelia-steam-cdn) | Depot downloads, forked from [steam-cdn](https://github.com/OccamyLab/steam-cdn) | [Drackrath/aurelia-steam-cdn](https://github.com/Drackrath/aurelia-steam-cdn) |
+| [`aurelia-steam-vent-chat`](https://crates.io/crates/aurelia-steam-vent-chat) | Friend chat, forked from [steam-vent-chat](https://codeberg.org/steam-vent/chat) | [Drackrath/aurelia-steam-vent-chat](https://codeberg.org/Drackrath/aurelia-steam-vent-chat) |
+
+To use Aurelia as a library, add `aurelia-steam` to your project and import it as `aurelia`:
+
+```bash
+cargo add aurelia-steam
+```
+
+```rust
+use aurelia::core::utils::is_safe_dir_name;
+
+assert!(!is_safe_dir_name("../x"));
+```
+
+The library is pre-1.0, so its API may change between releases.
 
 ---
 
@@ -296,6 +333,7 @@ aurelia play 1245620 --steam         # run with Steam online features (Family Sh
 aurelia launch-targets 1245620       # installed builds + Steam modes, and the `play` flags for each
 aurelia play 1245620 --platform linux        # Linux: run the native build (or `windows` via Proton)
 aurelia play 1245620 --steam-mode host       # one launch: `runtime` (in-Wine), `host` or `none`
+aurelia play 1245620 --launch-option 3       # one launch: an entry from `launch-options`, by id
 aurelia play 1245620 -v              # also log progress/debug output (-vv/-vvv: Steam networking)
 aurelia play 1245620 --skip-shaders  # Linux: launch without pre-compiling Vulkan shaders first
 aurelia shaders 1245620              # Linux: pre-compile a game's Vulkan shaders now (--force to redo)
@@ -558,7 +596,7 @@ but it is content-only: it downloads and updates app and Workshop files and litt
 Aurelia is a full launcher and library manager. It lists and searches your library, launches
 games natively or through Proton and Wine, syncs Steam Cloud saves, manages DLC and Workshop
 subscriptions, reads achievements, and does friends & chat. SteamCMD is proprietary and ships
-as a prebuilt binary. Aurelia is open source under GPL-3.0.
+as a prebuilt binary. Aurelia is open source under GPL-3.0-or-later.
 
 ### Is Aurelia an OpenSteamClient alternative?
 
@@ -617,15 +655,16 @@ thanks to its author: SteamFlow did the hard groundwork that made Aurelia possib
 
 It stands, in turn, on **[steam-vent](https://codeberg.org/steam-vent/steam-vent)** and
 **[steam-vent-chat](https://codeberg.org/steam-vent/chat)**, whose reverse-engineering and
-protocol work let Aurelia speak Steam's real network protocols, and on a vendored, modified
-`steam-cdn` (plus the `zip` crate) for the content pipeline.
+protocol work let Aurelia speak Steam's real network protocols, and on a modified fork of
+[`steam-cdn`](https://github.com/OccamyLab/steam-cdn) (plus the `zip` crate) for the content
+pipeline.
 
 ### Credits
 
 - [SteamFlow](https://github.com/weter11/SteamFlow): the project Aurelia is derived from. Its groundwork is the base everything here is built on. Thank you!
 - [steam-vent](https://codeberg.org/steam-vent/steam-vent): Steam network protocol implementation
-- [steam-vent-chat](https://codeberg.org/steam-vent/chat): Steam Chat protocol implementation
-- [steam-cdn](https://crates.io/crates/steam-cdn): content-delivery and depot download engine (vendored & modified)
+- [steam-vent-chat](https://codeberg.org/steam-vent/chat): Steam Chat protocol implementation (forked & modified as [aurelia-steam-vent-chat](https://codeberg.org/Drackrath/aurelia-steam-vent-chat))
+- [steam-cdn](https://github.com/OccamyLab/steam-cdn): content-delivery and depot download engine (forked & modified as [aurelia-steam-cdn](https://github.com/Drackrath/aurelia-steam-cdn))
 - [SteamKit2](https://github.com/SteamRE/SteamKit): Steam .NET research code
 - [SteamHelper-rs](https://github.com/saskenuba/SteamHelper-rs): SteamKit Rust port
 
@@ -667,4 +706,4 @@ proton launcher cli, steam library manager, rust steam client.*
 
 ## License
 
-Aurelia is released under the [GPL-3.0 License](LICENSE).
+Aurelia is released under the [GPL-3.0-or-later License](LICENSE).
