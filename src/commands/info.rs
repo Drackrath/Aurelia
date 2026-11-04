@@ -838,16 +838,29 @@ pub(crate) async fn cmd_depots(app_id: u32, json: bool) -> Result<()> {
 }
 
 pub(crate) async fn cmd_launch_options(app_id: u32, json: bool) -> Result<()> {
-    let client = authed_client().await?;
-    let options = client
+    let mut client = authed_client().await?;
+    let mut options = client
         .fetch_launch_options(app_id)
         .await
         .with_context(|| format!("failed to load launch options for app {app_id}"))?;
+
+    // Unowned apps still list options.
+    let game = find_game(&mut client, app_id).await.ok();
+    let config = aurelia::core::config::load_launcher_config().await?;
+    if let Some(game) = game
+        .as_ref()
+        .filter(|_| config.hide_uninstalled_launch_options)
+    {
+        aurelia::steam_client::hide_uninstalled_launch_options(&mut options, game);
+    }
 
     if json {
         let arr: Vec<_> = options
             .iter()
             .map(|o| {
+                let installed = game.as_ref().is_some_and(|g| {
+                    aurelia::steam_client::launch_executable_installed(g, &o.executable)
+                });
                 serde_json::json!({
                     "id": o.id,
                     "description": o.description,
@@ -857,6 +870,7 @@ pub(crate) async fn cmd_launch_options(app_id: u32, json: bool) -> Result<()> {
                     "oslist": o.oslist,
                     "osarch": o.osarch,
                     "type": o.launch_type,
+                    "installed": installed,
                 })
             })
             .collect();

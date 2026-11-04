@@ -167,6 +167,9 @@ pub struct LauncherConfig {
     /// Vulkan shader pre-caching before launch.
     #[serde(default)]
     pub shader_precache: crate::launch::shaders::ShaderPrecache,
+    /// Hide launch options not installed.
+    #[serde(default = "crate::core::models::default_true")]
+    pub hide_uninstalled_launch_options: bool,
     /// Opt-in gate for experimental features. Off by default. Currently gates the
     /// browser/OpenID identity check (`login --openid`) and web-token auth
     /// (`login --web-token`), which prove identity / enable web-surface commands
@@ -223,6 +226,7 @@ impl Default for LauncherConfig {
             steam_runtime_policy: crate::core::models::SteamRuntimePolicy::default(),
             install_resume: crate::library::backlog::InstallResume::default(),
             shader_precache: crate::launch::shaders::ShaderPrecache::default(),
+            hide_uninstalled_launch_options: true,
             experimental: false,
             encrypt_session: false,
         }

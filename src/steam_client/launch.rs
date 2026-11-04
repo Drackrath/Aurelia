@@ -82,9 +82,21 @@ pub fn check_launch_option_target(
     Ok(())
 }
 
+/// Is this launch executable on disk?
+pub fn launch_executable_installed(app: &LibraryGame, executable: &str) -> bool {
+    app.is_installed && !executable.is_empty() && on_disk_path(app, executable).is_some()
+}
+
+/// Drop entries an installed game lacks.
+pub fn hide_uninstalled_launch_options(options: &mut Vec<LaunchOptionInfo>, app: &LibraryGame) {
+    if app.is_installed {
+        options.retain(|o| launch_executable_installed(app, &o.executable));
+    }
+}
+
 /// Require the entry's executable on disk.
 pub(super) fn require_launch_option_installed(entry: &LaunchInfo, app: &LibraryGame) -> Result<()> {
-    if entry.executable.is_empty() || on_disk_path(app, &entry.executable).is_none() {
+    if !launch_executable_installed(app, &entry.executable) {
         bail!(
             "launch option {} needs {:?}, which isn't installed; see `aurelia launch-targets {}`",
             entry.id,

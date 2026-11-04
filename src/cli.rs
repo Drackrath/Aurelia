@@ -592,6 +592,13 @@ pub(crate) enum ConfigCommand {
         /// `auto` or `off`. Omit to print the current setting.
         mode: Option<ShaderPrecacheArg>,
     },
+    /// View or set whether `launch-options` hides entries whose executable isn't
+    /// installed, for installed games. `on` (default) lists only entries `play` can
+    /// start; `off` lists every entry, with `installed` in `--json`.
+    HideUninstalledLaunchOptions {
+        /// `on` or `off`. Omit to print the current setting.
+        mode: Option<OnOffArg>,
+    },
     /// View or set the network proxy used for all HTTP(S) communication.
     ///
     /// Applies to the Steam web endpoints, depot downloads, and Proton/plugin
@@ -1131,6 +1138,15 @@ pub(crate) enum SteamModeArg {
     Host,
     /// Standalone, no Steam client.
     None,
+}
+
+/// Choices for on/off settings.
+#[derive(Clone, Copy, ValueEnum)]
+pub(crate) enum OnOffArg {
+    /// Enable the setting.
+    On,
+    /// Disable the setting.
+    Off,
 }
 
 /// `config shader-precache` choices.

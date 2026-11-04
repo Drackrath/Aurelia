@@ -499,7 +499,8 @@ mod launch;
 mod library;
 mod manage;
 pub use launch::{
-    LaunchTargetChoice, check_launch_option_target, find_launch_option, launch_targets,
+    LaunchTargetChoice, check_launch_option_target, find_launch_option,
+    hide_uninstalled_launch_options, launch_executable_installed, launch_targets,
     select_launch_entry,
 };
 mod cloudconfig;

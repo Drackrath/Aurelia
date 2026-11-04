@@ -324,7 +324,7 @@ aurelia disable 2001                 # disable a DLC
 aurelia branches 1245620             # list beta branches
 aurelia set-branch 1245620 beta      # switch branch
 aurelia depots 1245620               # list depots
-aurelia launch-options 1245620       # list Steam launch configs (exe, args, platform)
+aurelia launch-options 1245620       # list Steam launch configs (exe, args, platform; `--json` adds `installed`)
 
 # Launch
 aurelia play 1245620                 # launch a game and wait for it to exit
@@ -382,6 +382,7 @@ aurelia config country DE            # default store region for prices (unset: s
 aurelia config game 1245620 --proton GE-Proton9-20  # pin a Proton version for one game
 aurelia config install-resume auto   # let the daemon resume interrupted installs when it starts
 aurelia config shader-precache off   # Linux: don't pre-compile Vulkan shaders before play (default: auto)
+aurelia config hide-uninstalled-launch-options off  # list launch options that aren't installed too (default: on)
 
 # Proton and Wine runtimes (download manager)
 aurelia proton list                  # installable runtimes (Valve + GE + CachyOS) and what's installed

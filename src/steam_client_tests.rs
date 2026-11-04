@@ -513,6 +513,43 @@ fn launch_option_must_be_installed() {
 
     let empty = launch_option("2", "", LaunchTarget::WindowsProton);
     assert!(launch::require_launch_option_installed(&empty, &app).is_err());
+
+    // Steam manifests use backslashes.
+    std::fs::create_dir(tmp.path().join("x64")).unwrap();
+    std::fs::write(tmp.path().join("x64/Game.exe"), b"").unwrap();
+    assert!(launch::launch_executable_installed(&app, "X64\\game.exe"));
+    assert!(!launch::launch_executable_installed(
+        &app,
+        "Debug\\game.exe"
+    ));
+
+    // Installed games lose missing entries.
+    let info = |id: &str, executable: &str| LaunchOptionInfo {
+        id: id.to_string(),
+        executable: executable.to_string(),
+        ..Default::default()
+    };
+    let all = vec![
+        info("0", "x64\\Game.exe"),
+        info("1", "Debug\\Game.exe"),
+        info("2", ""),
+    ];
+    let mut options = all.clone();
+    launch::hide_uninstalled_launch_options(&mut options, &app);
+    let kept: Vec<&str> = options.iter().map(|o| o.id.as_str()).collect();
+    assert_eq!(kept, ["0"]);
+
+    // Leftover files don't count.
+    let mut uninstalled = app;
+    uninstalled.is_installed = false;
+    // Uninstalled games keep every entry.
+    let mut options = all.clone();
+    launch::hide_uninstalled_launch_options(&mut options, &uninstalled);
+    assert_eq!(options.len(), all.len());
+    assert!(!launch::launch_executable_installed(
+        &uninstalled,
+        "game.exe"
+    ));
 }
 
 #[test]

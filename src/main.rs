@@ -517,6 +517,9 @@ async fn run(cli: Cli) -> Result<()> {
             }
             ConfigCommand::InstallResume { mode } => cmd_config_install_resume(mode, json).await,
             ConfigCommand::ShaderPrecache { mode } => cmd_config_shader_precache(mode, json).await,
+            ConfigCommand::HideUninstalledLaunchOptions { mode } => {
+                cmd_config_hide_uninstalled_launch_options(mode, json).await
+            }
             ConfigCommand::SteamRuntimeRunner { runner } => {
                 cmd_config_steam_runtime_runner(runner, json).await
             }

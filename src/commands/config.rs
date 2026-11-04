@@ -307,6 +307,33 @@ pub(crate) async fn cmd_config_shader_precache(
     Ok(())
 }
 
+/// `config hide-uninstalled-launch-options [on|off]`.
+pub(crate) async fn cmd_config_hide_uninstalled_launch_options(
+    mode: Option<OnOffArg>,
+    json: bool,
+) -> Result<()> {
+    let (config, changed) = view_or_set(mode, |c, m| {
+        c.hide_uninstalled_launch_options = matches!(m, OnOffArg::On);
+    })
+    .await?;
+    if json {
+        print_json(&serde_json::json!({
+            "hide_uninstalled_launch_options": config.hide_uninstalled_launch_options
+        }));
+        return Ok(());
+    }
+    let label = if config.hide_uninstalled_launch_options {
+        "on (`launch-options` lists only installed entries of installed games)"
+    } else {
+        "off (`launch-options` lists every entry; `play` refuses ones not installed)"
+    };
+    cli_println!("Hide uninstalled launch options: {label}");
+    if changed {
+        cli_println!("Saved.");
+    }
+    Ok(())
+}
+
 /// `config install-resume [manual|auto]`.
 pub(crate) async fn cmd_config_install_resume(
     mode: Option<InstallResumeArg>,

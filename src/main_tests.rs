@@ -77,6 +77,15 @@ fn parse(args: &[&str]) -> Cli {
 }
 
 #[test]
+fn hide_uninstalled_launch_options_takes_on_or_off() {
+    let name = "hide-uninstalled-launch-options";
+    assert!(Cli::try_parse_from(["aurelia", "config", name]).is_ok());
+    assert!(Cli::try_parse_from(["aurelia", "config", name, "on"]).is_ok());
+    assert!(Cli::try_parse_from(["aurelia", "config", name, "off"]).is_ok());
+    assert!(Cli::try_parse_from(["aurelia", "config", name, "maybe"]).is_err());
+}
+
+#[test]
 fn play_accepts_a_launch_option_id() {
     // Heroic combines it with target flags.
     let argv = [
