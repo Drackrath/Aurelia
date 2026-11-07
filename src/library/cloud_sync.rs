@@ -186,7 +186,7 @@ impl SyncBaseline {
         }
         match serde_json::to_string_pretty(self) {
             Ok(raw) => {
-                if let Err(e) = std::fs::write(&path, raw) {
+                if let Err(e) = crate::core::atomic::write_atomic(&path, raw.as_bytes()) {
                     tracing::warn!("could not persist cloud-sync state {}: {e}", path.display());
                 }
             }

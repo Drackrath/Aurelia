@@ -210,10 +210,7 @@ fn save_to(path: &Path, entries: &[BacklogEntry]) -> Result<()> {
         entries: entries.to_vec(),
     };
     let body = serde_json::to_string_pretty(&file)?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, body).with_context(|| format!("failed writing {}", tmp.display()))?;
-    std::fs::rename(&tmp, path).with_context(|| format!("failed replacing {}", path.display()))?;
-    Ok(())
+    crate::core::atomic::write_atomic(path, body.as_bytes())
 }
 
 /// Folder `forget --delete-files` may remove.

@@ -84,7 +84,7 @@ fn write_daemon_info() {
     let path = transport::version_marker_path();
     match serde_json::to_vec(&info) {
         Ok(bytes) => {
-            if let Err(e) = std::fs::write(&path, bytes) {
+            if let Err(e) = aurelia::core::atomic::write_atomic(&path, &bytes) {
                 tracing::warn!(
                     "daemon: could not write version marker {}: {e}",
                     path.display()

@@ -108,12 +108,7 @@ pub fn record_launch(game: &RunningGame) -> Result<()> {
     std::fs::create_dir_all(&dir).with_context(|| format!("failed creating {}", dir.display()))?;
     let path = record_path(game.app_id)?;
     let body = serde_json::to_string_pretty(game)?;
-    // Write-then-rename so a reader (or a crash) never sees a half-written
-    // record. The `.tmp` extension keeps it out of `list()`.
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, body).with_context(|| format!("failed writing {}", tmp.display()))?;
-    std::fs::rename(&tmp, &path).with_context(|| format!("failed replacing {}", path.display()))?;
-    Ok(())
+    crate::core::atomic::write_atomic(&path, body.as_bytes())
 }
 
 /// Load the running-game record for `app_id`, if one exists.

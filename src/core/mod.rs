@@ -1,4 +1,5 @@
 pub mod acf;
+pub mod atomic;
 pub mod config;
 pub mod error;
 pub mod locale;
