@@ -37,6 +37,37 @@ pub fn is_safe_dir_name(name: &str) -> bool {
         )
 }
 
+/// Relative path with no escaping parts.
+pub fn safe_relative_path(path: &str) -> Option<PathBuf> {
+    use std::path::Component;
+    if path.contains('\0') {
+        return None;
+    }
+    let mut out = PathBuf::new();
+    for component in Path::new(path).components() {
+        match component {
+            Component::Normal(part) => out.push(part),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    (!out.as_os_str().is_empty()).then_some(out)
+}
+
+/// Nearest existing ancestor resolves inside `root`.
+pub fn resolves_within(root: &Path, path: &Path) -> bool {
+    let mut probe = path;
+    loop {
+        if std::fs::symlink_metadata(probe).is_ok() {
+            return probe.canonicalize().is_ok_and(|p| p.starts_with(root));
+        }
+        match probe.parent() {
+            Some(parent) => probe = parent,
+            None => return false,
+        }
+    }
+}
+
 /// Current Unix time in seconds.
 pub fn now_unix() -> u64 {
     std::time::SystemTime::now()

@@ -156,12 +156,25 @@ pub fn download_single_file(
         .map_err(|e| anyhow!("failed to get depot key: {e}"))?
         .ok_or_else(|| anyhow!("no decryption key for depot {depot_id}"))?;
 
+    let relative = crate::core::utils::safe_relative_path(&file.full_path())
+        .ok_or_else(|| anyhow!("unsafe path in manifest: {:?}", file.full_path()))?;
+
     std::fs::create_dir_all(output_dir)
         .with_context(|| format!("failed creating {}", output_dir.display()))?;
+    let root = output_dir
+        .canonicalize()
+        .with_context(|| format!("failed resolving {}", output_dir.display()))?;
 
-    let full_path = output_dir.join(file.full_path());
+    let full_path = root.join(&relative);
+    if !crate::core::utils::resolves_within(&root, &full_path) {
+        bail!("{} leaves {}", relative.display(), root.display());
+    }
     if let Some(parent) = full_path.parent() {
         std::fs::create_dir_all(parent).context("failed creating directory for file")?;
+    }
+    // Never write through a symlink.
+    if std::fs::symlink_metadata(&full_path).is_ok_and(|m| m.file_type().is_symlink()) {
+        std::fs::remove_file(&full_path).context("failed removing symlink")?;
     }
 
     runtime
