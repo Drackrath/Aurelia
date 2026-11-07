@@ -9,12 +9,14 @@
 //! imports live in the parent module and are pulled in via `use super::*`.
 use super::*;
 use std::sync::RwLock;
-use steam_vent::NetMessage;
+use steam_vent::ReceivableMessage;
+use steam_vent_proto::steammessages_clientserver_2::CMsgClientPlayingSessionState;
 use steam_vent_proto::steammessages_clientserver_friends::{
     CMsgClientAddFriend, CMsgClientAddFriendResponse, CMsgClientChangeStatus,
     CMsgClientFriendsList, CMsgClientPersonaState, CMsgClientRemoveFriend,
     CMsgClientRequestFriendData,
 };
+use steam_vent_proto::steammessages_clientserver_login::CMsgClientLoggedOff;
 use tokio_stream::StreamExt;
 
 /// EFriendRelationship value for an accepted friend.
@@ -36,6 +38,14 @@ pub const PERSONA_REQUEST_FLAGS: u32 = 1 | 2 | 16 | 256 | 512;
 /// buffer, which would otherwise drop persona updates as the stream reports
 /// `Lagged`.
 const PERSONA_REQUEST_CHUNK: usize = 8;
+
+/// Interval between unnamed-friend retries.
+const UNNAMED_RETRY_EVERY: std::time::Duration = std::time::Duration::from_secs(5);
+/// Retries after startup (~30s total).
+const UNNAMED_RETRIES: u32 = 6;
+
+/// Last announce: (session id, state).
+static ANNOUNCED: std::sync::Mutex<Option<(i32, u32)>> = std::sync::Mutex::new(None);
 
 /// Idle gap that marks the end of a chunk's persona-response burst.
 const PERSONA_DRAIN_IDLE: std::time::Duration = std::time::Duration::from_millis(500);
@@ -71,6 +81,15 @@ impl Friend {
             game_name: None,
         }
     }
+}
+
+/// Why the friends watcher returned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WatcherEnd {
+    /// The connection's streams ended.
+    StreamsClosed,
+    /// Steam ended the session (EResult).
+    LoggedOff(i32),
 }
 
 /// The friends roster, keyed by SteamID64.
@@ -111,14 +130,25 @@ fn friend_ids(roster: &Roster) -> Vec<u64> {
         .collect()
 }
 
+/// Friends still lacking a persona name.
+fn unnamed_friend_ids(roster: &Roster) -> Vec<u64> {
+    roster
+        .values()
+        .filter(|f| f.relationship == RELATIONSHIP_FRIEND && f.persona_name.is_none())
+        .map(|f| f.steam_id)
+        .collect()
+}
+
 /// Fold a `CMsgClientFriendsList` into the roster.
 ///
-/// A non-incremental message is a full snapshot, so the roster is cleared first.
+/// Full snapshots keep surviving friends' persona.
 /// Relationship 0 (None) means the friend was removed; any other relationship is
 /// an upsert that preserves already-known persona fields.
 pub fn apply_friends_list(roster: &mut Roster, msg: &CMsgClientFriendsList) {
     if !msg.bincremental() {
-        roster.clear();
+        let keep: std::collections::HashSet<u64> =
+            msg.friends.iter().map(|f| f.ulfriendid()).collect();
+        roster.retain(|id, _| keep.contains(id));
     }
     for f in &msg.friends {
         let id = f.ulfriendid();
@@ -139,6 +169,7 @@ pub fn apply_friends_list(roster: &mut Roster, msg: &CMsgClientFriendsList) {
 /// Fold a `CMsgClientPersonaState` into the roster, updating each friend's
 /// display name, online status, and current game.
 ///
+/// Only fields Steam sent apply.
 /// An empty incoming name never clobbers a known one; an app id of 0 clears the
 /// in-game fields.
 pub fn apply_persona_state(roster: &mut Roster, msg: &CMsgClientPersonaState) {
@@ -150,13 +181,22 @@ pub fn apply_persona_state(roster: &mut Roster, msg: &CMsgClientPersonaState) {
         if !name.is_empty() {
             entry.persona_name = Some(name.to_string());
         }
-        entry.persona_state = Some(fr.persona_state());
-        entry.game_app_id = match fr.game_played_app_id() {
-            0 => None,
-            app_id => Some(app_id),
-        };
-        let game_name = fr.game_name();
-        entry.game_name = (!game_name.is_empty()).then(|| game_name.to_string());
+        // Replies may omit status; keep known.
+        if fr.has_persona_state() {
+            entry.persona_state = Some(fr.persona_state());
+        }
+        if fr.has_game_played_app_id() {
+            entry.game_app_id = match fr.game_played_app_id() {
+                0 => None,
+                app_id => Some(app_id),
+            };
+            if entry.game_app_id.is_none() {
+                entry.game_name = None;
+            }
+        }
+        if fr.has_game_name() && entry.game_app_id.is_some() {
+            entry.game_name = nonempty(fr.game_name());
+        }
     }
 }
 
@@ -173,13 +213,18 @@ fn drain_unprocessed_into(connection: &Connection, roster: &mut Roster) {
     let mut lists = Vec::new();
     let mut personas = Vec::new();
     for raw in connection.take_unprocessed() {
-        if raw.kind == <CMsgClientFriendsList as NetMessage>::KIND {
+        if raw.kind == <CMsgClientFriendsList as ReceivableMessage>::KIND {
             if let Ok(msg) = raw.into_message::<CMsgClientFriendsList>() {
                 lists.push(msg);
             }
-        } else if raw.kind == <CMsgClientPersonaState as NetMessage>::KIND {
+        } else if raw.kind == <CMsgClientPersonaState as ReceivableMessage>::KIND {
             if let Ok(msg) = raw.into_message::<CMsgClientPersonaState>() {
                 personas.push(msg);
+            }
+        } else if raw.kind == <CMsgClientPlayingSessionState as ReceivableMessage>::KIND {
+            // Keep it for game invites.
+            if let Ok(msg) = raw.into_message::<CMsgClientPlayingSessionState>() {
+                super::chat::record_playing_session(connection.session_id(), &msg);
             }
         }
     }
@@ -198,8 +243,13 @@ impl SteamClient {
     /// and friend messages — until the client declares a persona. `persona_state`
     /// is a raw EPersonaState (1 = online, 7 = invisible); `need_persona_response`
     /// asks Steam to push the friends' persona state in reply.
+    ///
+    /// Skips repeats; Steam throttles after announce.
     pub async fn announce_persona(&self, persona_state: u32) -> Result<()> {
         let connection = self.require_connection()?;
+        if self.announced_persona() == Some(persona_state) {
+            return Ok(());
+        }
         let mut status = CMsgClientChangeStatus::new();
         status.set_persona_state(persona_state);
         status.set_need_persona_response(true);
@@ -207,7 +257,18 @@ impl SteamClient {
             .send(status)
             .await
             .map_err(|e| anyhow!("failed to announce persona status: {e}"))?;
+        *ANNOUNCED.lock().expect("announce lock poisoned") =
+            Some((connection.session_id(), persona_state));
         Ok(())
+    }
+
+    /// State this connection last announced.
+    pub fn announced_persona(&self) -> Option<u32> {
+        let session = self.connection.as_ref()?.session_id();
+        match *ANNOUNCED.lock().expect("announce lock poisoned") {
+            Some((s, state)) if s == session => Some(state),
+            _ => None,
+        }
     }
 
     /// Announce the presence configured in `LauncherConfig::chat_presence`
@@ -289,12 +350,14 @@ impl SteamClient {
     /// may be missed if this subscription loses the race against the initial
     /// push, but it self-heals on the next friends-list update; persona updates
     /// arrive continuously regardless.
-    pub async fn run_friends_watcher(&self, roster: Arc<RwLock<Roster>>) -> Result<()> {
+    pub async fn run_friends_watcher(&self, roster: Arc<RwLock<Roster>>) -> Result<WatcherEnd> {
         // Keep a local clone of the connection alive: the streams returned by
         // `on::<T>()` are tied to the connection value's lifetime.
         let connection = self.require_connection_owned()?;
         let mut friends_stream = connection.on::<CMsgClientFriendsList>();
         let mut persona_stream = connection.on::<CMsgClientPersonaState>();
+        let mut playing_stream = connection.on::<CMsgClientPlayingSessionState>();
+        let mut logoff_stream = connection.on::<CMsgClientLoggedOff>();
 
         // Announce the configured presence so Steam delivers friend persona data
         // (and incoming chat). A refresh-token session is otherwise offline.
@@ -322,27 +385,65 @@ impl SteamClient {
             "friends watcher started ({} friend(s) so far)",
             initial_ids.len()
         );
+        // Steam ignores requests after announcing.
+        let mut retry = tokio::time::interval(UNNAMED_RETRY_EVERY);
+        retry.tick().await;
+        let mut retries_left = UNNAMED_RETRIES;
         loop {
             tokio::select! {
-                Some(Ok(list)) = friends_stream.next() => {
+                _ = retry.tick(), if retries_left > 0 => {
+                    let ids = unnamed_friend_ids(&roster.read().expect("roster lock poisoned"));
+                    if ids.is_empty() {
+                        retries_left = 0;
+                        continue;
+                    }
+                    retries_left -= 1;
+                    tracing::debug!("re-requesting {} unnamed friend(s)", ids.len());
+                    self.drain_persona_data(&mut persona_stream, &ids, None, true, |state| {
+                        let mut guard = roster.write().expect("roster lock poisoned");
+                        apply_persona_state(&mut guard, state);
+                    })
+                    .await;
+                }
+                list = friends_stream.next() => {
+                    let list = match list {
+                        Some(Ok(list)) => list,
+                        Some(Err(_)) => continue, // lagged — keep watching
+                        None => break,
+                    };
                     let ids: Vec<u64> = {
                         let mut guard = roster.write().expect("roster lock poisoned");
                         apply_friends_list(&mut guard, &list);
                         friend_ids(&guard)
                     };
-                    if let Err(e) = self.request_friend_data(&ids).await {
-                        tracing::warn!("failed to request friend data: {e}");
+                    // Chunked, like startup, to avoid overflow.
+                    self.drain_persona_data(&mut persona_stream, &ids, None, true, |state| {
+                        let mut guard = roster.write().expect("roster lock poisoned");
+                        apply_persona_state(&mut guard, state);
+                    })
+                    .await;
+                }
+                Some(Ok(logoff)) = logoff_stream.next() => {
+                    tracing::warn!(eresult = logoff.eresult(), "Steam logged this session off");
+                    return Ok(WatcherEnd::LoggedOff(logoff.eresult()));
+                }
+                Some(Ok(state)) = playing_stream.next() => {
+                    super::chat::record_playing_session(connection.session_id(), &state);
+                }
+                state = persona_stream.next() => {
+                    match state {
+                        Some(Ok(state)) => {
+                            let mut guard = roster.write().expect("roster lock poisoned");
+                            apply_persona_state(&mut guard, &state);
+                        }
+                        Some(Err(_)) => continue, // lagged — keep watching
+                        None => break,
                     }
                 }
-                Some(Ok(state)) = persona_stream.next() => {
-                    let mut guard = roster.write().expect("roster lock poisoned");
-                    apply_persona_state(&mut guard, &state);
-                }
-                else => break,
             }
         }
         tracing::info!("friends watcher stopped");
-        Ok(())
+        Ok(WatcherEnd::StreamsClosed)
     }
 
     /// Collect a one-shot, bounded snapshot of the friends roster for standalone

@@ -138,7 +138,7 @@ impl SteamClient {
 
         let mut data = AccountData {
             steam_id: u64::from(connection.steam_id()),
-            country: connection.ip_country_code().unwrap_or_default(),
+            country: connection.ip_country_code().to_string(),
             ..Default::default()
         };
 
@@ -319,7 +319,15 @@ impl SteamClient {
             .context("refresh token login succeeded but no token was available for persistence")?;
         // Keep the persisted persona across restores.
         session.persona_name = persisted.persona_name.clone();
-        save_session(&session).await?;
+        session.client_instance_id = persisted.client_instance_id;
+        session.web_token = persisted.web_token.clone();
+        // Rewrites make the daemon log on.
+        if session.refresh_token != persisted.refresh_token
+            || session.account_name != persisted.account_name
+            || session.steam_id != persisted.steam_id
+        {
+            save_session(&session).await?;
+        }
         self.state = LoginState::Complete;
         self.pending_confirmations.clear();
         Ok(session)
@@ -352,18 +360,20 @@ impl SteamClient {
         self.state = LoginState::AwaitingAccessTokenLogon;
 
         // One login, three guard handlers.
-        async fn login_with<H: AuthConfirmationHandler>(
+        async fn login_with<H: AuthConfirmationHandler + Send>(
             server_list: &ServerList,
             account_name: &str,
             password: &str,
             handler: H,
         ) -> std::result::Result<Connection, ConnectionError> {
-            Connection::login(
+            Connection::login_with_logon_id(
                 server_list,
                 account_name,
                 password,
                 FileGuardDataStore::user_cache(),
                 handler,
+                &ClientInfo::default(),
+                super::logon_id(),
             )
             .await
         }
@@ -376,17 +386,20 @@ impl SteamClient {
                 .context("failed to prepare guard code input")?;
             drop(writer);
 
-            let handler = UserProvidedAuthConfirmationHandler::new(reader, sink())
-                .or(DeviceConfirmationHandler);
+            let handler = (
+                UserProvidedAuthConfirmationHandler::new(reader, sink()),
+                DeviceConfirmationHandler,
+            );
 
             login_with(&server_list, &account_name, &password, handler).await
         } else if interactive_pin {
             // Read the Steam Guard code from stdin when Steam asks for it; fall back
             // to mobile-app approval if the account only allows that.
             tracing::info!("Login method awaited: Steam Guard code — enter it when prompted below");
-            let handler =
-                UserProvidedAuthConfirmationHandler::new(tokio::io::stdin(), tokio::io::stderr())
-                    .or(DeviceConfirmationHandler);
+            let handler = (
+                UserProvidedAuthConfirmationHandler::new(tokio::io::stdin(), tokio::io::stderr()),
+                DeviceConfirmationHandler,
+            );
 
             login_with(&server_list, &account_name, &password, handler).await
         } else {
@@ -595,7 +608,7 @@ impl SteamClient {
             account_name: Some(account_name),
             persona_name: None,
             steam_id: Some(steam_id),
-            refresh_token: connection.access_token().map(ToString::to_string),
+            refresh_token: Some(connection.refresh_token().token().to_string()),
             client_instance_id: None,
             web_token: None,
         })

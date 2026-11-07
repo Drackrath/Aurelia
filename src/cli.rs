@@ -536,6 +536,12 @@ pub(crate) enum ConfigCommand {
         /// given. Omit the value to print the current setting.
         lang: Option<String>,
     },
+    /// View or set `user` status wait.
+    PersonaWait {
+        /// Seconds (1-300); omit to print.
+        #[arg(value_parser = clap::value_parser!(u64).range(1..=300))]
+        seconds: Option<u64>,
+    },
     /// View or set the price country.
     #[command(alias = "cc")]
     Country {
@@ -844,6 +850,16 @@ pub(crate) enum ChatCommand {
         /// The message text (all remaining words are joined with spaces).
         #[arg(required = true, trailing_var_arg = true)]
         message: Vec<String>,
+    },
+    /// Invite a friend (by SteamID64) into your running game.
+    Invite {
+        steamid: u64,
+        /// App id to invite to.
+        #[arg(short = 'a', long = "app")]
+        app_id: u32,
+        /// Optional game connect string.
+        #[arg(short = 'c', long)]
+        connect: Option<String>,
     },
     /// Show recent messages exchanged with a friend (by SteamID64).
     History {

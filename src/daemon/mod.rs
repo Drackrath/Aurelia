@@ -256,11 +256,7 @@ impl DaemonState {
                     s.client = Some(client);
                     s.last_failure = None;
                     s.last_error = None;
-                    // Start (or re-confirm) the background friends watcher on the freshly
-                    // established connection so the roster cache fills without a request
-                    // having to drive it. `spawn_watcher` is idempotent — if one is still
-                    // running (e.g. this restore ran without a prior invalidate) it's a
-                    // no-op. `s.client` was just set, so the unwrap cannot fail.
+                    // Rebind watcher to the new connection.
                     self.spawn_watcher(s.client.as_ref().unwrap());
                 }
                 Ok(_) => {
@@ -290,30 +286,57 @@ impl DaemonState {
         s.session_mtime = session_mtime().await.or(mtime);
     }
 
-    /// Spawn the background friends watcher on `client`, unless one is already running.
+    /// Spawn the background friends watcher on `client`, replacing any previous one.
     ///
     /// The watcher runs forever against the client's connection, populating the shared
     /// [`roster`](Self::roster) from Steam friend/persona broadcasts, and returns only
-    /// when that connection's streams end (i.e. the session died). We keep exactly one
-    /// running at a time: a stale-but-not-yet-cleaned handle (the task already finished,
-    /// e.g. its connection dropped) is treated as "no watcher" so we replace it. Locked
-    /// for just the inspect/replace; the spawn and `.await` happen on the task itself.
+    /// when that connection's streams end (i.e. the session died).
+    ///
+    /// Each restore opens a new connection.
     fn spawn_watcher(&self, client: &SteamClient) {
         let mut guard = self.watcher.lock().unwrap();
-        if guard.as_ref().is_some_and(|h| !h.is_finished()) {
-            return; // a watcher is already live on this (or a prior) connection.
+        if let Some(old) = guard.take() {
+            old.abort();
         }
+        // Old roster may be another account.
+        self.roster.write().unwrap().clear();
         // Both the client (cheap Arc-backed clone over the shared connection) and the
         // roster Arc are moved into the task so it can outlive this call.
         let client = client.clone();
         let roster = Arc::clone(&self.roster);
         let handle = tokio::spawn(async move {
-            if let Err(e) = client.run_friends_watcher(roster).await {
-                tracing::warn!("daemon: friends watcher exited: {e:#}");
+            match client.run_friends_watcher(roster).await {
+                Ok(aurelia::steam_client::WatcherEnd::LoggedOff(eresult)) => {
+                    tracing::warn!(
+                        eresult,
+                        "daemon: Steam ended the shared session; reconnecting on next command"
+                    );
+                    if let Some(session) = client.connection().map(|c| c.session_id()) {
+                        init_state().drop_session(session).await;
+                    }
+                }
+                Ok(aurelia::steam_client::WatcherEnd::StreamsClosed) => {}
+                Err(e) => tracing::warn!("daemon: friends watcher exited: {e:#}"),
             }
         });
         tracing::info!("daemon: friends watcher started");
         *guard = Some(handle);
+    }
+
+    /// Drop the session if still `session_id`.
+    ///
+    /// Lazy: the next command reconnects, not the liveness loop.
+    async fn drop_session(&self, session_id: i32) {
+        let current = {
+            let s = self.slot.read().await;
+            s.client
+                .as_ref()
+                .and_then(|c| c.connection())
+                .map(|c| c.session_id())
+        };
+        if current == Some(session_id) {
+            self.invalidate().await;
+        }
     }
 
     /// Drop the shared session and clear the failure backoff so the next

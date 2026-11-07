@@ -186,6 +186,23 @@ pub(crate) async fn cmd_chat_send(steamid: u64, message: String, json: bool) -> 
     Ok(())
 }
 
+/// `aurelia chat invite`: send a game invite.
+pub(crate) async fn cmd_chat_invite(
+    steamid: u64,
+    app_id: u32,
+    connect: Option<String>,
+    json: bool,
+) -> Result<()> {
+    let client = authed_client().await?;
+    client.invite_to_game(steamid, app_id, connect).await?;
+    if json {
+        print_json(&serde_json::json!({ "steamid": steamid, "app_id": app_id, "sent": true }));
+    } else {
+        cli_println!("Game invite for app {app_id} sent to {steamid}.");
+    }
+    Ok(())
+}
+
 /// `aurelia chat history <steamid>`: show recent messages with a friend.
 pub(crate) async fn cmd_chat_history(steamid: u64, count: u32, json: bool) -> Result<()> {
     let client = authed_client().await?;
@@ -213,8 +230,12 @@ pub(crate) fn render_chat_event(target: u64, event: steam_vent_chat::ChatEvent, 
     // Every event carries the conversation partner's SteamID; ignore events for
     // other conversations sharing this connection's notification stream.
     let source = match &event {
-        ChatEvent::Message(e) | ChatEvent::EchoMessage(e) => u64::from(e.source),
+        ChatEvent::Message(e) | ChatEvent::EchoMessage(e) | ChatEvent::GameInvite(e) => {
+            u64::from(e.source)
+        }
         ChatEvent::Typing(e) => u64::from(e.source),
+        ChatEvent::Other(e) => u64::from(e.source),
+        _ => return, // future event kinds
     };
     if source != target {
         return;
@@ -251,6 +272,26 @@ pub(crate) fn render_chat_event(target: u64, event: steam_vent_chat::ChatEvent, 
                 cli_println!("* {target} is typing...");
             }
         }
+        ChatEvent::GameInvite(e) => {
+            if json {
+                print_json_line(&serde_json::json!({
+                    "event": "game_invite", "from": target,
+                    "text": e.message_no_bbcode.unwrap_or(e.message),
+                    "timestamp": e.server_timestamp,
+                }));
+            } else {
+                cli_println!("* {target} sent a game invite");
+            }
+        }
+        // Raw entry types: JSON only.
+        ChatEvent::Other(e) if json => {
+            print_json_line(&serde_json::json!({
+                "event": "other", "with": target, "entry_type": e.entry_type,
+                "local_echo": e.local_echo, "text": e.message,
+                "timestamp": e.server_timestamp,
+            }));
+        }
+        _ => {}
     }
 }
 

@@ -181,6 +181,16 @@ pub struct LauncherConfig {
     /// Enabled automatically by the first successful login.
     #[serde(default)]
     pub encrypt_session: bool,
+    /// Max seconds `user` waits for status.
+    #[serde(default = "default_persona_wait_secs")]
+    pub persona_wait_secs: u64,
+}
+
+/// Default `persona_wait_secs`.
+pub const DEFAULT_PERSONA_WAIT_SECS: u64 = 30;
+
+fn default_persona_wait_secs() -> u64 {
+    DEFAULT_PERSONA_WAIT_SECS
 }
 
 impl LauncherConfig {
@@ -229,6 +239,7 @@ impl Default for LauncherConfig {
             hide_uninstalled_launch_options: true,
             experimental: false,
             encrypt_session: false,
+            persona_wait_secs: DEFAULT_PERSONA_WAIT_SECS,
         }
     }
 }
