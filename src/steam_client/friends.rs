@@ -37,6 +37,9 @@ pub const PERSONA_REQUEST_FLAGS: u32 = 1 | 2 | 16 | 256 | 512;
 /// `Lagged`.
 const PERSONA_REQUEST_CHUNK: usize = 8;
 
+/// Last announce: (session id, state).
+static ANNOUNCED: std::sync::Mutex<Option<(i32, u32)>> = std::sync::Mutex::new(None);
+
 /// Idle gap that marks the end of a chunk's persona-response burst.
 const PERSONA_DRAIN_IDLE: std::time::Duration = std::time::Duration::from_millis(500);
 
@@ -210,8 +213,13 @@ impl SteamClient {
     /// and friend messages — until the client declares a persona. `persona_state`
     /// is a raw EPersonaState (1 = online, 7 = invisible); `need_persona_response`
     /// asks Steam to push the friends' persona state in reply.
+    ///
+    /// Skips repeats; Steam throttles after announce.
     pub async fn announce_persona(&self, persona_state: u32) -> Result<()> {
         let connection = self.require_connection()?;
+        if self.announced_persona() == Some(persona_state) {
+            return Ok(());
+        }
         let mut status = CMsgClientChangeStatus::new();
         status.set_persona_state(persona_state);
         status.set_need_persona_response(true);
@@ -219,7 +227,18 @@ impl SteamClient {
             .send(status)
             .await
             .map_err(|e| anyhow!("failed to announce persona status: {e}"))?;
+        *ANNOUNCED.lock().expect("announce lock poisoned") =
+            Some((connection.session_id(), persona_state));
         Ok(())
+    }
+
+    /// State this connection last announced.
+    pub fn announced_persona(&self) -> Option<u32> {
+        let session = self.connection.as_ref()?.session_id();
+        match *ANNOUNCED.lock().expect("announce lock poisoned") {
+            Some((s, state)) if s == session => Some(state),
+            _ => None,
+        }
     }
 
     /// Announce the presence configured in `LauncherConfig::chat_presence`

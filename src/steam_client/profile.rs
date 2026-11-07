@@ -10,6 +10,8 @@ use tokio_stream::StreamExt;
 
 /// `EAccountFlags::LimitedUser`.
 const ACCOUNT_FLAG_LIMITED: u32 = 4096;
+/// Re-request interval while waiting.
+const PERSONA_RETRY: std::time::Duration = std::time::Duration::from_secs(3);
 /// Community visibility: 1 private, 2 friends-only, 3 public.
 const VISIBILITY_PUBLIC: i32 = 3;
 
@@ -142,53 +144,66 @@ impl SteamClient {
         if let Err(e) = self.announce_configured_presence().await {
             tracing::debug!("persona announce failed: {e}");
         }
-        // Own status may arrive late.
         let is_self = u64::from(connection.steam_id()) == steam_id;
+        // Own status is what we announced.
+        let own_state = if is_self {
+            self.announced_persona()
+        } else {
+            None
+        };
+        if own_state.is_some() {
+            profile.persona_state = own_state;
+        }
         let wait = crate::core::config::load_launcher_config()
             .await
             .map(|c| c.persona_wait_secs)
             .unwrap_or(crate::core::config::DEFAULT_PERSONA_WAIT_SECS);
-        let wait = std::time::Duration::from_secs(wait.max(1));
-        if self.request_friend_data(&[steam_id]).await.is_ok() {
-            let deadline = tokio::time::Instant::now() + wait;
-            loop {
-                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-                if remaining.is_zero() {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(wait.max(1));
+        let mut next_request = tokio::time::Instant::now();
+        loop {
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                break;
+            }
+            // Steam may ignore early requests.
+            if now >= next_request {
+                if self.request_friend_data(&[steam_id]).await.is_err() {
                     break;
                 }
-                match tokio::time::timeout(remaining, stream.next()).await {
-                    Ok(Some(Ok(state))) => {
-                        if let Some(fr) = state.friends.iter().find(|f| f.friendid() == steam_id) {
-                            if let Some(name) = nonempty(fr.player_name()) {
-                                profile.persona_name = Some(name);
-                            }
-                            if fr.has_persona_state() {
-                                profile.persona_state = Some(fr.persona_state());
-                            }
-                            if fr.game_played_app_id() > 0 {
-                                profile.game_app_id = Some(fr.game_played_app_id());
-                            }
-                            if let Some(g) = nonempty(fr.game_name()) {
-                                profile.game_name = Some(g);
-                            }
-                            if fr.last_logoff() > 0 {
-                                profile.last_logoff = Some(u64::from(fr.last_logoff()));
-                            }
-                            if profile.avatar_url.is_none() {
-                                profile.avatar_url = avatar_url(fr.avatar_hash());
-                            }
-                            if !profile.sources.iter().any(|s| s == "persona_state") {
-                                profile.sources.push("persona_state".to_string());
-                            }
-                            // Self: wait for a status.
-                            if !is_self || fr.has_persona_state() {
-                                break;
-                            }
+                next_request = now + PERSONA_RETRY;
+            }
+            match tokio::time::timeout_at(deadline.min(next_request), stream.next()).await {
+                Ok(Some(Ok(state))) => {
+                    if let Some(fr) = state.friends.iter().find(|f| f.friendid() == steam_id) {
+                        if let Some(name) = nonempty(fr.player_name()) {
+                            profile.persona_name = Some(name);
+                        }
+                        if fr.has_persona_state() {
+                            profile.persona_state = Some(fr.persona_state());
+                        }
+                        if fr.game_played_app_id() > 0 {
+                            profile.game_app_id = Some(fr.game_played_app_id());
+                        }
+                        if let Some(g) = nonempty(fr.game_name()) {
+                            profile.game_name = Some(g);
+                        }
+                        if fr.last_logoff() > 0 {
+                            profile.last_logoff = Some(u64::from(fr.last_logoff()));
+                        }
+                        if profile.avatar_url.is_none() {
+                            profile.avatar_url = avatar_url(fr.avatar_hash());
+                        }
+                        if !profile.sources.iter().any(|s| s == "persona_state") {
+                            profile.sources.push("persona_state".to_string());
+                        }
+                        // Self: wait for a status.
+                        if !is_self || profile.persona_state.is_some() {
+                            break;
                         }
                     }
-                    Ok(Some(Err(_))) => continue,
-                    _ => break,
                 }
+                Err(_) | Ok(Some(Err(_))) => continue, // retry tick or lag
+                Ok(None) => break,
             }
         }
 
