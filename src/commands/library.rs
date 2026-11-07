@@ -369,17 +369,12 @@ pub(crate) async fn cmd_account(json: bool) -> Result<()> {
     let mut data = client.get_account_data().await;
     // Resolve the public persona
     data.persona_name = client.own_persona_name().await;
-    let logon_id = aurelia::steam_client::logon_id();
-    let logon_source = if crate::daemon::in_daemon() {
-        "daemon"
-    } else {
-        "this process"
-    };
+    // Only the daemon has one.
+    let daemon_logon_id = crate::daemon::in_daemon().then(aurelia::steam_client::logon_id);
 
     if json {
         let value = serde_json::json!({
-            "logon_id": logon_id,
-            "logon_id_source": logon_source,
+            "daemon_logon_id": daemon_logon_id,
             "steam_id": data.steam_id,
             "account_name": data.account_name,
             "persona_name": data.persona_name,
@@ -395,7 +390,9 @@ pub(crate) async fn cmd_account(json: bool) -> Result<()> {
         return Ok(());
     }
 
-    cli_println!("Logon ID: {logon_id} ({logon_source})");
+    if let Some(id) = daemon_logon_id {
+        cli_println!("DaemonLogonID: {id}");
+    }
     cli_println!("Account : {}", data.account_name);
     if let Some(persona) = &data.persona_name {
         cli_println!("Persona : {persona}");
