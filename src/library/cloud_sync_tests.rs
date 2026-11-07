@@ -391,3 +391,16 @@ fn a_clean_run_is_not_incomplete() {
     assert!(!outcome.is_incomplete());
     assert!(!outcome.has_failures());
 }
+
+#[test]
+fn oversized_cloud_unzip_keeps_raw_body() {
+    let body = zip_wrap(&[7u8; 65]);
+    assert_eq!(unzip_capped(&body, None, 65).map(|v| v.len()), Some(65));
+    assert_eq!(unzip_capped(&body, None, 64), None);
+}
+
+#[test]
+fn huge_size_hint_is_not_preallocated() {
+    let body = zip_wrap(b"save");
+    assert_eq!(unzip_single_entry(&body, Some(u32::MAX)).as_deref(), Some(&b"save"[..]));
+}
