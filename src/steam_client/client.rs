@@ -360,33 +360,22 @@ impl SteamClient {
         self.state = LoginState::AwaitingAccessTokenLogon;
 
         // One login, three guard handlers.
-        async fn login_with<H: AuthConfirmationHandler + Send + 'static>(
+        async fn login_with<H: AuthConfirmationHandler + Send>(
             server_list: &ServerList,
             account_name: &str,
             password: &str,
             handler: H,
         ) -> std::result::Result<Connection, ConnectionError> {
-            let server_list = server_list.clone();
-            let account_name = account_name.to_string();
-            let password = password.to_string();
-            let runtime = tokio::runtime::Handle::current();
-            // 0.6 login future isn't Send.
-            let joined = tokio::task::spawn_blocking(move || {
-                runtime.block_on(Connection::login_with_logon_id(
-                    &server_list,
-                    &account_name,
-                    &password,
-                    FileGuardDataStore::user_cache(),
-                    handler,
-                    &ClientInfo::default(),
-                    super::logon_id(),
-                ))
-            })
-            .await;
-            match joined {
-                Ok(result) => result,
-                Err(e) => std::panic::resume_unwind(e.into_panic()),
-            }
+            Connection::login_with_logon_id(
+                server_list,
+                account_name,
+                password,
+                FileGuardDataStore::user_cache(),
+                handler,
+                &ClientInfo::default(),
+                super::logon_id(),
+            )
+            .await
         }
 
         let login_result = if let Some(code) = guard_code.filter(|v| !v.trim().is_empty()) {

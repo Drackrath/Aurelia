@@ -337,9 +337,9 @@ dependencies = [
 
 [[package]]
 name = "aurelia-steam-cdn"
-version = "2.0.0"
+version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fbc3d73125e500342cdd833089b4dca18b25bbc8b03c1c89e88a162e20ea42b4"
+checksum = "2f66f7163e93aba7fc85a4962992add6926bd821a67bc7d8a289b85d87a74dc3"
 dependencies = [
  "aes",
  "aurelia-steam-vent",
@@ -365,9 +365,9 @@ dependencies = [
 
 [[package]]
 name = "aurelia-steam-vent"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f642027f9072e41929e0acbe318426668dcb68ab50fd3230d5fb9fdb3f2cf48"
+checksum = "58ec8ffa1235907b7518546eda49008e57da3489b0cc7a4c54829db8a2ef7976"
 dependencies = [
  "another-steam-totp",
  "async-stream",
@@ -408,9 +408,9 @@ dependencies = [
 
 [[package]]
 name = "aurelia-steam-vent-chat"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c32b00e332bca55cbd0fed525e389756f02e187abcf0080dd2461712c570be69"
+checksum = "ebd7a646dfe55ddd222be7ed66cd46f16a41915aa434030a98119d17694511bc"
 dependencies = [
  "aurelia-steam-vent",
  "steam-vent-proto",
