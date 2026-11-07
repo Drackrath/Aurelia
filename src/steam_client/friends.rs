@@ -10,6 +10,7 @@
 use super::*;
 use std::sync::RwLock;
 use steam_vent::NetMessage;
+use steam_vent_proto::steammessages_clientserver_2::CMsgClientPlayingSessionState;
 use steam_vent_proto::steammessages_clientserver_friends::{
     CMsgClientAddFriend, CMsgClientAddFriendResponse, CMsgClientChangeStatus,
     CMsgClientFriendsList, CMsgClientPersonaState, CMsgClientRemoveFriend,
@@ -210,6 +211,11 @@ fn drain_unprocessed_into(connection: &Connection, roster: &mut Roster) {
             if let Ok(msg) = raw.into_message::<CMsgClientPersonaState>() {
                 personas.push(msg);
             }
+        } else if raw.kind == <CMsgClientPlayingSessionState as NetMessage>::KIND {
+            // Keep it for game invites.
+            if let Ok(msg) = raw.into_message::<CMsgClientPlayingSessionState>() {
+                super::chat::record_playing_session(connection.session_id(), &msg);
+            }
         }
     }
     for list in &lists {
@@ -340,6 +346,7 @@ impl SteamClient {
         let connection = self.require_connection_owned()?;
         let mut friends_stream = connection.on::<CMsgClientFriendsList>();
         let mut persona_stream = connection.on::<CMsgClientPersonaState>();
+        let mut playing_stream = connection.on::<CMsgClientPlayingSessionState>();
 
         // Announce the configured presence so Steam delivers friend persona data
         // (and incoming chat). A refresh-token session is otherwise offline.
@@ -404,6 +411,9 @@ impl SteamClient {
                         apply_persona_state(&mut guard, state);
                     })
                     .await;
+                }
+                Some(Ok(state)) = playing_stream.next() => {
+                    super::chat::record_playing_session(connection.session_id(), &state);
                 }
                 state = persona_stream.next() => {
                     match state {

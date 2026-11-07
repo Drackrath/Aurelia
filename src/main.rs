@@ -301,6 +301,11 @@ async fn run(cli: Cli) -> Result<()> {
                 cmd_chat_send(steamid, message.join(" "), json).await
             }
             ChatCommand::History { steamid, count } => cmd_chat_history(steamid, count, json).await,
+            ChatCommand::Invite {
+                steamid,
+                app_id,
+                connect,
+            } => cmd_chat_invite(steamid, app_id, connect, json).await,
             ChatCommand::Open { steamid } => cmd_chat_open(steamid, json).await,
         },
         Command::Inventory { app_id, context } => cmd_inventory(app_id, context, json).await,

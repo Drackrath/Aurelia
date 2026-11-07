@@ -851,6 +851,16 @@ pub(crate) enum ChatCommand {
         #[arg(required = true, trailing_var_arg = true)]
         message: Vec<String>,
     },
+    /// Invite a friend (by SteamID64) to a game.
+    Invite {
+        steamid: u64,
+        /// App id to invite to.
+        #[arg(short = 'a', long = "app")]
+        app_id: u32,
+        /// Optional game connect string.
+        #[arg(short = 'c', long)]
+        connect: Option<String>,
+    },
     /// Show recent messages exchanged with a friend (by SteamID64).
     History {
         steamid: u64,
