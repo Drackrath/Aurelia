@@ -195,3 +195,21 @@ fn full_snapshot_keeps_persona_of_remaining_friends() {
     assert_eq!(roster[&10].persona_name.as_deref(), Some("Alice"));
     assert_eq!(roster[&10].persona_state, Some(3));
 }
+
+#[test]
+fn unnamed_friend_ids_skips_named_and_non_friends() {
+    let mut roster = Roster::new();
+    apply_friends_list(
+        &mut roster,
+        &friends_list(
+            false,
+            &[
+                (10, RELATIONSHIP_FRIEND),
+                (20, RELATIONSHIP_FRIEND),
+                (30, 2),
+            ],
+        ),
+    );
+    apply_persona_state(&mut roster, &persona_state(&[(10, "Alice", 1, 0)]));
+    assert_eq!(unnamed_friend_ids(&roster), vec![20]);
+}

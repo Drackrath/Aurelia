@@ -37,6 +37,11 @@ pub const PERSONA_REQUEST_FLAGS: u32 = 1 | 2 | 16 | 256 | 512;
 /// `Lagged`.
 const PERSONA_REQUEST_CHUNK: usize = 8;
 
+/// Interval between unnamed-friend retries.
+const UNNAMED_RETRY_EVERY: std::time::Duration = std::time::Duration::from_secs(5);
+/// Retries after startup (~30s total).
+const UNNAMED_RETRIES: u32 = 6;
+
 /// Last announce: (session id, state).
 static ANNOUNCED: std::sync::Mutex<Option<(i32, u32)>> = std::sync::Mutex::new(None);
 
@@ -110,6 +115,15 @@ fn friend_ids(roster: &Roster) -> Vec<u64> {
     roster
         .values()
         .filter(|f| f.relationship == RELATIONSHIP_FRIEND)
+        .map(|f| f.steam_id)
+        .collect()
+}
+
+/// Friends still lacking a persona name.
+fn unnamed_friend_ids(roster: &Roster) -> Vec<u64> {
+    roster
+        .values()
+        .filter(|f| f.relationship == RELATIONSHIP_FRIEND && f.persona_name.is_none())
         .map(|f| f.steam_id)
         .collect()
 }
@@ -353,8 +367,26 @@ impl SteamClient {
             "friends watcher started ({} friend(s) so far)",
             initial_ids.len()
         );
+        // Steam ignores requests after announcing.
+        let mut retry = tokio::time::interval(UNNAMED_RETRY_EVERY);
+        retry.tick().await;
+        let mut retries_left = UNNAMED_RETRIES;
         loop {
             tokio::select! {
+                _ = retry.tick(), if retries_left > 0 => {
+                    let ids = unnamed_friend_ids(&roster.read().expect("roster lock poisoned"));
+                    if ids.is_empty() {
+                        retries_left = 0;
+                        continue;
+                    }
+                    retries_left -= 1;
+                    tracing::debug!("re-requesting {} unnamed friend(s)", ids.len());
+                    self.drain_persona_data(&mut persona_stream, &ids, None, true, |state| {
+                        let mut guard = roster.write().expect("roster lock poisoned");
+                        apply_persona_state(&mut guard, state);
+                    })
+                    .await;
+                }
                 list = friends_stream.next() => {
                     let list = match list {
                         Some(Ok(list)) => list,
