@@ -524,7 +524,7 @@ pub use profile::UserProfile;
 mod categories;
 pub mod genres_table;
 
-pub use chat::{InviteVia, PlayingSession, plan_invite};
+pub use chat::{PlayingSession, check_invite};
 pub use collections::RemoteNamespace;
 pub use friends::{AddedFriend, Friend, Roster};
 pub use market::{

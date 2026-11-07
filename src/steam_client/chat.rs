@@ -9,9 +9,7 @@
 use super::*;
 use steam_vent::NetMessage;
 use steam_vent_chat::ChatClient;
-use steam_vent_proto::steammessages_clientserver::{
-    CMsgClientGamesPlayed, CMsgClientInviteToGame, cmsg_client_games_played,
-};
+use steam_vent_proto::steammessages_clientserver::CMsgClientInviteToGame;
 use steam_vent_proto::steammessages_clientserver_2::CMsgClientPlayingSessionState;
 use steam_vent_proto::steammessages_friendmessages_steamclient::{
     CFriendMessages_GetRecentMessages_Request, CFriendMessages_GetRecentMessages_Response,
@@ -19,8 +17,6 @@ use steam_vent_proto::steammessages_friendmessages_steamclient::{
 use steamid_ng::SteamID;
 use tokio_stream::StreamExt;
 
-/// Settle time around the invite.
-const INVITE_SETTLE: std::time::Duration = std::time::Duration::from_secs(1);
 /// Wait for Steam's playing-session state.
 const PLAYING_STATE_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 
@@ -46,30 +42,24 @@ pub(crate) fn record_playing_session(session_id: i32, msg: &CMsgClientPlayingSes
     *PLAYING.lock().expect("playing lock poisoned") = Some((session_id, state));
 }
 
-/// How an invite reaches Steam.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum InviteVia {
-    /// The session already playing it.
-    ExistingSession,
-    /// A brief Aurelia playing session.
-    OwnSession,
-}
-
-/// Pick the invite path for `app_id`.
-pub fn plan_invite(state: Option<PlayingSession>, app_id: u32) -> Result<InviteVia> {
+/// Allow invites only into running games.
+pub fn check_invite(state: Option<PlayingSession>, app_id: u32) -> Result<()> {
     match state {
-        Some(s) if s.playing_app == app_id => Ok(InviteVia::ExistingSession),
-        Some(s) if s.blocked && s.playing_app != 0 => bail!(
-            "your account is playing app {} in another Steam session, and Steam takes the \
-             invite's game from that session; invite to app {} or quit that game first",
+        Some(s) if s.playing_app == app_id => Ok(()),
+        Some(s) if s.playing_app != 0 => bail!(
+            "your account is playing app {} right now, not app {app_id}; Steam takes the \
+             invite's game from the running session, so invite to app {} instead",
             s.playing_app,
             s.playing_app
         ),
-        Some(s) if s.blocked => {
-            bail!("another Steam session holds your account's game slot; quit that game first")
-        }
-        _ => Ok(InviteVia::OwnSession),
+        Some(_) => bail!(
+            "app {app_id} isn't running on your account; start it in Steam (or with \
+             `aurelia play {app_id} --steam`) and invite from there"
+        ),
+        None => bail!(
+            "Steam didn't report whether a game is running, so the invite wasn't sent; \
+             try again in a few seconds"
+        ),
     }
 }
 
@@ -195,53 +185,28 @@ impl SteamClient {
         self.playing_session()
     }
 
-    /// Invite a friend to `app_id`.
+    /// Invite a friend into a running game.
     pub async fn invite_to_game(
         &self,
         target: u64,
         app_id: u32,
         connect: Option<String>,
-    ) -> Result<InviteVia> {
+    ) -> Result<()> {
         SteamID::try_from(target).map_err(|_| anyhow!("invalid target SteamID: {target}"))?;
         let connection = self.require_connection()?;
         let me = u64::from(connection.steam_id());
 
-        let state = self.fetch_playing_session().await;
-        if state.is_none() {
-            tracing::warn!("Steam sent no playing-session state; assuming no game is running");
-        }
-        let via = plan_invite(state, app_id)?;
-
-        // Steam takes app from played game.
-        if via == InviteVia::OwnSession {
-            let mut played = CMsgClientGamesPlayed::new();
-            let mut game = cmsg_client_games_played::GamePlayed::new();
-            game.set_game_id(u64::from(app_id));
-            played.games_played.push(game);
-            connection
-                .send(played)
-                .await
-                .map_err(|e| anyhow!("failed to report game {app_id} as played: {e}"))?;
-            tokio::time::sleep(INVITE_SETTLE).await;
-        }
+        // Never report a game ourselves.
+        check_invite(self.fetch_playing_session().await, app_id)?;
 
         let mut invite = CMsgClientInviteToGame::new();
         invite.set_steam_id_dest(target);
         invite.set_steam_id_src(me);
         invite.set_connect_string(connect.unwrap_or_default());
-        let sent = connection
+        connection
             .send(invite)
             .await
-            .map_err(|e| anyhow!("failed to send game invite: {e}"));
-
-        if via == InviteVia::OwnSession {
-            tokio::time::sleep(INVITE_SETTLE).await;
-            // Always clear the played game.
-            if let Err(e) = connection.send(CMsgClientGamesPlayed::new()).await {
-                tracing::warn!("could not clear played game: {e}");
-            }
-        }
-        sent.map(|()| via)
+            .map_err(|e| anyhow!("failed to send game invite: {e}"))
     }
 }
 
@@ -257,44 +222,38 @@ mod invite_tests {
     }
 
     #[test]
-    fn same_app_elsewhere_uses_existing_session() {
-        assert_eq!(
-            plan_invite(state(true, 1942280), 1942280).unwrap(),
-            InviteVia::ExistingSession
-        );
+    fn steam_client_running_the_app_is_allowed() {
+        assert!(check_invite(state(true, 1942280), 1942280).is_ok());
     }
 
     #[test]
-    fn own_session_already_playing_is_reused() {
-        assert_eq!(
-            plan_invite(state(false, 1942280), 1942280).unwrap(),
-            InviteVia::ExistingSession
-        );
+    fn this_session_running_the_app_is_allowed() {
+        assert!(check_invite(state(false, 1942280), 1942280).is_ok());
     }
 
     #[test]
-    fn other_app_elsewhere_is_refused() {
-        let err = plan_invite(state(true, 440), 1942280)
+    fn other_running_app_is_refused() {
+        let err = check_invite(state(true, 440), 1942280)
             .unwrap_err()
             .to_string();
         assert!(err.contains("app 440"), "{err}");
     }
 
     #[test]
+    fn nothing_running_is_refused() {
+        let err = check_invite(state(false, 0), 1942280)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("isn't running"), "{err}");
+    }
+
+    #[test]
     fn blocked_without_app_is_refused() {
-        assert!(plan_invite(state(true, 0), 1942280).is_err());
+        assert!(check_invite(state(true, 0), 1942280).is_err());
     }
 
     #[test]
-    fn idle_account_opens_own_session() {
-        assert_eq!(
-            plan_invite(state(false, 0), 1942280).unwrap(),
-            InviteVia::OwnSession
-        );
-    }
-
-    #[test]
-    fn unknown_state_opens_own_session() {
-        assert_eq!(plan_invite(None, 1942280).unwrap(), InviteVia::OwnSession);
+    fn unknown_state_is_refused() {
+        assert!(check_invite(None, 1942280).is_err());
     }
 }

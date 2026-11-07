@@ -851,7 +851,7 @@ pub(crate) enum ChatCommand {
         #[arg(required = true, trailing_var_arg = true)]
         message: Vec<String>,
     },
-    /// Invite a friend (by SteamID64) to a game.
+    /// Invite a friend (by SteamID64) into your running game.
     Invite {
         steamid: u64,
         /// App id to invite to.

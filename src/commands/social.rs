@@ -194,17 +194,11 @@ pub(crate) async fn cmd_chat_invite(
     json: bool,
 ) -> Result<()> {
     let client = authed_client().await?;
-    let via = client.invite_to_game(steamid, app_id, connect).await?;
+    client.invite_to_game(steamid, app_id, connect).await?;
     if json {
-        print_json(&serde_json::json!({
-            "steamid": steamid, "app_id": app_id, "sent": true, "via": via,
-        }));
+        print_json(&serde_json::json!({ "steamid": steamid, "app_id": app_id, "sent": true }));
     } else {
-        let how = match via {
-            aurelia::steam_client::InviteVia::ExistingSession => "your running game session",
-            aurelia::steam_client::InviteVia::OwnSession => "a brief Aurelia playing session",
-        };
-        cli_println!("Game invite for app {app_id} sent to {steamid} via {how}.");
+        cli_println!("Game invite for app {app_id} sent to {steamid}.");
     }
     Ok(())
 }
