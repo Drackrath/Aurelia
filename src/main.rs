@@ -511,6 +511,7 @@ async fn run(cli: Cli) -> Result<()> {
             ConfigCommand::Presence { mode } => cmd_config_presence(mode, json).await,
             ConfigCommand::Language { lang } => cmd_config_language(lang, json).await,
             ConfigCommand::Country { country } => cmd_config_country(country, json).await,
+            ConfigCommand::PersonaWait { seconds } => cmd_config_persona_wait(seconds, json).await,
             ConfigCommand::Experimental { enabled } => cmd_config_experimental(enabled, json).await,
             ConfigCommand::SteamRuntimePolicy { policy } => {
                 cmd_config_steam_runtime_policy(policy, json).await

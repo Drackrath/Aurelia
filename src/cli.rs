@@ -536,6 +536,12 @@ pub(crate) enum ConfigCommand {
         /// given. Omit the value to print the current setting.
         lang: Option<String>,
     },
+    /// View or set `user` status wait.
+    PersonaWait {
+        /// Seconds (1-300); omit to print.
+        #[arg(value_parser = clap::value_parser!(u64).range(1..=300))]
+        seconds: Option<u64>,
+    },
     /// View or set the price country.
     #[command(alias = "cc")]
     Country {

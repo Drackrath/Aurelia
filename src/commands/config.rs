@@ -75,6 +75,21 @@ pub(crate) async fn cmd_config_language(lang: Option<String>, json: bool) -> Res
     Ok(())
 }
 
+/// View or set persona wait.
+pub(crate) async fn cmd_config_persona_wait(seconds: Option<u64>, json: bool) -> Result<()> {
+    let (config, changed) = view_or_set(seconds, |c, s| c.persona_wait_secs = s).await?;
+    let current = config.persona_wait_secs;
+    if json {
+        print_json(&serde_json::json!({ "persona_wait_secs": current }));
+    } else {
+        cli_println!("Persona wait: {current}s");
+        if changed {
+            cli_println!("Saved.");
+        }
+    }
+    Ok(())
+}
+
 /// View or set the price country.
 pub(crate) async fn cmd_config_country(country: Option<String>, json: bool) -> Result<()> {
     use aurelia::core::error::{ErrorKind, TypedError};

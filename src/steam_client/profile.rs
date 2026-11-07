@@ -10,10 +10,6 @@ use tokio_stream::StreamExt;
 
 /// `EAccountFlags::LimitedUser`.
 const ACCOUNT_FLAG_LIMITED: u32 = 4096;
-/// Persona reply wait for other users.
-const PERSONA_WAIT: std::time::Duration = std::time::Duration::from_secs(4);
-/// Persona reply wait for `me`.
-const SELF_PERSONA_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 /// Community visibility: 1 private, 2 friends-only, 3 public.
 const VISIBILITY_PUBLIC: i32 = 3;
 
@@ -148,11 +144,11 @@ impl SteamClient {
         }
         // Own status may arrive late.
         let is_self = u64::from(connection.steam_id()) == steam_id;
-        let wait = if is_self {
-            SELF_PERSONA_WAIT
-        } else {
-            PERSONA_WAIT
-        };
+        let wait = crate::core::config::load_launcher_config()
+            .await
+            .map(|c| c.persona_wait_secs)
+            .unwrap_or(crate::core::config::DEFAULT_PERSONA_WAIT_SECS);
+        let wait = std::time::Duration::from_secs(wait.max(1));
         if self.request_friend_data(&[steam_id]).await.is_ok() {
             let deadline = tokio::time::Instant::now() + wait;
             loop {
