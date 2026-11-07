@@ -4,8 +4,31 @@
 //! and free helpers live in the parent module (in scope via `use super::*`).
 use super::*;
 
+/// One content server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContentHost {
+    pub host: String,
+    pub https: bool,
+}
+
+/// Whether `https_support` allows TLS.
+pub(crate) fn supports_https(https_support: &str) -> bool {
+    matches!(https_support, "mandatory" | "optional")
+}
+
+/// Keep HTTPS hosts when any exist.
+pub(crate) fn prefer_https(hosts: Vec<ContentHost>) -> Vec<ContentHost> {
+    if hosts.iter().any(|h| h.https) {
+        return hosts.into_iter().filter(|h| h.https).collect();
+    }
+    if !hosts.is_empty() {
+        tracing::warn!("No HTTPS content servers offered; downloading over plain HTTP");
+    }
+    hosts
+}
+
 impl SteamClient {
-    pub async fn get_content_servers(&self, cell_id: u32) -> Result<Vec<String>> {
+    pub(crate) async fn get_content_servers(&self, cell_id: u32) -> Result<Vec<ContentHost>> {
         let connection = self.require_connection()?;
         let mut request = CContentServerDirectory_GetServersForSteamPipe_Request::new();
         request.set_cell_id(cell_id);
@@ -25,7 +48,15 @@ impl SteamClient {
             .collect();
         // Least-loaded first, as Steam does.
         servers.sort_by(|a, b| a.weighted_load().total_cmp(&b.weighted_load()));
-        let hosts: Vec<String> = servers.iter().map(|s| s.host().to_string()).collect();
+        let hosts = prefer_https(
+            servers
+                .iter()
+                .map(|s| ContentHost {
+                    host: s.host().to_string(),
+                    https: supports_https(s.https_support()),
+                })
+                .collect(),
+        );
 
         if hosts.is_empty() {
             tracing::error!("ContentServerDirectory returned 0 valid CDN servers");

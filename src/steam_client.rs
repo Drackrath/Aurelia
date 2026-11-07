@@ -537,6 +537,7 @@ mod install;
 mod market;
 pub use install::InstallOptions;
 mod content;
+pub(crate) use content::ContentHost;
 mod launch;
 mod library;
 mod manage;
@@ -1618,7 +1619,7 @@ pub(crate) async fn fetch_content_hosts(
     connection: &Connection,
     tx: &tokio::sync::mpsc::Sender<DownloadProgress>,
     appid: u32,
-) -> Option<Vec<String>> {
+) -> Option<Vec<ContentHost>> {
     tracing::info!("Fetching Content Servers for AppID: {}...", appid);
     match client.get_content_servers(connection.cell_id()).await {
         Ok(h) => Some(h),
@@ -1637,7 +1638,7 @@ pub(crate) async fn run_depot_loop(
     appid: u32,
     selections: Vec<ManifestSelection>,
     dest: &Path,
-    hosts: &[String],
+    hosts: &[ContentHost],
     opts: &DepotLoopOpts,
 ) -> Option<Vec<(u32, u64, u64)>> {
     let verb = if opts.verify_mode {
