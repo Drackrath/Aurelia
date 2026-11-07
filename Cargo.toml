@@ -33,7 +33,7 @@ steam-vdf-parser = "0.1.1" # Needed for raw binary PICS VDF parsing (not support
 steam-vent = "0.5"
 steam-vent-proto = "=0.5.2" # proto is no longer re-exported as steam_vent::proto since 0.5; depend on it directly
 steam-vent-proto-common = "0.5.1" # RpcMethod/RpcMessage traits, to hand-wire the CloudConfigStore RPC (library collections) not shipped in steam-vent-proto
-steam-vent-chat = { package = "aurelia-steam-vent-chat", version = "0.5.0" } # Fork ported to steam-vent 0.5
+steam-vent-chat = { package = "aurelia-steam-vent-chat", version = "0.6.0" } # Fork ported to steam-vent 0.5
 steamid-ng = "3" # Construct SteamIDs (from u64 / string) to pass to steam-vent-chat; matches steam-vent's steamid-ng
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "time", "net", "io-util", "sync", "io-std", "process"] }
 tokio-stream = "0.1" # Consume steam-vent's notification broadcast streams (friend chat events)

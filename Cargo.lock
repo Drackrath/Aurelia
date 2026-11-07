@@ -356,9 +356,9 @@ dependencies = [
 
 [[package]]
 name = "aurelia-steam-vent-chat"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d54f635f36e6ab2964b1ee087e6a797bd720258dab14332b060d62d7039ab6c"
+checksum = "43ecb81b146795c29bbe6d22c1ae742485bc1d77eba34c18ca74cd415ab4a872"
 dependencies = [
  "steam-vent",
  "steam-vent-proto",
