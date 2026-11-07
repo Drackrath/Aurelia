@@ -113,12 +113,14 @@ fn friend_ids(roster: &Roster) -> Vec<u64> {
 
 /// Fold a `CMsgClientFriendsList` into the roster.
 ///
-/// A non-incremental message is a full snapshot, so the roster is cleared first.
+/// Full snapshots keep surviving friends' persona.
 /// Relationship 0 (None) means the friend was removed; any other relationship is
 /// an upsert that preserves already-known persona fields.
 pub fn apply_friends_list(roster: &mut Roster, msg: &CMsgClientFriendsList) {
     if !msg.bincremental() {
-        roster.clear();
+        let keep: std::collections::HashSet<u64> =
+            msg.friends.iter().map(|f| f.ulfriendid()).collect();
+        roster.retain(|id, _| keep.contains(id));
     }
     for f in &msg.friends {
         let id = f.ulfriendid();
@@ -139,6 +141,7 @@ pub fn apply_friends_list(roster: &mut Roster, msg: &CMsgClientFriendsList) {
 /// Fold a `CMsgClientPersonaState` into the roster, updating each friend's
 /// display name, online status, and current game.
 ///
+/// Only fields Steam sent apply.
 /// An empty incoming name never clobbers a known one; an app id of 0 clears the
 /// in-game fields.
 pub fn apply_persona_state(roster: &mut Roster, msg: &CMsgClientPersonaState) {
@@ -150,13 +153,22 @@ pub fn apply_persona_state(roster: &mut Roster, msg: &CMsgClientPersonaState) {
         if !name.is_empty() {
             entry.persona_name = Some(name.to_string());
         }
-        entry.persona_state = Some(fr.persona_state());
-        entry.game_app_id = match fr.game_played_app_id() {
-            0 => None,
-            app_id => Some(app_id),
-        };
-        let game_name = fr.game_name();
-        entry.game_name = (!game_name.is_empty()).then(|| game_name.to_string());
+        // Replies may omit status; keep known.
+        if fr.has_persona_state() {
+            entry.persona_state = Some(fr.persona_state());
+        }
+        if fr.has_game_played_app_id() {
+            entry.game_app_id = match fr.game_played_app_id() {
+                0 => None,
+                app_id => Some(app_id),
+            };
+            if entry.game_app_id.is_none() {
+                entry.game_name = None;
+            }
+        }
+        if fr.has_game_name() && entry.game_app_id.is_some() {
+            entry.game_name = nonempty(fr.game_name());
+        }
     }
 }
 
@@ -324,21 +336,34 @@ impl SteamClient {
         );
         loop {
             tokio::select! {
-                Some(Ok(list)) = friends_stream.next() => {
+                list = friends_stream.next() => {
+                    let list = match list {
+                        Some(Ok(list)) => list,
+                        Some(Err(_)) => continue, // lagged — keep watching
+                        None => break,
+                    };
                     let ids: Vec<u64> = {
                         let mut guard = roster.write().expect("roster lock poisoned");
                         apply_friends_list(&mut guard, &list);
                         friend_ids(&guard)
                     };
-                    if let Err(e) = self.request_friend_data(&ids).await {
-                        tracing::warn!("failed to request friend data: {e}");
+                    // Chunked, like startup, to avoid overflow.
+                    self.drain_persona_data(&mut persona_stream, &ids, None, true, |state| {
+                        let mut guard = roster.write().expect("roster lock poisoned");
+                        apply_persona_state(&mut guard, state);
+                    })
+                    .await;
+                }
+                state = persona_stream.next() => {
+                    match state {
+                        Some(Ok(state)) => {
+                            let mut guard = roster.write().expect("roster lock poisoned");
+                            apply_persona_state(&mut guard, &state);
+                        }
+                        Some(Err(_)) => continue, // lagged — keep watching
+                        None => break,
                     }
                 }
-                Some(Ok(state)) = persona_stream.next() => {
-                    let mut guard = roster.write().expect("roster lock poisoned");
-                    apply_persona_state(&mut guard, &state);
-                }
-                else => break,
             }
         }
         tracing::info!("friends watcher stopped");

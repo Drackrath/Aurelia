@@ -117,3 +117,81 @@ fn incremental_upsert_preserves_persona_fields() {
     assert_eq!(roster[&10].persona_name.as_deref(), Some("Alice"));
     assert_eq!(roster[&10].persona_state, Some(1));
 }
+
+/// A reply carrying only the name.
+fn name_only(id: u64, name: &str) -> CMsgClientPersonaState {
+    let mut msg = CMsgClientPersonaState::new();
+    let mut f = cmsg_client_persona_state::Friend::new();
+    f.set_friendid(id);
+    f.set_player_name(name.to_string());
+    msg.friends.push(f);
+    msg
+}
+
+#[test]
+fn reply_without_status_keeps_known_state_and_game() {
+    let mut roster = Roster::new();
+    apply_friends_list(
+        &mut roster,
+        &friends_list(false, &[(10, RELATIONSHIP_FRIEND)]),
+    );
+    let mut full = persona_state(&[(10, "Alice", 3, 440)]);
+    full.friends[0].set_game_name("Team Fortress 2".to_string());
+    apply_persona_state(&mut roster, &full);
+
+    apply_persona_state(&mut roster, &name_only(10, "Alice2"));
+
+    let f = &roster[&10];
+    assert_eq!(f.persona_name.as_deref(), Some("Alice2"));
+    assert_eq!(f.persona_state, Some(3));
+    assert_eq!(f.game_app_id, Some(440));
+    assert_eq!(f.game_name.as_deref(), Some("Team Fortress 2"));
+}
+
+#[test]
+fn reply_without_status_leaves_unknown_state_unset() {
+    let mut roster = Roster::new();
+    apply_friends_list(
+        &mut roster,
+        &friends_list(false, &[(10, RELATIONSHIP_FRIEND)]),
+    );
+    apply_persona_state(&mut roster, &name_only(10, "Alice"));
+    assert_eq!(roster[&10].persona_state, None);
+}
+
+#[test]
+fn stopping_a_game_clears_its_name() {
+    let mut roster = Roster::new();
+    apply_friends_list(
+        &mut roster,
+        &friends_list(false, &[(10, RELATIONSHIP_FRIEND)]),
+    );
+    let mut playing = persona_state(&[(10, "Alice", 1, 440)]);
+    playing.friends[0].set_game_name("Team Fortress 2".to_string());
+    apply_persona_state(&mut roster, &playing);
+    apply_persona_state(&mut roster, &persona_state(&[(10, "Alice", 1, 0)]));
+
+    assert_eq!(roster[&10].game_app_id, None);
+    assert_eq!(roster[&10].game_name, None);
+}
+
+#[test]
+fn full_snapshot_keeps_persona_of_remaining_friends() {
+    let mut roster = Roster::new();
+    apply_friends_list(
+        &mut roster,
+        &friends_list(
+            false,
+            &[(10, RELATIONSHIP_FRIEND), (20, RELATIONSHIP_FRIEND)],
+        ),
+    );
+    apply_persona_state(&mut roster, &persona_state(&[(10, "Alice", 3, 440)]));
+
+    apply_friends_list(
+        &mut roster,
+        &friends_list(false, &[(10, RELATIONSHIP_FRIEND)]),
+    );
+    assert!(!roster.contains_key(&20));
+    assert_eq!(roster[&10].persona_name.as_deref(), Some("Alice"));
+    assert_eq!(roster[&10].persona_state, Some(3));
+}

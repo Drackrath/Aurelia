@@ -288,6 +288,7 @@ pub(crate) fn persona_state_label(state: Option<u32>) -> &'static str {
         Some(4) => "snooze",
         Some(5) => "looking to trade",
         Some(6) => "looking to play",
+        Some(7) => "invisible",
         Some(_) => "online",
     }
 }
