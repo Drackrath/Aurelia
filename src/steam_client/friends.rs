@@ -9,13 +9,14 @@
 //! imports live in the parent module and are pulled in via `use super::*`.
 use super::*;
 use std::sync::RwLock;
-use steam_vent::NetMessage;
+use steam_vent::ReceivableMessage;
 use steam_vent_proto::steammessages_clientserver_2::CMsgClientPlayingSessionState;
 use steam_vent_proto::steammessages_clientserver_friends::{
     CMsgClientAddFriend, CMsgClientAddFriendResponse, CMsgClientChangeStatus,
     CMsgClientFriendsList, CMsgClientPersonaState, CMsgClientRemoveFriend,
     CMsgClientRequestFriendData,
 };
+use steam_vent_proto::steammessages_clientserver_login::CMsgClientLoggedOff;
 use tokio_stream::StreamExt;
 
 /// EFriendRelationship value for an accepted friend.
@@ -80,6 +81,15 @@ impl Friend {
             game_name: None,
         }
     }
+}
+
+/// Why the friends watcher returned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WatcherEnd {
+    /// The connection's streams ended.
+    StreamsClosed,
+    /// Steam ended the session (EResult).
+    LoggedOff(i32),
 }
 
 /// The friends roster, keyed by SteamID64.
@@ -203,15 +213,15 @@ fn drain_unprocessed_into(connection: &Connection, roster: &mut Roster) {
     let mut lists = Vec::new();
     let mut personas = Vec::new();
     for raw in connection.take_unprocessed() {
-        if raw.kind == <CMsgClientFriendsList as NetMessage>::KIND {
+        if raw.kind == <CMsgClientFriendsList as ReceivableMessage>::KIND {
             if let Ok(msg) = raw.into_message::<CMsgClientFriendsList>() {
                 lists.push(msg);
             }
-        } else if raw.kind == <CMsgClientPersonaState as NetMessage>::KIND {
+        } else if raw.kind == <CMsgClientPersonaState as ReceivableMessage>::KIND {
             if let Ok(msg) = raw.into_message::<CMsgClientPersonaState>() {
                 personas.push(msg);
             }
-        } else if raw.kind == <CMsgClientPlayingSessionState as NetMessage>::KIND {
+        } else if raw.kind == <CMsgClientPlayingSessionState as ReceivableMessage>::KIND {
             // Keep it for game invites.
             if let Ok(msg) = raw.into_message::<CMsgClientPlayingSessionState>() {
                 super::chat::record_playing_session(connection.session_id(), &msg);
@@ -340,13 +350,14 @@ impl SteamClient {
     /// may be missed if this subscription loses the race against the initial
     /// push, but it self-heals on the next friends-list update; persona updates
     /// arrive continuously regardless.
-    pub async fn run_friends_watcher(&self, roster: Arc<RwLock<Roster>>) -> Result<()> {
+    pub async fn run_friends_watcher(&self, roster: Arc<RwLock<Roster>>) -> Result<WatcherEnd> {
         // Keep a local clone of the connection alive: the streams returned by
         // `on::<T>()` are tied to the connection value's lifetime.
         let connection = self.require_connection_owned()?;
         let mut friends_stream = connection.on::<CMsgClientFriendsList>();
         let mut persona_stream = connection.on::<CMsgClientPersonaState>();
         let mut playing_stream = connection.on::<CMsgClientPlayingSessionState>();
+        let mut logoff_stream = connection.on::<CMsgClientLoggedOff>();
 
         // Announce the configured presence so Steam delivers friend persona data
         // (and incoming chat). A refresh-token session is otherwise offline.
@@ -412,6 +423,10 @@ impl SteamClient {
                     })
                     .await;
                 }
+                Some(Ok(logoff)) = logoff_stream.next() => {
+                    tracing::warn!(eresult = logoff.eresult(), "Steam logged this session off");
+                    return Ok(WatcherEnd::LoggedOff(logoff.eresult()));
+                }
                 Some(Ok(state)) = playing_stream.next() => {
                     super::chat::record_playing_session(connection.session_id(), &state);
                 }
@@ -428,7 +443,7 @@ impl SteamClient {
             }
         }
         tracing::info!("friends watcher stopped");
-        Ok(())
+        Ok(WatcherEnd::StreamsClosed)
     }
 
     /// Collect a one-shot, bounded snapshot of the friends roster for standalone

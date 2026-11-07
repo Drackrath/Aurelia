@@ -22,8 +22,8 @@ use std::time::{Duration, Instant};
 
 use protobuf::{Message, MessageField};
 use steam_vent::auth::{
-    AuthConfirmationHandler, ConfirmationMethod, DeviceConfirmationHandler, FileGuardDataStore,
-    UserProvidedAuthConfirmationHandler,
+    AuthConfirmationHandler, ClientInfo, ConfirmationMethod, DeviceConfirmationHandler,
+    FileGuardDataStore, RefreshToken, UserProvidedAuthConfirmationHandler,
 };
 use steam_vent::connection::Connection;
 use steam_vent::{ConnectionError, ConnectionTrait, LoginError, ServerList};
@@ -77,10 +77,47 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(20);
 /// round-robin, so each attempt hits a different server.
 const CM_CONNECT_ATTEMPTS: usize = 3;
 
+/// Daemon-chosen logon ID; 0 means unset.
+static LOGON_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Use a stable logon ID from `key`.
+///
+/// For the daemon, so a respawn replaces only its own earlier session.
+pub fn use_stable_logon_id(key: &str) {
+    LOGON_ID.store(stable_logon_id(key), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// FNV-1a of `key`, never 0.
+pub fn stable_logon_id(key: &str) -> u32 {
+    let mut hash: u32 = 0x811c_9dc5;
+    for byte in key.bytes() {
+        hash ^= u32::from(byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    hash | 1
+}
+
+/// This process's logon ID, never 0.
+///
+/// Steam replaces a session when another logs on with the same ID from the
+/// same public IP, so each process gets its own unless the daemon set one.
+pub fn logon_id() -> u32 {
+    use std::sync::atomic::Ordering;
+    let current = LOGON_ID.load(Ordering::Relaxed);
+    if current != 0 {
+        return current;
+    }
+    let random = rand::random::<u32>() | 1;
+    match LOGON_ID.compare_exchange(0, random, Ordering::Relaxed, Ordering::Relaxed) {
+        Ok(_) => random,
+        Err(set) => set,
+    }
+}
+
 /// Authenticate with a stored refresh token, with a per-attempt timeout and
 /// automatic failover to the next CM server.
 ///
-/// `Connection::access` connects to a single WebSocket CM server and performs
+/// `Connection::login_with_refresh_token_and_logon_id` connects to a single WebSocket CM server and performs
 /// the refresh-token logon, but it never times out — a stalled CM leaves the
 /// whole command hanging (the reported symptom). Each call re-picks a server
 /// round-robin, so on timeout/error we simply retry, advancing to the next one.
@@ -89,17 +126,22 @@ async fn access_with_retry(
     account: &str,
     refresh_token: &str,
 ) -> Result<Connection> {
+    let _ = account; // 0.6 reads it from the token
+    let token = RefreshToken::new(refresh_token.to_string())
+        .map_err(|e| anyhow!("stored refresh token is invalid: {e}"))?;
+    let logon_id = logon_id();
     let mut last_err: Option<anyhow::Error> = None;
 
     for attempt in 1..=CM_CONNECT_ATTEMPTS {
         tracing::debug!(
             attempt,
             attempts = CM_CONNECT_ATTEMPTS,
+            logon_id,
             "Authenticating with stored refresh token ..."
         );
         match tokio::time::timeout(
             CM_CONNECT_TIMEOUT,
-            Connection::access(server_list, account, refresh_token),
+            Connection::login_with_refresh_token_and_logon_id(server_list, &token, logon_id),
         )
         .await
         {
@@ -526,7 +568,7 @@ pub mod genres_table;
 
 pub use chat::{PlayingSession, check_invite};
 pub use collections::RemoteNamespace;
-pub use friends::{AddedFriend, Friend, Roster};
+pub use friends::{AddedFriend, Friend, Roster, WatcherEnd};
 pub use market::{
     InventoryItem, MarketPrice, MarketSearchResult, MyMarketState, WalletBalance, inventory_via,
     market_price, market_search, my_listings_via, wallet_via,

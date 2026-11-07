@@ -103,6 +103,14 @@ pub async fn run_server() -> Result<()> {
 
     // Establish the shared session in the background (one logon if a token exists),
     // then keep it alive: the liveness loop reconnects if the socket later dies.
+    // Stable ID: respawns replace only us.
+    if let Ok(dir) = aurelia::core::config::config_dir() {
+        aurelia::steam_client::use_stable_logon_id(&format!(
+            "{}|{}",
+            dir.display(),
+            transport::endpoint()
+        ));
+    }
     let state = super::init_state();
     tokio::spawn(async move {
         state.ensure_session().await;

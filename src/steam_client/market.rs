@@ -116,10 +116,7 @@ impl SteamClient {
     pub async fn web_session(&self) -> Result<WebSession> {
         let connection = self.require_connection()?;
         let steam_id = u64::from(connection.steam_id());
-        let refresh_token = connection
-            .access_token()
-            .context("no Steam token available for a web session; run `aurelia login`")?
-            .to_string();
+        let refresh_token = connection.refresh_token().token().to_string();
 
         let mut req = CAuthentication_AccessToken_GenerateForApp_Request::new();
         req.set_refresh_token(refresh_token);
@@ -133,7 +130,11 @@ impl SteamClient {
         if token.is_empty() {
             bail!("Steam returned an empty web access token");
         }
-        WebSession::new(steam_id, token, connection.ip_country_code().as_deref())
+        WebSession::new(
+            steam_id,
+            token,
+            Some(connection.ip_country_code()).filter(|c| !c.is_empty()),
+        )
     }
 }
 

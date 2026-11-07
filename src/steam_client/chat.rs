@@ -7,7 +7,7 @@
 //! submodules, the struct and shared imports live in the parent module and are
 //! pulled in via `use super::*`.
 use super::*;
-use steam_vent::NetMessage;
+use steam_vent::ReceivableMessage;
 use steam_vent_chat::ChatClient;
 use steam_vent_proto::steammessages_clientserver::CMsgClientInviteToGame;
 use steam_vent_proto::steammessages_clientserver_2::CMsgClientPlayingSessionState;
@@ -170,7 +170,7 @@ impl SteamClient {
         let mut stream = connection.on::<CMsgClientPlayingSessionState>();
         // Logon push may sit unclaimed.
         for raw in connection.take_unprocessed() {
-            if raw.kind == <CMsgClientPlayingSessionState as NetMessage>::KIND
+            if raw.kind == <CMsgClientPlayingSessionState as ReceivableMessage>::KIND
                 && let Ok(msg) = raw.into_message::<CMsgClientPlayingSessionState>()
             {
                 record_playing_session(session, &msg);

@@ -305,12 +305,38 @@ impl DaemonState {
         let client = client.clone();
         let roster = Arc::clone(&self.roster);
         let handle = tokio::spawn(async move {
-            if let Err(e) = client.run_friends_watcher(roster).await {
-                tracing::warn!("daemon: friends watcher exited: {e:#}");
+            match client.run_friends_watcher(roster).await {
+                Ok(aurelia::steam_client::WatcherEnd::LoggedOff(eresult)) => {
+                    tracing::warn!(
+                        eresult,
+                        "daemon: Steam ended the shared session; reconnecting on next command"
+                    );
+                    if let Some(session) = client.connection().map(|c| c.session_id()) {
+                        init_state().drop_session(session).await;
+                    }
+                }
+                Ok(aurelia::steam_client::WatcherEnd::StreamsClosed) => {}
+                Err(e) => tracing::warn!("daemon: friends watcher exited: {e:#}"),
             }
         });
         tracing::info!("daemon: friends watcher started");
         *guard = Some(handle);
+    }
+
+    /// Drop the session if still `session_id`.
+    ///
+    /// Lazy: the next command reconnects, not the liveness loop.
+    async fn drop_session(&self, session_id: i32) {
+        let current = {
+            let s = self.slot.read().await;
+            s.client
+                .as_ref()
+                .and_then(|c| c.connection())
+                .map(|c| c.session_id())
+        };
+        if current == Some(session_id) {
+            self.invalidate().await;
+        }
     }
 
     /// Drop the shared session and clear the failure backoff so the next
