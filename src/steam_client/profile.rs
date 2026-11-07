@@ -10,6 +10,10 @@ use tokio_stream::StreamExt;
 
 /// `EAccountFlags::LimitedUser`.
 const ACCOUNT_FLAG_LIMITED: u32 = 4096;
+/// Persona reply wait for other users.
+const PERSONA_WAIT: std::time::Duration = std::time::Duration::from_secs(4);
+/// Persona reply wait for `me`.
+const SELF_PERSONA_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 /// Community visibility: 1 private, 2 friends-only, 3 public.
 const VISIBILITY_PUBLIC: i32 = 3;
 
@@ -142,8 +146,15 @@ impl SteamClient {
         if let Err(e) = self.announce_configured_presence().await {
             tracing::debug!("persona announce failed: {e}");
         }
+        // Own status may arrive late.
+        let is_self = u64::from(connection.steam_id()) == steam_id;
+        let wait = if is_self {
+            SELF_PERSONA_WAIT
+        } else {
+            PERSONA_WAIT
+        };
         if self.request_friend_data(&[steam_id]).await.is_ok() {
-            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(4);
+            let deadline = tokio::time::Instant::now() + wait;
             loop {
                 let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
                 if remaining.is_zero() {
@@ -170,8 +181,13 @@ impl SteamClient {
                             if profile.avatar_url.is_none() {
                                 profile.avatar_url = avatar_url(fr.avatar_hash());
                             }
-                            profile.sources.push("persona_state".to_string());
-                            break;
+                            if !profile.sources.iter().any(|s| s == "persona_state") {
+                                profile.sources.push("persona_state".to_string());
+                            }
+                            // Self: wait for a status.
+                            if !is_self || fr.has_persona_state() {
+                                break;
+                            }
                         }
                     }
                     Ok(Some(Err(_))) => continue,
