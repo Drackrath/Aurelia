@@ -163,10 +163,10 @@ Grab the `.deb` for your architecture from the
 sudo apt install ./aurelia_*_amd64.deb
 ```
 
-### Prebuilt binaries (Linux, Windows, macOS)
+### Prebuilt binaries (Linux, Windows)
 
 Every release ships static-ish binaries for `linux_x86_64`, `linux_arm64`,
-`windows_x86_64`, `windows_arm64`, `macOS_x86_64` and `macOS_arm64`.
+`windows_x86_64` and `windows_arm64`.
 See the [releases page](https://github.com/Drackrath/Aurelia/releases/latest).
 
 ```bash
@@ -626,8 +626,8 @@ Under ~50 MB idle, against roughly 400 to 800 MB for the official Steam desktop 
 
 ### Which platforms are supported?
 
-Linux is the primary target (x86_64 and arm64), Windows is supported, and macOS binaries are
-built for each release. See [Install](#install).
+Linux is the primary target (x86_64 and arm64), and Windows is supported. Releases no longer
+include macOS binaries. See [Install](#install).
 
 ### Can I use it to script my Steam library?
 
