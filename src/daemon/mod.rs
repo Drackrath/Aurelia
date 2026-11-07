@@ -256,11 +256,7 @@ impl DaemonState {
                     s.client = Some(client);
                     s.last_failure = None;
                     s.last_error = None;
-                    // Start (or re-confirm) the background friends watcher on the freshly
-                    // established connection so the roster cache fills without a request
-                    // having to drive it. `spawn_watcher` is idempotent — if one is still
-                    // running (e.g. this restore ran without a prior invalidate) it's a
-                    // no-op. `s.client` was just set, so the unwrap cannot fail.
+                    // Rebind watcher to the new connection.
                     self.spawn_watcher(s.client.as_ref().unwrap());
                 }
                 Ok(_) => {
@@ -290,19 +286,20 @@ impl DaemonState {
         s.session_mtime = session_mtime().await.or(mtime);
     }
 
-    /// Spawn the background friends watcher on `client`, unless one is already running.
+    /// Spawn the background friends watcher on `client`, replacing any previous one.
     ///
     /// The watcher runs forever against the client's connection, populating the shared
     /// [`roster`](Self::roster) from Steam friend/persona broadcasts, and returns only
-    /// when that connection's streams end (i.e. the session died). We keep exactly one
-    /// running at a time: a stale-but-not-yet-cleaned handle (the task already finished,
-    /// e.g. its connection dropped) is treated as "no watcher" so we replace it. Locked
-    /// for just the inspect/replace; the spawn and `.await` happen on the task itself.
+    /// when that connection's streams end (i.e. the session died).
+    ///
+    /// Each restore opens a new connection.
     fn spawn_watcher(&self, client: &SteamClient) {
         let mut guard = self.watcher.lock().unwrap();
-        if guard.as_ref().is_some_and(|h| !h.is_finished()) {
-            return; // a watcher is already live on this (or a prior) connection.
+        if let Some(old) = guard.take() {
+            old.abort();
         }
+        // Old roster may be another account.
+        self.roster.write().unwrap().clear();
         // Both the client (cheap Arc-backed clone over the shared connection) and the
         // roster Arc are moved into the task so it can outlive this call.
         let client = client.clone();
