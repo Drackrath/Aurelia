@@ -338,9 +338,9 @@ dependencies = [
 
 [[package]]
 name = "aurelia-steam-cdn"
-version = "3.1.0"
+version = "3.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "151c6e4566a17b931cdc0ccbec63d4edd8986276a442c3a43c59f4764c0f2b00"
+checksum = "fc302dd4e84e1064fa2f25efe38f22c5ba54f75b8c29df3bbc04a018c8c72c01"
 dependencies = [
  "aes",
  "aurelia-steam-vent",
