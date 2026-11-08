@@ -97,6 +97,10 @@ fn write_daemon_info() {
 
 /// Read the running daemon's identity marker, if present and parseable.
 fn read_daemon_info() -> Option<DaemonInfo> {
+    // Planted markers could name victims.
+    if !transport::location_trusted() {
+        return None;
+    }
     let bytes = std::fs::read(transport::version_marker_path()).ok()?;
     serde_json::from_slice(&bytes).ok()
 }

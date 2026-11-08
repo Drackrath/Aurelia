@@ -17,52 +17,135 @@ pub fn version_marker_path() -> std::path::PathBuf {
     imp::version_marker_path()
 }
 
+/// Whether marker and socket are ours.
+pub fn location_trusted() -> bool {
+    imp::location_trusted()
+}
+
+#[cfg(all(unix, test))]
+#[path = "transport_tests.rs"]
+mod tests;
+
 #[cfg(unix)]
 mod imp {
-    use std::path::PathBuf;
+    use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
+    use std::path::{Path, PathBuf};
     use tokio::net::{UnixListener, UnixStream};
+
+    fn uid() -> u32 {
+        unsafe { libc::getuid() }
+    }
+
+    /// Runtime dir, else private temp dir.
+    fn base_dir() -> PathBuf {
+        let uid = uid();
+        std::env::var_os("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .unwrap_or_else(|| std::env::temp_dir().join(format!("aurelia-{uid}")))
+    }
 
     pub fn endpoint() -> String {
         if let Ok(p) = std::env::var("AURELIA_DAEMON_SOCKET") {
             return p;
         }
-        let base = std::env::var("XDG_RUNTIME_DIR")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .map(PathBuf::from)
-            .unwrap_or_else(std::env::temp_dir);
-        let uid = unsafe { libc::getuid() };
-        base.join(format!("aurelia-{uid}.sock"))
+        base_dir()
+            .join(format!("aurelia-{}.sock", uid()))
             .to_string_lossy()
             .into_owned()
     }
 
     pub fn version_marker_path() -> PathBuf {
-        // Alongside the socket (`aurelia-{uid}.info`), so it inherits any
-        // AURELIA_DAEMON_SOCKET override the endpoint uses.
+        // Next to the socket.
         PathBuf::from(endpoint()).with_extension("info")
+    }
+
+    /// Ours, a real directory, no group/other writes.
+    pub(super) fn dir_is_private(dir: &Path) -> bool {
+        std::fs::symlink_metadata(dir).is_ok_and(|m| {
+            m.file_type().is_dir() && m.uid() == uid() && m.mode() & 0o022 == 0
+        })
+    }
+
+    /// Create or tighten the endpoint's directory.
+    pub(super) fn ensure_private_dir(dir: &Path) -> std::io::Result<()> {
+        match std::fs::symlink_metadata(dir) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
+            }
+            Err(e) => return Err(e),
+            Ok(_) => {}
+        }
+        let meta = std::fs::symlink_metadata(dir)?;
+        if !meta.file_type().is_dir() || meta.uid() != uid() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!("{} is not a directory owned by this user", dir.display()),
+            ));
+        }
+        if meta.mode() & 0o022 != 0 {
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+        }
+        Ok(())
+    }
+
+    /// Whether the endpoint's files can be trusted.
+    pub fn location_trusted() -> bool {
+        let path = PathBuf::from(endpoint());
+        let parent_ok = path.parent().is_some_and(|dir| {
+            // Custom socket: caller's choice.
+            dir_is_private(dir) || std::env::var_os("AURELIA_DAEMON_SOCKET").is_some()
+        });
+        let socket_ok = std::fs::symlink_metadata(&path).map_or(true, |m| m.uid() == uid());
+        parent_ok && socket_ok
     }
 
     pub struct Listener(UnixListener);
 
     impl Listener {
         pub async fn bind() -> std::io::Result<Self> {
-            let path = endpoint();
-            // A stale socket file from a previous run blocks bind(); remove it.
-            let _ = std::fs::remove_file(&path);
-            if let Some(parent) = std::path::Path::new(&path).parent() {
-                let _ = std::fs::create_dir_all(parent);
+            let path = PathBuf::from(endpoint());
+            if std::env::var_os("AURELIA_DAEMON_SOCKET").is_none() {
+                if let Some(parent) = path.parent() {
+                    ensure_private_dir(parent)?;
+                }
             }
-            Ok(Self(UnixListener::bind(&path)?))
+            // Only clear our own stale socket.
+            if let Ok(meta) = std::fs::symlink_metadata(&path) {
+                if !meta.file_type().is_socket() || meta.uid() != uid() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::AlreadyExists,
+                        format!("{} exists and is not our socket", path.display()),
+                    ));
+                }
+                std::fs::remove_file(&path)?;
+            }
+            let listener = UnixListener::bind(&path)?;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+            Ok(Self(listener))
         }
 
         pub async fn next(&mut self) -> std::io::Result<UnixStream> {
-            let (stream, _addr) = self.0.accept().await?;
-            Ok(stream)
+            loop {
+                let (stream, _addr) = self.0.accept().await?;
+                match stream.peer_cred() {
+                    Ok(cred) if cred.uid() == uid() => return Ok(stream),
+                    Ok(cred) => {
+                        tracing::warn!("daemon: rejected connection from uid {}", cred.uid());
+                    }
+                    Err(e) => tracing::warn!("daemon: unreadable peer credentials: {e}"),
+                }
+            }
         }
     }
 
     pub async fn connect() -> std::io::Result<UnixStream> {
+        if !location_trusted() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!("untrusted daemon endpoint {}", endpoint()),
+            ));
+        }
         UnixStream::connect(endpoint()).await
     }
 }
@@ -81,6 +164,10 @@ mod imp {
         }
         let user = std::env::var("USERNAME").unwrap_or_else(|_| "default".to_string());
         format!(r"\\.\pipe\aurelia-{user}")
+    }
+
+    pub fn location_trusted() -> bool {
+        true
     }
 
     pub fn version_marker_path() -> std::path::PathBuf {
