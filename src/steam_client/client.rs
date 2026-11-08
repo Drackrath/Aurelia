@@ -90,6 +90,35 @@ impl SteamClient {
             .map(|connection| u64::from(connection.steam_id()))
     }
 
+    /// Revoke a refresh token at Steam.
+    pub async fn revoke_refresh_token(&mut self, token: &str) -> Result<()> {
+        use steam_vent_proto::steammessages_auth_steamclient::{
+            CAuthentication_Token_Revoke_Request, CAuthentication_Token_Revoke_Response,
+            EAuthTokenRevokeAction,
+        };
+        let mut request = CAuthentication_Token_Revoke_Request::new();
+        request.set_token(token.to_string());
+        request.set_revoke_action(EAuthTokenRevokeAction::k_EAuthTokenRevokePermanent);
+        if let Some(connection) = &self.connection {
+            let _: CAuthentication_Token_Revoke_Response = connection
+                .service_method(request)
+                .await
+                .context("failed calling Authentication.RevokeToken")?;
+            return Ok(());
+        }
+        // Not logged on: anonymous.
+        let server_list = self.resolve_server_list().await?;
+        let anon = Connection::anonymous(&server_list)
+            .await
+            .map_err(|e| anyhow!(e))
+            .context("failed to open anonymous Steam connection")?;
+        let _: CAuthentication_Token_Revoke_Response = anon
+            .service_method(request)
+            .await
+            .context("failed calling Authentication.RevokeToken")?;
+        Ok(())
+    }
+
     pub async fn logout(&mut self) -> Result<()> {
         self.connection = None;
         self.state = LoginState::Connected;

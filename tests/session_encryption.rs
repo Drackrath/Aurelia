@@ -54,6 +54,18 @@ fn keyring_mode_without_a_keyring_names_the_keyring() {
 }
 
 #[test]
+fn logout_removes_an_unreadable_session() {
+    let tmp = tempdir().unwrap();
+    write_envelope(tmp.path(), false);
+    let out = aurelia(tmp.path(), &["logout", "--json"]);
+    assert!(out.status.success(), "logout must succeed: {}", stderr(&out));
+    assert!(!tmp.path().join("session.json").exists());
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["logged_out"], true);
+    assert_eq!(body["token"], "not_revoked");
+}
+
+#[test]
 fn legacy_password_envelope_points_at_relogin() {
     let tmp = tempdir().unwrap();
     write_envelope(tmp.path(), false);
