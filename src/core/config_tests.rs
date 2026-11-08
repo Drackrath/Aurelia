@@ -85,3 +85,19 @@ fn proxy_config_omits_empty_and_round_trips() {
     let back: ProxyConfig = serde_json::from_str(&serde_json::to_string(&proxy).unwrap()).unwrap();
     assert_eq!(back, proxy);
 }
+
+#[test]
+fn launcher_config_without_download_limit_is_unlimited() {
+    let legacy = r#"{ "steam_library_path": "/x", "proton_version": "experimental",
+        "enable_cloud_sync": true }"#;
+    let cfg: LauncherConfig = serde_json::from_str(legacy).unwrap();
+    assert_eq!(cfg.download_limit_kbit, 0);
+    assert_eq!(cfg.download_limit_bytes(), 0);
+}
+
+#[test]
+fn download_limit_converts_kbit_to_bytes() {
+    assert_eq!(kbit_to_bytes(8000), 1_000_000);
+    assert_eq!(kbit_to_bytes(1), 125);
+    assert_eq!(kbit_to_bytes(u64::MAX), u64::MAX / 8);
+}

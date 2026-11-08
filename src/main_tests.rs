@@ -236,3 +236,35 @@ fn cli_has_no_conflicting_flags() {
     use clap::CommandFactory;
     crate::cli::Cli::command().debug_assert();
 }
+
+#[test]
+fn download_limit_parses_numbers_and_off() {
+    assert_eq!(crate::cli::parse_download_limit("8000"), Ok(8000));
+    assert_eq!(crate::cli::parse_download_limit(" 0 "), Ok(0));
+    for word in ["off", "OFF", "none", "unlimited"] {
+        assert_eq!(crate::cli::parse_download_limit(word), Ok(0), "{word}");
+    }
+    assert!(crate::cli::parse_download_limit("1 MB").is_err());
+    assert!(crate::cli::parse_download_limit("-5").is_err());
+}
+
+#[test]
+fn download_limit_reads_in_bytes() {
+    use crate::commands::config::describe_download_limit;
+    assert_eq!(describe_download_limit(0), "unlimited");
+    assert_eq!(describe_download_limit(8000), "8000 kbit/s (1.0 MB/s)");
+    assert_eq!(describe_download_limit(800), "800 kbit/s (100.0 kB/s)");
+}
+
+#[test]
+fn download_limit_command_parses() {
+    use clap::Parser;
+    let cli =
+        crate::cli::Cli::try_parse_from(["aurelia", "config", "download-limit", "off"]).unwrap();
+    assert!(matches!(
+        cli.command,
+        crate::cli::Command::Config {
+            command: crate::cli::ConfigCommand::DownloadLimit { kbit: Some(0) }
+        }
+    ));
+}

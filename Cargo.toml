@@ -1,6 +1,6 @@
 [package]
 name = "aurelia-steam"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2024"
 description = "Aurelia CLI Steam launcher"
 license = "GPL-3.0-or-later"
@@ -49,7 +49,7 @@ flate2 = "1"
 xz2 = "0.1"
 cbc = "0.1"
 aes = "0.8"
-steam-cdn = { package = "aurelia-steam-cdn", version = "3.1.0" } # Fork on aurelia-steam-vent 0.7
+steam-cdn = { package = "aurelia-steam-cdn", version = "3.2.0" } # Fork on aurelia-steam-vent 0.7
 libc = "0.2"
 regex = "1"
 sysinfo = { version = "0.33", default-features = false, features = ["system", "disk"] } # Enumerate/kill aurelia processes for `kill`/`daemon`; `disk` for library free-space checks
