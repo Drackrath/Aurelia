@@ -366,9 +366,9 @@ dependencies = [
 
 [[package]]
 name = "aurelia-steam-vent"
-version = "0.7.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58ec8ffa1235907b7518546eda49008e57da3489b0cc7a4c54829db8a2ef7976"
+checksum = "6b5584812b396982b997d8a538caca69e22c79a5b1d6c454c8e69a359398c67b"
 dependencies = [
  "another-steam-totp",
  "async-stream",
