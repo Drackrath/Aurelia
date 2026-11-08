@@ -8,6 +8,42 @@ use crate::core::error::{ErrorKind, TypedError, io_kind, message_kind};
 /// CDN hosts tried together.
 const HOST_POOL_SIZE: usize = 4;
 
+/// Shared limit for every depot download.
+static DOWNLOAD_LIMITER: std::sync::LazyLock<Arc<steam_cdn::RateLimiter>> =
+    std::sync::LazyLock::new(|| Arc::new(steam_cdn::RateLimiter::new(0)));
+
+/// How often running downloads reread config.
+const LIMIT_REFRESH: Duration = Duration::from_secs(5);
+
+/// Apply the configured download limit.
+async fn refresh_download_limit() {
+    // Unreadable config keeps the old limit.
+    if let Ok(cfg) = load_launcher_config().await {
+        DOWNLOAD_LIMITER.set_rate(cfg.download_limit_bytes());
+    }
+}
+
+/// Rereads the limit until dropped.
+struct LimitWatcher(tokio::task::JoinHandle<()>);
+
+impl LimitWatcher {
+    async fn start() -> Self {
+        refresh_download_limit().await;
+        Self(tokio::spawn(async {
+            loop {
+                tokio::time::sleep(LIMIT_REFRESH).await;
+                refresh_download_limit().await;
+            }
+        }))
+    }
+}
+
+impl Drop for LimitWatcher {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 /// Content host as CDN server.
 pub(crate) fn cdn_server_for(
     content: &ContentHost,
@@ -638,6 +674,8 @@ impl SteamClient {
             .map(|s| (s.downloaded_bytes, s.reused_bytes))
             .unwrap_or_default();
 
+        let _limit = LimitWatcher::start().await;
+
         for pool in hosts.chunks(HOST_POOL_SIZE) {
             let mut servers = Vec::with_capacity(pool.len());
             for host in pool {
@@ -664,7 +702,8 @@ impl SteamClient {
             }
 
             let cdn_client =
-                steam_cdn::CDNClient::with_servers(Arc::new(connection.clone()), servers);
+                steam_cdn::CDNClient::with_servers(Arc::new(connection.clone()), servers)
+                    .with_rate_limiter(DOWNLOAD_LIMITER.clone());
 
             let state_for_closure = shared_state.clone();
             let on_progress: steam_cdn::ProgressFn = Arc::new(move |bytes: u64, reused: bool| {

@@ -590,6 +590,15 @@ pub(crate) enum ConfigCommand {
         /// `manual` or `auto`. Omit to print the current setting.
         mode: Option<InstallResumeArg>,
     },
+    /// View or set the global download limit.
+    ///
+    /// Caps all game downloads together, in kbit/s (8000 = 1 MB/s). `0` or `off`
+    /// removes the limit. Running downloads pick up a change within seconds.
+    DownloadLimit {
+        /// kbit/s, or `off`. Omit to print.
+        #[arg(value_parser = parse_download_limit)]
+        kbit: Option<u64>,
+    },
     /// View or set Vulkan shader pre-caching before `play` (Linux). `auto` (default)
     /// replays the game's Steam pipeline cache with `fossilize_replay` and points the
     /// driver caches at `steamapps/shadercache/<appid>`, like Steam; `off` leaves
@@ -1181,6 +1190,20 @@ impl From<ShaderPrecacheArg> for aurelia::launch::shaders::ShaderPrecache {
             ShaderPrecacheArg::Off => Self::Off,
         }
     }
+}
+
+/// kbit/s or `off`/`unlimited`.
+pub(crate) fn parse_download_limit(raw: &str) -> Result<u64, String> {
+    let value = raw.trim();
+    if ["off", "none", "unlimited"]
+        .iter()
+        .any(|w| value.eq_ignore_ascii_case(w))
+    {
+        return Ok(0);
+    }
+    value
+        .parse::<u64>()
+        .map_err(|_| format!("`{raw}` is not a number of kbit/s or `off`"))
 }
 
 /// `config install-resume` choices.

@@ -182,6 +182,14 @@ pub struct LauncherConfig {
     /// Max seconds `user` waits for status.
     #[serde(default = "default_persona_wait_secs")]
     pub persona_wait_secs: u64,
+    /// Global download limit in kbit/s; 0 is unlimited.
+    #[serde(default)]
+    pub download_limit_kbit: u64,
+}
+
+/// kbit/s to bytes/s.
+pub fn kbit_to_bytes(kbit: u64) -> u64 {
+    kbit.saturating_mul(1000) / 8
 }
 
 /// Default `persona_wait_secs`.
@@ -192,6 +200,11 @@ fn default_persona_wait_secs() -> u64 {
 }
 
 impl LauncherConfig {
+    /// Download limit in bytes/s; 0 is unlimited.
+    pub fn download_limit_bytes(&self) -> u64 {
+        kbit_to_bytes(self.download_limit_kbit)
+    }
+
     pub async fn load() -> Result<Self> {
         load_launcher_config().await
     }
@@ -238,6 +251,7 @@ impl Default for LauncherConfig {
             experimental: false,
             encrypt_session: false,
             persona_wait_secs: DEFAULT_PERSONA_WAIT_SECS,
+            download_limit_kbit: 0,
         }
     }
 }

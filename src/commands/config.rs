@@ -349,6 +349,35 @@ pub(crate) async fn cmd_config_hide_uninstalled_launch_options(
     Ok(())
 }
 
+/// Human form of a kbit/s limit.
+pub(crate) fn describe_download_limit(kbit: u64) -> String {
+    if kbit == 0 {
+        return "unlimited".to_string();
+    }
+    let bytes = aurelia::core::config::kbit_to_bytes(kbit);
+    let rate = if bytes >= 1_000_000 {
+        format!("{:.1} MB/s", bytes as f64 / 1_000_000.0)
+    } else {
+        format!("{:.1} kB/s", bytes as f64 / 1_000.0)
+    };
+    format!("{kbit} kbit/s ({rate})")
+}
+
+/// `config download-limit [<kbit/s>|off]`.
+pub(crate) async fn cmd_config_download_limit(kbit: Option<u64>, json: bool) -> Result<()> {
+    let (config, changed) = view_or_set(kbit, |c, k| c.download_limit_kbit = k).await?;
+    let current = config.download_limit_kbit;
+    if json {
+        print_json(&serde_json::json!({ "download_limit_kbit": current }));
+        return Ok(());
+    }
+    cli_println!("Download limit: {}", describe_download_limit(current));
+    if changed {
+        cli_println!("Saved. Running downloads follow within a few seconds.");
+    }
+    Ok(())
+}
+
 /// `config install-resume [manual|auto]`.
 pub(crate) async fn cmd_config_install_resume(
     mode: Option<InstallResumeArg>,

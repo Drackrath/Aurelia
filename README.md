@@ -381,6 +381,7 @@ aurelia config language german       # default language for info and achievement
 aurelia config country DE            # default store region for prices (unset: system locale, else US)
 aurelia config game 1245620 --proton GE-Proton9-20  # pin a Proton version for one game
 aurelia config install-resume auto   # let the daemon resume interrupted installs when it starts
+aurelia config download-limit 50000  # cap all game downloads at 50000 kbit/s (off: no limit, the default)
 aurelia config shader-precache off   # Linux: don't pre-compile Vulkan shaders before play (default: auto)
 aurelia config hide-uninstalled-launch-options off  # list launch options that aren't installed too (default: on)
 
