@@ -10,17 +10,18 @@ const HOST_POOL_SIZE: usize = 4;
 
 /// Content host as CDN server.
 pub(crate) fn cdn_server_for(
-    host: &str,
+    content: &ContentHost,
     cell_id: u32,
     auth_token: Option<String>,
 ) -> steam_cdn::web_api::content_service::CDNServer {
-    let (host_name, port) = match host.rsplit_once(':') {
-        Some((name, port)) => (name, port.parse::<u16>().unwrap_or(80)),
-        None => (host, 80),
+    let default_port = if content.https { 443 } else { 80 };
+    let (host_name, port) = match content.host.rsplit_once(':') {
+        Some((name, port)) => (name, port.parse::<u16>().unwrap_or(default_port)),
+        None => (content.host.as_str(), default_port),
     };
     steam_cdn::web_api::content_service::CDNServer {
         r#type: "CDN".to_string(),
-        https: port == 443,
+        https: content.https || port == 443,
         host: host_name.to_string(),
         vhost: host_name.to_string(),
         port,
@@ -596,7 +597,7 @@ impl SteamClient {
         manifest_id: u64,
         dest: &std::path::Path,
         shared_state: Arc<std::sync::RwLock<crate::core::models::DownloadState>>,
-        hosts: &[String],
+        hosts: &[ContentHost],
         grand_total_bytes: u64,
         connection: &Connection,
         key: Vec<u8>,
@@ -640,16 +641,20 @@ impl SteamClient {
         for pool in hosts.chunks(HOST_POOL_SIZE) {
             let mut servers = Vec::with_capacity(pool.len());
             for host in pool {
-                let token = match self.get_cdn_auth_token(app_id, depot_id, host).await {
+                let token = match self.get_cdn_auth_token(app_id, depot_id, &host.host).await {
                     Ok(t) => Some(t),
                     Err(e) => {
-                        tracing::warn!("Failed to get auth token for host {}: {}", host, e);
+                        tracing::warn!("Failed to get auth token for host {}: {}", host.host, e);
                         None
                     }
                 };
                 servers.push(cdn_server_for(host, connection.cell_id(), token));
             }
-            let host = pool.join(", ");
+            let host = pool
+                .iter()
+                .map(|h| h.host.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
 
             // A retry re-verifies from disk.
             if let Ok(mut state) = shared_state.write() {

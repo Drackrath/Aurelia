@@ -156,7 +156,8 @@ pub(crate) async fn web_access() -> Result<aurelia::web::web_session::WebSession
     let session = load_session().await.unwrap_or_default();
     let Some(token) = session
         .web_token
-        .as_deref()
+        .as_ref()
+        .map(|t| t.expose())
         .filter(|t| !t.trim().is_empty())
     else {
         bail!(

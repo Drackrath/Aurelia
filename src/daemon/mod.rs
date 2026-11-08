@@ -84,7 +84,7 @@ fn write_daemon_info() {
     let path = transport::version_marker_path();
     match serde_json::to_vec(&info) {
         Ok(bytes) => {
-            if let Err(e) = std::fs::write(&path, bytes) {
+            if let Err(e) = aurelia::core::atomic::write_atomic(&path, &bytes) {
                 tracing::warn!(
                     "daemon: could not write version marker {}: {e}",
                     path.display()
@@ -97,6 +97,10 @@ fn write_daemon_info() {
 
 /// Read the running daemon's identity marker, if present and parseable.
 fn read_daemon_info() -> Option<DaemonInfo> {
+    // Planted markers could name victims.
+    if !transport::location_trusted() {
+        return None;
+    }
     let bytes = std::fs::read(transport::version_marker_path()).ok()?;
     serde_json::from_slice(&bytes).ok()
 }
@@ -472,7 +476,7 @@ async fn status_from_slot(slot: &Slot) -> SessionStatus {
     let persisted_steam_id = persisted.as_ref().and_then(|s| s.steam_id);
     let web_token = persisted
         .as_ref()
-        .is_some_and(|s| s.web_token.as_deref().is_some_and(|t| !t.is_empty()));
+        .is_some_and(|s| s.web_token.as_ref().is_some_and(|t| !t.is_empty()));
 
     match &slot.client {
         Some(client) => SessionStatus {

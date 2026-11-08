@@ -181,7 +181,7 @@ pub(crate) async fn cmd_login(args: crate::cli::LoginArgs, json: bool) -> Result
     // (handled inside `login`); otherwise we wait for mobile-app approval and only
     // prompt for a code on the retry path below.
     let attempt = client
-        .login(username.clone(), password.clone(), guard.clone(), code)
+        .login(username.clone(), password.clone().into(), guard.clone(), code)
         .await;
 
     match attempt {
@@ -202,7 +202,7 @@ pub(crate) async fn cmd_login(args: crate::cli::LoginArgs, json: bool) -> Result
                 tracing::info!("Login method awaited: Steam Guard code");
                 let code = prompt_line("Steam Guard code: ")?;
                 client
-                    .login(username, password.clone(), Some(code), false)
+                    .login(username, password.clone().into(), Some(code), false)
                     .await
                     .context("login failed after providing Steam Guard code")?;
                 secure_session(&client).await;
@@ -514,7 +514,7 @@ pub(crate) async fn login_with_timeout(
 ) -> Result<aurelia::core::models::SessionState> {
     match tokio::time::timeout(
         LOGIN_TIMEOUT,
-        client.login(username.to_string(), password.to_string(), guard, false),
+        client.login(username.to_string(), password.into(), guard, false),
     )
     .await
     {
@@ -663,13 +663,55 @@ pub(crate) fn report_login_success(account: &str, json: bool) {
     }
 }
 
+/// Bound on the Steam revoke call.
+const REVOKE_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Token revocation result.
+enum Revocation {
+    Revoked,
+    NoToken,
+    Failed(String),
+}
+
+/// Revoke `token` at Steam, bounded.
+async fn revoke(token: &str) -> Revocation {
+    let attempt = async {
+        let mut client = restored_client().await?;
+        client.revoke_refresh_token(token).await
+    };
+    match tokio::time::timeout(REVOKE_TIMEOUT, attempt).await {
+        Ok(Ok(())) => Revocation::Revoked,
+        Ok(Err(e)) => Revocation::Failed(format!("{e:#}")),
+        Err(_) => Revocation::Failed("timed out".to_string()),
+    }
+}
+
 pub(crate) async fn cmd_logout(json: bool) -> Result<()> {
-    let mut client = restored_client().await?;
-    client.logout().await?;
+    // Unreadable sessions still get deleted.
+    let revocation = match load_session().await {
+        Ok(session) => match session.refresh_token {
+            Some(token) => revoke(token.expose()).await,
+            None => Revocation::NoToken,
+        },
+        Err(e) => Revocation::Failed(format!("{e:#}")),
+    };
+    aurelia::core::config::delete_session().await?;
+    let token = match &revocation {
+        Revocation::Revoked => "revoked",
+        Revocation::NoToken => "none",
+        Revocation::Failed(_) => "not_revoked",
+    };
     if json {
-        print_json(&serde_json::json!({ "logged_out": true }));
+        let mut out = serde_json::json!({ "logged_out": true, "token": token });
+        if let Revocation::Failed(reason) = &revocation {
+            out["token_error"] = serde_json::json!(reason);
+        }
+        print_json(&out);
     } else {
         cli_println!("Logged out.");
+        if let Revocation::Failed(reason) = &revocation {
+            cli_eprintln!("warning: Steam did not revoke the refresh token: {reason}");
+        }
     }
     Ok(())
 }
@@ -694,7 +736,7 @@ pub(crate) async fn cmd_login_health(json: bool) -> Result<()> {
                 .or(session.as_ref().and_then(|s| s.steam_id)),
             web_token: session
                 .as_ref()
-                .is_some_and(|s| s.web_token.as_deref().is_some_and(|t| !t.is_empty())),
+                .is_some_and(|s| s.web_token.as_ref().is_some_and(|t| !t.is_empty())),
         }
     };
     report_session_status(&status, via_daemon, json);

@@ -157,11 +157,8 @@ impl CollectionsStore {
     /// Persist the local store (pretty JSON).
     pub fn save(&self) -> Result<()> {
         let path = store_path()?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).ok();
-        }
         let text = serde_json::to_string_pretty(self).context("failed serializing collections")?;
-        std::fs::write(&path, text).with_context(|| format!("failed writing {}", path.display()))
+        crate::core::atomic::write_atomic(&path, text.as_bytes())
     }
 
     /// Resolve a collection by exact id or case-insensitive name. Errors on

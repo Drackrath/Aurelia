@@ -90,6 +90,35 @@ impl SteamClient {
             .map(|connection| u64::from(connection.steam_id()))
     }
 
+    /// Revoke a refresh token at Steam.
+    pub async fn revoke_refresh_token(&mut self, token: &str) -> Result<()> {
+        use steam_vent_proto::steammessages_auth_steamclient::{
+            CAuthentication_Token_Revoke_Request, CAuthentication_Token_Revoke_Response,
+            EAuthTokenRevokeAction,
+        };
+        let mut request = CAuthentication_Token_Revoke_Request::new();
+        request.set_token(token.to_string());
+        request.set_revoke_action(EAuthTokenRevokeAction::k_EAuthTokenRevokePermanent);
+        if let Some(connection) = &self.connection {
+            let _: CAuthentication_Token_Revoke_Response = connection
+                .service_method(request)
+                .await
+                .context("failed calling Authentication.RevokeToken")?;
+            return Ok(());
+        }
+        // Not logged on: anonymous.
+        let server_list = self.resolve_server_list().await?;
+        let anon = Connection::anonymous(&server_list)
+            .await
+            .map_err(|e| anyhow!(e))
+            .context("failed to open anonymous Steam connection")?;
+        let _: CAuthentication_Token_Revoke_Response = anon
+            .service_method(request)
+            .await
+            .context("failed calling Authentication.RevokeToken")?;
+        Ok(())
+    }
+
     pub async fn logout(&mut self) -> Result<()> {
         self.connection = None;
         self.state = LoginState::Connected;
@@ -301,7 +330,7 @@ impl SteamClient {
         let refresh_token = persisted
             .refresh_token
             .clone()
-            .filter(|value| !value.trim().is_empty())
+            .filter(|value| !value.expose().trim().is_empty())
             .ok_or_else(|| anyhow!("no persisted refresh_token found"))?;
 
         self.connect().await?;
@@ -311,7 +340,7 @@ impl SteamClient {
         self.state = LoginState::AwaitingAccessTokenLogon;
 
         let server_list = self.resolve_server_list().await?;
-        let connection = access_with_retry(&server_list, &account_name, &refresh_token).await?;
+        let connection = access_with_retry(&server_list, &account_name, refresh_token.expose()).await?;
 
         self.connection = Some(connection);
         let mut session = self
@@ -343,7 +372,7 @@ impl SteamClient {
     pub async fn login(
         &mut self,
         account_name: String,
-        password: String,
+        password: crate::core::secret::Secret,
         guard_code: Option<String>,
         interactive_pin: bool,
     ) -> Result<SessionState> {
@@ -391,7 +420,7 @@ impl SteamClient {
                 DeviceConfirmationHandler,
             );
 
-            login_with(&server_list, &account_name, &password, handler).await
+            login_with(&server_list, &account_name, password.expose(), handler).await
         } else if interactive_pin {
             // Read the Steam Guard code from stdin when Steam asks for it; fall back
             // to mobile-app approval if the account only allows that.
@@ -401,12 +430,12 @@ impl SteamClient {
                 DeviceConfirmationHandler,
             );
 
-            login_with(&server_list, &account_name, &password, handler).await
+            login_with(&server_list, &account_name, password.expose(), handler).await
         } else {
             login_with(
                 &server_list,
                 &account_name,
-                &password,
+                password.expose(),
                 DeviceConfirmationHandler,
             )
             .await
@@ -586,7 +615,7 @@ impl SteamClient {
                         account_name: Some(account_name),
                         persona_name: None,
                         steam_id,
-                        refresh_token: Some(refresh_token.to_string()),
+                        refresh_token: Some(refresh_token.into()),
                         client_instance_id: None,
                         // A full client session supersedes any pasted web token
                         // (web tokens are minted fresh off the CM session instead).
@@ -608,7 +637,7 @@ impl SteamClient {
             account_name: Some(account_name),
             persona_name: None,
             steam_id: Some(steam_id),
-            refresh_token: Some(connection.refresh_token().token().to_string()),
+            refresh_token: Some(connection.refresh_token().token().into()),
             client_instance_id: None,
             web_token: None,
         })

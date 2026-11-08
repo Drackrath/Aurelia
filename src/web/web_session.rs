@@ -25,7 +25,7 @@ pub struct WebSession {
     /// `sessionid` form field on POSTs, so a client-generated value is accepted.
     sessionid: String,
     /// Pre-rendered `Cookie:` header value.
-    cookie: String,
+    cookie: crate::core::secret::Secret,
 }
 
 impl WebSession {
@@ -57,7 +57,7 @@ impl WebSession {
             http,
             steam_id,
             sessionid,
-            cookie,
+            cookie: cookie.into(),
         })
     }
 
@@ -78,7 +78,7 @@ impl WebSession {
         let request = self
             .http
             .get(url)
-            .header(reqwest::header::COOKIE, &self.cookie);
+            .header(reqwest::header::COOKIE, self.cookie.expose());
         let resp = crate::core::net::send_with_retry(&self.http, request).await?;
         read_checked(resp).await
     }

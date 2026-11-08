@@ -288,7 +288,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "aurelia-steam"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "aes",
  "anyhow",
@@ -332,14 +332,15 @@ dependencies = [
  "walkdir",
  "windows-sys 0.59.0",
  "xz2",
+ "zeroize",
  "zip",
 ]
 
 [[package]]
 name = "aurelia-steam-cdn"
-version = "3.0.0"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f66f7163e93aba7fc85a4962992add6926bd821a67bc7d8a289b85d87a74dc3"
+checksum = "151c6e4566a17b931cdc0ccbec63d4edd8986276a442c3a43c59f4764c0f2b00"
 dependencies = [
  "aes",
  "aurelia-steam-vent",

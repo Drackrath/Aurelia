@@ -371,6 +371,9 @@ impl SteamClient {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .ok_or_else(|| anyhow!("PICS appinfo for {appid} has no installdir; cannot import"))?;
+        if !crate::core::utils::is_safe_dir_name(&installdir) {
+            bail!("PICS appinfo for {appid} has unsafe installdir {installdir:?}");
+        }
 
         let depots_obj = app_obj.get("depots").and_then(|v| v.as_obj());
         let buildid = depots_obj

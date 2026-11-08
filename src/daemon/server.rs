@@ -1,7 +1,7 @@
 //! Daemon server: accept forwarded commands and run them against the shared session.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, SystemTime};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
@@ -15,6 +15,17 @@ use crate::output::{OutChunk, OutputCtx, Stream};
 /// restarts the daemon while it is idle (never mid-request).
 static INFLIGHT: AtomicUsize = AtomicUsize::new(0);
 
+/// Unix seconds of last request activity.
+static LAST_ACTIVITY: AtomicU64 = AtomicU64::new(0);
+
+fn now_secs() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+fn touch_activity() {
+    LAST_ACTIVITY.store(now_secs(), Ordering::SeqCst);
+}
+
 /// Increments [`INFLIGHT`] for its lifetime; decrements on drop (covers `?` early
 /// returns in [`handle`]).
 struct InflightGuard;
@@ -22,6 +33,7 @@ struct InflightGuard;
 impl InflightGuard {
     fn new() -> Self {
         INFLIGHT.fetch_add(1, Ordering::SeqCst);
+        touch_activity();
         Self
     }
 }
@@ -29,6 +41,7 @@ impl InflightGuard {
 impl Drop for InflightGuard {
     fn drop(&mut self) {
         INFLIGHT.fetch_sub(1, Ordering::SeqCst);
+        touch_activity();
     }
 }
 
@@ -61,8 +74,52 @@ async fn watch_for_upgrade(startup: Option<(SystemTime, u64)>) {
                 "daemon: binary changed on disk; exiting so the next command starts a \
                  fresh daemon"
             );
-            super::clear_daemon_info();
-            std::process::exit(0);
+            shut_down();
+        }
+    }
+}
+
+/// Clear marker and socket, then exit.
+fn shut_down() -> ! {
+    super::clear_daemon_info();
+    transport::remove_endpoint();
+    std::process::exit(0);
+}
+
+/// `AURELIA_DAEMON_IDLE_TIMEOUT` minutes, 0 off.
+fn idle_timeout() -> Option<Duration> {
+    std::env::var("AURELIA_DAEMON_IDLE_TIMEOUT")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|&minutes| minutes > 0)
+        .map(|minutes| Duration::from_secs(minutes.saturating_mul(60)))
+}
+
+/// Whether an idle daemon should exit.
+fn idle_expired(last: u64, now: u64, timeout: Duration, busy: bool) -> bool {
+    !busy && now.saturating_sub(last) >= timeout.as_secs()
+}
+
+/// Requests, installs or games still active.
+fn busy() -> bool {
+    INFLIGHT.load(Ordering::SeqCst) > 0
+        || crate::commands::common::active_installs()
+            .lock()
+            .map_or(true, |map| !map.is_empty())
+        || !aurelia::compat::running::list().is_empty()
+}
+
+/// Exit after the configured idle time.
+async fn watch_for_idle(timeout: Duration) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        let busy = busy();
+        if busy {
+            touch_activity();
+        }
+        if idle_expired(LAST_ACTIVITY.load(Ordering::SeqCst), now_secs(), timeout, busy) {
+            tracing::info!("daemon: idle for {}s; exiting", timeout.as_secs());
+            shut_down();
         }
     }
 }
@@ -120,6 +177,11 @@ pub async fn run_server() -> Result<()> {
 
     // Self-restart on binary upgrade so the daemon never serves stale code.
     tokio::spawn(watch_for_upgrade(exe_signature()));
+    touch_activity();
+    if let Some(timeout) = idle_timeout() {
+        tracing::info!("daemon: exits after {}s idle", timeout.as_secs());
+        tokio::spawn(watch_for_idle(timeout));
+    }
 
     loop {
         match listener.next().await {
@@ -343,4 +405,22 @@ where
     proto::write_frame(&mut *w, proto::C_EXIT, &code.to_be_bytes()).await?;
     let _ = w.shutdown().await;
     Ok(())
+}
+
+#[cfg(test)]
+mod idle_tests {
+    use super::*;
+
+    #[test]
+    fn expires_only_when_idle_long_enough() {
+        let timeout = Duration::from_secs(600);
+        assert!(!idle_expired(1_000, 1_599, timeout, false));
+        assert!(idle_expired(1_000, 1_600, timeout, false));
+        assert!(!idle_expired(1_000, 9_999, timeout, true));
+    }
+
+    #[test]
+    fn clock_going_backwards_never_expires() {
+        assert!(!idle_expired(2_000, 1_000, Duration::from_secs(60), false));
+    }
 }

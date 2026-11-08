@@ -932,17 +932,40 @@ fn cdn_errors_map_to_kinds() {
 
 #[test]
 fn cdn_server_parses_host_and_port() {
-    let s = install::cdn_server_for("cache1.steamcontent.com", 7, Some("t".into()));
+    let host = |h: &str, https| ContentHost { host: h.into(), https };
+    let s = install::cdn_server_for(&host("cache1.steamcontent.com", false), 7, Some("t".into()));
     assert_eq!(
         (s.host.as_str(), s.port, s.https),
         ("cache1.steamcontent.com", 80, false)
     );
     assert_eq!(s.auth_token.as_deref(), Some("t"));
-    let s = install::cdn_server_for("cdn.example:443", 7, None);
+    let s = install::cdn_server_for(&host("cdn.example:443", false), 7, None);
     assert_eq!(
         (s.host.as_str(), s.port, s.https),
         ("cdn.example", 443, true)
     );
+    let s = install::cdn_server_for(&host("cache2.steamcontent.com", true), 7, None);
+    assert_eq!(
+        (s.host.as_str(), s.port, s.https),
+        ("cache2.steamcontent.com", 443, true)
+    );
+}
+
+#[test]
+fn https_support_values_map_to_tls() {
+    assert!(content::supports_https("mandatory"));
+    assert!(content::supports_https("optional"));
+    assert!(!content::supports_https("none"));
+    assert!(!content::supports_https(""));
+}
+
+#[test]
+fn https_hosts_are_preferred() {
+    let host = |h: &str, https| ContentHost { host: h.into(), https };
+    let kept = content::prefer_https(vec![host("a", false), host("b", true), host("c", true)]);
+    assert_eq!(kept, vec![host("b", true), host("c", true)]);
+    let only_http = vec![host("a", false)];
+    assert_eq!(content::prefer_https(only_http.clone()), only_http);
 }
 
 #[test]

@@ -186,7 +186,7 @@ impl SyncBaseline {
         }
         match serde_json::to_string_pretty(self) {
             Ok(raw) => {
-                if let Err(e) = std::fs::write(&path, raw) {
+                if let Err(e) = crate::core::atomic::write_atomic(&path, raw.as_bytes()) {
                     tracing::warn!("could not persist cloud-sync state {}: {e}", path.display());
                 }
             }
@@ -1018,12 +1018,22 @@ impl CloudClient {
     }
 }
 
+/// Largest accepted unzipped cloud file.
+const MAX_CLOUD_UNZIPPED: u64 = 1024 * 1024 * 1024;
+/// Cap on Steam-supplied capacity hints.
+const MAX_CLOUD_PREALLOC: u32 = 64 * 1024 * 1024;
+
 /// A ZIP local-file-header magic — how a compressed Steam Cloud transfer starts.
 const ZIP_MAGIC: &[u8; 4] = b"PK\x03\x04";
 
 /// Pull the single archived entry out of a ZIP container, or `None` if the bytes
 /// aren't a readable one-entry archive.
 fn unzip_single_entry(body: &[u8], expected_len: Option<u32>) -> Option<Vec<u8>> {
+    unzip_capped(body, expected_len, MAX_CLOUD_UNZIPPED)
+}
+
+/// [`unzip_single_entry`] with an explicit cap.
+fn unzip_capped(body: &[u8], expected_len: Option<u32>, max: u64) -> Option<Vec<u8>> {
     if !body.starts_with(ZIP_MAGIC) {
         return None;
     }
@@ -1031,9 +1041,15 @@ fn unzip_single_entry(body: &[u8], expected_len: Option<u32>) -> Option<Vec<u8>>
     if archive.is_empty() {
         return None;
     }
-    let mut entry = archive.by_index(0).ok()?;
-    let mut out = Vec::with_capacity(expected_len.unwrap_or(0) as usize);
-    std::io::Read::read_to_end(&mut entry, &mut out).ok()?;
+    let entry = archive.by_index(0).ok()?;
+    let hint = expected_len.unwrap_or(0).min(MAX_CLOUD_PREALLOC) as usize;
+    let mut out = Vec::with_capacity(hint);
+    let limit = max.saturating_add(1);
+    std::io::Read::read_to_end(&mut std::io::Read::take(entry, limit), &mut out).ok()?;
+    if out.len() as u64 > max {
+        tracing::warn!("Cloud file unzips past {max} bytes; keeping raw body");
+        return None;
+    }
     Some(out)
 }
 

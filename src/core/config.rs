@@ -10,16 +10,14 @@ use tokio::fs;
 /// directory first. Shared by the `save_*` helpers so the create-dir / serialize /
 /// write / error-context sequence lives in one place.
 async fn write_json_pretty<T: Serialize>(path: &Path, value: &T) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .await
-            .with_context(|| format!("failed creating {}", parent.display()))?;
-    }
     let body = serde_json::to_string_pretty(value)?;
-    fs::write(path, body)
-        .await
-        .with_context(|| format!("failed writing {}", path.display()))?;
-    Ok(())
+    crate::core::atomic::write_atomic_async(path.to_path_buf(), body.into_bytes(), false).await
+}
+
+/// Owner-only [`write_json_pretty`] for secrets.
+async fn write_json_private<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+    let body = serde_json::to_string_pretty(value)?;
+    crate::core::atomic::write_atomic_async(path.to_path_buf(), body.into_bytes(), true).await
 }
 
 /// Read `path` and parse it as JSON into `T`. Shared by the `load_*` helpers so the
@@ -405,28 +403,18 @@ pub async fn save_session(session: &SessionState) -> Result<()> {
                     .persona_name
                     .clone()
                     .or_else(|| session.account_name.clone());
-                write_json_pretty(&session_path, &envelope).await?;
+                write_json_private(&session_path, &envelope).await?;
             }
             None => {
                 tracing::warn!(
                     "no OS keyring available; session.json stays plaintext \
                      (owner-only permissions)"
                 );
-                write_json_pretty(&session_path, session).await?;
+                write_json_private(&session_path, session).await?;
             }
         }
     } else {
-        write_json_pretty(&session_path, session).await?;
-    }
-
-    // The session holds a long-lived Steam refresh token; keep it owner-only so it
-    // is not world-readable on shared Unix hosts.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&session_path, std::fs::Permissions::from_mode(0o600))
-            .await
-            .with_context(|| format!("failed securing {}", session_path.display()))?;
+        write_json_private(&session_path, session).await?;
     }
 
     Ok(())
