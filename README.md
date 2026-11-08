@@ -518,6 +518,11 @@ a command seems stuck. Commands run through the session daemon show the same log
 own output is saved per launch under `~/.config/Aurelia/logs/` (Proton's stderr in
 `wine_<appid>.log`).
 
+The session daemon keeps running until `aurelia daemon stop`. Set
+**`AURELIA_DAEMON_IDLE_TIMEOUT`** to a number of minutes to let it exit once nothing has
+used it for that long and no install or game is running. The next command starts a new
+daemon, which logs on to Steam again.
+
 On Linux, `play` pre-compiles a game's Vulkan shaders before it starts, like Steam's
 "Processing Vulkan shaders" step. It replays the game's Steam pipeline cache
 (`steamapps/shadercache/<appid>`) with Steam's `fossilize_replay` and points the NVIDIA, Mesa

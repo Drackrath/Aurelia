@@ -17,6 +17,11 @@ pub fn version_marker_path() -> std::path::PathBuf {
     imp::version_marker_path()
 }
 
+/// Remove our socket file, if any.
+pub fn remove_endpoint() {
+    imp::remove_endpoint()
+}
+
 /// Whether marker and socket are ours.
 pub fn location_trusted() -> bool {
     imp::location_trusted()
@@ -60,7 +65,7 @@ mod imp {
         PathBuf::from(endpoint()).with_extension("info")
     }
 
-    /// Ours, a real directory, no group/other writes.
+    /// Ours, a directory, not group/other-writable.
     pub(super) fn dir_is_private(dir: &Path) -> bool {
         std::fs::symlink_metadata(dir).is_ok_and(|m| {
             m.file_type().is_dir() && m.uid() == uid() && m.mode() & 0o022 == 0
@@ -89,7 +94,7 @@ mod imp {
         Ok(())
     }
 
-    /// Whether the endpoint's files can be trusted.
+    /// Whether endpoint files are trustworthy.
     pub fn location_trusted() -> bool {
         let path = PathBuf::from(endpoint());
         let parent_ok = path.parent().is_some_and(|dir| {
@@ -98,6 +103,15 @@ mod imp {
         });
         let socket_ok = std::fs::symlink_metadata(&path).map_or(true, |m| m.uid() == uid());
         parent_ok && socket_ok
+    }
+
+    pub fn remove_endpoint() {
+        let path = PathBuf::from(endpoint());
+        let ours = std::fs::symlink_metadata(&path)
+            .is_ok_and(|m| m.file_type().is_socket() && m.uid() == uid());
+        if ours {
+            let _ = std::fs::remove_file(&path);
+        }
     }
 
     pub struct Listener(UnixListener);
@@ -169,6 +183,8 @@ mod imp {
     pub fn location_trusted() -> bool {
         true
     }
+
+    pub fn remove_endpoint() {}
 
     pub fn version_marker_path() -> std::path::PathBuf {
         // A named pipe has no filesystem path, so keep the marker in the temp dir —
