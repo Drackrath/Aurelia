@@ -4,6 +4,7 @@ pub mod config;
 pub mod error;
 pub mod locale;
 pub mod models;
+pub mod secret;
 pub mod net;
 pub mod session_crypto;
 pub mod utils;

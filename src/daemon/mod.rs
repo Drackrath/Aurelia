@@ -476,7 +476,7 @@ async fn status_from_slot(slot: &Slot) -> SessionStatus {
     let persisted_steam_id = persisted.as_ref().and_then(|s| s.steam_id);
     let web_token = persisted
         .as_ref()
-        .is_some_and(|s| s.web_token.as_deref().is_some_and(|t| !t.is_empty()));
+        .is_some_and(|s| s.web_token.as_ref().is_some_and(|t| !t.is_empty()));
 
     match &slot.client {
         Some(client) => SessionStatus {

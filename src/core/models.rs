@@ -137,13 +137,13 @@ pub struct SessionState {
     #[serde(default)]
     pub persona_name: Option<String>,
     pub steam_id: Option<u64>,
-    pub refresh_token: Option<String>,
+    pub refresh_token: Option<crate::core::secret::Secret>,
     pub client_instance_id: Option<u64>,
     /// Web-scoped access token pasted from the browser (`login --web-token`).
     /// Enables the web-surface commands (inventory/wallet/listings) without a
     /// CM session; short-lived (expiry is inside the JWT). Not a refresh token.
     #[serde(default)]
-    pub web_token: Option<String>,
+    pub web_token: Option<crate::core::secret::Secret>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

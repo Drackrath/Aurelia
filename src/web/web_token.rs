@@ -23,7 +23,7 @@ pub struct WebTokenInfo {
     pub steam_id: u64,
     /// Steam login (account) name, when the paste was the full JSON.
     pub account_name: Option<String>,
-    pub token: String,
+    pub token: crate::core::secret::Secret,
     /// Unix seconds after which Steam rejects the token — known only for
     /// JWT-format tokens (from the `exp` claim). Steam also issues opaque
     /// (non-JWT) web tokens, whose expiry only Steam knows.
@@ -122,7 +122,7 @@ pub fn parse_web_token(raw: &str, fallback_steam_id: Option<u64>) -> Result<WebT
     Ok(WebTokenInfo {
         steam_id: subject,
         account_name,
-        token,
+        token: token.into(),
         expires_at,
     })
 }

@@ -181,7 +181,7 @@ pub(crate) async fn cmd_login(args: crate::cli::LoginArgs, json: bool) -> Result
     // (handled inside `login`); otherwise we wait for mobile-app approval and only
     // prompt for a code on the retry path below.
     let attempt = client
-        .login(username.clone(), password.clone(), guard.clone(), code)
+        .login(username.clone(), password.clone().into(), guard.clone(), code)
         .await;
 
     match attempt {
@@ -202,7 +202,7 @@ pub(crate) async fn cmd_login(args: crate::cli::LoginArgs, json: bool) -> Result
                 tracing::info!("Login method awaited: Steam Guard code");
                 let code = prompt_line("Steam Guard code: ")?;
                 client
-                    .login(username, password.clone(), Some(code), false)
+                    .login(username, password.clone().into(), Some(code), false)
                     .await
                     .context("login failed after providing Steam Guard code")?;
                 secure_session(&client).await;
@@ -514,7 +514,7 @@ pub(crate) async fn login_with_timeout(
 ) -> Result<aurelia::core::models::SessionState> {
     match tokio::time::timeout(
         LOGIN_TIMEOUT,
-        client.login(username.to_string(), password.to_string(), guard, false),
+        client.login(username.to_string(), password.into(), guard, false),
     )
     .await
     {
@@ -690,7 +690,7 @@ pub(crate) async fn cmd_logout(json: bool) -> Result<()> {
     // Unreadable sessions still get deleted.
     let revocation = match load_session().await {
         Ok(session) => match session.refresh_token {
-            Some(token) => revoke(&token).await,
+            Some(token) => revoke(token.expose()).await,
             None => Revocation::NoToken,
         },
         Err(e) => Revocation::Failed(format!("{e:#}")),
@@ -736,7 +736,7 @@ pub(crate) async fn cmd_login_health(json: bool) -> Result<()> {
                 .or(session.as_ref().and_then(|s| s.steam_id)),
             web_token: session
                 .as_ref()
-                .is_some_and(|s| s.web_token.as_deref().is_some_and(|t| !t.is_empty())),
+                .is_some_and(|s| s.web_token.as_ref().is_some_and(|t| !t.is_empty())),
         }
     };
     report_session_status(&status, via_daemon, json);

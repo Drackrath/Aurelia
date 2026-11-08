@@ -66,7 +66,7 @@ fn parses_a_full_clientjstoken_paste() {
     let info = parse_web_token(&clientjstoken_json(STEAM_ID, &token, true), None).unwrap();
     assert_eq!(info.steam_id, STEAM_ID.parse::<u64>().unwrap());
     assert_eq!(info.account_name.as_deref(), Some("gabelogannewell"));
-    assert_eq!(info.token, token);
+    assert_eq!(info.token.expose(), token);
     assert_eq!(info.expires_at, Some(EXP));
 }
 
@@ -93,7 +93,7 @@ fn parses_an_opaque_token_json_paste() {
     assert_eq!(info.steam_id, STEAM_ID.parse::<u64>().unwrap());
     assert_eq!(info.account_name.as_deref(), Some("ali_kid"));
     assert_eq!(
-        info.token,
+        info.token.expose(),
         "v+xYapFDu1AAAAAAAAAAAAAAAAAAAAAAAwAf8yFETJ/NcYZuSG9mmAbr"
     );
     assert_eq!(info.expires_at, None);
@@ -114,7 +114,7 @@ fn bare_opaque_token_binds_to_the_fallback_identity_or_is_rejected() {
     let info = parse_web_token(OPAQUE, Some(id)).unwrap();
     assert_eq!(info.steam_id, id);
     assert_eq!(
-        info.token,
+        info.token.expose(),
         "v+xYapFDu1AAAAAAAAAAAAAAAAAAAAAAAwAf8yFETJ/NcYZuSG9mmAbr"
     );
     assert_eq!(info.expires_at, None);
@@ -131,7 +131,7 @@ fn parses_a_steam_login_secure_cookie_paste() {
     for sep in ["||", "%7C%7C"] {
         let info = parse_web_token(&format!("{STEAM_ID}{sep}{token}"), None).unwrap();
         assert_eq!(info.steam_id, STEAM_ID.parse::<u64>().unwrap());
-        assert_eq!(info.token, token);
+        assert_eq!(info.token.expose(), token);
         assert_eq!(info.expires_at, Some(EXP));
     }
     // Cookie identity must agree with a JWT token's sub claim.

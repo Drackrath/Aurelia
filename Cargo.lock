@@ -332,6 +332,7 @@ dependencies = [
  "walkdir",
  "windows-sys 0.59.0",
  "xz2",
+ "zeroize",
  "zip",
 ]
 
