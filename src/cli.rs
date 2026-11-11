@@ -614,6 +614,14 @@ pub(crate) enum ConfigCommand {
         /// `on` or `off`. Omit to print the current setting.
         mode: Option<OnOffArg>,
     },
+    /// View or set whether `play` auto-installs a missing Proton anti-cheat
+    /// runtime (EasyAntiCheat / BattlEye) for a game that ships one. `on`
+    /// (default) downloads it before the Proton launch, like Steam; `off` never
+    /// downloads (install manually with `aurelia proton anticheat`).
+    AnticheatAutoInstall {
+        /// `on` or `off`. Omit to print the current setting.
+        mode: Option<OnOffArg>,
+    },
     /// View or set the network proxy used for all HTTP(S) communication.
     ///
     /// Applies to the Steam web endpoints, depot downloads, and Proton/plugin
@@ -662,6 +670,11 @@ pub(crate) enum ProtonCommand {
     Uninstall { version: String },
     /// Set the global default Proton/Wine version (used when a game has none set).
     Default { version: String },
+    /// Install a Proton anti-cheat runtime.
+    Anticheat {
+        /// Which runtime to install.
+        runtime: AntiCheatArg,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1163,6 +1176,15 @@ pub(crate) enum SteamModeArg {
     Host,
     /// Standalone, no Steam client.
     None,
+}
+
+/// `proton anticheat` choices.
+#[derive(Clone, Copy, ValueEnum)]
+pub(crate) enum AntiCheatArg {
+    /// Proton EasyAntiCheat Runtime.
+    Eac,
+    /// Proton BattlEye Runtime.
+    Battleye,
 }
 
 /// Choices for on/off settings.

@@ -168,6 +168,9 @@ pub struct LauncherConfig {
     /// Hide launch options not installed.
     #[serde(default = "crate::core::models::default_true")]
     pub hide_uninstalled_launch_options: bool,
+    /// Auto-install Proton anti-cheat runtimes.
+    #[serde(default = "crate::core::models::default_true")]
+    pub anticheat_auto_install: bool,
     /// Opt-in gate for experimental features. Off by default. Currently gates the
     /// browser/OpenID identity check (`login --openid`) and web-token auth
     /// (`login --web-token`), which prove identity / enable web-surface commands
@@ -248,6 +251,7 @@ impl Default for LauncherConfig {
             install_resume: crate::library::backlog::InstallResume::default(),
             shader_precache: crate::launch::shaders::ShaderPrecache::default(),
             hide_uninstalled_launch_options: true,
+            anticheat_auto_install: true,
             experimental: false,
             encrypt_session: false,
             persona_wait_secs: DEFAULT_PERSONA_WAIT_SECS,

@@ -527,6 +527,9 @@ async fn run(cli: Cli) -> Result<()> {
             ConfigCommand::HideUninstalledLaunchOptions { mode } => {
                 cmd_config_hide_uninstalled_launch_options(mode, json).await
             }
+            ConfigCommand::AnticheatAutoInstall { mode } => {
+                cmd_config_anticheat_auto_install(mode, json).await
+            }
             ConfigCommand::SteamRuntimeRunner { runner } => {
                 cmd_config_steam_runtime_runner(runner, json).await
             }
@@ -587,6 +590,13 @@ async fn run(cli: Cli) -> Result<()> {
             ProtonCommand::Install { version } => cmd_proton_install(version, json).await,
             ProtonCommand::Uninstall { version } => cmd_proton_uninstall(version, json).await,
             ProtonCommand::Default { version } => cmd_proton_default(version, json).await,
+            ProtonCommand::Anticheat { runtime } => {
+                let kind = match runtime {
+                    AntiCheatArg::Eac => aurelia::compat::anticheat::AntiCheat::EasyAntiCheat,
+                    AntiCheatArg::Battleye => aurelia::compat::anticheat::AntiCheat::BattlEye,
+                };
+                cmd_proton_anticheat(kind, json).await
+            }
         },
         Command::SteamRuntime { command } => match command {
             SteamRuntimeCommand::Install { reinstall } => {

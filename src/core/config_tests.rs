@@ -101,3 +101,12 @@ fn download_limit_converts_kbit_to_bytes() {
     assert_eq!(kbit_to_bytes(1), 125);
     assert_eq!(kbit_to_bytes(u64::MAX), u64::MAX / 8);
 }
+
+#[test]
+fn launcher_config_without_anticheat_flag_defaults_on() {
+    let legacy = r#"{ "steam_library_path": "/x", "proton_version": "experimental",
+        "enable_cloud_sync": true }"#;
+    let cfg: LauncherConfig = serde_json::from_str(legacy).unwrap();
+    assert!(cfg.anticheat_auto_install);
+    assert!(LauncherConfig::default().anticheat_auto_install);
+}

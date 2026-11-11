@@ -349,6 +349,33 @@ pub(crate) async fn cmd_config_hide_uninstalled_launch_options(
     Ok(())
 }
 
+/// `config anticheat-auto-install [on|off]`.
+pub(crate) async fn cmd_config_anticheat_auto_install(
+    mode: Option<OnOffArg>,
+    json: bool,
+) -> Result<()> {
+    let (config, changed) = view_or_set(mode, |c, m| {
+        c.anticheat_auto_install = matches!(m, OnOffArg::On);
+    })
+    .await?;
+    if json {
+        print_json(&serde_json::json!({
+            "anticheat_auto_install": config.anticheat_auto_install
+        }));
+        return Ok(());
+    }
+    let label = if config.anticheat_auto_install {
+        "on (`play` installs a missing EAC/BattlEye runtime before a Proton launch)"
+    } else {
+        "off (install runtimes with `aurelia proton anticheat eac|battleye`)"
+    };
+    cli_println!("Anti-cheat runtime auto-install: {label}");
+    if changed {
+        cli_println!("Saved. Applies to the next launch.");
+    }
+    Ok(())
+}
+
 /// Human form of a kbit/s limit.
 pub(crate) fn describe_download_limit(kbit: u64) -> String {
     if kbit == 0 {
