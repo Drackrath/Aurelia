@@ -1,5 +1,6 @@
 pub mod dll_provider_resolver;
 pub mod fixups;
+pub mod game_process;
 pub mod launch_script;
 pub mod pipeline;
 pub mod shaders;
@@ -8,6 +9,10 @@ pub mod validators;
 
 #[cfg(test)]
 mod verification_tests;
+
+#[cfg(test)]
+#[path = "game_process_tests.rs"]
+mod game_process_tests;
 
 #[cfg(test)]
 #[path = "wait_tests.rs"]

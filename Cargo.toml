@@ -67,7 +67,8 @@ protobuf-codegen = "3.5"
 [target.'cfg(windows)'.dependencies]
 # Used to stop the detached daemon from inheriting the spawning process's stdio
 # handles (otherwise a parent like Heroic never sees EOF and hangs).
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Console"] }
+# Shell/Registry/Threading/WindowsAndMessaging: UAC-elevated game launch.
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [profile.release]
 opt-level = "z"      # optimize for size
