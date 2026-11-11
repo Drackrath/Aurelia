@@ -155,6 +155,69 @@ pub(crate) async fn cmd_proton_install(version: String, json: bool) -> Result<()
     Ok(())
 }
 
+/// `proton anticheat`: install one runtime.
+pub(crate) async fn cmd_proton_anticheat(
+    kind: aurelia::compat::anticheat::AntiCheat,
+    json: bool,
+) -> Result<()> {
+    if !aurelia::core::utils::PROTON_SUPPORTED {
+        bail!(
+            "{} Nothing to install.",
+            aurelia::core::utils::linux_only_msg("Proton anti-cheat runtimes")
+        );
+    }
+    let app_id = kind.runtime_app_id();
+    let installed = aurelia::compat::anticheat::installed_runtimes().await;
+    let already = installed.contains_key(&app_id);
+    if !already {
+        if !json {
+            cli_println!(
+                "Installing {} via Steam (app {app_id}) ...",
+                kind.runtime_name()
+            );
+        }
+        let client = authed_client().await?;
+        let state = Arc::new(RwLock::new(DownloadState::default()));
+        let rx = client
+            .install_game(
+                app_id,
+                DepotPlatform::Linux,
+                InstallOptions::default(),
+                state,
+            )
+            .await
+            .with_context(|| format!("failed to start installing {}", kind.runtime_name()))?;
+        drive_progress(rx, json).await?;
+    }
+    let path = aurelia::compat::anticheat::installed_runtimes()
+        .await
+        .remove(&app_id)
+        .with_context(|| format!("{} finished but was not found on disk", kind.runtime_name()))?;
+    let status = if already {
+        "already_installed"
+    } else {
+        "installed"
+    };
+    if json {
+        print_json(&serde_json::json!({
+            "name": kind.runtime_name(),
+            "app_id": app_id,
+            "env": kind.env_var(),
+            "path": path,
+            "status": status,
+        }));
+    } else {
+        let verb = if already {
+            "Already installed"
+        } else {
+            "Installed"
+        };
+        cli_println!("{verb}: {} at {}", kind.runtime_name(), path.display());
+        cli_println!("Proton launches set {} automatically.", kind.env_var());
+    }
+    Ok(())
+}
+
 /// `proton uninstall`: delete an installed custom (GE) runtime.
 pub(crate) async fn cmd_proton_uninstall(version: String, json: bool) -> Result<()> {
     aurelia::compat::proton::remove(&version)

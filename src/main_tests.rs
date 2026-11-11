@@ -268,3 +268,18 @@ fn download_limit_command_parses() {
         }
     ));
 }
+
+#[test]
+fn anticheat_auto_install_takes_on_or_off() {
+    let name = "anticheat-auto-install";
+    assert!(Cli::try_parse_from(["aurelia", "config", name]).is_ok());
+    assert!(Cli::try_parse_from(["aurelia", "config", name, "off"]).is_ok());
+    assert!(Cli::try_parse_from(["aurelia", "config", name, "maybe"]).is_err());
+}
+
+#[test]
+fn proton_anticheat_takes_eac_or_battleye() {
+    assert!(Cli::try_parse_from(["aurelia", "proton", "anticheat", "eac"]).is_ok());
+    assert!(Cli::try_parse_from(["aurelia", "proton", "anticheat", "battleye"]).is_ok());
+    assert!(Cli::try_parse_from(["aurelia", "proton", "anticheat", "vac"]).is_err());
+}

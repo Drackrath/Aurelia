@@ -24,6 +24,8 @@ pub const IGNORED_STEAM_APP_IDS: &[u32] = &[
     1628350, // Steam Linux Runtime 3.0 (sniper)
     1493710, // Proton Experimental
     2348590, // Proton 8.0
+    1826330, // Proton EasyAntiCheat Runtime
+    1161040, // Proton BattlEye Runtime
 ];
 
 /// Games whose name starts with any of these prefixes are Steam tooling rather

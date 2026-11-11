@@ -18,7 +18,10 @@ impl PipelineStage for ResolveGameFixupsStage {
 
     async fn execute(&self, ctx: &mut PipelineContext) -> std::result::Result<(), LaunchError> {
         let app_id = ctx.app.as_ref().map(|a| a.app_id).unwrap_or(ctx.app_id);
-        let fixups = crate::launch::fixups::game_fixups(app_id);
+        let mut fixups = crate::launch::fixups::game_fixups(app_id);
+        if ctx.proton_path.is_some() {
+            add_anticheat_env(ctx, &mut fixups).await;
+        }
 
         if !fixups.is_empty() {
             tracing::info!(
@@ -48,5 +51,37 @@ impl PipelineStage for ResolveGameFixupsStage {
 
         ctx.game_fixups = fixups;
         Ok(())
+    }
+}
+
+/// Point Proton at anti-cheat runtimes.
+async fn add_anticheat_env(ctx: &PipelineContext, fixups: &mut crate::launch::fixups::GameFixups) {
+    use crate::compat::anticheat;
+    let Some(dir) = ctx.app.as_ref().and_then(|a| a.install_path.clone()) else {
+        return;
+    };
+    let kinds = tokio::task::spawn_blocking(move || anticheat::detect(std::path::Path::new(&dir)))
+        .await
+        .unwrap_or_default();
+    if kinds.is_empty() {
+        return;
+    }
+    let installed = anticheat::installed_runtimes().await;
+    for kind in &kinds {
+        if !installed.contains_key(&kind.runtime_app_id()) {
+            tracing::warn!(
+                "{} not installed; the game's anti-cheat may refuse to start \
+                 (install with `aurelia proton anticheat {}`)",
+                kind.runtime_name(),
+                kind.cli_name()
+            );
+        }
+    }
+    for (key, val) in anticheat::runtime_env(&kinds, &installed) {
+        if fixups.env.iter().any(|(k, _)| *k == key) {
+            continue;
+        }
+        tracing::info!("Anti-cheat runtime: {key}={val}");
+        fixups.env.push((key, val));
     }
 }

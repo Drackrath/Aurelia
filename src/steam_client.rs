@@ -34,6 +34,7 @@ use steam_vent_proto::steammessages_clientserver_2::{
     CMsgClientGetDepotDecryptionKey, CMsgClientGetDepotDecryptionKeyResponse,
 };
 use steam_vent_proto::steammessages_clientserver_appinfo::{
+    CMsgClientPICSAccessTokenRequest, CMsgClientPICSAccessTokenResponse,
     CMsgClientPICSProductInfoRequest, CMsgClientPICSProductInfoResponse,
     cmsg_client_picsproduct_info_request,
 };
@@ -530,6 +531,7 @@ pub struct SteamClient {
 }
 
 // SteamClient methods are implemented across these submodules.
+mod anticheat;
 mod chat;
 mod client;
 mod friends;
@@ -2234,23 +2236,59 @@ pub(crate) async fn pics_app_buffer(
     appid: u32,
     job_context: &'static str,
 ) -> Result<Vec<u8>> {
+    let app = pics_app_info(connection, appid, None, job_context).await?;
+    if !app.missing_token() {
+        return Ok(app.buffer().to_vec());
+    }
+    // Token-gated app: fetch token, retry.
+    let token = pics_access_token(connection, appid).await?;
+    let app = pics_app_info(connection, appid, Some(token), job_context).await?;
+    Ok(app.buffer().to_vec())
+}
+
+async fn pics_app_info(
+    connection: &Connection,
+    appid: u32,
+    access_token: Option<u64>,
+    job_context: &'static str,
+) -> Result<steam_vent_proto::steammessages_clientserver_appinfo::cmsg_client_picsproduct_info_response::AppInfo>
+{
     let mut request = CMsgClientPICSProductInfoRequest::new();
     request
         .apps
         .push(cmsg_client_picsproduct_info_request::AppInfo {
             appid: Some(appid),
+            access_token,
             ..Default::default()
         });
 
     let response: CMsgClientPICSProductInfoResponse =
         connection.job(request).await.context(job_context)?;
 
-    let app = response
+    response
         .apps
-        .iter()
+        .into_iter()
         .find(|entry| entry.appid() == appid)
-        .ok_or_else(|| anyhow!("missing appinfo payload for app {appid}"))?;
-    Ok(app.buffer().to_vec())
+        .ok_or_else(|| anyhow!("missing appinfo payload for app {appid}"))
+}
+
+/// PICS access token for one app.
+async fn pics_access_token(connection: &Connection, appid: u32) -> Result<u64> {
+    let mut request = CMsgClientPICSAccessTokenRequest::new();
+    request.appids.push(appid);
+    let response: CMsgClientPICSAccessTokenResponse = connection
+        .job(request)
+        .await
+        .context("failed requesting PICS access token")?;
+    if response.app_denied_tokens.contains(&appid) {
+        bail!("Steam denied access to app {appid} (no license)");
+    }
+    response
+        .app_access_tokens
+        .iter()
+        .find(|t| t.appid() == appid)
+        .map(|t| t.access_token())
+        .ok_or_else(|| anyhow!("no PICS access token returned for app {appid}"))
 }
 
 impl SteamClient {

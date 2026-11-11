@@ -396,6 +396,10 @@ impl SteamClient {
             }
         };
 
+        if chosen_proton_path.is_some() && launcher_config.anticheat_auto_install {
+            self.ensure_anticheat_runtimes(app).await;
+        }
+
         let cloud_enabled = launcher_config.enable_cloud_sync && !self.is_offline();
         let mut cloud_client = None;
         let mut cloud_resolver = None;
