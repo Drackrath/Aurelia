@@ -28,20 +28,37 @@ pub fn extract_quoted_values(line: &str) -> Vec<String> {
 
 /// Writes `steam_appid.txt` only when missing.
 pub fn ensure_steam_appid(dir: &Path, app_id: u32) -> std::io::Result<bool> {
-    use std::io::Write;
     let path = dir.join("steam_appid.txt");
     match std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&path)
     {
-        Ok(mut file) => {
-            file.write_all(app_id.to_string().as_bytes())?;
+        Ok(file) => {
+            write_appid_or_remove(&path, file, app_id)?;
             Ok(true)
         }
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
         Err(e) => Err(e),
     }
+}
+
+/// Writes; removes `path` on failure.
+fn write_appid_or_remove(
+    path: &Path,
+    mut file: impl std::io::Write,
+    app_id: u32,
+) -> std::io::Result<()> {
+    let result = file
+        .write_all(app_id.to_string().as_bytes())
+        .and_then(|()| file.flush());
+    drop(file);
+    if let Err(e) = result {
+        // Partial file blocks later retries.
+        let _ = std::fs::remove_file(path);
+        return Err(e);
+    }
+    Ok(())
 }
 
 /// [`ensure_steam_appid`] that logs instead of failing.
