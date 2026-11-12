@@ -745,6 +745,24 @@ pub fn ensure_steam_running() {
     }
 }
 
+/// Polls `done` until true or timeout.
+pub fn wait_until(
+    mut done: impl FnMut() -> bool,
+    timeout: std::time::Duration,
+    interval: std::time::Duration,
+) -> bool {
+    let start = std::time::Instant::now();
+    loop {
+        if done() {
+            return true;
+        }
+        if start.elapsed() >= timeout {
+            return false;
+        }
+        std::thread::sleep(interval);
+    }
+}
+
 /// `steam` on PATH, else `<root>/steam.sh`.
 pub fn steam_launcher_program(
     path_env: Option<&std::ffi::OsStr>,
@@ -2062,3 +2080,7 @@ mod steam_client_tests;
 #[cfg(all(test, target_os = "linux"))]
 #[path = "utils_steam_launcher_tests.rs"]
 mod steam_launcher_tests;
+
+#[cfg(test)]
+#[path = "utils_wait_until_tests.rs"]
+mod wait_until_tests;
