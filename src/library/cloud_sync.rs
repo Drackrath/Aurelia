@@ -3,7 +3,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use sha1::{Digest, Sha1};
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, UNIX_EPOCH};
 use steam_vent::ConnectionTrait;
 use steam_vent::connection::Connection;
 use steam_vent_proto::steammessages_cloud_steamclient::{
@@ -11,6 +11,7 @@ use steam_vent_proto::steammessages_cloud_steamclient::{
     CCloud_ClientCommitFileUpload_Request, CCloud_ClientCommitFileUpload_Response,
     CCloud_ClientFileDownload_Request, CCloud_ClientFileDownload_Response,
     CCloud_EnumerateUserFiles_Request, CCloud_EnumerateUserFiles_Response,
+    ClientCloudFileUploadBlockDetails,
 };
 
 #[derive(Debug, Clone)]
@@ -566,13 +567,119 @@ pub struct CloudClient {
     http: reqwest::Client,
 }
 
+/// Cloud RPC response timeout.
+const CLOUD_RPC_TIMEOUT: Duration = Duration::from_secs(30);
+/// Cloud HTTP connect timeout.
+const CLOUD_CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+/// Cloud HTTP read (idle) timeout.
+const CLOUD_READ_TIMEOUT: Duration = Duration::from_secs(60);
+/// Waits between transfer attempts.
+const TRANSFER_BACKOFF: [Duration; 3] = [
+    Duration::from_secs(2),
+    Duration::from_secs(4),
+    Duration::from_secs(8),
+];
+/// Upload deadline floor rate, bytes/second.
+const UPLOAD_FLOOR_RATE: u64 = 32 * 1024;
+/// Minimum per-block upload deadline.
+const UPLOAD_MIN_DEADLINE: Duration = Duration::from_secs(60);
+
+/// HTTP client with cloud timeouts.
+fn cloud_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .user_agent("aurelia")
+        .connect_timeout(CLOUD_CONNECT_TIMEOUT)
+        .read_timeout(CLOUD_READ_TIMEOUT)
+        .build()
+        .unwrap_or_else(|e| {
+            tracing::warn!("cloud HTTP client fallback: {e}");
+            reqwest::Client::new()
+        })
+}
+
+/// How an HTTP transfer failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TransferFailure {
+    Connect,
+    Timeout,
+    Body,
+    Status(u16),
+    Other,
+}
+
+/// Classify first HTTP error in chain.
+fn transfer_failure(err: &anyhow::Error) -> TransferFailure {
+    for cause in err.chain() {
+        if let Some(e) = cause.downcast_ref::<reqwest::Error>() {
+            return if e.is_timeout() {
+                TransferFailure::Timeout
+            } else if e.is_connect() {
+                TransferFailure::Connect
+            } else if let Some(status) = e.status() {
+                TransferFailure::Status(status.as_u16())
+            } else if e.is_body() || e.is_decode() {
+                TransferFailure::Body
+            } else {
+                TransferFailure::Other
+            };
+        }
+    }
+    TransferFailure::Other
+}
+
+/// Worth retrying: network, timeout, 5xx/429.
+fn is_transient(failure: TransferFailure) -> bool {
+    match failure {
+        TransferFailure::Connect | TransferFailure::Timeout | TransferFailure::Body => true,
+        TransferFailure::Status(code) => code == 429 || (500..600).contains(&code),
+        TransferFailure::Other => false,
+    }
+}
+
+/// Drop the (signed) URL from errors.
+fn http_error(e: reqwest::Error) -> anyhow::Error {
+    anyhow::Error::new(e.without_url())
+}
+
+/// Per-block deadline scaled by size.
+fn upload_deadline(len: usize) -> Duration {
+    let secs = (len as u64).div_ceil(UPLOAD_FLOOR_RATE);
+    Duration::from_secs(secs).max(UPLOAD_MIN_DEADLINE)
+}
+
+/// Run `op`, retrying transient failures after `delays`.
+async fn retry_transfer<T, F, Fut>(what: &str, delays: &[Duration], mut op: F) -> Result<T>
+where
+    F: FnMut(usize) -> Fut,
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    let mut attempt = 0usize;
+    loop {
+        attempt += 1;
+        match op(attempt).await {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                let Some(delay) = delays.get(attempt - 1) else {
+                    return Err(e);
+                };
+                if !is_transient(transfer_failure(&e)) {
+                    return Err(e);
+                }
+                tracing::warn!("{what}: attempt {attempt} failed ({e:#}); retrying in {delay:?}");
+                tokio::time::sleep(*delay).await;
+            }
+        }
+    }
+}
+
 impl CloudClient {
-    pub fn new(connection: Connection) -> Self {
+    pub fn new(mut connection: Connection) -> Self {
         let steam_id = u64::from(connection.steam_id());
+        connection.set_timeout(CLOUD_RPC_TIMEOUT);
         Self {
             connection,
             steam_id,
-            http: reqwest::Client::new(),
+            http: cloud_http_client(),
         }
     }
 
@@ -834,12 +941,14 @@ impl CloudClient {
                 format!("failed to create parent directory {}", parent.display())
             })?;
         }
-        let body = self
-            .download_file(appid, filename, cloud.sha_hash.as_deref())
-            .await
-            .with_context(|| {
-                format!("failed downloading cloud file '{filename}' for app {appid}")
-            })?;
+        let what = format!("cloud download '{filename}'");
+        let body = retry_transfer(&what, &TRANSFER_BACKOFF, |attempt| {
+            tracing::info!("{what} for app {appid} (attempt {attempt})");
+            // Fresh signed URL per attempt.
+            self.download_file(appid, filename, cloud.sha_hash.as_deref())
+        })
+        .await
+        .with_context(|| format!("failed downloading cloud file '{filename}' for app {appid}"))?;
         tokio::fs::write(local_path, &body)
             .await
             .with_context(|| format!("failed writing {}", local_path.display()))?;
@@ -902,13 +1011,16 @@ impl CloudClient {
             .headers(headers)
             .send()
             .await
+            .map_err(http_error)
             .context("failed cloud HTTP GET")?
             .error_for_status()
+            .map_err(http_error)
             .context("cloud HTTP GET returned failure status")?;
 
         let body = http_response
             .bytes()
             .await
+            .map_err(http_error)
             .context("failed reading cloud download body")?
             .to_vec();
 
@@ -952,7 +1064,45 @@ impl CloudClient {
             .await
             .context("failed calling Cloud.ClientBeginFileUpload")?;
 
-        for mut block in begin_response.block_requests {
+        let blocks = self
+            .upload_blocks(filename, &data, begin_response.block_requests)
+            .await;
+        // Failed uploads still commit, as failed.
+        let succeeded = blocks.is_ok();
+
+        let commit_request = CCloud_ClientCommitFileUpload_Request {
+            transfer_succeeded: Some(succeeded),
+            appid: Some(appid),
+            file_sha: Some(file_sha),
+            filename: Some(filename.to_string()),
+            ..Default::default()
+        };
+
+        let commit: Result<CCloud_ClientCommitFileUpload_Response> = self
+            .connection
+            .service_method(commit_request)
+            .await
+            .context("failed calling Cloud.ClientCommitFileUpload");
+        blocks?;
+        let commit_response = commit?;
+
+        if !commit_response.file_committed() {
+            return Err(anyhow!(
+                "Cloud.ClientCommitFileUpload returned file_committed=false"
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Send every upload block, each retried.
+    async fn upload_blocks(
+        &self,
+        filename: &str,
+        data: &[u8],
+        block_requests: Vec<ClientCloudFileUploadBlockDetails>,
+    ) -> Result<()> {
+        for mut block in block_requests {
             let url = cloud_transfer_url(
                 block.use_https(),
                 block.url_host(),
@@ -968,7 +1118,7 @@ impl CloudClient {
             } else if block_offset < data.len() {
                 data[block_offset..end].to_vec()
             } else {
-                data.clone()
+                data.to_vec()
             };
 
             let method = match block.http_method() {
@@ -983,37 +1133,31 @@ impl CloudClient {
                 )
             }))?;
 
-            self.http
-                .request(method, url)
-                .headers(headers)
-                .body(payload)
-                .send()
-                .await
-                .context("failed cloud HTTP upload")?
-                .error_for_status()
-                .context("cloud HTTP upload returned failure status")?;
+            let deadline = upload_deadline(payload.len());
+            let what = format!("cloud upload block of '{filename}'");
+            // Blocks retry on their own URL.
+            retry_transfer(&what, &TRANSFER_BACKOFF, |attempt| {
+                tracing::info!("{what} ({} bytes, attempt {attempt})", payload.len());
+                let request = self
+                    .http
+                    .request(method.clone(), &url)
+                    .headers(headers.clone())
+                    .timeout(deadline)
+                    .body(payload.clone());
+                async move {
+                    request
+                        .send()
+                        .await
+                        .map_err(http_error)
+                        .context("failed cloud HTTP upload")?
+                        .error_for_status()
+                        .map_err(http_error)
+                        .context("cloud HTTP upload returned failure status")?;
+                    Ok(())
+                }
+            })
+            .await?;
         }
-
-        let commit_request = CCloud_ClientCommitFileUpload_Request {
-            transfer_succeeded: Some(true),
-            appid: Some(appid),
-            file_sha: Some(file_sha),
-            filename: Some(filename.to_string()),
-            ..Default::default()
-        };
-
-        let commit_response: CCloud_ClientCommitFileUpload_Response = self
-            .connection
-            .service_method(commit_request)
-            .await
-            .context("failed calling Cloud.ClientCommitFileUpload")?;
-
-        if !commit_response.file_committed() {
-            return Err(anyhow!(
-                "Cloud.ClientCommitFileUpload returned file_committed=false"
-            ));
-        }
-
         Ok(())
     }
 }
