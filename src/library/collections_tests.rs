@@ -67,6 +67,7 @@ fn deleted_collection_becomes_tombstone() {
 fn merge_follows_remote_and_honors_remote_deletion() {
     let mut store = CollectionsStore {
         namespace_version: 5,
+        format: STORE_FORMAT,
         collections: vec![
             Collection {
                 id: "uc-a".into(),
@@ -157,6 +158,7 @@ fn remote_of(version: u64, colls: &[Collection]) -> RemoteNamespace {
 fn pending_local_edits_survive_stale_remote() {
     let mut store = CollectionsStore {
         namespace_version: 1,
+        format: STORE_FORMAT,
         collections: vec![coll("uc-a", vec![5], vec![10])],
     };
     // Re-add 10 locally, remove 5.
@@ -175,6 +177,7 @@ fn pending_local_edits_survive_stale_remote() {
 fn non_pending_ids_follow_remote() {
     let mut store = CollectionsStore {
         namespace_version: 1,
+        format: STORE_FORMAT,
         collections: vec![coll("uc-a", vec![1, 2], vec![])],
     };
     store.apply_remote(remote_of(2, &[coll("uc-a", vec![2], vec![1])]));
@@ -242,12 +245,39 @@ fn old_store_without_pending_loads() {
     assert!(store.collections[0].pending.is_empty());
     let out = serde_json::to_string(&store).unwrap();
     assert!(!out.contains("pending"));
+    assert_eq!(store.format, 0);
+}
+
+#[test]
+fn legacy_store_keeps_unpushed_edits_on_first_pull() {
+    // Old version: no format, pending.
+    let text = r#"{"namespace_version":3,"collections":[
+        {"id":"uc-a","name":"A","added":[1,10,20],"removed":[5],"deleted":false}]}"#;
+    let mut store: CollectionsStore = serde_json::from_str(text).unwrap();
+    // Stale remote: 10 removed, 5 added.
+    store.apply_remote(remote_of(4, &[coll("uc-a", vec![1, 5, 20, 30], vec![10])]));
+
+    let a = store.resolve("uc-a").unwrap();
+    assert!(a.contains(10), "local re-add kept");
+    assert!(!a.contains(5), "local remove kept");
+    assert!(a.contains(1) && a.contains(20) && a.contains(30));
+    let mut pending = a.pending.clone();
+    pending.sort_unstable();
+    assert_eq!(pending, vec![5, 10]);
+    assert_eq!(store.format, STORE_FORMAT);
+
+    // Marked: later pulls follow remote.
+    store.collections[0].pending.clear();
+    store.apply_remote(remote_of(5, &[coll("uc-a", vec![1], vec![10])]));
+    let a = store.resolve("uc-a").unwrap();
+    assert!(!a.contains(10) && !a.contains(20));
 }
 
 #[test]
 fn resolve_by_name_id_and_ambiguity() {
     let store = CollectionsStore {
         namespace_version: 0,
+        format: STORE_FORMAT,
         collections: vec![
             Collection {
                 id: "uc-1".into(),

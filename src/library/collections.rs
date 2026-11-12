@@ -154,6 +154,23 @@ pub struct CollectionsStore {
     pub namespace_version: u64,
     #[serde(default)]
     pub collections: Vec<Collection>,
+    /// Store format; 0 predates `pending`.
+    #[serde(default)]
+    pub format: u32,
+}
+
+/// Format with `pending` tracking.
+pub const STORE_FORMAT: u32 = 1;
+
+/// Explicit membership: added, removed, neither.
+fn membership(added: &[u32], removed: &[u32], app: u32) -> Option<bool> {
+    if removed.contains(&app) {
+        Some(false)
+    } else if added.contains(&app) {
+        Some(true)
+    } else {
+        None
+    }
 }
 
 /// Path to the local collections store.
@@ -168,7 +185,10 @@ impl CollectionsStore {
         match std::fs::read_to_string(&path) {
             Ok(text) => serde_json::from_str(&text)
                 .with_context(|| format!("failed parsing {}", path.display())),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(CollectionsStore::default()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(CollectionsStore {
+                format: STORE_FORMAT,
+                ..CollectionsStore::default()
+            }),
             Err(e) => Err(e).with_context(|| format!("failed reading {}", path.display())),
         }
     }
@@ -370,8 +390,12 @@ impl CollectionsStore {
                             continue;
                         }
                     };
+                    let legacy = self.format < STORE_FORMAT;
                     match self.collections.iter_mut().find(|c| c.id == incoming.id) {
                         Some(local) => {
+                            if legacy {
+                                seed_pending(local, &incoming);
+                            }
                             let pending = &local.pending;
                             let merge = |remote: &[u32], local: &[u32]| -> Vec<u32> {
                                 let mut out: Vec<u32> = remote
@@ -395,6 +419,7 @@ impl CollectionsStore {
             }
         }
         self.namespace_version = remote.version;
+        self.format = STORE_FORMAT;
     }
 
     /// Upload entries plus pending-state snapshot.
@@ -428,6 +453,19 @@ impl CollectionsStore {
         self.collections
             .retain(|c| !(c.deleted && deleted.contains(&c.id)));
         self.namespace_version = new_version;
+        self.format = STORE_FORMAT;
+    }
+}
+
+/// Legacy store: local explicit diffs become pending.
+fn seed_pending(local: &mut Collection, remote: &Collection) {
+    let explicit: Vec<u32> = local.added.iter().chain(&local.removed).copied().collect();
+    for app in explicit {
+        let mine = membership(&local.added, &local.removed, app);
+        let theirs = membership(&remote.added, &remote.removed, app);
+        if mine != theirs && !local.pending.contains(&app) {
+            local.pending.push(app);
+        }
     }
 }
 
