@@ -190,7 +190,8 @@ fn default_directives(verbosity: u8) -> &'static str {
         0 => "warn",
         1 => "debug,steam_vent=info,steam_vent_proto=info",
         2 => "debug,steam_vent=debug,steam_vent_proto=debug",
-        _ => "trace",
+        // steam-vent traces can dump tokens.
+        _ => "trace,steam_vent=debug",
     }
 }
 
