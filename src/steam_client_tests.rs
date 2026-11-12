@@ -979,6 +979,28 @@ fn cdn_errors_map_to_kinds() {
 }
 
 #[test]
+fn cdn_pool_is_never_empty() {
+    let hosts = vec![
+        ContentHost {
+            host: "cache1.steamcontent.com".into(),
+            https: true,
+        },
+        ContentHost {
+            host: "cache2.steamcontent.com".into(),
+            https: true,
+        },
+    ];
+    // Missing tokens default to none.
+    let pool = content::cdn_pool(&hosts, 7, vec![Some("t".into())]).unwrap();
+    assert_eq!(pool.len(), 2);
+    assert_eq!(pool[0].auth_token.as_deref(), Some("t"));
+    assert_eq!(pool[1].auth_token, None);
+    assert!(pool.iter().all(|s| s.cell_id == 7 && s.port == 443));
+    // No hosts: error, not empty pool.
+    assert!(content::cdn_pool(&[], 7, Vec::new()).is_err());
+}
+
+#[test]
 fn cdn_server_parses_host_and_port() {
     let host = |h: &str, https| ContentHost {
         host: h.into(),

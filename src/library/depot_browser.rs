@@ -4,7 +4,6 @@ use sha1::Digest;
 use std::collections::HashMap;
 use std::path::Path;
 
-use std::sync::Arc;
 use steam_cdn::CDNClient;
 use steam_vent::connection::Connection;
 
@@ -88,14 +87,20 @@ pub async fn fetch_depots(connection: &Connection, appid: u32) -> Result<Vec<Dep
 
 pub async fn fetch_manifest_files(
     connection: &Connection,
+    cdn_client: &CDNClient,
     appid: u32,
     depot_id: u32,
     manifest_ref: &str,
 ) -> Result<Vec<ManifestFileEntry>> {
     let manifest_id = resolve_manifest_id(connection, appid, depot_id, manifest_ref).await?;
-    let cdn_client = CDNClient::new(Arc::new(connection.clone()));
+    let key = cdn_client
+        .get_depot_decryption_key(appid, depot_id)
+        .await
+        .ok()
+        .flatten();
+    let code = request_code(cdn_client, appid, depot_id, manifest_id).await;
     let manifest = cdn_client
-        .get_manifest(appid, depot_id, manifest_id, None, None)
+        .get_manifest(appid, depot_id, manifest_id, code, key)
         .await
         .map_err(|e| anyhow!("failed to get manifest: {e}"))?;
 
@@ -124,15 +129,17 @@ pub async fn fetch_manifest_files(
     Ok(files)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn download_single_file(
+    runtime: &tokio::runtime::Runtime,
     connection: &Connection,
+    cdn_client: &CDNClient,
     appid: u32,
     depot_id: u32,
     manifest_ref: &str,
     file_path: &str,
     output_dir: &Path,
 ) -> Result<()> {
-    let runtime = tokio::runtime::Runtime::new()?;
     let manifest_id = runtime.block_on(resolve_manifest_id(
         connection,
         appid,
@@ -140,9 +147,14 @@ pub fn download_single_file(
         manifest_ref,
     ))?;
 
-    let cdn_client = CDNClient::new(Arc::new(connection.clone()));
+    let depot_key = runtime
+        .block_on(cdn_client.get_depot_decryption_key(appid, depot_id))
+        .map_err(|e| anyhow!("failed to get depot key: {e}"))?
+        .ok_or_else(|| anyhow!("no decryption key for depot {depot_id}"))?;
+
+    let code = runtime.block_on(request_code(cdn_client, appid, depot_id, manifest_id));
     let manifest = runtime
-        .block_on(cdn_client.get_manifest(appid, depot_id, manifest_id, None, None))
+        .block_on(cdn_client.get_manifest(appid, depot_id, manifest_id, code, Some(depot_key)))
         .map_err(|e| anyhow!("failed to get manifest: {e}"))?;
 
     let file = manifest
@@ -150,11 +162,6 @@ pub fn download_single_file(
         .iter()
         .find(|f| f.full_path() == file_path)
         .ok_or_else(|| anyhow!("file not found in manifest: {file_path}"))?;
-
-    let depot_key = runtime
-        .block_on(cdn_client.get_depot_decryption_key(appid, depot_id))
-        .map_err(|e| anyhow!("failed to get depot key: {e}"))?
-        .ok_or_else(|| anyhow!("no decryption key for depot {depot_id}"))?;
 
     let relative = crate::core::utils::safe_relative_path(&file.full_path())
         .ok_or_else(|| anyhow!("unsafe path in manifest: {:?}", file.full_path()))?;
@@ -182,6 +189,14 @@ pub fn download_single_file(
         .map_err(|e| anyhow!("failed to download file: {e}"))?;
 
     Ok(())
+}
+
+/// Request code; newer manifests need it.
+async fn request_code(cdn_client: &CDNClient, appid: u32, depot_id: u32, id: u64) -> Option<u64> {
+    cdn_client
+        .get_manifest_request_code(appid, depot_id, id)
+        .await
+        .ok()
 }
 
 async fn resolve_manifest_id(
