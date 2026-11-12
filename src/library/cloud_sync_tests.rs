@@ -402,5 +402,8 @@ fn oversized_cloud_unzip_keeps_raw_body() {
 #[test]
 fn huge_size_hint_is_not_preallocated() {
     let body = zip_wrap(b"save");
-    assert_eq!(unzip_single_entry(&body, Some(u32::MAX)).as_deref(), Some(&b"save"[..]));
+    assert_eq!(
+        unzip_single_entry(&body, Some(u32::MAX)).as_deref(),
+        Some(&b"save"[..])
+    );
 }

@@ -40,7 +40,10 @@ fn rejects_drive_prefix() {
 
 #[test]
 fn relative_paths_keep_plain_parts() {
-    assert_eq!(safe_relative_path("bin/game"), Some(PathBuf::from("bin/game")));
+    assert_eq!(
+        safe_relative_path("bin/game"),
+        Some(PathBuf::from("bin/game"))
+    );
     assert_eq!(safe_relative_path("./a/./b"), Some(PathBuf::from("a/b")));
 }
 
@@ -58,7 +61,10 @@ fn symlinked_ancestor_out_of_root_is_caught() {
     let outside = tempfile::tempdir().unwrap();
     let root_path = root.path().canonicalize().unwrap();
     std::os::unix::fs::symlink(outside.path(), root_path.join("link")).unwrap();
-    assert!(resolves_within(&root_path, &root_path.join("plain/new/file")));
+    assert!(resolves_within(
+        &root_path,
+        &root_path.join("plain/new/file")
+    ));
     assert!(!resolves_within(&root_path, &root_path.join("link/file")));
     assert!(!resolves_within(&root_path, Path::new("/")));
 }

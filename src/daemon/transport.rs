@@ -67,16 +67,18 @@ mod imp {
 
     /// Ours, a directory, not group/other-writable.
     pub(super) fn dir_is_private(dir: &Path) -> bool {
-        std::fs::symlink_metadata(dir).is_ok_and(|m| {
-            m.file_type().is_dir() && m.uid() == uid() && m.mode() & 0o022 == 0
-        })
+        std::fs::symlink_metadata(dir)
+            .is_ok_and(|m| m.file_type().is_dir() && m.uid() == uid() && m.mode() & 0o022 == 0)
     }
 
     /// Create or tighten the endpoint's directory.
     pub(super) fn ensure_private_dir(dir: &Path) -> std::io::Result<()> {
         match std::fs::symlink_metadata(dir) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
+                std::fs::DirBuilder::new()
+                    .recursive(true)
+                    .mode(0o700)
+                    .create(dir)?;
             }
             Err(e) => return Err(e),
             Ok(_) => {}

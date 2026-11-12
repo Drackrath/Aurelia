@@ -181,7 +181,12 @@ pub(crate) async fn cmd_login(args: crate::cli::LoginArgs, json: bool) -> Result
     // (handled inside `login`); otherwise we wait for mobile-app approval and only
     // prompt for a code on the retry path below.
     let attempt = client
-        .login(username.clone(), password.clone().into(), guard.clone(), code)
+        .login(
+            username.clone(),
+            password.clone().into(),
+            guard.clone(),
+            code,
+        )
         .await;
 
     match attempt {

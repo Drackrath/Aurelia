@@ -932,7 +932,10 @@ fn cdn_errors_map_to_kinds() {
 
 #[test]
 fn cdn_server_parses_host_and_port() {
-    let host = |h: &str, https| ContentHost { host: h.into(), https };
+    let host = |h: &str, https| ContentHost {
+        host: h.into(),
+        https,
+    };
     let s = install::cdn_server_for(&host("cache1.steamcontent.com", false), 7, Some("t".into()));
     assert_eq!(
         (s.host.as_str(), s.port, s.https),
@@ -961,7 +964,10 @@ fn https_support_values_map_to_tls() {
 
 #[test]
 fn https_hosts_are_preferred() {
-    let host = |h: &str, https| ContentHost { host: h.into(), https };
+    let host = |h: &str, https| ContentHost {
+        host: h.into(),
+        https,
+    };
     let kept = content::prefer_https(vec![host("a", false), host("b", true), host("c", true)]);
     assert_eq!(kept, vec![host("b", true), host("c", true)]);
     let only_http = vec![host("a", false)];

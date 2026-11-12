@@ -1,3 +1,5 @@
+#![warn(clippy::print_stdout)]
+
 pub mod compat;
 pub mod core;
 pub mod infra;

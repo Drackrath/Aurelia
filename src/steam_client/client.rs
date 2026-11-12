@@ -340,7 +340,8 @@ impl SteamClient {
         self.state = LoginState::AwaitingAccessTokenLogon;
 
         let server_list = self.resolve_server_list().await?;
-        let connection = access_with_retry(&server_list, &account_name, refresh_token.expose()).await?;
+        let connection =
+            access_with_retry(&server_list, &account_name, refresh_token.expose()).await?;
 
         self.connection = Some(connection);
         let mut session = self

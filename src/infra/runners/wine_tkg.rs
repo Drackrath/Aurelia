@@ -283,7 +283,7 @@ impl Runner for WineTkgRunner {
             });
 
             if steam_running {
-                println!("✅ Steam already running in prefix — skipping spawn");
+                tracing::info!("Steam already running in prefix — skipping spawn");
             } else {
                 // Background Steam is hosted on a DEDICATED Steam-runtime runner —
                 // NOT the game runner's `proton run` wrapper. It must run under a
@@ -345,7 +345,7 @@ impl Runner for WineTkgRunner {
                 });
 
                 let readiness_timeout = 8;
-                println!(
+                tracing::info!(
                     "Waiting for Steam to initialise (max {}s)...",
                     readiness_timeout
                 );
@@ -366,8 +366,8 @@ impl Runner for WineTkgRunner {
 
                         // Crash detection — bail immediately
                         if let Ok(Some(status)) = steam_process.try_wait() {
-                            println!(
-                                "❌ FATAL: Background Steam exited after {}s with: {}",
+                            tracing::error!(
+                                "Background Steam exited after {}s with: {}",
                                 i + 1,
                                 status
                             );
@@ -383,21 +383,21 @@ impl Runner for WineTkgRunner {
 
                         // Signal 1: pid file (some Wine/Steam combos do write this)
                         if steam_pid_path.exists() {
-                            println!("✅ Steam ready after {}s (steam.pid found)", i + 1);
+                            tracing::info!("Steam ready after {}s (steam.pid found)", i + 1);
                             ready_signal = Some(format!("steam.pid after {}s", i + 1));
                             break;
                         }
 
                         // Signal 2: .steampath in temp (Proton-style)
                         if steam_pipe.exists() {
-                            println!("✅ Steam ready after {}s (.steampath found)", i + 1);
+                            tracing::info!("Steam ready after {}s (.steampath found)", i + 1);
                             ready_signal = Some(format!(".steampath after {}s", i + 1));
                             break;
                         }
 
                         // Signal 3: config.vdf written — Steam has finished early init
                         if steam_config_vdf.exists() {
-                            println!("✅ Steam ready after {}s (config.vdf found)", i + 1);
+                            tracing::info!("Steam ready after {}s (config.vdf found)", i + 1);
                             ready_signal = Some(format!("config.vdf after {}s", i + 1));
                             break;
                         }
@@ -407,8 +407,8 @@ impl Runner for WineTkgRunner {
                             .map(|d| d.count())
                             .unwrap_or(0);
                         if log_count >= 2 {
-                            println!(
-                                "✅ Steam ready after {}s ({} log files found)",
+                            tracing::info!(
+                                "Steam ready after {}s ({} log files found)",
                                 i + 1,
                                 log_count
                             );
@@ -421,7 +421,7 @@ impl Runner for WineTkgRunner {
                             break;
                         }
 
-                        println!("  Waiting... {}s", i + 1);
+                        tracing::debug!("Waiting... {}s", i + 1);
                     }
 
                     // Liveness grace window: after a readiness heuristic fires, a
@@ -436,9 +436,11 @@ impl Runner for WineTkgRunner {
                             .await;
                         match reclassify_after_grace(&mut steam_process) {
                             ReadinessGrace::ExitedEarly { code } => {
-                                println!(
-                                    "❌ FATAL: Background Steam signalled ready ({}) but exited within {}s grace (code {:?})",
-                                    reason, READINESS_GRACE_SECS, code
+                                tracing::error!(
+                                    "Background Steam signalled ready ({}) but exited within {}s grace (code {:?})",
+                                    reason,
+                                    READINESS_GRACE_SECS,
+                                    code
                                 );
                                 ctx.with_verification(|v| {
                                     v.steam_runtime_exit_code = code;
@@ -454,8 +456,8 @@ impl Runner for WineTkgRunner {
                         }
                     }
 
-                    println!(
-                        "⚠️ Steam did not signal ready after {}s, launching game anyway",
+                    tracing::warn!(
+                        "Steam did not signal ready after {}s, launching game anyway",
                         readiness_timeout
                     );
                     ctx.with_verification(|v| {
@@ -956,7 +958,7 @@ impl Runner for WineTkgRunner {
                     env.insert("MANGOHUD_DLSYM".to_string(), "1".to_string());
                 }
                 None => {
-                    println!("⚠️  MangoHud requested but libMangoHud.so not found — skipping");
+                    tracing::warn!("MangoHud requested but libMangoHud.so not found — skipping");
                 }
             }
         }

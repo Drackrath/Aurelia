@@ -19,7 +19,9 @@ static INFLIGHT: AtomicUsize = AtomicUsize::new(0);
 static LAST_ACTIVITY: AtomicU64 = AtomicU64::new(0);
 
 fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }
 
 fn touch_activity() {
@@ -117,7 +119,12 @@ async fn watch_for_idle(timeout: Duration) {
         if busy {
             touch_activity();
         }
-        if idle_expired(LAST_ACTIVITY.load(Ordering::SeqCst), now_secs(), timeout, busy) {
+        if idle_expired(
+            LAST_ACTIVITY.load(Ordering::SeqCst),
+            now_secs(),
+            timeout,
+            busy,
+        ) {
             tracing::info!("daemon: idle for {}s; exiting", timeout.as_secs());
             shut_down();
         }
