@@ -252,6 +252,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_compat_data_path_follows_game_library() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("A");
+        let b = tmp.path().join("B");
+        std::fs::create_dir_all(a.join("steamapps")).unwrap();
+        std::fs::write(
+            a.join("steamapps/libraryfolders.vdf"),
+            format!(
+                "\"libraryfolders\"\n{{\n\t\"0\"\n\t{{\n\t\t\"path\"\t\t\"{}\"\n\t}}\n}}\n",
+                b.display()
+            ),
+        )
+        .unwrap();
+        // Unlikely real app id.
+        let app_id = 3_999_999_919;
+        std::fs::create_dir_all(b.join("steamapps")).unwrap();
+        std::fs::write(b.join(format!("steamapps/appmanifest_{app_id}.acf")), "").unwrap();
+
+        let mut ctx = mock_context();
+        ctx.app.app_id = app_id;
+        ctx.launcher_config.steam_library_path = a.to_string_lossy().into_owned();
+        let env = WineTkgRunner.build_env(&ctx).await.unwrap();
+        let compat = env.get("STEAM_COMPAT_DATA_PATH").unwrap();
+        assert_eq!(
+            PathBuf::from(compat),
+            b.join(format!("steamapps/compatdata/{app_id}"))
+        );
+    }
+
+    #[tokio::test]
     async fn test_wine_tkg_runner_stubs() {
         // We can only test stubs that don't hit the filesystem hard or expect real Proton/Wine
         let runner = WineTkgRunner;

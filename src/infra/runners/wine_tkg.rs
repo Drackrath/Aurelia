@@ -62,8 +62,11 @@ impl SteamLayout {
         } else {
             PathBuf::new()
         };
+        // Compatdata follows the game's library.
+        let game_library =
+            crate::core::utils::game_library_root(&ctx.launcher_config, ctx.app.app_id);
         let compat_data_path = game_compat_data_path(
-            &library_root,
+            &game_library,
             ctx.app.app_id,
             steam_mode,
             steam_prefix_mode.clone(),

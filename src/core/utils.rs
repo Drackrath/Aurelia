@@ -1954,7 +1954,61 @@ pub fn proton_compat_prefix(
     config: &crate::core::config::LauncherConfig,
     app_id: u32,
 ) -> std::path::PathBuf {
-    compat_data_dir(std::path::Path::new(&config.steam_library_path), app_id).join("pfx")
+    game_compat_data_dir(config, app_id).join("pfx")
+}
+
+/// Compatdata dir in the game's library.
+pub fn game_compat_data_dir(config: &crate::core::config::LauncherConfig, app_id: u32) -> PathBuf {
+    let configured = Path::new(&config.steam_library_path);
+    let root = game_library_root(config, app_id);
+    let dir = compat_data_dir(&root, app_id);
+    if root != configured {
+        let old = compat_data_dir(configured, app_id);
+        if old.is_dir() && !dir.exists() {
+            tracing::warn!(
+                "app {app_id}: prefix now lives in its own library ({}); \
+                 an older prefix exists at {} (move it there to keep saves)",
+                dir.display(),
+                old.display()
+            );
+        }
+    }
+    dir
+}
+
+/// Library holding the game's appmanifest.
+pub fn game_library_root(config: &crate::core::config::LauncherConfig, app_id: u32) -> PathBuf {
+    game_library_root_in(
+        Path::new(&config.steam_library_path),
+        &crate::library::steam_root_candidates(),
+        app_id,
+    )
+}
+
+/// Testable core of [`game_library_root`].
+pub fn game_library_root_in(configured: &Path, steam_roots: &[PathBuf], app_id: u32) -> PathBuf {
+    let manifest = format!("appmanifest_{app_id}.acf");
+    let has_manifest = |lib: &Path| lib.join("steamapps").join(&manifest).is_file();
+    if has_manifest(configured) {
+        return configured.to_path_buf();
+    }
+    let mut roots = vec![configured.to_path_buf()];
+    roots.extend(steam_roots.iter().cloned());
+    let mut candidates: Vec<PathBuf> = steam_roots.to_vec();
+    for root in &roots {
+        for vdf in [
+            root.join("steamapps").join("libraryfolders.vdf"),
+            root.join("config").join("libraryfolders.vdf"),
+        ] {
+            if let Ok(raw) = std::fs::read_to_string(&vdf) {
+                candidates.extend(crate::library::library_folder_paths(&raw));
+            }
+        }
+    }
+    candidates
+        .into_iter()
+        .find(|lib| has_manifest(lib))
+        .unwrap_or_else(|| configured.to_path_buf())
 }
 
 /// `steamapps/compatdata/<appid>` under a library root.
@@ -2084,3 +2138,7 @@ mod steam_launcher_tests;
 #[cfg(test)]
 #[path = "utils_wait_until_tests.rs"]
 mod wait_until_tests;
+
+#[cfg(test)]
+#[path = "utils_game_library_tests.rs"]
+mod game_library_tests;
