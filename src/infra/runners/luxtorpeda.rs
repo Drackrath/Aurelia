@@ -156,5 +156,9 @@ fn custom_path(ctx: &LaunchContext) -> Option<PathBuf> {
 
 /// Steam compat-data directory for this app under the active library.
 fn compat_data_path(ctx: &LaunchContext) -> PathBuf {
-    crate::core::utils::game_compat_data_dir(&ctx.launcher_config, ctx.app.app_id)
+    crate::core::utils::game_compat_data_dir(
+        &ctx.launcher_config,
+        ctx.app.app_id,
+        ctx.app.install_path.as_deref().map(std::path::Path::new),
+    )
 }
