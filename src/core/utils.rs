@@ -599,9 +599,70 @@ pub fn setup_fake_steam_trap(config_dir: &Path) -> Result<PathBuf> {
 /// The host's real Steam client install directory, suitable as
 /// `STEAM_COMPAT_CLIENT_INSTALL_PATH` so Proton's `lsteamclient` bridge can reach
 /// the running Steam client (Steamworks online features, Family-Sharing licences).
-/// Returns the first existing standard location, or `None` if Steam isn't found.
+/// `None` unless a client is installed.
 pub fn host_steam_client_path() -> Option<PathBuf> {
-    crate::core::config::detect_steam_path()
+    let root = crate::core::config::detect_steam_path()?;
+    #[cfg(not(target_os = "windows"))]
+    {
+        let path_env = std::env::var_os("PATH");
+        let flatpak_dirs = steam_flatpak_app_dirs();
+        if !steam_client_installed(&root, path_env.as_deref(), &flatpak_dirs) {
+            tracing::debug!(
+                "no Steam client found for {}; ignoring host Steam",
+                root.display()
+            );
+            return None;
+        }
+    }
+    Some(root)
+}
+
+/// Flatpak app dirs for Valve's Steam.
+pub fn steam_flatpak_app_dirs() -> Vec<PathBuf> {
+    let mut dirs = vec![PathBuf::from(
+        "/var/lib/flatpak/app/com.valvesoftware.Steam",
+    )];
+    if let Ok(home) = crate::core::config::home_dir() {
+        dirs.push(home.join(".local/share/flatpak/app/com.valvesoftware.Steam"));
+    }
+    dirs
+}
+
+/// First executable named `name` on `path_env`.
+pub fn find_on_path(name: &str, path_env: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+    let path_env = path_env?;
+    std::env::split_paths(path_env)
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .map(|dir| dir.join(name))
+        .find(|candidate| is_executable_file(candidate))
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        meta.is_file() && meta.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        meta.is_file()
+    }
+}
+
+/// Whether a real Steam client exists.
+pub fn steam_client_installed(
+    root: &Path,
+    path_env: Option<&std::ffi::OsStr>,
+    flatpak_dirs: &[PathBuf],
+) -> bool {
+    ["ubuntu12_32/steam", "steam.sh", "steam.exe"]
+        .iter()
+        .any(|rel| root.join(rel).is_file())
+        || find_on_path("steam", path_env).is_some()
+        || flatpak_dirs.iter().any(|d| d.is_dir())
 }
 
 /// Whether the host's Steam client is currently running. Checks `~/.steam/steam.pid`
@@ -1944,3 +2005,7 @@ mod steam_appid_tests;
 #[cfg(test)]
 #[path = "utils_dll_overrides_tests.rs"]
 mod dll_overrides_tests;
+
+#[cfg(test)]
+#[path = "utils_steam_client_tests.rs"]
+mod steam_client_tests;
