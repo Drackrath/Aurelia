@@ -174,6 +174,86 @@ fn discovers_local_saves_from_ufs_specs() {
     );
 }
 
+fn linux_override() -> UfsRootOverride {
+    UfsRootOverride {
+        root: "WinAppDataRoaming".into(),
+        os: "Linux".into(),
+        os_compare: "=".into(),
+        use_instead: "GameInstall".into(),
+        add_path: "linuxsaves".into(),
+        path_transforms: vec![("Company/".into(), "company/".into())],
+    }
+}
+
+#[cfg(not(windows))]
+#[test]
+fn root_override_applies_only_to_its_os() {
+    let overrides = [linux_override()];
+    let linux = CloudPathResolver::new(PathBuf::from("/r"), Some(PathBuf::from("/game")))
+        .with_wine_prefix(Some(PathBuf::from("/pfx")))
+        .with_root_overrides(&overrides, "linux");
+    assert_eq!(
+        linux
+            .resolve("%WinAppDataRoaming%Company/Game/s.dat")
+            .unwrap(),
+        Path::new("/game/linuxsaves/company/Game/s.dat")
+    );
+
+    let windows = CloudPathResolver::new(PathBuf::from("/r"), Some(PathBuf::from("/game")))
+        .with_wine_prefix(Some(PathBuf::from("/pfx")))
+        .with_root_overrides(&overrides, "windows");
+    assert_eq!(
+        windows
+            .resolve("%WinAppDataRoaming%Company/Game/s.dat")
+            .unwrap(),
+        Path::new("/pfx/drive_c/users/steamuser/AppData/Roaming/Company/Game/s.dat")
+    );
+
+    // `!=` inverts the match.
+    let mut not_linux = linux_override();
+    not_linux.os_compare = "!=".into();
+    assert!(!not_linux.applies_to("Linux"));
+    assert!(not_linux.applies_to("windows"));
+}
+
+#[test]
+fn steam_id_placeholders_substituted() {
+    let r = CloudPathResolver::new(PathBuf::from("/r"), None).with_steam_id(76561197960287930);
+    assert_eq!(
+        r.substitute_ids("saves/{64BitSteamID}/{Steam3AccountID}"),
+        "saves/76561197960287930/22202"
+    );
+    // Without an id: unchanged.
+    let bare = CloudPathResolver::new(PathBuf::from("/r"), None);
+    assert_eq!(bare.substitute_ids("{64BitSteamID}"), "{64BitSteamID}");
+}
+
+#[test]
+fn discovery_finds_saves_under_substituted_id_and_override() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("linuxsaves/company/Game/76561197960287930");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("s.dat"), b"x").unwrap();
+
+    let resolver = CloudPathResolver::new(PathBuf::from("/r"), Some(tmp.path().to_path_buf()))
+        .with_root_overrides(&[linux_override()], "linux")
+        .with_steam_id(76561197960287930);
+    let specs = [UfsSaveSpec {
+        root: "WinAppDataRoaming".into(),
+        path: "Company/Game/{64BitSteamID}".into(),
+        pattern: "*.dat".into(),
+        recursive: false,
+    }];
+    let found = discover_local_saves(&specs, &resolver);
+    assert_eq!(found.len(), 1);
+    // Cloud name keeps Steam's Windows form.
+    assert_eq!(
+        found[0].0,
+        "%WinAppDataRoaming%Company/Game/76561197960287930/s.dat"
+    );
+    assert_eq!(resolver.resolve(&found[0].0).unwrap(), dir.join("s.dat"));
+}
+
 #[test]
 fn non_recursive_spec_skips_subdirectories() {
     let tmp = tempfile::tempdir().unwrap();

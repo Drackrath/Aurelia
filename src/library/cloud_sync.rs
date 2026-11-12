@@ -233,6 +233,42 @@ pub struct UfsSaveSpec {
     pub recursive: bool,
 }
 
+/// One `ufs/rootoverrides` rule.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct UfsRootOverride {
+    /// Token being overridden, e.g. `WinAppDataRoaming`.
+    pub root: String,
+    /// OS name: `Windows`, `Linux`, `MacOS`.
+    pub os: String,
+    /// `=` (default) or `!=`.
+    pub os_compare: String,
+    /// Replacement root token.
+    pub use_instead: String,
+    /// Sub-path appended to the replacement.
+    pub add_path: String,
+    /// `(find, replace)` applied to paths.
+    pub path_transforms: Vec<(String, String)>,
+}
+
+impl UfsRootOverride {
+    /// Whether it applies to `target_os`.
+    pub fn applies_to(&self, target_os: &str) -> bool {
+        let same = self.os.is_empty() || self.os.eq_ignore_ascii_case(target_os);
+        if self.os_compare.trim() == "!=" {
+            !same
+        } else {
+            same
+        }
+    }
+}
+
+/// An app's UFS appinfo section.
+#[derive(Debug, Clone, Default)]
+pub struct UfsConfig {
+    pub savefiles: Vec<UfsSaveSpec>,
+    pub root_overrides: Vec<UfsRootOverride>,
+}
+
 /// Translates Steam Cloud filenames to real on-disk paths.
 ///
 /// Steam Auto-Cloud filenames embed the real save location as a leading root token,
@@ -250,6 +286,9 @@ pub struct CloudPathResolver {
     remote_root: PathBuf,
     install_dir: Option<PathBuf>,
     wine_prefix: Option<PathBuf>,
+    /// Overrides for the target OS only.
+    overrides: Vec<UfsRootOverride>,
+    steam_id: Option<u64>,
 }
 
 impl CloudPathResolver {
@@ -258,7 +297,55 @@ impl CloudPathResolver {
             remote_root,
             install_dir,
             wine_prefix: None,
+            overrides: Vec::new(),
+            steam_id: None,
         }
+    }
+
+    /// Keep overrides matching `target_os`.
+    #[must_use]
+    pub fn with_root_overrides(mut self, overrides: &[UfsRootOverride], target_os: &str) -> Self {
+        self.overrides = overrides
+            .iter()
+            .filter(|o| o.applies_to(target_os))
+            .cloned()
+            .collect();
+        self
+    }
+
+    /// Steam id for path placeholders.
+    #[must_use]
+    pub fn with_steam_id(mut self, steam_id: u64) -> Self {
+        self.steam_id = Some(steam_id);
+        self
+    }
+
+    fn override_for(&self, token: &str) -> Option<&UfsRootOverride> {
+        self.overrides
+            .iter()
+            .find(|o| o.root.eq_ignore_ascii_case(token))
+    }
+
+    /// Apply the token's path transforms.
+    pub fn transform_path(&self, token: &str, path: &str) -> String {
+        let mut out = path.to_string();
+        if let Some(o) = self.override_for(token) {
+            for (find, replace) in &o.path_transforms {
+                if out.contains(find.as_str()) {
+                    out = out.replacen(find.as_str(), replace, 1);
+                }
+            }
+        }
+        out
+    }
+
+    /// Fill `{64BitSteamID}` and `{Steam3AccountID}`.
+    pub fn substitute_ids(&self, path: &str) -> String {
+        let Some(id) = self.steam_id else {
+            return path.to_string();
+        };
+        path.replace("{64BitSteamID}", &id.to_string())
+            .replace("{Steam3AccountID}", &(id as u32).to_string())
     }
 
     /// Point `%Win*%` root tokens at a Proton/wine prefix (the `pfx` directory that
@@ -277,7 +364,7 @@ impl CloudPathResolver {
                 let base = self.resolve_root(token).with_context(|| {
                     format!("unsupported Steam Cloud root token '%{token}%' on this platform")
                 })?;
-                Ok(join_relative(&base, rest))
+                Ok(join_relative(&base, &self.transform_path(token, rest)))
             }
             None => Ok(join_relative(&self.remote_root, filename)),
         }
@@ -287,11 +374,25 @@ impl CloudPathResolver {
     /// `None` if it isn't applicable on this platform (e.g. a `%Linux*%` root on
     /// Windows, or a `%Win*%` root with no wine prefix). Used by UFS save discovery.
     pub fn resolve_root(&self, root_token: &str) -> Option<PathBuf> {
-        resolve_root_token(
-            root_token,
-            self.install_dir.as_deref(),
-            self.wine_prefix.as_deref(),
-        )
+        let lookup = |token: &str| {
+            resolve_root_token(
+                token,
+                self.install_dir.as_deref(),
+                self.wine_prefix.as_deref(),
+            )
+        };
+        match self.override_for(root_token) {
+            Some(o) => {
+                let target = if o.use_instead.is_empty() {
+                    o.root.as_str()
+                } else {
+                    o.use_instead.as_str()
+                };
+                let base = lookup(target)?;
+                Some(join_relative(&base, &self.substitute_ids(&o.add_path)))
+            }
+            None => lookup(root_token),
+        }
     }
 }
 
@@ -308,7 +409,9 @@ fn discover_local_saves(
         let Some(base) = resolver.resolve_root(&spec.root) else {
             continue;
         };
-        let search_root = join_relative(&base, &spec.path);
+        // Cloud names keep the untransformed path.
+        let spec_path = normalize_rel(&resolver.substitute_ids(&spec.path));
+        let search_root = join_relative(&base, &resolver.transform_path(&spec.root, &spec_path));
         if !search_root.is_dir() {
             continue;
         }
@@ -328,14 +431,15 @@ fn discover_local_saves(
             if !glob_matches(&spec.pattern, &name) {
                 continue;
             }
-            let Ok(rel) = entry.path().strip_prefix(&base) else {
+            let Ok(rel) = entry.path().strip_prefix(&search_root) else {
                 continue;
             };
-            let cloud_name = format!(
-                "%{}%{}",
-                spec.root,
-                rel.to_string_lossy().replace('\\', "/")
-            );
+            let rel = rel.to_string_lossy().replace('\\', "/");
+            let cloud_name = if spec_path.is_empty() {
+                format!("%{}%{rel}", spec.root)
+            } else {
+                format!("%{}%{spec_path}/{rel}", spec.root)
+            };
             out.push((cloud_name, entry.path().to_path_buf()));
         }
     }
@@ -369,6 +473,14 @@ fn split_root_token(filename: &str) -> Option<(&str, &str)> {
     let after = filename.strip_prefix('%')?;
     let end = after.find('%')?;
     Some((&after[..end], &after[end + 1..]))
+}
+
+/// Clean relative path, `/`-separated.
+fn normalize_rel(rel: &str) -> String {
+    rel.split(['/', '\\'])
+        .filter(|c| !c.is_empty() && *c != "." && *c != "..")
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// Join a `/`- or `\`-separated cloud-relative path onto `base`, skipping empty,

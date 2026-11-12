@@ -411,13 +411,23 @@ impl SteamClient {
             // `%Win*%` cloud roots point inside the game's Proton prefix; without it
             // every Auto-Cloud save of a Windows game would be silently skipped.
             let cloud_user_configs = crate::core::config::load_user_configs().await?;
+            // UFS rules and overrides; best-effort.
+            let ufs = self.fetch_ufs_config(app.app_id).await.unwrap_or_default();
+            let runs_windows = native_windows || chosen_proton_path.is_some();
+            let target_os = if runs_windows { "windows" } else { "linux" };
+            // Native Linux builds have no prefix.
+            let wine_prefix = chosen_proton_path.is_some().then(|| {
+                crate::core::utils::game_save_prefix(
+                    &launcher_config,
+                    app.app_id,
+                    &cloud_user_configs,
+                )
+            });
             let resolver =
                 CloudPathResolver::new(remote_root, app.install_path.as_ref().map(PathBuf::from))
-                    .with_wine_prefix(Some(crate::core::utils::game_save_prefix(
-                        &launcher_config,
-                        app.app_id,
-                        &cloud_user_configs,
-                    )));
+                    .with_wine_prefix(wine_prefix)
+                    .with_root_overrides(&ufs.root_overrides, target_os)
+                    .with_steam_id(client.steam_id());
             tracing::info!(appid = app.app_id, "Syncing Cloud...");
             // Conflict-safe: a divergent save is left untouched (never clobbered),
             // so the user can resolve it via `cloud sync` / the Heroic chooser. The
@@ -464,14 +474,10 @@ impl SteamClient {
                     "Cloud sync-down failed, launching anyway — saves may be missing or incomplete: {e:#}"
                 ),
             }
-            // UFS rules let sync_up discover brand-new local saves; best-effort.
-            let specs = self
-                .fetch_ufs_save_specs(app.app_id)
-                .await
-                .unwrap_or_default();
+            // Lets sync_up discover new local saves.
             cloud_client = Some(client);
             cloud_resolver = Some(resolver);
-            cloud_specs = specs;
+            cloud_specs = ufs.savefiles;
         }
 
         let mut child = if native_windows {

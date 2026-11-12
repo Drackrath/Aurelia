@@ -316,6 +316,54 @@ fn parses_ufs_savefile_rules() {
 }
 
 #[test]
+fn vdf_flag_accepts_binary_int() {
+    use steam_vdf_parser::Value;
+    assert!(vdf_flag(&Value::I32(1)));
+    assert!(!vdf_flag(&Value::I32(0)));
+    assert!(vdf_flag(&Value::Str("1".into())));
+    assert!(!vdf_flag(&Value::Str("0".into())));
+}
+
+#[test]
+fn parses_ufs_root_overrides() {
+    let raw = r#""2784470"
+{
+  "ufs"
+  {
+"savefiles"
+{
+  "0" { "root" "WinAppDataRoaming" "path" "Co/Game" "pattern" "*" }
+}
+"rootoverrides"
+{
+  "0"
+  {
+    "root" "WinAppDataRoaming"
+    "os" "Linux"
+    "oscompare" "="
+    "useinstead" "LinuxXdgDataHome"
+    "addpath" "co"
+    "pathtransforms"
+    {
+      "0" { "find" "Co/" "replace" "co/" }
+    }
+  }
+}
+  }
+}"#;
+    let vdf = find_vdf_in_pics(raw.as_bytes()).expect("parse pics vdf");
+    let cfg = ufs_config_from_section(pics_app_section(vdf.value()));
+    assert_eq!(cfg.savefiles.len(), 1);
+    assert_eq!(cfg.root_overrides.len(), 1);
+    let o = &cfg.root_overrides[0];
+    assert_eq!(o.root, "WinAppDataRoaming");
+    assert_eq!(o.use_instead, "LinuxXdgDataHome");
+    assert_eq!(o.add_path, "co");
+    assert_eq!(o.path_transforms, vec![("Co/".into(), "co/".into())]);
+    assert!(o.applies_to("linux") && !o.applies_to("windows"));
+}
+
+#[test]
 fn acf_name_and_last_owner_parse() {
     let raw = "\"AppState\"\n{\n\t\"appid\"\t\t\"960090\"\n\t\"name\"\t\t\"Bloons TD 6\"\n\t\"LastOwner\"\t\t\"76561198000000001\"\n}\n";
     assert_eq!(parse_name_from_acf(raw).as_deref(), Some("Bloons TD 6"));
