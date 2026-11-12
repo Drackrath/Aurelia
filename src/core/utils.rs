@@ -672,17 +672,24 @@ pub fn steam_client_installed(
 /// brings the already-open client to the foreground (the opposite of `-silent`).
 #[cfg(target_os = "linux")]
 pub fn is_steam_running() -> bool {
-    // ~/.steam/steam.pid holds the running client's PID.
-    if let Ok(home) = std::env::var("HOME") {
-        if let Ok(pid) = std::fs::read_to_string(format!("{home}/.steam/steam.pid")) {
-            if let Ok(pid) = pid.trim().parse::<u32>() {
-                if std::path::Path::new(&format!("/proc/{pid}")).exists() {
-                    return true;
-                }
-            }
-        }
+    let pid_file = std::env::var("HOME")
+        .ok()
+        .map(|home| PathBuf::from(home).join(".steam/steam.pid"));
+    steam_running_in(Path::new("/proc"), pid_file.as_deref())
+}
+
+/// Testable core of [`is_steam_running`].
+#[cfg(target_os = "linux")]
+fn steam_running_in(proc_root: &Path, pid_file: Option<&Path>) -> bool {
+    // Pid file names the client.
+    if let Some(pid) = pid_file
+        .and_then(|f| std::fs::read_to_string(f).ok())
+        .and_then(|pid| pid.trim().parse::<u32>().ok())
+        && proc_entry_is_live(&proc_root.join(pid.to_string()))
+    {
+        return true;
     }
-    let Ok(entries) = std::fs::read_dir("/proc") else {
+    let Ok(entries) = std::fs::read_dir(proc_root) else {
         return false;
     };
     for entry in entries.flatten() {
@@ -693,12 +700,27 @@ pub fn is_steam_running() -> bool {
         }
         if let Ok(comm) = std::fs::read_to_string(entry.path().join("comm")) {
             let comm = comm.trim();
-            if comm == "steam" || comm == "steamwebhelper" {
+            if (comm == "steam" || comm == "steamwebhelper") && proc_entry_is_live(&entry.path()) {
                 return true;
             }
         }
     }
     false
+}
+
+/// Existing, non-zombie `/proc/<pid>` entry.
+#[cfg(target_os = "linux")]
+fn proc_entry_is_live(proc_dir: &Path) -> bool {
+    if !proc_dir.exists() {
+        return false;
+    }
+    let Ok(status) = std::fs::read_to_string(proc_dir.join("status")) else {
+        return true;
+    };
+    !status
+        .lines()
+        .find_map(|l| l.strip_prefix("State:"))
+        .is_some_and(|state| state.trim_start().starts_with('Z'))
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -717,14 +739,37 @@ pub fn ensure_steam_running() {
         return;
     }
     tracing::info!("Steam client not running; starting `steam -silent` (tray)");
-    let mut cmd = std::process::Command::new("steam");
-    cmd.arg("-silent")
+    match start_steam_detached(&["-silent"]) {
+        Ok(()) => tracing::info!("Launched Steam client (-silent)"),
+        Err(e) => tracing::warn!("could not start Steam client: {e:#}"),
+    }
+}
+
+/// `steam` on PATH, else `<root>/steam.sh`.
+pub fn steam_launcher_program(
+    path_env: Option<&std::ffi::OsStr>,
+    root: Option<&Path>,
+) -> Option<PathBuf> {
+    find_on_path("steam", path_env).or_else(|| {
+        root.map(|r| r.join("steam.sh"))
+            .filter(|script| script.is_file())
+    })
+}
+
+/// Spawns Steam detached and reaps it.
+#[cfg(target_os = "linux")]
+pub fn start_steam_detached(args: &[&str]) -> Result<()> {
+    let path_env = std::env::var_os("PATH");
+    let root = crate::core::config::detect_steam_path();
+    let Some(program) = steam_launcher_program(path_env.as_deref(), root.as_deref()) else {
+        bail!("no `steam` on PATH and no steam.sh in the Steam root");
+    };
+    let mut cmd = std::process::Command::new(&program);
+    cmd.args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    // Detach into its own session/process group so Steam keeps running independently
-    // of this launch (and isn't torn down with the game's process tree on stop).
-    #[cfg(unix)]
+    // Own session; outlives the game.
     {
         use std::os::unix::process::CommandExt;
         unsafe {
@@ -734,10 +779,14 @@ pub fn ensure_steam_running() {
             });
         }
     }
-    match cmd.spawn() {
-        Ok(_) => tracing::info!("Launched Steam client (-silent)"),
-        Err(e) => tracing::warn!("could not start Steam client: {e:#}"),
-    }
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| anyhow!("could not start {}: {e}", program.display()))?;
+    // Reap it; avoid daemon zombies.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
 }
 
 /// Latest logged-on state in connection-log text.
@@ -2009,3 +2058,7 @@ mod dll_overrides_tests;
 #[cfg(test)]
 #[path = "utils_steam_client_tests.rs"]
 mod steam_client_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "utils_steam_launcher_tests.rs"]
+mod steam_launcher_tests;
