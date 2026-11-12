@@ -6,7 +6,7 @@ use super::*;
 use crate::core::error::{ErrorKind, TypedError, io_kind, message_kind};
 
 /// CDN hosts tried together.
-const HOST_POOL_SIZE: usize = 4;
+pub(crate) const HOST_POOL_SIZE: usize = 4;
 
 /// Shared limit for every depot download.
 static DOWNLOAD_LIMITER: std::sync::LazyLock<Arc<steam_cdn::RateLimiter>> =
@@ -677,17 +677,9 @@ impl SteamClient {
         let _limit = LimitWatcher::start().await;
 
         for pool in hosts.chunks(HOST_POOL_SIZE) {
-            let mut servers = Vec::with_capacity(pool.len());
-            for host in pool {
-                let token = match self.get_cdn_auth_token(app_id, depot_id, &host.host).await {
-                    Ok(t) => Some(t),
-                    Err(e) => {
-                        tracing::warn!("Failed to get auth token for host {}: {}", host.host, e);
-                        None
-                    }
-                };
-                servers.push(cdn_server_for(host, connection.cell_id(), token));
-            }
+            let servers = self
+                .cdn_servers(app_id, depot_id, pool, connection.cell_id())
+                .await?;
             let host = pool
                 .iter()
                 .map(|h| h.host.as_str())
