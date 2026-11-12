@@ -311,4 +311,22 @@ fn relative_path_args_resolve_against_cwd() {
     };
     let expected = cwd.join("./runners/p").to_string_lossy().into_owned();
     assert_eq!(proton, Some(expected));
+
+    // Steam-runtime runner: path, name, clear.
+    let runner_of = |arg: &str| {
+        let mut cli =
+            Cli::try_parse_from(["aurelia", "config", "steam-runtime-runner", arg]).unwrap();
+        absolutize_path_args(&mut cli.command);
+        let Command::Config {
+            command: ConfigCommand::SteamRuntimeRunner { runner },
+        } = cli.command
+        else {
+            panic!("expected steam-runtime-runner");
+        };
+        runner
+    };
+    let expected = cwd.join("wine/bin").to_string_lossy().into_owned();
+    assert_eq!(runner_of("wine/bin"), Some(expected));
+    assert_eq!(runner_of("GE-Proton9-20").as_deref(), Some("GE-Proton9-20"));
+    assert_eq!(runner_of("").as_deref(), Some(""));
 }
