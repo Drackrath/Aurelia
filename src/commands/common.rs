@@ -447,6 +447,32 @@ pub(crate) fn steam_guard_restart(managed: bool, json: bool) -> Result<()> {
     Ok(())
 }
 
+/// Always restart; op error wins.
+pub(crate) fn settle_with_restart<T>(
+    op: Result<T>,
+    restart: impl FnOnce() -> Result<()>,
+) -> Result<T> {
+    match (op, restart()) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Ok(_), Err(restart_err)) => Err(restart_err),
+        (Err(op_err), Ok(())) => Err(op_err),
+        (Err(op_err), Err(restart_err)) => {
+            tracing::error!("failed restarting Steam after an error: {restart_err:#}");
+            Err(op_err)
+        }
+    }
+}
+
+/// Runs `op`, then restarts Steam.
+pub(crate) async fn with_steam_stopped<T>(
+    managed: bool,
+    json: bool,
+    op: impl Future<Output = Result<T>>,
+) -> Result<T> {
+    let result = op.await;
+    settle_with_restart(result, || steam_guard_restart(managed, json))
+}
+
 /// Non-default branch suffix, else empty.
 pub(crate) fn branch_suffix(game: &LibraryGame) -> String {
     if game.active_branch != "public" {
