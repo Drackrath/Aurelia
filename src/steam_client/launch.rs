@@ -421,6 +421,7 @@ impl SteamClient {
                     &launcher_config,
                     app.app_id,
                     &cloud_user_configs,
+                    app.install_path.as_deref().map(std::path::Path::new),
                 )
             });
             let resolver =
@@ -510,6 +511,7 @@ impl SteamClient {
                 &launcher_config,
                 app.app_id,
                 &user_configs,
+                app.install_path.as_deref().map(std::path::Path::new),
             );
             // Only record a per-game (compatdata) prefix — sweeping the shared
             // master prefix on stop would also kill the Steam client inside it.

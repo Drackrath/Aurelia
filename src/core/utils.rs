@@ -2017,14 +2017,16 @@ pub fn steam_wineprefix_for_game(
     config: &crate::core::config::LauncherConfig,
     app_id: u32,
     user_configs: &crate::core::models::UserConfigStore,
+    install_path: Option<&Path>,
 ) -> std::path::PathBuf {
-    wineprefix_for_game(config, app_id, user_configs.get(&app_id))
+    wineprefix_for_game(config, app_id, user_configs.get(&app_id), install_path)
 }
 
 pub fn wineprefix_for_game(
     config: &crate::core::config::LauncherConfig,
     app_id: u32,
     user_config: Option<&crate::core::models::UserAppConfig>,
+    install_path: Option<&Path>,
 ) -> std::path::PathBuf {
     let use_steam_runtime = match user_config.map(|c| &c.steam_runtime_policy) {
         Some(crate::core::models::SteamRuntimePolicy::Enabled) => true,
@@ -2042,7 +2044,7 @@ pub fn wineprefix_for_game(
         .unwrap_or(config.use_shared_compat_data);
 
     if use_per_game_compat_data {
-        proton_compat_prefix(config, app_id)
+        proton_compat_prefix(config, app_id, install_path)
     } else {
         resolve_master_wineprefix()
     }
@@ -2053,14 +2055,19 @@ pub fn wineprefix_for_game(
 pub fn proton_compat_prefix(
     config: &crate::core::config::LauncherConfig,
     app_id: u32,
+    install_path: Option<&Path>,
 ) -> std::path::PathBuf {
-    game_compat_data_dir(config, app_id).join("pfx")
+    game_compat_data_dir(config, app_id, install_path).join("pfx")
 }
 
 /// Compatdata dir in the game's library.
-pub fn game_compat_data_dir(config: &crate::core::config::LauncherConfig, app_id: u32) -> PathBuf {
+pub fn game_compat_data_dir(
+    config: &crate::core::config::LauncherConfig,
+    app_id: u32,
+    install_path: Option<&Path>,
+) -> PathBuf {
     let configured = Path::new(&config.steam_library_path);
-    let root = game_library_root(config, app_id);
+    let root = game_library_root(config, app_id, install_path);
     let dir = compat_data_dir(&root, app_id);
     if root != configured {
         let old = compat_data_dir(configured, app_id);
@@ -2077,12 +2084,39 @@ pub fn game_compat_data_dir(config: &crate::core::config::LauncherConfig, app_id
 }
 
 /// Library holding the game's appmanifest.
-pub fn game_library_root(config: &crate::core::config::LauncherConfig, app_id: u32) -> PathBuf {
+pub fn game_library_root(
+    config: &crate::core::config::LauncherConfig,
+    app_id: u32,
+    install_path: Option<&Path>,
+) -> PathBuf {
+    // Install path beats the library walk.
+    if let Some(lib) = install_path.and_then(|p| library_from_install_path(p, app_id)) {
+        return lib;
+    }
     game_library_root_in(
         Path::new(&config.steam_library_path),
         &crate::library::steam_root_candidates(),
         app_id,
     )
+}
+
+/// Install dir's library, if manifest present.
+pub fn library_from_install_path(install_path: &Path, app_id: u32) -> Option<PathBuf> {
+    let common = install_path.parent()?;
+    let steamapps = common.parent()?;
+    let is = |p: &Path, name: &str| {
+        p.file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.eq_ignore_ascii_case(name))
+    };
+    if !is(common, "common") || !is(steamapps, "steamapps") {
+        return None;
+    }
+    steamapps
+        .join(format!("appmanifest_{app_id}.acf"))
+        .is_file()
+        .then(|| steamapps.parent().map(Path::to_path_buf))
+        .flatten()
 }
 
 /// Testable core of [`game_library_root`].
@@ -2141,12 +2175,13 @@ pub fn game_save_prefix(
     config: &crate::core::config::LauncherConfig,
     app_id: u32,
     user_configs: &crate::core::models::UserConfigStore,
+    install_path: Option<&Path>,
 ) -> std::path::PathBuf {
-    let proton_prefix = proton_compat_prefix(config, app_id);
+    let proton_prefix = proton_compat_prefix(config, app_id, install_path);
     if proton_prefix.join("drive_c").is_dir() {
         return proton_prefix;
     }
-    steam_wineprefix_for_game(config, app_id, user_configs)
+    steam_wineprefix_for_game(config, app_id, user_configs, install_path)
 }
 
 /// Resolve `rel` under `base`, ignoring case.

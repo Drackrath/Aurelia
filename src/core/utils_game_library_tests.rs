@@ -42,7 +42,7 @@ fn manifest_in_second_library_wins() {
 
     let config = config_with_library(&a);
     assert_eq!(
-        proton_compat_prefix(&config, APP),
+        proton_compat_prefix(&config, APP, None),
         b.join(format!("steamapps/compatdata/{APP}/pfx"))
     );
 }
@@ -81,7 +81,10 @@ fn old_prefix_in_configured_still_uses_game_library() {
     std::fs::create_dir_all(compat_data_dir(&a, APP).join("pfx/drive_c")).unwrap();
     let config = config_with_library(&a);
     // Hint is logged; B is used.
-    assert_eq!(game_compat_data_dir(&config, APP), compat_data_dir(&b, APP));
+    assert_eq!(
+        game_compat_data_dir(&config, APP, None),
+        compat_data_dir(&b, APP)
+    );
 }
 
 #[test]
@@ -95,5 +98,44 @@ fn save_prefix_follows_game_library() {
     std::fs::create_dir_all(pfx.join("drive_c")).unwrap();
     let config = config_with_library(&a);
     let store = crate::core::models::UserConfigStore::default();
-    assert_eq!(game_save_prefix(&config, APP, &store), pfx);
+    assert_eq!(game_save_prefix(&config, APP, &store, None), pfx);
+}
+
+#[test]
+fn unregistered_library_found_via_install_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let a = tmp.path().join("A");
+    let c = tmp.path().join("C");
+    std::fs::create_dir_all(a.join("steamapps")).unwrap();
+    write_manifest(&c, APP);
+    let install = c.join("steamapps/common/Game");
+    std::fs::create_dir_all(&install).unwrap();
+    let config = config_with_library(&a);
+    // Not in any libraryfolders.vdf.
+    assert_eq!(game_library_root(&config, APP, None), a);
+    assert_eq!(game_library_root(&config, APP, Some(&install)), c);
+    assert_eq!(
+        proton_compat_prefix(&config, APP, Some(&install)),
+        compat_data_dir(&c, APP).join("pfx")
+    );
+    let pfx = compat_data_dir(&c, APP).join("pfx");
+    std::fs::create_dir_all(pfx.join("drive_c")).unwrap();
+    let store = crate::core::models::UserConfigStore::default();
+    assert_eq!(game_save_prefix(&config, APP, &store, Some(&install)), pfx);
+}
+
+#[test]
+fn install_path_needs_manifest_and_layout() {
+    let tmp = tempfile::tempdir().unwrap();
+    let c = tmp.path().join("C");
+    let install = c.join("steamapps/common/Game");
+    std::fs::create_dir_all(&install).unwrap();
+    // No appmanifest yet.
+    assert_eq!(library_from_install_path(&install, APP), None);
+    write_manifest(&c, APP);
+    assert_eq!(library_from_install_path(&install, APP), Some(c.clone()));
+    // Wrong layout is ignored.
+    let odd = c.join("games/Game");
+    std::fs::create_dir_all(&odd).unwrap();
+    assert_eq!(library_from_install_path(&odd, APP), None);
 }

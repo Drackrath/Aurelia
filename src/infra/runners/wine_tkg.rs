@@ -63,8 +63,11 @@ impl SteamLayout {
             PathBuf::new()
         };
         // Compatdata follows the game's library.
-        let game_library =
-            crate::core::utils::game_library_root(&ctx.launcher_config, ctx.app.app_id);
+        let game_library = crate::core::utils::game_library_root(
+            &ctx.launcher_config,
+            ctx.app.app_id,
+            ctx.app.install_path.as_deref().map(std::path::Path::new),
+        );
         let compat_data_path = game_compat_data_path(
             &game_library,
             ctx.app.app_id,
@@ -1172,6 +1175,7 @@ fn effective_game_prefix(ctx: &LaunchContext) -> PathBuf {
         &ctx.launcher_config,
         ctx.app.app_id,
         ctx.user_config.as_ref(),
+        ctx.app.install_path.as_deref().map(std::path::Path::new),
     )
 }
 

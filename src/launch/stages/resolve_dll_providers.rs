@@ -71,6 +71,7 @@ impl PipelineStage for ResolveDllProvidersStage {
                 config,
                 app.app_id,
                 ctx.user_config.as_ref(),
+                app.install_path.as_deref().map(std::path::Path::new),
             ))
         } else {
             None
