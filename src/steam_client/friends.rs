@@ -294,7 +294,8 @@ impl SteamClient {
     /// `CMsgClientPersonaState` messages. A no-op for an empty id list.
     pub async fn request_friend_data(&self, ids: &[u64]) -> Result<()> {
         let connection = self.require_connection()?;
-        if ids.is_empty() {
+        // Offline asks overwrite other clients' rosters.
+        if ids.is_empty() || self.announced_persona().is_none() {
             return Ok(());
         }
         let mut req = CMsgClientRequestFriendData::new();
