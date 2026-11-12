@@ -28,20 +28,37 @@ pub fn extract_quoted_values(line: &str) -> Vec<String> {
 
 /// Writes `steam_appid.txt` only when missing.
 pub fn ensure_steam_appid(dir: &Path, app_id: u32) -> std::io::Result<bool> {
-    use std::io::Write;
     let path = dir.join("steam_appid.txt");
     match std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&path)
     {
-        Ok(mut file) => {
-            file.write_all(app_id.to_string().as_bytes())?;
+        Ok(file) => {
+            write_appid_or_remove(&path, file, app_id)?;
             Ok(true)
         }
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
         Err(e) => Err(e),
     }
+}
+
+/// Writes; removes `path` on failure.
+fn write_appid_or_remove(
+    path: &Path,
+    mut file: impl std::io::Write,
+    app_id: u32,
+) -> std::io::Result<()> {
+    let result = file
+        .write_all(app_id.to_string().as_bytes())
+        .and_then(|()| file.flush());
+    drop(file);
+    if let Err(e) = result {
+        // Partial file blocks later retries.
+        let _ = std::fs::remove_file(path);
+        return Err(e);
+    }
+    Ok(())
 }
 
 /// [`ensure_steam_appid`] that logs instead of failing.
@@ -763,15 +780,83 @@ pub fn wait_until(
     }
 }
 
-/// `steam` on PATH, else `<root>/steam.sh`.
-pub fn steam_launcher_program(
+/// Flatpak app id of Valve's Steam.
+pub const STEAM_FLATPAK_APP_ID: &str = "com.valvesoftware.Steam";
+
+/// Program plus leading args starting Steam.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SteamLauncher {
+    pub program: PathBuf,
+    pub prefix_args: Vec<String>,
+}
+
+/// Sandboxed packaging of a Steam root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SteamRootKind {
+    Native,
+    Flatpak,
+    Snap,
+}
+
+/// Classifies a Steam root by path.
+pub fn steam_root_kind(root: &Path) -> SteamRootKind {
+    let check = |p: &Path| {
+        let text = p.to_string_lossy();
+        if text.contains(&format!("/.var/app/{STEAM_FLATPAK_APP_ID}/"))
+            || text.ends_with(&format!("/.var/app/{STEAM_FLATPAK_APP_ID}"))
+        {
+            Some(SteamRootKind::Flatpak)
+        } else if text.contains("/snap/steam/") {
+            Some(SteamRootKind::Snap)
+        } else {
+            None
+        }
+    };
+    check(root)
+        .or_else(|| std::fs::canonicalize(root).ok().and_then(|c| check(&c)))
+        .unwrap_or(SteamRootKind::Native)
+}
+
+/// Steam launcher; sandboxed roots skip `steam.sh`.
+pub fn steam_launcher(
     path_env: Option<&std::ffi::OsStr>,
     root: Option<&Path>,
-) -> Option<PathBuf> {
-    find_on_path("steam", path_env).or_else(|| {
-        root.map(|r| r.join("steam.sh"))
+    flatpak_dirs: &[PathBuf],
+) -> Option<SteamLauncher> {
+    let kind = root.map_or(SteamRootKind::Native, steam_root_kind);
+    let flatpak_run = || {
+        let installed = kind == SteamRootKind::Flatpak || flatpak_dirs.iter().any(|d| d.is_dir());
+        if !installed {
+            return None;
+        }
+        find_on_path("flatpak", path_env).map(|program| SteamLauncher {
+            program,
+            prefix_args: vec!["run".into(), STEAM_FLATPAK_APP_ID.into()],
+        })
+    };
+    // Live Flatpak root: use flatpak.
+    if kind == SteamRootKind::Flatpak
+        && let Some(launcher) = flatpak_run()
+    {
+        return Some(launcher);
+    }
+    if let Some(program) = find_on_path("steam", path_env) {
+        return Some(SteamLauncher {
+            program,
+            prefix_args: Vec::new(),
+        });
+    }
+    if kind == SteamRootKind::Native
+        && let Some(script) = root
+            .map(|r| r.join("steam.sh"))
             .filter(|script| script.is_file())
-    })
+    {
+        return Some(SteamLauncher {
+            program: script,
+            prefix_args: Vec::new(),
+        });
+    }
+    flatpak_run()
 }
 
 /// Spawns Steam detached and reaps it.
@@ -779,11 +864,15 @@ pub fn steam_launcher_program(
 pub fn start_steam_detached(args: &[&str]) -> Result<()> {
     let path_env = std::env::var_os("PATH");
     let root = crate::core::config::detect_steam_path();
-    let Some(program) = steam_launcher_program(path_env.as_deref(), root.as_deref()) else {
-        bail!("no `steam` on PATH and no steam.sh in the Steam root");
+    let flatpak_dirs = steam_flatpak_app_dirs();
+    let Some(launcher) = steam_launcher(path_env.as_deref(), root.as_deref(), &flatpak_dirs) else {
+        tracing::warn!("no usable Steam launcher found");
+        bail!("no `steam` on PATH, no host steam.sh and no Flatpak Steam");
     };
+    let program = launcher.program;
     let mut cmd = std::process::Command::new(&program);
-    cmd.args(args)
+    cmd.args(&launcher.prefix_args)
+        .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
@@ -1434,6 +1523,17 @@ pub fn merge_dll_overrides(existing: &str, entries: &[(String, String)]) -> Stri
             .map(|(_, name, mode)| format!("{name}={mode}")),
     );
     out.join(";")
+}
+
+/// Adds only DLLs not yet present.
+pub fn fill_dll_overrides(existing: &str, entries: &[(String, String)]) -> String {
+    let present = dll_override_names(existing);
+    let missing: Vec<(String, String)> = entries
+        .iter()
+        .filter(|(name, _)| !present.contains(&normalize_dll_name(name)))
+        .cloned()
+        .collect();
+    merge_dll_overrides(existing, &missing)
 }
 
 /// Parses user overrides into entries.

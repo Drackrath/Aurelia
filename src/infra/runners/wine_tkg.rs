@@ -909,6 +909,17 @@ impl Runner for WineTkgRunner {
                     .is_some_and(|c| c.env_variables.contains_key(key))
             };
             for (key, val) in &ctx.game_fixups.env {
+                if key == "WINEDLLOVERRIDES" {
+                    // Fill gaps; computed entries win.
+                    let computed = env.get(key).cloned().unwrap_or_default();
+                    let merged = crate::core::utils::fill_dll_overrides(
+                        &computed,
+                        &crate::core::utils::dll_override_entries(val),
+                    );
+                    tracing::info!("Applying fixup DLL overrides: {}", merged);
+                    env.insert(key.clone(), merged);
+                    continue;
+                }
                 if user_has(key) {
                     tracing::info!(
                         "Skipping fixup env {} (explicit per-game value present)",
