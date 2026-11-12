@@ -283,3 +283,32 @@ fn proton_anticheat_takes_eac_or_battleye() {
     assert!(Cli::try_parse_from(["aurelia", "proton", "anticheat", "battleye"]).is_ok());
     assert!(Cli::try_parse_from(["aurelia", "proton", "anticheat", "vac"]).is_err());
 }
+
+#[test]
+fn relative_path_args_resolve_against_cwd() {
+    let cwd = std::env::current_dir().unwrap();
+    let mut cli = Cli::try_parse_from(["aurelia", "image", "570", "-o", "x.jpg"]).unwrap();
+    absolutize_path_args(&mut cli.command);
+    let Command::Image { output, .. } = cli.command else {
+        panic!("expected image");
+    };
+    assert_eq!(output, Some(cwd.join("x.jpg")));
+
+    // Runner names are not paths.
+    let mut cli =
+        Cli::try_parse_from(["aurelia", "play", "570", "--proton", "GE-Proton9-20"]).unwrap();
+    absolutize_path_args(&mut cli.command);
+    let Command::Play { proton, .. } = cli.command else {
+        panic!("expected play");
+    };
+    assert_eq!(proton.as_deref(), Some("GE-Proton9-20"));
+
+    let mut cli =
+        Cli::try_parse_from(["aurelia", "play", "570", "--proton", "./runners/p"]).unwrap();
+    absolutize_path_args(&mut cli.command);
+    let Command::Play { proton, .. } = cli.command else {
+        panic!("expected play");
+    };
+    let expected = cwd.join("./runners/p").to_string_lossy().into_owned();
+    assert_eq!(proton, Some(expected));
+}

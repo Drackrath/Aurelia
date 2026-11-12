@@ -10,6 +10,7 @@
 //! behalf of many thin-client invocations while each still sees its own streams.
 
 use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tokio::sync::{Mutex, mpsc};
@@ -32,6 +33,8 @@ pub struct OutChunk {
 pub struct OutputCtx {
     out: mpsc::UnboundedSender<OutChunk>,
     stdin: Arc<Mutex<DaemonStdin>>,
+    /// Client's working directory, if sent.
+    cwd: Option<PathBuf>,
 }
 
 impl OutputCtx {
@@ -40,12 +43,35 @@ impl OutputCtx {
     pub fn new(
         out: mpsc::UnboundedSender<OutChunk>,
         stdin_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+        cwd: Option<PathBuf>,
     ) -> Self {
         Self {
             out,
             stdin: Arc::new(Mutex::new(DaemonStdin::new(stdin_rx))),
+            cwd,
         }
     }
+}
+
+/// Resolve against the client's cwd.
+pub fn user_path(p: &Path) -> PathBuf {
+    if p.is_absolute() || p.as_os_str().is_empty() {
+        return p.to_path_buf();
+    }
+    let base = CTX
+        .try_with(|ctx| ctx.cwd.clone())
+        .ok()
+        .flatten()
+        .or_else(|| std::env::current_dir().ok());
+    match base {
+        Some(base) => base.join(p),
+        None => p.to_path_buf(),
+    }
+}
+
+/// [`user_path`] for string arguments.
+pub fn user_path_str(s: String) -> String {
+    user_path(Path::new(&s)).to_string_lossy().into_owned()
 }
 
 tokio::task_local! {

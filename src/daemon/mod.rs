@@ -39,6 +39,9 @@ struct Header {
     /// Client's canonical config dir.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     config_dir: Option<std::path::PathBuf>,
+    /// Client's working directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cwd: Option<std::path::PathBuf>,
 }
 
 /// This process's canonical config dir.

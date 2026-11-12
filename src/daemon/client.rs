@@ -206,6 +206,7 @@ where
     let header = serde_json::to_vec(&Header {
         argv,
         config_dir: super::own_config_dir(),
+        cwd: std::env::current_dir().ok(),
     })?;
     proto::send_frame(&writer, proto::C_HEADER, &header)
         .await

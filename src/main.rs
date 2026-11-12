@@ -257,8 +257,67 @@ async fn run_and_report(cli: Cli) -> i32 {
     }
 }
 
-async fn run(cli: Cli) -> Result<()> {
+/// Absolutize path args for the daemon.
+///
+/// New path args go here.
+pub(crate) fn absolutize_path_args(command: &mut Command) {
+    use crate::output::{user_path, user_path_str};
+    let path = |p: &mut std::path::PathBuf| *p = user_path(p);
+    let opt_path = |p: &mut Option<std::path::PathBuf>| {
+        if let Some(p) = p {
+            *p = user_path(p);
+        }
+    };
+    let opt_str = |s: &mut Option<String>| {
+        if let Some(v) = s.take() {
+            *s = Some(user_path_str(v));
+        }
+    };
+    // Runner names stay untouched.
+    let proton = |s: &mut Option<String>| {
+        if let Some(v) = s.take() {
+            *s = Some(if v.contains(['/', '\\']) {
+                user_path_str(v)
+            } else {
+                v
+            });
+        }
+    };
+    match command {
+        Command::Play {
+            proton: p, script, ..
+        } => {
+            proton(p);
+            opt_path(script);
+        }
+        Command::Image { output, .. } => opt_path(output),
+        Command::Move { library, .. }
+        | Command::Relink { library, .. }
+        | Command::Import { library, .. } => path(library),
+        Command::Cloud {
+            command: CloudCommand::Sync { path: p, .. },
+        } => opt_path(p),
+        Command::Luxtorpeda {
+            command: LuxtorpedaCommand::Path { path: p, .. },
+        }
+        | Command::Umu {
+            command: UmuCommand::Path { path: p, .. },
+        } => opt_str(p),
+        Command::Install(args) => opt_str(&mut args.library),
+        Command::Downgrade(args) => opt_str(&mut args.library),
+        Command::Config {
+            command: ConfigCommand::Game { args },
+        } => {
+            proton(&mut args.proton);
+            opt_path(&mut args.launch_script);
+        }
+        _ => {}
+    }
+}
+
+async fn run(mut cli: Cli) -> Result<()> {
     aurelia::core::config::ensure_config_dirs().await?;
+    absolutize_path_args(&mut cli.command);
 
     let json = cli.json;
     match cli.command {

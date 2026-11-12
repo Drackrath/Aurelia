@@ -48,15 +48,21 @@ fn header_round_trips_with_and_without_config_dir() {
     let old: Header = serde_json::from_str(r#"{"argv":["aurelia","list"]}"#).unwrap();
     assert_eq!(old.argv, ["aurelia", "list"]);
     assert!(old.config_dir.is_none());
+    assert!(old.cwd.is_none());
 
     let h = Header {
         argv: vec!["aurelia".into()],
         config_dir: Some("/tmp/iso".into()),
+        cwd: Some("/home/u/shots".into()),
     };
     let back: Header = serde_json::from_slice(&serde_json::to_vec(&h).unwrap()).unwrap();
     assert_eq!(
         back.config_dir.as_deref(),
         Some(std::path::Path::new("/tmp/iso"))
+    );
+    assert_eq!(
+        back.cwd.as_deref(),
+        Some(std::path::Path::new("/home/u/shots"))
     );
 }
 

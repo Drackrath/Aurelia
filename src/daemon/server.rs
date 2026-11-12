@@ -233,7 +233,7 @@ async fn auto_resume_installs() {
     let (out_tx, _) = tokio::sync::mpsc::unbounded_channel();
     let (_, in_rx) = tokio::sync::mpsc::unbounded_channel();
     let resume = crate::commands::resume_entries(&ids, true, true);
-    if let Err(e) = crate::output::scoped(OutputCtx::new(out_tx, in_rx), resume).await {
+    if let Err(e) = crate::output::scoped(OutputCtx::new(out_tx, in_rx, None), resume).await {
         tracing::warn!("daemon: auto-resume: {e:#}");
     }
 }
@@ -403,7 +403,7 @@ where
 
     // Run the command with IO routed to this connection. Dropping `ctx` when the
     // scope ends closes `out_tx`, which ends `writer_task`.
-    let ctx = OutputCtx::new(out_tx, in_rx);
+    let ctx = OutputCtx::new(out_tx, in_rx, header.cwd);
     let refused = refusal.is_some();
     let run_argv = argv.clone();
     let run = async move {
