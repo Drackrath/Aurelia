@@ -200,6 +200,11 @@ pub fn apply_persona_state(roster: &mut Roster, msg: &CMsgClientPersonaState) {
     }
 }
 
+/// Announcing would sign it out.
+pub fn host_steam_owns_presence() -> bool {
+    crate::core::utils::is_steam_running()
+}
+
 /// Drain steam-vent's buffer of messages that arrived with no registered
 /// subscriber (its internal `rest` ring buffer) and fold any friends-list /
 /// persona-state messages into `roster`.
@@ -271,11 +276,12 @@ impl SteamClient {
         }
     }
 
-    /// Announce the presence configured in `LauncherConfig::chat_presence`
-    /// (defaults to invisible/"offline"). Falls back to invisible if the config
-    /// can't be read. Public so an interactive chat session can announce presence
-    /// when running standalone (the daemon's friends watcher already does so).
+    /// Announce `chat_presence` unless host Steam runs.
     pub async fn announce_configured_presence(&self) -> Result<()> {
+        if host_steam_owns_presence() {
+            tracing::debug!("host Steam client running; not announcing presence");
+            return Ok(());
+        }
         let persona_state = crate::core::config::load_launcher_config()
             .await
             .map(|c| c.chat_presence.persona_state())
@@ -359,12 +365,7 @@ impl SteamClient {
         let mut playing_stream = connection.on::<CMsgClientPlayingSessionState>();
         let mut logoff_stream = connection.on::<CMsgClientLoggedOff>();
 
-        // Announce the configured presence so Steam delivers friend persona data
-        // (and incoming chat). A refresh-token session is otherwise offline.
-        if let Err(e) = self.announce_configured_presence().await {
-            tracing::warn!("failed to announce presence: {e}");
-        }
-
+        // Announcing here signs out other clients.
         // Recover the logon-time friends/persona burst that landed in `rest` before
         // the subscriptions above existed; later updates arrive via the streams.
         let initial_ids: Vec<u64> = {

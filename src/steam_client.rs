@@ -574,7 +574,7 @@ pub mod genres_table;
 
 pub use chat::{PlayingSession, check_invite};
 pub use collections::RemoteNamespace;
-pub use friends::{AddedFriend, Friend, Roster, WatcherEnd};
+pub use friends::{AddedFriend, Friend, Roster, WatcherEnd, host_steam_owns_presence};
 pub use market::{
     InventoryItem, MarketPrice, MarketSearchResult, MyMarketState, WalletBalance, inventory_via,
     market_price, market_search, my_listings_via, wallet_via,
