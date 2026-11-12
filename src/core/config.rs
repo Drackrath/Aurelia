@@ -291,13 +291,45 @@ pub fn detect_steam_path() -> Option<PathBuf> {
     #[cfg(not(target_os = "windows"))]
     {
         let home = std::env::var("HOME").ok()?;
-        let candidates = [
+        // Legacy order first, then Flatpak/Snap.
+        let mut candidates = vec![
             PathBuf::from(&home).join(".steam/steam"),
             PathBuf::from(&home).join(".local/share/Steam"),
             PathBuf::from(&home).join(".steam/root"),
         ];
-        candidates.into_iter().find(|path| path.exists())
+        candidates.extend(crate::library::steam_root_candidates());
+        pick_steam_root(&candidates)
     }
+}
+
+/// Newest `loginusers.vdf` root, else first existing.
+pub fn pick_steam_root(candidates: &[PathBuf]) -> Option<PathBuf> {
+    let mut seen: Vec<PathBuf> = Vec::new();
+    let mut first: Option<PathBuf> = None;
+    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
+    for path in candidates {
+        if !path.exists() {
+            continue;
+        }
+        // Symlinked roots count once.
+        let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+        if seen.contains(&canonical) {
+            continue;
+        }
+        seen.push(canonical);
+        if first.is_none() {
+            first = Some(path.clone());
+        }
+        let modified = std::fs::metadata(path.join("config/loginusers.vdf"))
+            .and_then(|m| m.modified())
+            .ok();
+        if let Some(modified) = modified
+            && best.as_ref().is_none_or(|(t, _)| modified > *t)
+        {
+            best = Some((modified, path.clone()));
+        }
+    }
+    best.map(|(_, p)| p).or(first)
 }
 
 /// Resolve the user's home directory in a cross-platform way.
