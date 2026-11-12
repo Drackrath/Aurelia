@@ -56,6 +56,16 @@ fn mode_and_names_lookup() {
 }
 
 #[test]
+fn fill_keeps_existing_and_adds_missing() {
+    let merged = super::fill_dll_overrides(
+        "d3d11,dxgi=n;steamclient=n",
+        &[e("DXGI.dll", "b"), e("xlive", "b")],
+    );
+    assert_eq!(merged, "d3d11,dxgi=n;steamclient=n;xlive=b");
+    assert_eq!(super::fill_dll_overrides("", &[e("a", "n")]), "a=n");
+}
+
+#[test]
 fn entries_expand_comma_groups() {
     assert_eq!(
         dll_override_entries("a,b=n;c=b"),

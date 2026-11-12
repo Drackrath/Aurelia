@@ -1525,6 +1525,17 @@ pub fn merge_dll_overrides(existing: &str, entries: &[(String, String)]) -> Stri
     out.join(";")
 }
 
+/// Adds only DLLs not yet present.
+pub fn fill_dll_overrides(existing: &str, entries: &[(String, String)]) -> String {
+    let present = dll_override_names(existing);
+    let missing: Vec<(String, String)> = entries
+        .iter()
+        .filter(|(name, _)| !present.contains(&normalize_dll_name(name)))
+        .cloned()
+        .collect();
+    merge_dll_overrides(existing, &missing)
+}
+
 /// Parses user overrides into entries.
 pub fn dll_override_entries(overrides: &str) -> Vec<(String, String)> {
     parse_dll_override_groups(overrides)

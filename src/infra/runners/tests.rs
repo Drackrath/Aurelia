@@ -195,6 +195,9 @@ mod tests {
         use crate::core::models::UserAppConfig;
         let runner = WineTkgRunner;
         let mut ctx = mock_context();
+        // Standalone regardless of host Steam.
+        ctx.launcher_config.steam_runtime_policy =
+            crate::core::models::SteamRuntimePolicy::Disabled;
         let base = runner.build_env(&ctx).await.unwrap();
         let computed = base.get("WINEDLLOVERRIDES").unwrap().clone();
         assert!(computed.contains("steamclient=n"), "computed: {computed}");
@@ -219,6 +222,36 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn test_fixup_env_dll_overrides_fill_only() {
+        let runner = WineTkgRunner;
+        let mut ctx = mock_context();
+        // Standalone regardless of host Steam.
+        ctx.launcher_config.steam_runtime_policy =
+            crate::core::models::SteamRuntimePolicy::Disabled;
+        ctx.game_fixups = crate::launch::fixups::GameFixups {
+            env: vec![(
+                "WINEDLLOVERRIDES".to_string(),
+                "steamclient=b;xlive=n".to_string(),
+            )],
+            dll_overrides: vec![],
+        };
+        let env = runner.build_env(&ctx).await.unwrap();
+        let merged = env.get("WINEDLLOVERRIDES").unwrap();
+        // Computed stub wins; xlive added.
+        assert_eq!(
+            crate::core::utils::dll_override_mode(merged, "steamclient").as_deref(),
+            Some("n"),
+            "{merged}"
+        );
+        assert_eq!(
+            crate::core::utils::dll_override_mode(merged, "xlive").as_deref(),
+            Some("n"),
+            "{merged}"
+        );
+        assert!(merged.contains("lsteamclient="), "{merged}");
     }
 
     #[tokio::test]
