@@ -257,9 +257,7 @@ async fn run_and_report(cli: Cli) -> i32 {
     }
 }
 
-/// Absolutize path args for the daemon.
-///
-/// New path args go here.
+/// Absolutize path args; add new ones.
 pub(crate) fn absolutize_path_args(command: &mut Command) {
     use crate::output::{user_path, user_path_str};
     let path = |p: &mut std::path::PathBuf| *p = user_path(p);

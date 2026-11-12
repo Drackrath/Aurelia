@@ -212,9 +212,7 @@ pub(crate) async fn cmd_cloud_sync(
     Ok(())
 }
 
-/// OS the game would launch as.
-///
-/// Mirrors `play`'s default target; unknown means Windows.
+/// Launch OS like `play`; default Windows.
 async fn cloud_target_os(
     client: &mut aurelia::steam_client::SteamClient,
     app_id: u32,

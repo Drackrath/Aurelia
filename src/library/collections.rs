@@ -200,9 +200,7 @@ impl CollectionsStore {
         crate::core::atomic::write_atomic(&path, text.as_bytes())
     }
 
-    /// Locked load, edit, save; returns store.
-    ///
-    /// Never call across a network request.
+    /// Locked load-edit-save; never across network.
     pub fn edit<T>(f: impl FnOnce(&mut CollectionsStore) -> Result<T>) -> Result<(T, Self)> {
         let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut store = Self::load()?;
@@ -272,7 +270,7 @@ impl CollectionsStore {
         }
     }
 
-    /// Create a new **static** collection. Returns its generated id.
+    /// Create a static collection; returns id.
     pub fn create(&mut self, name: &str) -> Result<String> {
         let name = name.trim();
         if name.is_empty() {
@@ -291,8 +289,7 @@ impl CollectionsStore {
         Ok(id)
     }
 
-    /// Mark a collection deleted. Built-ins can't be deleted (only cleared);
-    /// dynamic collections aren't editable via the CLI.
+    /// Mark deleted; refuses built-ins, dynamic.
     pub fn delete(&mut self, name_or_id: &str) -> Result<()> {
         let idx = self.resolve_index(name_or_id)?;
         let c = &self.collections[idx];
@@ -323,12 +320,12 @@ impl CollectionsStore {
         Ok(())
     }
 
-    /// Add app ids to a static collection.
+    /// Add app ids to a collection.
     pub fn add(&mut self, name_or_id: &str, app_ids: &[u32]) -> Result<()> {
         self.set_membership(name_or_id, app_ids, true)
     }
 
-    /// Remove app ids from a static collection (tombstone them).
+    /// Tombstone app ids in a collection.
     pub fn remove(&mut self, name_or_id: &str, app_ids: &[u32]) -> Result<()> {
         self.set_membership(name_or_id, app_ids, false)
     }
@@ -370,12 +367,7 @@ impl CollectionsStore {
 
     // ---- Sync -----------------------------------------------------------
 
-    /// Merge a downloaded remote snapshot into the local store (pure; no I/O).
-    ///
-    /// Semantics: pending ids keep local state; others follow remote. Remote
-    /// wins for `name` and `filter_spec`; brand-new remote collections are added;
-    /// a remote deletion (tombstone) drops the local collection. Sets
-    /// `namespace_version` from the remote.
+    /// Merge remote; pending ids stay local.
     fn apply_remote(&mut self, remote: RemoteNamespace) {
         for (key, value) in remote.entries {
             let id = key.strip_prefix(KEY_PREFIX).unwrap_or(&key).to_string();
@@ -457,7 +449,7 @@ impl CollectionsStore {
     }
 }
 
-/// Legacy store: local explicit diffs become pending.
+/// Legacy: local explicit diffs become pending.
 fn seed_pending(local: &mut Collection, remote: &Collection) {
     let explicit: Vec<u32> = local.added.iter().chain(&local.removed).copied().collect();
     for app in explicit {
@@ -469,7 +461,7 @@ fn seed_pending(local: &mut Collection, remote: &Collection) {
     }
 }
 
-/// Pull remote collections from Steam, merge into the local store, and save.
+/// Pull, merge and save remote collections.
 pub async fn pull(client: &SteamClient) -> Result<CollectionsStore> {
     let remote = client
         .download_collections()

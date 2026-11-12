@@ -759,7 +759,7 @@ fn upload_deadline(len: usize) -> Duration {
     Duration::from_secs(secs).max(UPLOAD_MIN_DEADLINE)
 }
 
-/// Run `op`, retrying transient failures after `delays`.
+/// Run `op`; retry transient failures.
 async fn retry_transfer<T, F, Fut>(what: &str, delays: &[Duration], mut op: F) -> Result<T>
 where
     F: FnMut(usize) -> Fut,

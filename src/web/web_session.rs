@@ -24,7 +24,7 @@ pub struct WebSession {
     /// The `sessionid` CSRF token. Steam only checks that this cookie matches the
     /// `sessionid` form field on POSTs, so a client-generated value is accepted.
     sessionid: String,
-    /// Pre-rendered `Cookie:` header value; grows with server cookies.
+    /// `Cookie:` header; gains server cookies.
     cookie: std::sync::Arc<std::sync::Mutex<crate::core::secret::Secret>>,
 }
 
@@ -100,7 +100,7 @@ impl WebSession {
         guard.expose().into()
     }
 
-    /// Visit the check once; keep its cookies.
+    /// Visit check once, keep cookies.
     async fn pass_eligibility_check(&self, check_url: &str) -> Result<()> {
         tracing::debug!("following Steam market eligibility check");
         let resp = self.send_get(check_url).await?;
@@ -158,7 +158,7 @@ fn ineligible_error() -> anyhow::Error {
     .into()
 }
 
-/// Name and value of a `Set-Cookie` header.
+/// `Set-Cookie` header's name and value.
 fn parse_set_cookie(header: &str) -> Option<(String, String)> {
     let pair = header.split(';').next()?.trim();
     let (name, value) = pair.split_once('=')?;

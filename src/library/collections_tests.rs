@@ -164,7 +164,7 @@ fn pending_local_edits_survive_stale_remote() {
     // Re-add 10 locally, remove 5.
     store.add("uc-a", &[10]).unwrap();
     store.remove("uc-a", &[5]).unwrap();
-    // Remote: 10 removed, 5 added, 7 new.
+    // Stale remote state.
     store.apply_remote(remote_of(2, &[coll("uc-a", vec![5, 7], vec![10])]));
     let a = store.resolve("uc-a").unwrap();
     assert!(a.contains(10));

@@ -11,15 +11,14 @@ use tokio_stream::StreamExt;
 pub type CodeReader =
     std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<Option<String>>> + Send>>;
 
-/// Run `work`, feeding one line into `writer`.
-///
-/// Same task, so task-locals survive.
+/// Run `work`; feed one line in.
 pub(crate) async fn feed_code_while<F: std::future::Future>(
     work: F,
     read_code: CodeReader,
     mut writer: tokio::io::DuplexStream,
 ) -> F::Output {
     tokio::pin!(work);
+    // Same task keeps task-locals.
     let feed = async move {
         if let Ok(Some(line)) = read_code.await {
             let _ = writer
@@ -393,7 +392,7 @@ impl SteamClient {
     /// Log in with account credentials.
     ///
     /// * `guard_code` — a Steam Guard code supplied up front (non-interactive).
-    /// * `interactive_pin` — Guard code source, if prompting.
+    /// * `interactive_pin` — Guard code source.
     pub async fn login(
         &mut self,
         account_name: String,

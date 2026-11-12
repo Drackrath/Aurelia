@@ -249,11 +249,7 @@ impl SteamClient {
         Ok(out)
     }
 
-    /// Fetch the app's Steam Auto-Cloud `savefiles` rules from PICS appinfo. These
-    /// describe where the game's saves live on disk so Cloud sync can discover and
-    /// upload brand-new local saves (not just files already in the cloud). Returns
-    /// an empty config for apps with no UFS section.
-    /// Includes per-OS `rootoverrides`.
+    /// Fetch the app's PICS UFS config.
     pub async fn fetch_ufs_config(&self, appid: u32) -> Result<UfsConfig> {
         let buffer = self
             .pics_buffer(
