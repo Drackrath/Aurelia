@@ -616,14 +616,20 @@ impl Runner for WineTkgRunner {
                     == crate::launch::dll_provider_resolver::DllProvider::Runner
                     && res.name.contains("nvapi"))
             {
-                // Ensure native wins for game-local or non-symlinked custom DLLs
-                if !dll_overrides.contains(&format!("{}=n", res.name)) {
+                // Native must win; replace by name.
+                let already_native =
+                    crate::core::utils::dll_override_mode(&dll_overrides, &res.name)
+                        .is_some_and(|m| m.starts_with('n'));
+                if !already_native {
                     tracing::info!(
                         "Adding native override for resolved DLL: {} (provider: {:?})",
                         res.name,
                         res.chosen_provider
                     );
-                    dll_overrides.push_str(&format!(";{}=n", res.name));
+                    dll_overrides = crate::core::utils::merge_dll_overrides(
+                        &dll_overrides,
+                        &[(res.name.clone(), "n".to_string())],
+                    );
                 }
             } else if res.chosen_provider
                 == crate::launch::dll_provider_resolver::DllProvider::Internal
@@ -639,14 +645,9 @@ impl Runner for WineTkgRunner {
         // entries (policy/provider-derived, i.e. the explicit resolution) WIN: a
         // fixup is only appended for a DLL not already present in the override string.
         if !ctx.game_fixups.dll_overrides.is_empty() {
-            let existing_names: std::collections::HashSet<String> = dll_overrides
-                .split(';')
-                .filter_map(|e| e.split('=').next())
-                .map(|s| s.trim().trim_end_matches(".dll").to_lowercase())
-                .filter(|s| !s.is_empty())
-                .collect();
+            let existing_names = crate::core::utils::dll_override_names(&dll_overrides);
             for (dll, mode) in &ctx.game_fixups.dll_overrides {
-                let key = dll.trim_end_matches(".dll").to_lowercase();
+                let key = crate::core::utils::normalize_dll_name(dll);
                 if existing_names.contains(&key) {
                     tracing::info!(
                         "Skipping fixup DLL override {}={} (explicit override already present)",
@@ -656,10 +657,10 @@ impl Runner for WineTkgRunner {
                     continue;
                 }
                 tracing::info!("Applying fixup DLL override: {}={}", dll, mode);
-                if !dll_overrides.is_empty() {
-                    dll_overrides.push(';');
-                }
-                dll_overrides.push_str(&format!("{}={}", dll, mode));
+                dll_overrides = crate::core::utils::merge_dll_overrides(
+                    &dll_overrides,
+                    &[(dll.clone(), mode.clone())],
+                );
             }
         }
 
@@ -919,6 +920,17 @@ impl Runner for WineTkgRunner {
 
         if let Some(config) = &ctx.user_config {
             for (key, val) in &config.env_variables {
+                if key == "WINEDLLOVERRIDES" {
+                    // User wins per DLL only.
+                    let computed = env.get(key).cloned().unwrap_or_default();
+                    let merged = crate::core::utils::merge_dll_overrides(
+                        &computed,
+                        &crate::core::utils::dll_override_entries(val),
+                    );
+                    tracing::info!("Final WINEDLLOVERRIDES (with per-game env): {}", merged);
+                    env.insert(key.clone(), merged);
+                    continue;
+                }
                 env.insert(key.clone(), val.clone());
             }
 

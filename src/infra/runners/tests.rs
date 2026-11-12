@@ -191,6 +191,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_user_dll_overrides_merge_per_dll() {
+        use crate::core::models::UserAppConfig;
+        let runner = WineTkgRunner;
+        let mut ctx = mock_context();
+        let base = runner.build_env(&ctx).await.unwrap();
+        let computed = base.get("WINEDLLOVERRIDES").unwrap().clone();
+        assert!(computed.contains("steamclient=n"), "computed: {computed}");
+
+        let mut user = UserAppConfig::default();
+        user.env_variables
+            .insert("WINEDLLOVERRIDES".to_string(), "dxgi=b".to_string());
+        ctx.user_config = Some(user);
+        let env = runner.build_env(&ctx).await.unwrap();
+        let merged = env.get("WINEDLLOVERRIDES").unwrap();
+        // Stubs survive, dxgi changed only.
+        assert!(merged.contains("steamclient=n"), "merged: {merged}");
+        assert!(merged.contains("lsteamclient="), "merged: {merged}");
+        assert_eq!(
+            crate::core::utils::dll_override_mode(merged, "dxgi").as_deref(),
+            Some("b")
+        );
+        assert_eq!(
+            crate::core::utils::dll_override_entries(merged)
+                .iter()
+                .filter(|(n, _)| n == "dxgi")
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolver_entry_replaces_policy_entry() {
+        use crate::core::models::{GraphicsBackendPolicy, UserAppConfig};
+        use crate::launch::dll_provider_resolver::{DllProvider, DllResolution};
+        let runner = WineTkgRunner;
+        let mut ctx = mock_context();
+        let mut user = UserAppConfig::default();
+        user.graphics_layers.graphics_backend_policy = GraphicsBackendPolicy::WineD3D;
+        ctx.user_config = Some(user);
+        ctx.dll_resolutions = vec![DllResolution {
+            name: "d3d11".to_string(),
+            chosen_provider: DllProvider::GameLocal,
+            chosen_path: None,
+            fallback_reason: None,
+            candidates: Vec::new(),
+        }];
+        let env = runner.build_env(&ctx).await.unwrap();
+        let overrides = env.get("WINEDLLOVERRIDES").unwrap();
+        let d3d11: Vec<_> = crate::core::utils::dll_override_entries(overrides)
+            .into_iter()
+            .filter(|(n, _)| n == "d3d11")
+            .collect();
+        assert_eq!(
+            d3d11,
+            vec![("d3d11".to_string(), "n".to_string())],
+            "{overrides}"
+        );
+        assert!(!overrides.starts_with(';'));
+    }
+
+    #[tokio::test]
     async fn test_wine_tkg_runner_stubs() {
         // We can only test stubs that don't hit the filesystem hard or expect real Proton/Wine
         let runner = WineTkgRunner;
