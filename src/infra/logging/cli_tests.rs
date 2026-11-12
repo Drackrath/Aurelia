@@ -5,8 +5,34 @@ fn directives_escalate_with_verbosity() {
     assert_eq!(default_directives(0), "warn");
     assert!(default_directives(1).contains("steam_vent=info"));
     assert!(default_directives(2).contains("steam_vent=debug"));
-    assert_eq!(default_directives(3), "trace");
-    assert_eq!(default_directives(9), "trace");
+    assert!(default_directives(3).starts_with("trace"));
+    assert_eq!(default_directives(9), default_directives(3));
+}
+
+#[test]
+fn steam_vent_never_traces() {
+    for v in 0..=9 {
+        let d = default_directives(v);
+        assert!(!d.contains("steam_vent=trace"), "{d}");
+        if v >= 3 {
+            assert!(d.contains("steam_vent=debug"), "{d}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn relay_drops_steam_vent_trace_at_max_verbosity() {
+    let out = relayed_at(3, || {
+        tracing::trace!(target: "steam_vent::net", "vent-trace");
+        tracing::debug!(target: "steam_vent::net", "vent-debug");
+        tracing::trace!("app-trace");
+    })
+    .await;
+    assert!(!out.contains("vent-trace"), "{out}");
+    assert!(
+        out.contains("vent-debug") && out.contains("app-trace"),
+        "{out}"
+    );
 }
 
 #[test]
