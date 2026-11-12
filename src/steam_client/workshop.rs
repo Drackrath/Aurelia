@@ -28,6 +28,41 @@ use steam_vent_proto::steammessages_publishedfile_steamclient::{
 /// before giving up, as a backstop in addition to the visited-set cycle guard.
 const MAX_COLLECTION_DEPTH: usize = 8;
 
+/// `k_EWorkshopFileTypeCollection`.
+const FILE_TYPE_COLLECTION: u32 = 2;
+
+/// Expand one frontier; returns the next.
+fn expand_frontier(
+    frontier: Vec<u64>,
+    mut info: HashMap<u64, (WorkshopItemKind, Vec<u64>)>,
+    visited: &mut HashSet<u64>,
+    seen_leaf: &mut HashSet<u64>,
+    result: &mut Vec<u64>,
+) -> Vec<u64> {
+    let mut next = Vec::new();
+    for id in frontier {
+        match info.remove(&id) {
+            Some((WorkshopItemKind::Collection, children)) => {
+                for child in children {
+                    if visited.insert(child) {
+                        next.push(child);
+                    }
+                }
+            }
+            // Items, unknown ids: keep as leaves.
+            other => {
+                if let Some((_, required)) = other.filter(|(_, c)| !c.is_empty()) {
+                    tracing::debug!("workshop item {id} requires {required:?}");
+                }
+                if seen_leaf.insert(id) {
+                    result.push(id);
+                }
+            }
+        }
+    }
+    next
+}
+
 /// Map a `PublishedFileDetails` (from GetDetails or QueryFiles) into our
 /// [`WorkshopItem`]. `fallback_app_id` is used when the detail carries no
 /// `consumer_appid` (QueryFiles results sometimes omit it — we know the app we
@@ -39,8 +74,8 @@ fn detail_to_workshop_item(detail: &PublishedFileDetails, fallback_app_id: u32) 
         .map(|c| c.publishedfileid())
         .filter(|&cid| cid != 0)
         .collect();
-    // A collection is a Workshop entry whose payload is a list of member ids.
-    let kind = if !children.is_empty() || detail.num_children() > 0 {
+    // Item children are required items.
+    let kind = if detail.file_type() == FILE_TYPE_COLLECTION {
         WorkshopItemKind::Collection
     } else {
         WorkshopItemKind::Item
@@ -196,31 +231,12 @@ impl SteamClient {
             let details = self.fetch_published_file_details(&frontier).await?;
             // Map id -> kind/children for this frontier so we preserve the
             // first-seen order of `frontier` rather than the response order.
-            let mut info: HashMap<u64, (WorkshopItemKind, Vec<u64>)> = HashMap::new();
-            for d in details {
-                info.insert(d.id, (d.kind, d.children));
-            }
-
+            let info: HashMap<u64, (WorkshopItemKind, Vec<u64>)> = details
+                .into_iter()
+                .map(|d| (d.id, (d.kind, d.children)))
+                .collect();
             let current = std::mem::take(&mut frontier);
-            for id in current {
-                match info.remove(&id) {
-                    Some((WorkshopItemKind::Collection, children)) => {
-                        for child in children {
-                            if visited.insert(child) {
-                                frontier.push(child);
-                            }
-                        }
-                    }
-                    // Plain item, or an id Steam returned nothing for (skipped in
-                    // fetch_published_file_details). Unknown ids are treated as
-                    // leaves so the caller still sees them.
-                    _ => {
-                        if seen_leaf.insert(id) {
-                            result.push(id);
-                        }
-                    }
-                }
-            }
+            frontier = expand_frontier(current, info, &mut visited, &mut seen_leaf, &mut result);
 
             depth += 1;
         }
@@ -539,3 +555,7 @@ impl SteamClient {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "workshop_tests.rs"]
+mod tests;
