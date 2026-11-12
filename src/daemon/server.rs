@@ -244,7 +244,7 @@ use proto::SharedWriter;
 
 /// Read the opening frame and parse the argv header. The first frame on a connection
 /// must be the [`proto::C_HEADER`] frame carrying the request's argv.
-async fn read_header<R>(reader: &mut R) -> Result<Vec<String>>
+async fn read_header<R>(reader: &mut R) -> Result<Header>
 where
     R: AsyncRead + Unpin,
 {
@@ -253,7 +253,22 @@ where
         .context("client closed before sending a request header")?;
     anyhow::ensure!(channel == proto::C_HEADER, "expected a header frame first");
     let header: Header = serde_json::from_slice(&payload).context("malformed request header")?;
-    Ok(header.argv)
+    Ok(header)
+}
+
+/// Print a config-dir refusal; exit 2.
+fn report_refusal(argv: &[String], message: &str) -> i32 {
+    use clap::Parser;
+    let json = crate::cli::Cli::try_parse_from(argv).is_ok_and(|c| c.json);
+    if json {
+        crate::commands::print_json_line(&serde_json::json!({
+            "error": message,
+            "type": aurelia::core::error::ErrorKind::InvalidInput,
+        }));
+    } else {
+        crate::cli_eprintln!("Error: {message}");
+    }
+    2
 }
 
 /// Spawn the pump that forwards captured stdout/stderr chunks to the socket. Ends
@@ -363,7 +378,12 @@ where
 
     let (mut reader, writer) = proto::split_shared(stream);
 
-    let argv = read_header(&mut reader).await?;
+    let header = read_header(&mut reader).await?;
+    let argv = header.argv;
+    // Client path canonicalized here too.
+    let client_dir = header.config_dir.as_deref().map(transport::canonical);
+    let refusal =
+        super::config_dir_mismatch(client_dir.as_deref(), super::own_config_dir().as_deref());
 
     // Captured stdout/stderr → socket.
     let (out_tx, out_rx) = mpsc::unbounded_channel::<OutChunk>();
@@ -384,10 +404,15 @@ where
     // Run the command with IO routed to this connection. Dropping `ctx` when the
     // scope ends closes `out_tx`, which ends `writer_task`.
     let ctx = OutputCtx::new(out_tx, in_rx);
-    let command = crate::output::scoped(
-        ctx,
-        aurelia::infra::logging::relay::scoped(relay, crate::run_argv(argv.clone())),
-    );
+    let refused = refusal.is_some();
+    let run_argv = argv.clone();
+    let run = async move {
+        match refusal {
+            Some(msg) => report_refusal(&run_argv, &msg),
+            None => crate::run_argv(run_argv).await,
+        }
+    };
+    let command = crate::output::scoped(ctx, aurelia::infra::logging::relay::scoped(relay, run));
     tokio::pin!(command);
 
     // Run the command, but if the client's connection drops abort the command
@@ -402,7 +427,9 @@ where
     };
 
     // login/logout change the persisted token — adopt/clear the shared session now.
-    super::maybe_refresh_after(&argv).await;
+    if !refused {
+        super::maybe_refresh_after(&argv).await;
+    }
 
     // Drain all captured output before the exit frame, then stop the stdin pump.
     let _ = writer_task.await;

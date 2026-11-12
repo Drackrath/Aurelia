@@ -42,3 +42,31 @@ fn stale_failure_self_heals_after_the_backoff() {
         .expect("instant underflow");
     assert!(!slot(false, MTIME, Some(past)).is_current(MTIME));
 }
+
+#[test]
+fn header_round_trips_with_and_without_config_dir() {
+    let old: Header = serde_json::from_str(r#"{"argv":["aurelia","list"]}"#).unwrap();
+    assert_eq!(old.argv, ["aurelia", "list"]);
+    assert!(old.config_dir.is_none());
+
+    let h = Header {
+        argv: vec!["aurelia".into()],
+        config_dir: Some("/tmp/iso".into()),
+    };
+    let back: Header = serde_json::from_slice(&serde_json::to_vec(&h).unwrap()).unwrap();
+    assert_eq!(
+        back.config_dir.as_deref(),
+        Some(std::path::Path::new("/tmp/iso"))
+    );
+}
+
+#[test]
+fn config_dir_mismatch_refuses_only_differing_dirs() {
+    use std::path::Path;
+    let a = Path::new("/home/u/.config/Aurelia");
+    let b = Path::new("/tmp/iso");
+    assert!(config_dir_mismatch(Some(a), Some(a)).is_none());
+    assert!(config_dir_mismatch(None, Some(a)).is_none());
+    let msg = config_dir_mismatch(Some(b), Some(a)).unwrap();
+    assert!(msg.contains("/tmp/iso") && msg.contains("AURELIA_DAEMON_SOCKET"));
+}

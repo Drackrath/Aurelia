@@ -36,6 +36,34 @@ pub use server::run_server;
 #[derive(Debug, Serialize, Deserialize)]
 struct Header {
     argv: Vec<String>,
+    /// Client's canonical config dir.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    config_dir: Option<std::path::PathBuf>,
+}
+
+/// This process's canonical config dir.
+fn own_config_dir() -> Option<std::path::PathBuf> {
+    aurelia::core::config::config_dir()
+        .ok()
+        .map(|d| transport::canonical(&d))
+}
+
+/// Refusal message when config dirs differ.
+fn config_dir_mismatch(
+    client: Option<&std::path::Path>,
+    own: Option<&std::path::Path>,
+) -> Option<String> {
+    // Old clients send none: accept.
+    let (client, own) = (client?, own?);
+    if client == own {
+        return None;
+    }
+    Some(format!(
+        "this session daemon serves the config directory {}, not {}; set \
+         AURELIA_DAEMON_SOCKET to a separate socket or AURELIA_NO_DAEMON=1",
+        own.display(),
+        client.display()
+    ))
 }
 
 /// Identity marker a running daemon writes next to its socket so a thin client can tell
