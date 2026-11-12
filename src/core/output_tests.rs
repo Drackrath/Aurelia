@@ -89,3 +89,15 @@ async fn blocking_read_uses_client_stdin_in_scope() {
     let line = scoped(ctx, async { read_line_opt_blocking().unwrap() }).await;
     assert_eq!(line.as_deref(), Some("yes"));
 }
+
+#[test]
+fn tty_prompt_skips_pump_until_started() {
+    // Standalone TTY: one-shot read, no pump.
+    assert!(direct_tty_read(false, true, false));
+    // Pump running: must share its buffer.
+    assert!(!direct_tty_read(false, true, true));
+    // Piped stdin keeps the shared pump.
+    assert!(!direct_tty_read(false, false, false));
+    // Daemon context reads client stdin.
+    assert!(!direct_tty_read(true, true, false));
+}

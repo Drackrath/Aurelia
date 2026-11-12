@@ -173,23 +173,39 @@ async fn read_real_stdin_line() -> std::io::Result<Option<String>> {
 
 /// Blocking [`read_line_opt`] for prompts.
 pub fn read_line_opt_blocking() -> std::io::Result<Option<String>> {
+    use std::io::IsTerminal as _;
     use tokio::runtime::{Handle, RuntimeFlavor};
+    let in_ctx = CTX.try_with(|_| ()).is_ok();
+    if direct_tty_read(
+        in_ctx,
+        std::io::stdin().is_terminal(),
+        REAL_STDIN.get().is_some(),
+    ) {
+        return read_std_line();
+    }
     match Handle::try_current() {
         Ok(h) if h.runtime_flavor() == RuntimeFlavor::MultiThread => {
             tokio::task::block_in_place(|| h.block_on(read_line_opt()))
         }
         // block_in_place needs a multi-thread runtime.
-        Ok(_) => {
-            let mut line = String::new();
-            if std::io::stdin().read_line(&mut line)? == 0 {
-                return Ok(None);
-            }
-            Ok(Some(line.trim_end_matches(['\n', '\r']).to_string()))
-        }
+        Ok(_) => read_std_line(),
         Err(_) => tokio::runtime::Builder::new_current_thread()
             .build()?
             .block_on(read_line_opt()),
     }
+}
+
+/// Idle pump would steal rpassword's line.
+fn direct_tty_read(in_ctx: bool, stdin_is_tty: bool, pump_started: bool) -> bool {
+    !in_ctx && stdin_is_tty && !pump_started
+}
+
+fn read_std_line() -> std::io::Result<Option<String>> {
+    let mut line = String::new();
+    if std::io::stdin().read_line(&mut line)? == 0 {
+        return Ok(None);
+    }
+    Ok(Some(line.trim_end_matches(['\n', '\r']).to_string()))
 }
 
 /// Buffers the client's forwarded stdin bytes and yields whole lines.
