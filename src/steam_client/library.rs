@@ -252,8 +252,9 @@ impl SteamClient {
     /// Fetch the app's Steam Auto-Cloud `savefiles` rules from PICS appinfo. These
     /// describe where the game's saves live on disk so Cloud sync can discover and
     /// upload brand-new local saves (not just files already in the cloud). Returns
-    /// an empty list for apps with no UFS config.
-    pub async fn fetch_ufs_save_specs(&self, appid: u32) -> Result<Vec<UfsSaveSpec>> {
+    /// an empty config for apps with no UFS section.
+    /// Includes per-OS `rootoverrides`.
+    pub async fn fetch_ufs_config(&self, appid: u32) -> Result<UfsConfig> {
         let buffer = self
             .pics_buffer(
                 appid,
@@ -262,7 +263,7 @@ impl SteamClient {
             .await?;
 
         let vdf = find_vdf_in_pics(&buffer).context("failed to parse product info VDF")?;
-        Ok(ufs_save_specs_from_section(pics_app_section(vdf.value())))
+        Ok(ufs_config_from_section(pics_app_section(vdf.value())))
     }
 
     /// Fetch a single app's PICS appinfo and infer whether it appears to require

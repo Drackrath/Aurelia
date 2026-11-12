@@ -304,6 +304,7 @@ dependencies = [
  "filetime",
  "flate2",
  "hex",
+ "http",
  "keyring",
  "keyvalues-serde",
  "libc",

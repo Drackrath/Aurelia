@@ -78,6 +78,7 @@ strip = "symbols"    # strip symbol/debug info from the binary
 
 [dev-dependencies]
 tempfile = "3"
+http = "1" # Build reqwest responses offline in tests
 
 [package.metadata.deb]
 name = "aurelia"

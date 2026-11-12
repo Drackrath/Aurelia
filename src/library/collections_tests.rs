@@ -10,6 +10,7 @@ fn static_entry_round_trips() {
         removed: vec![20],
         filter_spec: None,
         deleted: false,
+        pending: vec![],
     };
     let (key, value) = c.to_entry();
     assert_eq!(key, "user-collections.uc-0001");
@@ -34,6 +35,7 @@ fn dynamic_entry_preserves_filter_spec() {
         removed: vec![],
         filter_spec: Some(filter.clone()),
         deleted: false,
+        pending: vec![],
     };
     let (key, value) = c.to_entry();
     let value = value.unwrap();
@@ -54,6 +56,7 @@ fn deleted_collection_becomes_tombstone() {
         removed: vec![],
         filter_spec: None,
         deleted: true,
+        pending: vec![],
     };
     let (key, value) = c.to_entry();
     assert_eq!(key, "user-collections.uc-x");
@@ -61,7 +64,7 @@ fn deleted_collection_becomes_tombstone() {
 }
 
 #[test]
-fn merge_unions_and_honors_remote_deletion() {
+fn merge_follows_remote_and_honors_remote_deletion() {
     let mut store = CollectionsStore {
         namespace_version: 5,
         collections: vec![
@@ -72,6 +75,7 @@ fn merge_unions_and_honors_remote_deletion() {
                 removed: vec![],
                 filter_spec: None,
                 deleted: false,
+                pending: vec![],
             },
             Collection {
                 id: "uc-gone".into(),
@@ -80,6 +84,7 @@ fn merge_unions_and_honors_remote_deletion() {
                 removed: vec![],
                 filter_spec: None,
                 deleted: false,
+                pending: vec![],
             },
         ],
     };
@@ -93,6 +98,7 @@ fn merge_unions_and_honors_remote_deletion() {
         removed: vec![7],
         filter_spec: None,
         deleted: false,
+        pending: vec![],
     }
     .to_entry();
     let b_entry = Collection {
@@ -102,6 +108,7 @@ fn merge_unions_and_honors_remote_deletion() {
         removed: vec![],
         filter_spec: None,
         deleted: false,
+        pending: vec![],
     }
     .to_entry();
 
@@ -120,11 +127,121 @@ fn merge_unions_and_honors_remote_deletion() {
     assert!(store.collections.iter().all(|c| c.id != "uc-gone"));
     // uc-b added.
     assert!(store.collections.iter().any(|c| c.id == "uc-b"));
-    // uc-a: union of added {1,2}∪{2,3} = {1,2,3}; removed {7}; remote name.
+    // Nothing pending: uc-a follows remote.
     let a = store.collections.iter().find(|c| c.id == "uc-a").unwrap();
     assert_eq!(a.name, "Remote A");
-    assert!(a.added.contains(&1) && a.added.contains(&2) && a.added.contains(&3));
-    assert!(a.removed.contains(&7));
+    assert_eq!(a.added, vec![2, 3]);
+    assert_eq!(a.removed, vec![7]);
+}
+
+fn coll(id: &str, added: Vec<u32>, removed: Vec<u32>) -> Collection {
+    Collection {
+        id: id.into(),
+        name: id.into(),
+        added,
+        removed,
+        filter_spec: None,
+        deleted: false,
+        pending: vec![],
+    }
+}
+
+fn remote_of(version: u64, colls: &[Collection]) -> RemoteNamespace {
+    RemoteNamespace {
+        version,
+        entries: colls.iter().map(Collection::to_entry).collect(),
+    }
+}
+
+#[test]
+fn pending_local_edits_survive_stale_remote() {
+    let mut store = CollectionsStore {
+        namespace_version: 1,
+        collections: vec![coll("uc-a", vec![5], vec![10])],
+    };
+    // Re-add 10 locally, remove 5.
+    store.add("uc-a", &[10]).unwrap();
+    store.remove("uc-a", &[5]).unwrap();
+    // Remote: 10 removed, 5 added, 7 new.
+    store.apply_remote(remote_of(2, &[coll("uc-a", vec![5, 7], vec![10])]));
+    let a = store.resolve("uc-a").unwrap();
+    assert!(a.contains(10));
+    assert!(!a.contains(5));
+    // Non-pending id follows remote.
+    assert!(a.contains(7));
+}
+
+#[test]
+fn non_pending_ids_follow_remote() {
+    let mut store = CollectionsStore {
+        namespace_version: 1,
+        collections: vec![coll("uc-a", vec![1, 2], vec![])],
+    };
+    store.apply_remote(remote_of(2, &[coll("uc-a", vec![2], vec![1])]));
+    let a = store.resolve("uc-a").unwrap();
+    assert!(!a.contains(1));
+    assert!(a.contains(2));
+}
+
+#[test]
+fn push_keeps_ids_edited_during_upload_pending() {
+    let mut store = CollectionsStore::default();
+    store.collections.push(coll("uc-a", vec![], vec![]));
+    store.add("uc-a", &[1, 2]).unwrap();
+    let (_, snapshot) = store.push_snapshot();
+
+    // Concurrent edits after the snapshot.
+    let mut fresh = store.clone();
+    fresh.remove("uc-a", &[2]).unwrap();
+    fresh.add("uc-a", &[3]).unwrap();
+    fresh.finish_push(&snapshot, &[], 9);
+
+    let a = fresh.resolve("uc-a").unwrap();
+    assert_eq!(fresh.namespace_version, 9);
+    assert!(!a.pending.contains(&1));
+    assert!(a.pending.contains(&2) && a.pending.contains(&3));
+}
+
+#[test]
+fn push_drops_only_collections_sent_as_deleted() {
+    let mut store = CollectionsStore::default();
+    store.collections.push(coll("uc-a", vec![], vec![]));
+    store.collections.push(coll("uc-b", vec![], vec![]));
+    store.delete("uc-a").unwrap();
+    let (_, snapshot) = store.push_snapshot();
+    let mut fresh = store.clone();
+    fresh.delete("uc-b").unwrap();
+    fresh.finish_push(&snapshot, &["uc-a".to_string()], 3);
+    assert!(fresh.collections.iter().all(|c| c.id != "uc-a"));
+    assert!(fresh.collections.iter().any(|c| c.id == "uc-b"));
+}
+
+#[test]
+fn builtin_created_on_first_edit_then_renamed_by_pull() {
+    let mut store = CollectionsStore::default();
+    store.add("favorite", &[440]).unwrap();
+    let fav = store.resolve("favorite").unwrap();
+    assert!(fav.contains(440) && fav.is_builtin());
+
+    let mut remote = coll("favorite", vec![], vec![]);
+    remote.name = "Lieblinge".into();
+    store.apply_remote(remote_of(4, &[remote]));
+    let fav = store.resolve("favorite").unwrap();
+    assert_eq!(fav.name, "Lieblinge");
+    assert!(fav.contains(440));
+    assert_eq!(store.collections.len(), 1);
+    // Unknown names still fail.
+    assert!(store.add("nope", &[1]).is_err());
+}
+
+#[test]
+fn old_store_without_pending_loads() {
+    let text = r#"{"namespace_version":3,"collections":[
+        {"id":"uc-a","name":"A","added":[1],"removed":[],"deleted":false}]}"#;
+    let store: CollectionsStore = serde_json::from_str(text).unwrap();
+    assert!(store.collections[0].pending.is_empty());
+    let out = serde_json::to_string(&store).unwrap();
+    assert!(!out.contains("pending"));
 }
 
 #[test]
@@ -139,6 +256,7 @@ fn resolve_by_name_id_and_ambiguity() {
                 removed: vec![],
                 filter_spec: None,
                 deleted: false,
+                pending: vec![],
             },
             Collection {
                 id: "uc-2".into(),
@@ -147,6 +265,7 @@ fn resolve_by_name_id_and_ambiguity() {
                 removed: vec![],
                 filter_spec: None,
                 deleted: false,
+                pending: vec![],
             },
             Collection {
                 id: "uc-3".into(),
@@ -155,6 +274,7 @@ fn resolve_by_name_id_and_ambiguity() {
                 removed: vec![],
                 filter_spec: None,
                 deleted: false,
+                pending: vec![],
             },
         ],
     };

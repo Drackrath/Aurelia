@@ -240,3 +240,29 @@ fn plain_tar_is_extracted() {
     extract_tarball(&archive, ".tar", &out).unwrap();
     assert!(out.join("umu/umu-run").is_file());
 }
+
+#[test]
+fn list_installed_requires_proton_launcher() {
+    let tmp = tempfile::tempdir().unwrap();
+    let common = tmp.path().join("common");
+    let tools = tmp.path().join("compatibilitytools.d");
+    for d in [
+        "Proton 9.0",
+        "Proton EasyAntiCheat Runtime",
+        "proton_cachyos_prefix",
+    ] {
+        std::fs::create_dir_all(common.join(d)).unwrap();
+    }
+    std::fs::write(common.join("Proton 9.0/proton"), "").unwrap();
+    std::fs::create_dir_all(tools.join("GE-Proton9-20")).unwrap();
+    std::fs::write(tools.join("GE-Proton9-20/proton"), "").unwrap();
+    std::fs::create_dir_all(tools.join("wine-tkg/bin")).unwrap();
+    std::fs::write(tools.join("wine-tkg/bin/wine"), "").unwrap();
+    std::fs::create_dir_all(tools.join("junk")).unwrap();
+
+    let names: Vec<String> = list_installed_in(&common, Some(&tools))
+        .into_iter()
+        .map(|p| p.name)
+        .collect();
+    assert_eq!(names, vec!["GE-Proton9-20", "Proton 9.0", "wine-tkg"]);
+}
