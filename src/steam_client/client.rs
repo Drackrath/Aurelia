@@ -7,6 +7,33 @@ use crate::core::error::{ErrorKind, TypedError};
 use steam_vent_proto::steammessages_clientserver_friends::CMsgClientPersonaState;
 use tokio_stream::StreamExt;
 
+/// One input line; `None` at EOF.
+pub type CodeReader =
+    std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<Option<String>>> + Send>>;
+
+/// Run `work`, feeding one line into `writer`.
+///
+/// Same task, so task-locals survive.
+pub(crate) async fn feed_code_while<F: std::future::Future>(
+    work: F,
+    read_code: CodeReader,
+    mut writer: tokio::io::DuplexStream,
+) -> F::Output {
+    tokio::pin!(work);
+    let feed = async move {
+        if let Ok(Some(line)) = read_code.await {
+            let _ = writer
+                .write_all(format!("{}\n", line.trim()).as_bytes())
+                .await;
+        }
+        // EOF/drop ends the reader.
+    };
+    tokio::select! {
+        out = &mut work => out,
+        () = feed => work.await,
+    }
+}
+
 impl SteamClient {
     pub fn new() -> Result<Self> {
         Ok(Self {
@@ -366,16 +393,13 @@ impl SteamClient {
     /// Log in with account credentials.
     ///
     /// * `guard_code` — a Steam Guard code supplied up front (non-interactive).
-    /// * `interactive_pin` — when `true` and no `guard_code` is given, Steam Guard
-    ///   codes are read **interactively from stdin** (the `login --pin` flow). The
-    ///   prompt appears only once Steam has begun the auth session, so email codes
-    ///   (which Steam sends at that point) work correctly.
+    /// * `interactive_pin` — Guard code source, if prompting.
     pub async fn login(
         &mut self,
         account_name: String,
         password: crate::core::secret::Secret,
         guard_code: Option<String>,
-        interactive_pin: bool,
+        interactive_pin: Option<CodeReader>,
     ) -> Result<SessionState> {
         self.connect().await?;
         if self.is_offline() {
@@ -422,16 +446,17 @@ impl SteamClient {
             );
 
             login_with(&server_list, &account_name, password.expose(), handler).await
-        } else if interactive_pin {
+        } else if let Some(read_code) = interactive_pin {
             // Read the Steam Guard code from stdin when Steam asks for it; fall back
             // to mobile-app approval if the account only allows that.
             tracing::info!("Login method awaited: Steam Guard code — enter it when prompted below");
+            let (writer, reader) = duplex(256);
             let handler = (
-                UserProvidedAuthConfirmationHandler::new(tokio::io::stdin(), tokio::io::stderr()),
+                UserProvidedAuthConfirmationHandler::new(reader, tokio::io::stderr()),
                 DeviceConfirmationHandler,
             );
-
-            login_with(&server_list, &account_name, password.expose(), handler).await
+            let login = login_with(&server_list, &account_name, password.expose(), handler);
+            feed_code_while(login, read_code, writer).await
         } else {
             login_with(
                 &server_list,

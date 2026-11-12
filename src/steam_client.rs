@@ -536,6 +536,7 @@ pub struct SteamClient {
 mod anticheat;
 mod chat;
 mod client;
+pub use client::CodeReader;
 mod friends;
 mod install;
 mod market;

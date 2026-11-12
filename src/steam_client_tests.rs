@@ -1065,3 +1065,42 @@ fn process_logon_id_is_nonzero_and_stable() {
     assert_ne!(first, 0);
     assert_eq!(first, super::logon_id());
 }
+
+#[tokio::test]
+async fn guard_code_is_fed_through_duplex() {
+    use tokio::io::AsyncBufReadExt;
+    let (writer, reader) = tokio::io::duplex(64);
+    let work = async move {
+        let mut line = String::new();
+        tokio::io::BufReader::new(reader)
+            .read_line(&mut line)
+            .await
+            .unwrap();
+        line
+    };
+    let code: CodeReader = Box::pin(async { Ok(Some(" 12345 ".to_string())) });
+    let got = client::feed_code_while(work, code, writer).await;
+    assert_eq!(got, "12345\n");
+}
+
+#[tokio::test]
+async fn login_finishing_first_stops_waiting_for_code() {
+    let (writer, _reader) = tokio::io::duplex(64);
+    // Never yields, like idle stdin.
+    let code: CodeReader = Box::pin(std::future::pending());
+    let got = client::feed_code_while(async { 7 }, code, writer).await;
+    assert_eq!(got, 7);
+}
+
+#[tokio::test]
+async fn stdin_eof_ends_reader() {
+    use tokio::io::AsyncReadExt;
+    let (writer, mut reader) = tokio::io::duplex(64);
+    let work = async move {
+        let mut buf = Vec::new();
+        reader.read_to_end(&mut buf).await.unwrap();
+        buf.len()
+    };
+    let code: CodeReader = Box::pin(async { Ok(None) });
+    assert_eq!(client::feed_code_while(work, code, writer).await, 0);
+}

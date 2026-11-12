@@ -79,3 +79,13 @@ async fn user_path_uses_scoped_client_cwd() {
     assert_eq!(rel, Path::new("/home/u/shots/a.jpg"));
     assert_eq!(abs_in, abs);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn blocking_read_uses_client_stdin_in_scope() {
+    let (out_tx, _out_rx) = mpsc::unbounded_channel();
+    let (in_tx, in_rx) = mpsc::unbounded_channel();
+    in_tx.send(b"yes\n".to_vec()).unwrap();
+    let ctx = OutputCtx::new(out_tx, in_rx, None);
+    let line = scoped(ctx, async { read_line_opt_blocking().unwrap() }).await;
+    assert_eq!(line.as_deref(), Some("yes"));
+}

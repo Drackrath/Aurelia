@@ -171,12 +171,12 @@ async fn read_real_stdin_line() -> std::io::Result<Option<String>> {
     guard.read_line_opt().await
 }
 
-/// Blocking shared-reader line for prompts.
-pub fn read_real_stdin_line_blocking() -> std::io::Result<Option<String>> {
+/// Blocking [`read_line_opt`] for prompts.
+pub fn read_line_opt_blocking() -> std::io::Result<Option<String>> {
     use tokio::runtime::{Handle, RuntimeFlavor};
     match Handle::try_current() {
         Ok(h) if h.runtime_flavor() == RuntimeFlavor::MultiThread => {
-            tokio::task::block_in_place(|| h.block_on(read_real_stdin_line()))
+            tokio::task::block_in_place(|| h.block_on(read_line_opt()))
         }
         // block_in_place needs a multi-thread runtime.
         Ok(_) => {
@@ -188,7 +188,7 @@ pub fn read_real_stdin_line_blocking() -> std::io::Result<Option<String>> {
         }
         Err(_) => tokio::runtime::Builder::new_current_thread()
             .build()?
-            .block_on(read_real_stdin_line()),
+            .block_on(read_line_opt()),
     }
 }
 

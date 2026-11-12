@@ -813,7 +813,7 @@ pub(crate) fn prompt_line(prompt: &str) -> Result<String> {
     cli_eprint!("{prompt}");
     std::io::stderr().flush().ok();
     // Shared reader keeps buffered stdin intact.
-    let input = crate::output::read_real_stdin_line_blocking()
+    let input = crate::output::read_line_opt_blocking()
         .context("failed reading input")?
         .unwrap_or_default();
     Ok(input.trim().to_string())
