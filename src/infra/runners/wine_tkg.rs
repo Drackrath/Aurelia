@@ -478,12 +478,10 @@ impl Runner for WineTkgRunner {
             }
         }
 
-        // Write steam_appid.txt to the game working directory
+        // Keep any shipped steam_appid.txt
         let (_install_dir, _executable, game_working_dir) = ctx.game_paths()?;
 
-        let app_id_str = ctx.app.app_id.to_string();
-        let app_id_path = game_working_dir.join("steam_appid.txt");
-        let _ = std::fs::write(&app_id_path, &app_id_str);
+        crate::core::utils::ensure_steam_appid_logged(&game_working_dir, ctx.app.app_id);
 
         Ok(())
     }

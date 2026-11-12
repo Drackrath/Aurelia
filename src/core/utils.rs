@@ -26,6 +26,33 @@ pub fn extract_quoted_values(line: &str) -> Vec<String> {
     out
 }
 
+/// Writes `steam_appid.txt` only when missing.
+pub fn ensure_steam_appid(dir: &Path, app_id: u32) -> std::io::Result<bool> {
+    use std::io::Write;
+    let path = dir.join("steam_appid.txt");
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(mut file) => {
+            file.write_all(app_id.to_string().as_bytes())?;
+            Ok(true)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+/// [`ensure_steam_appid`] that logs instead of failing.
+pub fn ensure_steam_appid_logged(dir: &Path, app_id: u32) {
+    match ensure_steam_appid(dir, app_id) {
+        Ok(true) => tracing::debug!("wrote steam_appid.txt in {}", dir.display()),
+        Ok(false) => tracing::debug!("keeping existing steam_appid.txt in {}", dir.display()),
+        Err(e) => tracing::warn!("could not write steam_appid.txt in {}: {e}", dir.display()),
+    }
+}
+
 /// True only for one plain directory name.
 pub fn is_safe_dir_name(name: &str) -> bool {
     let mut parts = Path::new(name).components();
@@ -1812,3 +1839,7 @@ mod safe_dir_name_tests;
 #[cfg(all(test, target_os = "linux"))]
 #[path = "utils_steam_logon_tests.rs"]
 mod steam_logon_tests;
+
+#[cfg(test)]
+#[path = "utils_steam_appid_tests.rs"]
+mod steam_appid_tests;
