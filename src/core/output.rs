@@ -43,11 +43,7 @@ impl OutputCtx {
     ) -> Self {
         Self {
             out,
-            stdin: Arc::new(Mutex::new(DaemonStdin {
-                rx: stdin_rx,
-                buf: Vec::new(),
-                eof: false,
-            })),
+            stdin: Arc::new(Mutex::new(DaemonStdin::new(stdin_rx))),
         }
     }
 }
@@ -109,17 +105,65 @@ pub async fn read_line_opt() -> std::io::Result<Option<String>> {
     read_real_stdin_line().await
 }
 
+/// One shared, cancel-safe real stdin.
+static REAL_STDIN: std::sync::OnceLock<Arc<Mutex<DaemonStdin>>> = std::sync::OnceLock::new();
+
+fn real_stdin() -> Arc<Mutex<DaemonStdin>> {
+    REAL_STDIN
+        .get_or_init(|| {
+            let (tx, rx) = mpsc::unbounded_channel();
+            let _ = std::thread::Builder::new()
+                .name("aurelia-stdin".to_string())
+                .spawn(move || pump_reader(std::io::stdin(), tx));
+            Arc::new(Mutex::new(DaemonStdin::new(rx)))
+        })
+        .clone()
+}
+
+/// Forward chunks until EOF or error.
+fn pump_reader(mut reader: impl std::io::Read, tx: mpsc::UnboundedSender<Vec<u8>>) {
+    let mut buf = [0u8; 4096];
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                if tx.send(buf[..n].to_vec()).is_err() {
+                    break;
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        }
+    }
+}
+
 /// Read one line from the daemon's *own* process stdin, returning `Ok(None)` on EOF.
 /// Shared by [`read_line`]/[`read_line_opt`] for the non-daemon (standalone) path.
 async fn read_real_stdin_line() -> std::io::Result<Option<String>> {
-    use tokio::io::AsyncBufReadExt;
-    let mut line = String::new();
-    let mut reader = tokio::io::BufReader::new(tokio::io::stdin());
-    let n = reader.read_line(&mut line).await?;
-    if n == 0 {
-        return Ok(None);
+    let stdin = real_stdin();
+    let mut guard = stdin.lock().await;
+    guard.read_line_opt().await
+}
+
+/// Blocking shared-reader line for prompts.
+pub fn read_real_stdin_line_blocking() -> std::io::Result<Option<String>> {
+    use tokio::runtime::{Handle, RuntimeFlavor};
+    match Handle::try_current() {
+        Ok(h) if h.runtime_flavor() == RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(|| h.block_on(read_real_stdin_line()))
+        }
+        // block_in_place needs a multi-thread runtime.
+        Ok(_) => {
+            let mut line = String::new();
+            if std::io::stdin().read_line(&mut line)? == 0 {
+                return Ok(None);
+            }
+            Ok(Some(line.trim_end_matches(['\n', '\r']).to_string()))
+        }
+        Err(_) => tokio::runtime::Builder::new_current_thread()
+            .build()?
+            .block_on(read_real_stdin_line()),
     }
-    Ok(Some(line.trim_end_matches(['\n', '\r']).to_string()))
 }
 
 /// Buffers the client's forwarded stdin bytes and yields whole lines.
@@ -130,6 +174,14 @@ struct DaemonStdin {
 }
 
 impl DaemonStdin {
+    fn new(rx: mpsc::UnboundedReceiver<Vec<u8>>) -> Self {
+        Self {
+            rx,
+            buf: Vec::new(),
+            eof: false,
+        }
+    }
+
     /// Yields the next whole line, returning `Ok(None)` once the client's stdin is
     /// closed and fully consumed so callers can detect EOF.
     async fn read_line_opt(&mut self) -> std::io::Result<Option<String>> {
@@ -191,3 +243,7 @@ macro_rules! cli_eprint {
         $crate::output::write($crate::output::Stream::Stderr, &format!("{}", format_args!($($arg)*)))
     };
 }
+
+#[cfg(test)]
+#[path = "output_tests.rs"]
+mod tests;

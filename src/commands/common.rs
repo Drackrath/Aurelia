@@ -786,10 +786,10 @@ pub(crate) fn prompt_line(prompt: &str) -> Result<String> {
     // Write the prompt to stderr so stdout stays clean (important for --json).
     cli_eprint!("{prompt}");
     std::io::stderr().flush().ok();
-    let mut input = String::new();
-    std::io::stdin()
-        .read_line(&mut input)
-        .context("failed reading input")?;
+    // Shared reader keeps buffered stdin intact.
+    let input = crate::output::read_real_stdin_line_blocking()
+        .context("failed reading input")?
+        .unwrap_or_default();
     Ok(input.trim().to_string())
 }
 
