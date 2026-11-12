@@ -23,3 +23,22 @@ fn distinguishes_daemon_from_admin_and_clients() {
     assert!(!cmd_is_daemon(&s(&["aurelia", "list"])));
     assert!(!cmd_is_daemon(&s(&["aurelia"])));
 }
+
+#[test]
+fn recognises_daemon_after_global_flags() {
+    let s = |args: &[&str]| args.iter().map(|a| a.to_string()).collect::<Vec<_>>();
+    assert!(cmd_is_daemon(&s(&["aurelia", "-v", "daemon"])));
+    assert!(cmd_is_daemon(&s(&[
+        "aurelia", "-j", "daemon", "--socket", "/x"
+    ])));
+    assert!(cmd_is_daemon(&s(&[
+        "aurelia",
+        "daemon",
+        "--socket",
+        "/tmp/stop.sock"
+    ])));
+    assert!(!cmd_is_daemon(&s(&["aurelia", "-v", "daemon", "list"])));
+    assert!(!cmd_is_daemon(&s(&["aurelia", "daemon", "stop", "42"])));
+    // Unknown flags from another build.
+    assert!(!cmd_is_daemon(&s(&["aurelia", "--bogus", "daemon"])));
+}
