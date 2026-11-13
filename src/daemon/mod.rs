@@ -343,7 +343,21 @@ impl DaemonState {
         let client = client.clone();
         let roster = Arc::clone(&self.roster);
         let handle = tokio::spawn(async move {
-            match client.run_friends_watcher(roster).await {
+            let auth = client.run_auth_ticket_watcher();
+            let friends = client.run_friends_watcher(roster);
+            tokio::pin!(auth, friends);
+            // Auth subscribes before friends drain.
+            let outcome = tokio::select! {
+                biased;
+                res = &mut auth => {
+                    if let Err(e) = res {
+                        tracing::warn!("daemon: auth ticket watcher exited: {e:#}");
+                    }
+                    friends.await
+                }
+                res = &mut friends => res,
+            };
+            match outcome {
                 Ok(aurelia::steam_client::WatcherEnd::LoggedOff(eresult)) => {
                     tracing::warn!(
                         eresult,

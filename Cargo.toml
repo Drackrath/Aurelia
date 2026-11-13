@@ -44,6 +44,7 @@ filetime = "0.2" # Stamp downloaded Cloud saves with their cloud mtime so re-syn
 zip = "2.2.2"
 tar = "0.4" # Extract downloaded Proton/Wine-GE runtime tarballs (.tar.gz/.tar.xz)
 hex = "0.4"
+crc32fast = "1" # Auth ticket CRCs for ClientAuthList
 sha1 = "0.10"
 flate2 = "1"
 xz2 = "0.1"

@@ -170,9 +170,9 @@ impl SteamClient {
         let mut stream = connection.on::<CMsgClientPlayingSessionState>();
         // Logon push may sit unclaimed.
         for raw in connection.take_unprocessed() {
-            if raw.kind == <CMsgClientPlayingSessionState as ReceivableMessage>::KIND
-                && let Ok(msg) = raw.into_message::<CMsgClientPlayingSessionState>()
-            {
+            if raw.kind != <CMsgClientPlayingSessionState as ReceivableMessage>::KIND {
+                super::auth_ticket::absorb_unprocessed(session, raw);
+            } else if let Ok(msg) = raw.into_message::<CMsgClientPlayingSessionState>() {
                 record_playing_session(session, &msg);
             }
         }

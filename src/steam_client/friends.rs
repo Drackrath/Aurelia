@@ -231,6 +231,8 @@ fn drain_unprocessed_into(connection: &Connection, roster: &mut Roster) {
             if let Ok(msg) = raw.into_message::<CMsgClientPlayingSessionState>() {
                 super::chat::record_playing_session(connection.session_id(), &msg);
             }
+        } else {
+            super::auth_ticket::absorb_unprocessed(connection.session_id(), raw);
         }
     }
     for list in &lists {
