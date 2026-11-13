@@ -282,7 +282,8 @@ pub(crate) fn confirm_cloud_write(action: &str, count: usize, yes: bool, json: b
 /// Human label for a raw EPersonaState value.
 pub(crate) fn persona_state_label(state: Option<u32>) -> &'static str {
     match state {
-        Some(0) | None => "offline",
+        None => "unknown",
+        Some(0) => "offline",
         Some(1) => "online",
         Some(2) => "busy",
         Some(3) => "away",

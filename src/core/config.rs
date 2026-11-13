@@ -182,7 +182,7 @@ pub struct LauncherConfig {
     /// Enabled automatically by the first successful login.
     #[serde(default)]
     pub encrypt_session: bool,
-    /// Max seconds `user` waits for status.
+    /// Max seconds to await persona data.
     #[serde(default = "default_persona_wait_secs")]
     pub persona_wait_secs: u64,
     /// Global download limit in kbit/s; 0 is unlimited.

@@ -341,6 +341,8 @@ impl SteamClient {
             if let Err(e) = self.request_friend_data(chunk).await {
                 if log_request_errors {
                     tracing::warn!("failed to request friend data: {e}");
+                } else {
+                    tracing::debug!("failed to request friend data: {e}");
                 }
                 continue;
             }

@@ -163,8 +163,8 @@ const LIVENESS_PROBE_INTERVAL: Duration = Duration::from_secs(60);
 /// session and burns a logon.
 const LIVENESS_RECHECK_DELAY: Duration = Duration::from_secs(2);
 
-/// Bounds the first `friends` call.
-const ANNOUNCE_NAME_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+/// Poll step while awaiting names.
+const NAME_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 struct DaemonState {
     slot: RwLock<Slot>,
@@ -374,19 +374,11 @@ impl DaemonState {
             return;
         }
         // Watcher folds the reply in.
-        let deadline = tokio::time::Instant::now() + ANNOUNCE_NAME_WAIT;
-        while tokio::time::Instant::now() < deadline {
-            let unnamed = self
-                .roster
-                .read()
-                .unwrap()
-                .values()
-                .any(|f| f.relationship == 3 && f.persona_name.is_none());
-            if !unnamed {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-        }
+        let wait = aurelia::core::config::load_launcher_config()
+            .await
+            .map(|c| c.persona_wait_secs)
+            .unwrap_or(aurelia::core::config::DEFAULT_PERSONA_WAIT_SECS);
+        await_roster_names(&self.roster, Duration::from_secs(wait)).await;
     }
 
     /// Drop the session if still `session_id`.
@@ -463,6 +455,23 @@ impl DaemonState {
             Some(client) => client.probe_alive().await.is_ok(),
             None => true,
         }
+    }
+}
+
+/// Wait until every friend has a name.
+async fn await_roster_names(roster: &StdRwLock<Roster>, wait: Duration) {
+    let deadline = tokio::time::Instant::now() + wait;
+    loop {
+        let unnamed = roster
+            .read()
+            .unwrap()
+            .values()
+            .any(|f| f.relationship == 3 && f.persona_name.is_none());
+        let now = tokio::time::Instant::now();
+        if !unnamed || now >= deadline {
+            return;
+        }
+        tokio::time::sleep(NAME_POLL_INTERVAL.min(deadline - now)).await;
     }
 }
 

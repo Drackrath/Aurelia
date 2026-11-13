@@ -76,3 +76,58 @@ fn config_dir_mismatch_refuses_only_differing_dirs() {
     let msg = config_dir_mismatch(Some(b), Some(a)).unwrap();
     assert!(msg.contains("/tmp/iso") && msg.contains("AURELIA_DAEMON_SOCKET"));
 }
+
+fn bare_friend(steam_id: u64, name: Option<&str>) -> Friend {
+    Friend {
+        steam_id,
+        relationship: 3,
+        persona_name: name.map(str::to_owned),
+        persona_state: None,
+        game_app_id: None,
+        game_name: None,
+    }
+}
+
+#[tokio::test]
+async fn names_arriving_within_wait_are_awaited() {
+    let roster = Arc::new(StdRwLock::new(Roster::new()));
+    roster.write().unwrap().insert(1, bare_friend(1, None));
+    let writer = Arc::clone(&roster);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        writer
+            .write()
+            .unwrap()
+            .insert(1, bare_friend(1, Some("Alice")));
+    });
+    let start = Instant::now();
+    await_roster_names(&roster, Duration::from_secs(5)).await;
+    assert!(start.elapsed() < Duration::from_secs(4));
+    let name = roster.read().unwrap()[&1].persona_name.clone();
+    assert_eq!(name.as_deref(), Some("Alice"));
+}
+
+#[tokio::test]
+async fn missing_names_give_up_at_deadline() {
+    let roster = StdRwLock::new(Roster::new());
+    roster.write().unwrap().insert(1, bare_friend(1, None));
+    let start = Instant::now();
+    await_roster_names(&roster, Duration::from_millis(300)).await;
+    let elapsed = start.elapsed();
+    assert!(elapsed >= Duration::from_millis(300) && elapsed < Duration::from_secs(2));
+}
+
+#[tokio::test]
+async fn named_or_non_friend_roster_returns_at_once() {
+    let roster = StdRwLock::new(Roster::new());
+    roster
+        .write()
+        .unwrap()
+        .insert(1, bare_friend(1, Some("Bob")));
+    let mut pending = bare_friend(2, None);
+    pending.relationship = 2;
+    roster.write().unwrap().insert(2, pending);
+    let start = Instant::now();
+    await_roster_names(&roster, Duration::from_secs(5)).await;
+    assert!(start.elapsed() < Duration::from_millis(200));
+}

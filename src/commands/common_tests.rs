@@ -90,3 +90,10 @@ async fn unmanaged_guard_passes_result_through() {
     let err: Result<()> = with_steam_stopped(false, true, async { bail!("boom") }).await;
     assert_eq!(err.unwrap_err().to_string(), "boom");
 }
+
+#[test]
+fn unknown_persona_state_is_not_offline() {
+    assert_eq!(persona_state_label(None), "unknown");
+    assert_eq!(persona_state_label(Some(0)), "offline");
+    assert_eq!(persona_state_label(Some(1)), "online");
+}
