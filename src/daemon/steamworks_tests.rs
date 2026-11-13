@@ -11,6 +11,8 @@ struct Fake {
     stopped: Mutex<Vec<u64>>,
     cancelled: Mutex<Vec<u32>>,
     events: Mutex<Vec<TicketAuthEvent>>,
+    offline_id: Option<u64>,
+    cached: HashMap<u32, Vec<u8>>,
 }
 
 const SID: u64 = 76_561_197_960_287_930;
@@ -77,6 +79,26 @@ impl Backend for Fake {
     async fn ticket_events(&self) -> Vec<TicketAuthEvent> {
         std::mem::take(&mut *self.events.lock().unwrap())
     }
+
+    async fn offline_steam_id(&self) -> Option<u64> {
+        self.offline_id
+    }
+
+    async fn cached_ownership_ticket(&self, steam_id: u64, app_id: u32) -> Result<Vec<u8>> {
+        match self.cached.get(&app_id) {
+            Some(ticket) if steam_id == SID => Ok(ticket.clone()),
+            _ => bail!("no unexpired cached ownership ticket for app {app_id}"),
+        }
+    }
+}
+
+/// Offline daemon with cached tickets.
+fn offline(cached: &[(u32, Vec<u8>)]) -> Arc<Fake> {
+    Arc::new(Fake {
+        offline_id: Some(SID),
+        cached: cached.iter().cloned().collect(),
+        ..Fake::default()
+    })
 }
 
 fn hello(app_id: u32) -> Vec<u8> {
@@ -372,4 +394,82 @@ fn wire_golden_bytes() {
         auth_ticket_body(&ticket),
         [5, 0, 0, 0, 6, 0, 0, 0, 0, 1, 0, 0, 0, 7]
     );
+}
+
+#[tokio::test]
+async fn offline_cached_ticket_admits_game() {
+    let fake = offline(&[(480, vec![0xCC])]);
+    let router = Arc::new(Router::default());
+    let (mut game, welcome) = Game::connect(fake.clone(), router, hello(480), None).await;
+    assert_eq!(welcome, welcome_payload(welcome::OK, SID, OFFLINE_WELCOME));
+    // Nothing reported to Steam.
+    assert!(fake.started.lock().unwrap().is_empty());
+    assert_eq!(
+        game.ask(1, cmd::OWNERSHIP_TICKET, &[]).await,
+        (status::OK, vec![0xCC])
+    );
+    let (code, body) = game.ask(2, cmd::STATUS, &[]).await;
+    assert_eq!((code, body[0]), (status::OK, 0));
+    game.hang_up().await;
+    assert!(fake.stopped.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn offline_fails_closed_for_everything_else() {
+    let fake = offline(&[(480, vec![0xCC])]);
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router.clone(), hello(480), None).await;
+    let mut body = vec![ticket_kind::SESSION];
+    put_blob(&mut body, b"");
+    assert_eq!(
+        game.ask(1, cmd::CREATE_AUTH_TICKET, &body).await,
+        (status::NO_SESSION, b"offline".to_vec())
+    );
+    let (code, _) = game
+        .ask(2, cmd::CANCEL_AUTH_TICKET, &1u32.to_le_bytes())
+        .await;
+    assert_eq!(code, status::NO_SESSION);
+    assert_eq!(game.ask(3, 0x7F, &[]).await.0, status::UNSUPPORTED);
+    assert!(router.is_empty());
+    game.hang_up().await;
+    assert!(fake.cancelled.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn offline_without_cached_ticket_is_refused() {
+    let fake = offline(&[(70, vec![1])]);
+    let router = Arc::new(Router::default());
+    let (game, welcome) = Game::connect(fake.clone(), router, hello(480), None).await;
+    assert_eq!(welcome[0], welcome::NO_SESSION);
+    assert!(fake.started.lock().unwrap().is_empty());
+    game.server.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn offline_other_app_needs_its_own_ticket() {
+    let fake = offline(&[(480, vec![0xCC])]);
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake, router, hello(480), None).await;
+    let mut req = request(1, cmd::OWNERSHIP_TICKET, &[]);
+    req[4..8].copy_from_slice(&70u32.to_le_bytes());
+    proto::write_frame(&mut game.stream, proto::C_SW_REQUEST, &req)
+        .await
+        .unwrap();
+    let (_, payload) = game.next().await;
+    assert_eq!(payload[4], status::FAILED);
+    game.hang_up().await;
+}
+
+#[tokio::test]
+async fn offline_connection_stays_cache_only() {
+    let fake = offline(&[(480, vec![0xCC])]);
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router, hello(480), None).await;
+    *fake.steam_id.lock().unwrap() = Some(SID);
+    assert_eq!(
+        game.ask(1, cmd::OWNERSHIP_TICKET, &[]).await,
+        (status::OK, vec![0xCC])
+    );
+    game.hang_up().await;
+    assert!(fake.started.lock().unwrap().is_empty());
 }
