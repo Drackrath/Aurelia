@@ -194,16 +194,54 @@ pub fn resolve_runner(name: &str, library_root: &Path) -> PathBuf {
 /// name matches no on-disk runtime. Use this when you want to *check* whether a runner
 /// resolves without emitting the not-found warning [`resolve_runner`] logs.
 pub fn resolve_runner_opt(name: &str, library_root: &Path) -> Option<PathBuf> {
+    resolve_runner_opt_in(name, library_root, &crate::library::steam_root_candidates())
+}
+
+/// Configured library first, then all others.
+pub fn runner_library_roots(configured: &Path, steam_roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut libraries = vec![configured.to_path_buf()];
+    libraries.extend(steam_roots.iter().cloned());
+    let mut roots = vec![configured.to_path_buf()];
+    roots.extend(steam_roots.iter().cloned());
+    for root in &roots {
+        for vdf in [
+            root.join("steamapps").join("libraryfolders.vdf"),
+            root.join("config").join("libraryfolders.vdf"),
+        ] {
+            if let Ok(raw) = std::fs::read_to_string(&vdf) {
+                libraries.extend(crate::library::library_folder_paths(&raw));
+            }
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    libraries.retain(|p| seen.insert(std::fs::canonicalize(p).unwrap_or_else(|_| p.clone())));
+    libraries
+}
+
+/// Testable core of [`resolve_runner_opt`].
+pub fn resolve_runner_opt_in(
+    name: &str,
+    library_root: &Path,
+    steam_roots: &[PathBuf],
+) -> Option<PathBuf> {
     let name_path = Path::new(name);
     if name_path.is_absolute() || name_path.exists() {
         return Some(name_path.to_path_buf());
     }
 
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let libraries = runner_library_roots(library_root, steam_roots);
+    // Configured library wins ties.
     let mut search_dirs: Vec<PathBuf> = vec![
         library_root.join("steamapps/common"),
         library_root.join("compatibilitytools.d"),
     ];
+    for lib in libraries.iter().skip(1) {
+        search_dirs.push(lib.join("steamapps/common"));
+    }
+    for root in steam_roots {
+        search_dirs.push(root.join("compatibilitytools.d"));
+    }
     // The Steam root's compatibilitytools.d (handles a non-standard / Flatpak Steam
     // whose root differs from `library_root`).
     if let Ok(compat) = crate::compat::proton::compat_tools_dir() {

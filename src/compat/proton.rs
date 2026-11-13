@@ -187,14 +187,32 @@ pub fn compat_tools_dir() -> Result<PathBuf> {
 // Discovery
 // ---------------------------------------------------------------------------
 
-/// Scan disk for installed Proton/Wine runtimes: Steam-managed Proton under
-/// `<steam_library>/steamapps/common`, plus everything under `compatibilitytools.d`.
+/// Installed runtimes across all Steam libraries.
 pub fn list_installed(steam_library_path: &Path) -> Vec<InstalledProton> {
     let tools = compat_tools_dir().ok();
-    list_installed_in(
-        &steam_library_path.join("steamapps/common"),
-        tools.as_deref(),
-    )
+    let libraries = crate::core::utils::runner_library_roots(
+        steam_library_path,
+        &crate::library::steam_root_candidates(),
+    );
+    let mut out: Vec<InstalledProton> = Vec::new();
+    for (i, lib) in libraries.iter().enumerate() {
+        // Tools dir scanned once.
+        let tools = if i == 0 { tools.as_deref() } else { None };
+        out.extend(list_installed_in(&lib.join("steamapps/common"), tools));
+    }
+    let mut seen_paths = std::collections::HashSet::new();
+    out.retain(|p| {
+        let key = std::fs::canonicalize(&p.path).unwrap_or_else(|_| p.path.clone());
+        seen_paths.insert(key)
+    });
+    // Stable sort keeps configured first.
+    out.sort_by(|a, b| {
+        a.name
+            .to_ascii_lowercase()
+            .cmp(&b.name.to_ascii_lowercase())
+    });
+    out.dedup_by(|a, b| a.name == b.name);
+    out
 }
 
 /// Scan given common and tools dirs.
