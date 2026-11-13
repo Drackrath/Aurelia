@@ -316,6 +316,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rpassword",
+ "rsa",
  "serde",
  "serde_json",
  "sha1",

@@ -171,6 +171,28 @@ impl SteamClient {
         Ok(ticket)
     }
 
+    /// Ownership ticket; cache when offline.
+    pub async fn ownership_ticket(&self, appid: u32) -> Result<Vec<u8>> {
+        use super::ticket_cache::{TicketCache, TicketSource, now_rtime};
+        let source = if let Some(steam_id) = self.steam_id() {
+            TicketSource::Online {
+                steam_id,
+                fetched: self.get_app_ticket(appid).await,
+            }
+        } else if self.is_offline() {
+            TicketSource::Offline {
+                steam_id: load_session().await?.steam_id,
+            }
+        } else {
+            bail!("not logged in; no ownership ticket for app {appid}");
+        };
+        tokio::task::spawn_blocking(move || {
+            TicketCache::open()?.resolve(source, appid, now_rtime())
+        })
+        .await
+        .context("ticket cache task failed")?
+    }
+
     /// Request an encrypted app ticket.
     pub async fn request_encrypted_app_ticket(&self, appid: u32) -> Result<EncryptedTicketOutcome> {
         let connection = self.require_connection()?;
