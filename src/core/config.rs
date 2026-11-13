@@ -197,6 +197,9 @@ pub struct LauncherConfig {
     /// Anti-cheat games allowed with stand-in.
     #[serde(default)]
     pub steamworks_allowed_protected: Vec<u32>,
+    /// Games may store stats, achievements.
+    #[serde(default)]
+    pub steamworks_stats_writes: bool,
 }
 
 /// kbit/s to bytes/s.
@@ -268,6 +271,7 @@ impl Default for LauncherConfig {
             steamworks_client: false,
             steamworks_client_path: None,
             steamworks_allowed_protected: Vec::new(),
+            steamworks_stats_writes: false,
         }
     }
 }

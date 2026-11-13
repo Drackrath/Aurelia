@@ -15,6 +15,7 @@ use tokio::task::JoinSet;
 use aurelia::steam_client::auth_ticket::{AuthSessionTicket, TicketAuthEvent, TicketKind};
 use aurelia::steam_client::playing::{self, GAMES, Launch};
 use aurelia::steam_client::steamworks_info::{AppInstallInfo, DlcInfo};
+use aurelia::steam_client::user_stats::{StoreOutcome, UserStats};
 use aurelia::steam_client::{EncryptedTicketOutcome, SteamClient};
 
 use super::proto::{self, SharedWriter};
@@ -48,6 +49,15 @@ pub mod cmd {
     pub const DLC_LIST: u8 = 6;
     pub const APP_INFO: u8 = 7;
     pub const SESSION_INFO: u8 = 8;
+    /// Stats range is 30-39.
+    pub const USER_STATS: u8 = 30;
+    pub const STORE_STATS: u8 = 31;
+}
+
+/// User stats flag bits.
+pub mod stats_flag {
+    /// Config allows stats writes.
+    pub const WRITES: u8 = 1;
 }
 
 /// Per-DLC flag bits.
@@ -104,7 +114,6 @@ impl<'a> Fields<'a> {
             .map(|b| i32::from_le_bytes(b.try_into().unwrap()))
     }
 
-    #[cfg(test)]
     pub fn u64(&mut self) -> Option<u64> {
         self.take(8)
             .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
@@ -269,6 +278,65 @@ pub fn session_info_body(server_time: u32, country: &str) -> Vec<u8> {
     out
 }
 
+/// User stats body; see the .so.
+pub fn user_stats_body(stats: &UserStats, writes: bool) -> Vec<u8> {
+    let mut out = stats.eresult.to_le_bytes().to_vec();
+    out.extend_from_slice(&stats.crc.to_le_bytes());
+    out.push(if writes { stats_flag::WRITES } else { 0 });
+    let len = |n: usize| u32::try_from(n).unwrap_or(u32::MAX).to_le_bytes();
+    out.extend_from_slice(&len(stats.stats.len()));
+    for stat in &stats.stats {
+        out.extend_from_slice(&stat.id.to_le_bytes());
+        out.push(stat.kind);
+        out.extend_from_slice(&stat.value.to_le_bytes());
+        put_blob(&mut out, stat.name.as_bytes());
+    }
+    out.extend_from_slice(&len(stats.achievements.len()));
+    for ach in &stats.achievements {
+        out.extend_from_slice(&ach.block.to_le_bytes());
+        out.push(ach.bit);
+        out.extend_from_slice(&ach.unlock_time.to_le_bytes());
+        out.push(u8::from(ach.hidden));
+        put_blob(&mut out, ach.name.as_bytes());
+        put_blob(&mut out, ach.display_name.as_bytes());
+        put_blob(&mut out, ach.description.as_bytes());
+    }
+    out
+}
+
+/// Stat ID and raw value pairs.
+pub type StatChanges = Vec<(u32, u32)>;
+
+/// Store request: crc, reset, pairs.
+pub fn parse_store_request(body: &[u8]) -> Option<(u32, bool, StatChanges)> {
+    let mut f = Fields::new(body);
+    let crc = f.u32()?;
+    let reset = f.u8()? != 0;
+    let count = f.u32()?;
+    // Bounded by the body size.
+    if usize::try_from(count).ok()? > body.len() / 8 {
+        return None;
+    }
+    let mut changes = Vec::new();
+    for _ in 0..count {
+        changes.push((f.u32()?, f.u32()?));
+    }
+    f.rest().is_empty().then_some((crc, reset, changes))
+}
+
+/// Store reply: eresult, crc, reverted.
+pub fn store_outcome_body(outcome: &StoreOutcome) -> Vec<u8> {
+    let mut out = outcome.eresult.to_le_bytes().to_vec();
+    out.extend_from_slice(&outcome.crc.to_le_bytes());
+    let count = u32::try_from(outcome.reverted.len()).unwrap_or(u32::MAX);
+    out.extend_from_slice(&count.to_le_bytes());
+    for (id, value) in &outcome.reverted {
+        out.extend_from_slice(&id.to_le_bytes());
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+    out
+}
+
 /// What the daemon offers games.
 pub trait Backend: Send + Sync + 'static {
     /// SteamID when logged on.
@@ -306,6 +374,21 @@ pub trait Backend: Send + Sync + 'static {
     fn app_info(&self, app_id: u32) -> impl Future<Output = Result<AppInstallInfo>> + Send;
     /// Server time and logon country.
     fn session_info(&self) -> impl Future<Output = Result<(u32, String)>> + Send;
+    /// Stats of `steam_id`, else ours.
+    fn user_stats(
+        &self,
+        app_id: u32,
+        steam_id: Option<u64>,
+    ) -> impl Future<Output = Result<UserStats>> + Send;
+    /// Config switch for stats writes.
+    fn stats_writes(&self) -> impl Future<Output = bool> + Send;
+    fn store_stats(
+        &self,
+        app_id: u32,
+        crc: u32,
+        reset: bool,
+        changes: Vec<(u32, u32)>,
+    ) -> impl Future<Output = Result<StoreOutcome>> + Send;
 }
 
 /// Routes pushes to owning connections.
@@ -550,6 +633,8 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
             | cmd::DLC_LIST
             | cmd::APP_INFO
             | cmd::SESSION_INFO
+            | cmd::USER_STATS
+            | cmd::STORE_STATS
     ) {
         return (status::UNSUPPORTED, b"unknown command".to_vec());
     }
@@ -596,6 +681,31 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
             Ok((time, country)) => (status::OK, session_info_body(time, &country)),
             Err(e) => failed(&e),
         },
+        cmd::USER_STATS => {
+            let Some(target) = f.u64() else {
+                return (status::MALFORMED, b"no steam id".to_vec());
+            };
+            let target = (target != 0).then_some(target);
+            match conn.backend.user_stats(app_id, target).await {
+                Ok(stats) => {
+                    let writes = target.is_none() && conn.backend.stats_writes().await;
+                    (status::OK, user_stats_body(&stats, writes))
+                }
+                Err(e) => failed(&e),
+            }
+        }
+        cmd::STORE_STATS => {
+            if !conn.backend.stats_writes().await {
+                return (status::FAILED, b"stats writes are off".to_vec());
+            }
+            let Some((crc, reset, changes)) = parse_store_request(&req.body) else {
+                return (status::MALFORMED, b"bad store request".to_vec());
+            };
+            match conn.backend.store_stats(app_id, crc, reset, changes).await {
+                Ok(outcome) => (status::OK, store_outcome_body(&outcome)),
+                Err(e) => failed(&e),
+            }
+        }
         cmd::CREATE_AUTH_TICKET => {
             let kind = match (f.u8(), f.blob()) {
                 (Some(ticket_kind::SESSION), Some(_)) => TicketKind::Session,
@@ -738,6 +848,35 @@ impl Backend for DaemonBackend {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| u32::try_from(d.as_secs()).unwrap_or(u32::MAX));
         Ok((now, client.ip_country().unwrap_or_default()))
+    }
+
+    async fn user_stats(&self, app_id: u32, steam_id: Option<u64>) -> Result<UserStats> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        let language = game_language(&client, app_id).await;
+        client.user_stats(app_id, steam_id, &language).await
+    }
+
+    async fn stats_writes(&self) -> bool {
+        aurelia::core::config::load_launcher_config()
+            .await
+            .is_ok_and(|c| c.steamworks_stats_writes)
+    }
+
+    async fn store_stats(
+        &self,
+        app_id: u32,
+        crc: u32,
+        reset: bool,
+        changes: Vec<(u32, u32)>,
+    ) -> Result<StoreOutcome> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        tracing::info!(
+            app_id,
+            stats = changes.len(),
+            reset,
+            "steamworks: storing stats"
+        );
+        client.store_user_stats(app_id, crc, reset, &changes).await
     }
 }
 

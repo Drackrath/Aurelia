@@ -640,6 +640,15 @@ pub(crate) enum ConfigCommand {
                 Pass \"\" to use the default directory."
         )]
         path: Option<String>,
+        /// Let games write stats and achievements.
+        #[arg(
+            long,
+            value_name = "on|off",
+            long_help = "Let games store stats and unlock achievements on the \
+                account through the stand-in (StoreStats, SetAchievement, \
+                ResetAllStats). Off by default: games read stats but writes fail."
+        )]
+        stats_writes: Option<OnOffArg>,
         /// Allow one anti-cheat game anyway.
         #[arg(
             long,

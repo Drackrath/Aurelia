@@ -565,6 +565,7 @@ pub mod steamworks_info;
 mod storequery;
 mod tags;
 pub mod tags_table;
+pub mod user_stats;
 mod workshop;
 mod workshop_manifest;
 pub use storequery::{DealsScope, QueryPage};

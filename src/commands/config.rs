@@ -380,6 +380,7 @@ pub(crate) async fn cmd_config_anticheat_auto_install(
 pub(crate) struct SteamworksClientArgs {
     pub mode: Option<OnOffArg>,
     pub path: Option<String>,
+    pub stats_writes: Option<OnOffArg>,
     pub allow: Option<u32>,
     pub disallow: Option<u32>,
     pub yes: bool,
@@ -397,15 +398,23 @@ pub(crate) async fn cmd_config_steamworks_client(
     let SteamworksClientArgs {
         mode,
         path,
+        stats_writes,
         allow,
         disallow,
         ..
     } = args;
-    let any = mode.is_some() || path.is_some() || allow.is_some() || disallow.is_some();
-    let change = any.then_some((mode, path, allow, disallow));
-    let (config, changed) = view_or_set(change, |c, (mode, path, allow, disallow)| {
+    let any = mode.is_some()
+        || path.is_some()
+        || stats_writes.is_some()
+        || allow.is_some()
+        || disallow.is_some();
+    let change = any.then_some((mode, path, stats_writes, allow, disallow));
+    let (config, changed) = view_or_set(change, |c, (mode, path, writes, allow, disallow)| {
         if let Some(mode) = mode {
             c.steamworks_client = matches!(mode, OnOffArg::On);
+        }
+        if let Some(writes) = writes {
+            c.steamworks_stats_writes = matches!(writes, OnOffArg::On);
         }
         if let Some(path) = path {
             let path = path.trim();
@@ -432,6 +441,7 @@ pub(crate) async fn cmd_config_steamworks_client(
             "steamworks_client_path": config.steamworks_client_path,
             "effective_path": effective_path,
             "steamworks_allowed_protected": config.steamworks_allowed_protected,
+            "steamworks_stats_writes": config.steamworks_stats_writes,
         }));
         return Ok(());
     }
@@ -444,6 +454,12 @@ pub(crate) async fn cmd_config_steamworks_client(
     if let Some(path) = effective_path {
         cli_println!("Path: {path}");
     }
+    let writes = if config.steamworks_stats_writes {
+        "on (games may store stats and unlock achievements)"
+    } else {
+        "off (games read stats only)"
+    };
+    cli_println!("Stats writes: {writes}");
     if !config.steamworks_allowed_protected.is_empty() {
         let ids: Vec<String> = config
             .steamworks_allowed_protected
