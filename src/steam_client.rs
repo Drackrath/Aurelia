@@ -542,6 +542,7 @@ pub use client::CodeReader;
 mod friends;
 mod install;
 mod market;
+pub mod ticket_cache;
 pub use install::InstallOptions;
 mod content;
 pub(crate) use content::ContentHost;

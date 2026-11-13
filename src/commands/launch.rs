@@ -425,7 +425,7 @@ pub(crate) async fn cmd_play(
     if !steam && game.is_owned && !game.is_family_shared && !client.is_offline() {
         let probe = tokio::time::timeout(
             std::time::Duration::from_secs(10),
-            client.get_app_ticket(app_id),
+            client.ownership_ticket(app_id),
         )
         .await;
         match probe {
