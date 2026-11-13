@@ -166,7 +166,7 @@ async fn stalled_name_burst_returns_early() {
 }
 
 #[test]
-fn pending_covers_missing_name_or_status() {
+fn pending_covers_missing_names_only() {
     let mut roster = Roster::new();
     roster.insert(1, bare_friend(1, Some("Alice")));
     roster.insert(2, bare_friend(2, None));
@@ -176,20 +176,5 @@ fn pending_covers_missing_name_or_status() {
     let mut pending = bare_friend(4, None);
     pending.relationship = 2;
     roster.insert(4, pending);
-    assert_eq!(pending_friend_ids(&roster), vec![2, 3]);
-}
-
-#[tokio::test]
-async fn named_friend_without_status_is_awaited() {
-    let roster = Arc::new(StdRwLock::new(Roster::new()));
-    let mut stateless = bare_friend(1, Some("Alice"));
-    stateless.persona_state = None;
-    roster.write().unwrap().insert(1, stateless);
-    let writer = Arc::clone(&roster);
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        writer.write().unwrap().get_mut(&1).unwrap().persona_state = Some(0);
-    });
-    await_roster_names(&roster, Duration::from_secs(5), NAME_IDLE).await;
-    assert_eq!(roster.read().unwrap()[&1].persona_state, Some(0));
+    assert_eq!(pending_friend_ids(&roster), vec![2]);
 }

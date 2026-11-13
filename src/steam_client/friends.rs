@@ -183,8 +183,6 @@ pub fn apply_friends_list(roster: &mut Roster, msg: &CMsgClientFriendsList) {
 /// An empty incoming name never clobbers a known one; an app id of 0 clears the
 /// in-game fields.
 pub fn apply_persona_state(roster: &mut Roster, msg: &CMsgClientPersonaState) {
-    // Status flag set: omitted means offline.
-    let carries_status = msg.status_flags() & PERSONA_FLAG_STATUS != 0;
     for fr in &msg.friends {
         let id = fr.friendid();
         let entry = roster.entry(id).or_insert_with(|| Friend::new(id, 0));
@@ -194,7 +192,7 @@ pub fn apply_persona_state(roster: &mut Roster, msg: &CMsgClientPersonaState) {
             entry.persona_name = Some(name.to_string());
         }
         // Replies may omit status; keep known.
-        if fr.has_persona_state() || carries_status {
+        if fr.has_persona_state() {
             entry.persona_state = Some(fr.persona_state());
         }
         if fr.has_game_played_app_id() {

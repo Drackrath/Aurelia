@@ -232,14 +232,15 @@ fn clan_ids_are_not_friends() {
 }
 
 #[test]
-fn status_flagged_reply_without_state_is_offline() {
+fn status_flag_without_state_keeps_known_state() {
     let mut roster = Roster::new();
     apply_friends_list(
         &mut roster,
         &friends_list(false, &[(10, RELATIONSHIP_FRIEND)]),
     );
+    roster.get_mut(&10).unwrap().persona_state = Some(1);
     let mut msg = name_only(10, "Alice");
     msg.set_status_flags(PERSONA_REQUEST_FLAGS);
     apply_persona_state(&mut roster, &msg);
-    assert_eq!(roster[&10].persona_state, Some(0));
+    assert_eq!(roster[&10].persona_state, Some(1));
 }

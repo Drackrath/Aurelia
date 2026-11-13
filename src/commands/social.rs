@@ -11,6 +11,17 @@ use anyhow::Result;
 const HOST_STEAM_NOTE: &str = "Steam is running here, so Aurelia stays unannounced to keep it \
 signed in to Friends & Chat. Names, status and incoming messages may be missing.";
 
+/// Named without status means offline.
+fn shown_state(f: &aurelia::steam_client::Friend) -> Option<u32> {
+    match (f.persona_state, &f.persona_name, f.game_app_id) {
+        (Some(s), _, _) => Some(s),
+        // In a game implies online.
+        (None, Some(_), Some(_)) => Some(1),
+        (None, Some(_), None) => Some(0),
+        (None, None, _) => None,
+    }
+}
+
 /// `aurelia friends`: list the logged-in user's friends with status and game.
 ///
 /// Inside the daemon the roster is served from the background watcher's cache;
@@ -55,7 +66,7 @@ pub(crate) async fn cmd_friends(json: bool) -> Result<()> {
         };
         cli_println!(
             "{:<20}  {:<17}  {:<12}  {}",
-            persona_state_label(f.persona_state),
+            persona_state_label(shown_state(f)),
             f.steam_id,
             name,
             game

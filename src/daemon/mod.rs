@@ -493,12 +493,12 @@ fn name_wait(announced: Option<u32>, persona_wait_secs: u64) -> Option<Duration>
     }
 }
 
-/// Friends lacking name or status.
+/// Friends still lacking a name.
 fn pending_friend_ids(roster: &Roster) -> Vec<u64> {
     let mut ids: Vec<u64> = roster
         .values()
         .filter(|f| f.relationship == 3)
-        .filter(|f| f.persona_name.is_none() || f.persona_state.is_none())
+        .filter(|f| f.persona_name.is_none())
         .map(|f| f.steam_id)
         .collect();
     ids.sort_unstable();
