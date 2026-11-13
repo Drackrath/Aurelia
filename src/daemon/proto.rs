@@ -20,6 +20,13 @@ pub const C_STDIN_EOF: u8 = 0x03;
 pub const C_STDOUT: u8 = 0x11;
 pub const C_STDERR: u8 = 0x12;
 pub const C_EXIT: u8 = 0x13;
+// steamclient.so → daemon.
+pub const C_SW_HELLO: u8 = 0x21;
+pub const C_SW_REQUEST: u8 = 0x22;
+// Daemon → steamclient.so.
+pub const C_SW_WELCOME: u8 = 0x31;
+pub const C_SW_RESPONSE: u8 = 0x32;
+pub const C_SW_PUSH: u8 = 0x33;
 
 /// Write one frame and flush.
 pub async fn write_frame<W: AsyncWrite + Unpin>(
