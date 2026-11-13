@@ -195,10 +195,23 @@ impl SteamClient {
 
     /// Request an encrypted app ticket.
     pub async fn request_encrypted_app_ticket(&self, appid: u32) -> Result<EncryptedTicketOutcome> {
+        self.request_encrypted_app_ticket_with_data(appid, &[])
+            .await
+    }
+
+    /// Encrypted ticket carrying game data.
+    pub async fn request_encrypted_app_ticket_with_data(
+        &self,
+        appid: u32,
+        userdata: &[u8],
+    ) -> Result<EncryptedTicketOutcome> {
         let connection = self.require_connection()?;
 
         let mut request = CMsgClientRequestEncryptedAppTicket::new();
         request.set_app_id(appid);
+        if !userdata.is_empty() {
+            request.set_userdata(userdata.to_vec());
+        }
 
         let response: steam_vent_proto::steammessages_clientserver::CMsgClientRequestEncryptedAppTicketResponse =
             connection

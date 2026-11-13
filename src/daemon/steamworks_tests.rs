@@ -90,6 +90,56 @@ impl Backend for Fake {
             _ => bail!("no unexpired cached ownership ticket for app {app_id}"),
         }
     }
+
+    async fn encrypted_app_ticket(
+        &self,
+        app_id: u32,
+        userdata: Vec<u8>,
+    ) -> Result<EncryptedTicketOutcome> {
+        Ok(match app_id {
+            480 => EncryptedTicketOutcome::Issued(userdata),
+            70 => EncryptedTicketOutcome::Refused(15),
+            _ => bail!("Steam timed out"),
+        })
+    }
+
+    async fn dlcs(&self, app_id: u32) -> Result<Vec<DlcInfo>> {
+        if app_id != 480 {
+            bail!("no appinfo for {app_id}");
+        }
+        Ok(vec![
+            DlcInfo {
+                app_id: 1001,
+                name: Some("Soundtrack".into()),
+                content_ready: true,
+                disabled: false,
+            },
+            DlcInfo {
+                app_id: 1002,
+                name: None,
+                content_ready: false,
+                disabled: true,
+            },
+        ])
+    }
+
+    async fn app_info(&self, app_id: u32) -> Result<AppInstallInfo> {
+        Ok(match app_id {
+            480 => AppInstallInfo {
+                build_id: 77,
+                install_dir: Some("/games/Spacewar".into()),
+                language: Some("german".into()),
+            },
+            _ => AppInstallInfo {
+                language: Some("english".into()),
+                ..AppInstallInfo::default()
+            },
+        })
+    }
+
+    async fn session_info(&self) -> Result<(u32, String)> {
+        Ok((1_800_000_000, "DE".into()))
+    }
 }
 
 /// Offline daemon with cached tickets.
@@ -109,8 +159,12 @@ fn hello(app_id: u32) -> Vec<u8> {
 }
 
 fn request(id: u32, command: u8, body: &[u8]) -> Vec<u8> {
+    request_for(id, 0, command, body)
+}
+
+fn request_for(id: u32, app_id: u32, command: u8, body: &[u8]) -> Vec<u8> {
     let mut out = id.to_le_bytes().to_vec();
-    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&app_id.to_le_bytes());
     out.extend_from_slice(&1i32.to_le_bytes());
     out.extend_from_slice(&1i32.to_le_bytes());
     out.push(command);
@@ -147,7 +201,11 @@ impl Game {
     }
 
     async fn ask(&mut self, id: u32, command: u8, body: &[u8]) -> (u8, Vec<u8>) {
-        let req = request(id, command, body);
+        self.ask_for(id, 0, command, body).await
+    }
+
+    async fn ask_for(&mut self, id: u32, app_id: u32, command: u8, body: &[u8]) -> (u8, Vec<u8>) {
+        let req = request_for(id, app_id, command, body);
         proto::write_frame(&mut self.stream, proto::C_SW_REQUEST, &req)
             .await
             .unwrap();
@@ -352,6 +410,103 @@ async fn malformed_request_keeps_connection() {
     game.hang_up().await;
 }
 
+#[tokio::test]
+async fn ownership_for_other_apps_uses_request_app() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake, router, hello(70), None).await;
+    let (code, body) = game.ask_for(1, 480, cmd::OWNERSHIP_TICKET, &[]).await;
+    assert_eq!((code, body), (status::OK, vec![0xAA, 0xBB]));
+    assert_eq!(
+        game.ask(2, cmd::OWNERSHIP_TICKET, &[]).await.0,
+        status::FAILED
+    );
+    game.hang_up().await;
+}
+
+#[tokio::test]
+async fn encrypted_ticket_issued_refused_failed() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake, router, hello(480), None).await;
+    let (code, body) = game.ask(1, cmd::ENCRYPTED_APP_TICKET, b"data").await;
+    assert_eq!(code, status::OK);
+    let mut f = Fields::new(&body);
+    assert_eq!(f.i32(), Some(1));
+    assert_eq!(f.blob(), Some(&b"data"[..]));
+    let (code, body) = game.ask_for(2, 70, cmd::ENCRYPTED_APP_TICKET, &[]).await;
+    assert_eq!(code, status::OK);
+    let mut f = Fields::new(&body);
+    assert_eq!((f.i32(), f.blob()), (Some(15), Some(&[][..])));
+    let (code, body) = game.ask_for(3, 9, cmd::ENCRYPTED_APP_TICKET, &[]).await;
+    assert_eq!((code, body), (status::FAILED, b"Steam timed out".to_vec()));
+    game.hang_up().await;
+}
+
+#[tokio::test]
+async fn dlc_app_and_session_info() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake, router, hello(480), None).await;
+    let (code, body) = game.ask(1, cmd::DLC_LIST, &[]).await;
+    assert_eq!(code, status::OK);
+    let mut f = Fields::new(&body);
+    assert_eq!(f.u32(), Some(2));
+    let flags = dlc_flag::AVAILABLE | dlc_flag::CONTENT_READY;
+    assert_eq!(
+        (f.u32(), f.u8(), f.blob()),
+        (Some(1001), Some(flags), Some(&b"Soundtrack"[..]))
+    );
+    let flags = dlc_flag::DISABLED;
+    assert_eq!(
+        (f.u32(), f.u8(), f.blob()),
+        (Some(1002), Some(flags), Some(&[][..]))
+    );
+    assert!(f.rest().is_empty());
+    assert_eq!(
+        game.ask_for(2, 70, cmd::DLC_LIST, &[]).await.0,
+        status::FAILED
+    );
+
+    let (code, body) = game.ask(3, cmd::APP_INFO, &[]).await;
+    assert_eq!(code, status::OK);
+    let mut f = Fields::new(&body);
+    assert_eq!(f.u32(), Some(77));
+    assert_eq!(f.blob(), Some(&b"/games/Spacewar"[..]));
+    assert_eq!(f.blob(), Some(&b"german"[..]));
+    let (_, body) = game.ask_for(4, 70, cmd::APP_INFO, &[]).await;
+    let mut f = Fields::new(&body);
+    assert_eq!((f.u32(), f.blob()), (Some(0), Some(&[][..])));
+
+    let (code, body) = game.ask(5, cmd::SESSION_INFO, &[]).await;
+    assert_eq!(
+        (code, body),
+        (status::OK, session_info_body(1_800_000_000, "DE"))
+    );
+    game.hang_up().await;
+}
+
+#[tokio::test]
+async fn licensing_needs_a_session() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router, hello(480), None).await;
+    *fake.steam_id.lock().unwrap() = None;
+    for (id, command) in [
+        cmd::ENCRYPTED_APP_TICKET,
+        cmd::DLC_LIST,
+        cmd::APP_INFO,
+        cmd::SESSION_INFO,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (code, _) = game.ask(id as u32, command, &[]).await;
+        assert_eq!(code, status::NO_SESSION, "command {command}");
+    }
+    game.hang_up().await;
+}
+
 /// Same bytes the .so tests use.
 #[test]
 fn wire_golden_bytes() {
@@ -393,6 +548,33 @@ fn wire_golden_bytes() {
     assert_eq!(
         auth_ticket_body(&ticket),
         [5, 0, 0, 0, 6, 0, 0, 0, 0, 1, 0, 0, 0, 7]
+    );
+    assert_eq!(
+        encrypted_ticket_body(&EncryptedTicketOutcome::Issued(vec![7])),
+        [1, 0, 0, 0, 1, 0, 0, 0, 7]
+    );
+    let dlc = DlcInfo {
+        app_id: 1001,
+        name: Some("A".into()),
+        content_ready: true,
+        disabled: false,
+    };
+    assert_eq!(
+        dlc_list_body(&[dlc]),
+        [1, 0, 0, 0, 0xE9, 3, 0, 0, 3, 1, 0, 0, 0, b'A']
+    );
+    let info = AppInstallInfo {
+        build_id: 5,
+        install_dir: Some("/g".into()),
+        language: Some("de".into()),
+    };
+    assert_eq!(
+        app_info_body(&info),
+        [5, 0, 0, 0, 2, 0, 0, 0, b'/', b'g', 2, 0, 0, 0, b'd', b'e']
+    );
+    assert_eq!(
+        session_info_body(0x0102_0304, "US"),
+        [4, 3, 2, 1, 2, 0, 0, 0, b'U', b'S']
     );
 }
 

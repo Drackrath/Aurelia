@@ -16,6 +16,8 @@ pub struct AppManifest {
     pub build_id: u64,
     /// `UserConfig/BetaKey`, defaulting to `public`.
     pub active_branch: String,
+    /// `UserConfig/language`, when set.
+    pub language: Option<String>,
 }
 
 impl AppManifest {
@@ -70,6 +72,12 @@ pub fn parse_app_manifest(raw: &str) -> AppManifest {
             if !branch_set && parts[0].eq_ignore_ascii_case("betakey") && !value.trim().is_empty() {
                 m.active_branch = value.to_string();
                 branch_set = true;
+            }
+            if m.language.is_none()
+                && parts[0].eq_ignore_ascii_case("language")
+                && !value.trim().is_empty()
+            {
+                m.language = Some(value.trim().to_string());
             }
             continue;
         }
