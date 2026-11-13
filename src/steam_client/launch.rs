@@ -305,7 +305,8 @@ impl SteamClient {
         let steam_enabled = steam_enabled || !app.is_owned;
 
         // Reject bad entries before starting Steam.
-        let launch_options = self.get_product_info(app.app_id).await?;
+        let (launch_options, category_ids) =
+            self.get_product_info_and_categories(app.app_id).await?;
         let launch_options = match launch_option {
             Some(id) => {
                 let entry = find_launch_option(&launch_options, id)?;
@@ -347,6 +348,12 @@ impl SteamClient {
         .ok_or_else(|| anyhow!("no launch options"))?;
 
         let launcher_config = load_launcher_config().await?;
+        guard_stand_in(
+            app,
+            &launcher_config,
+            category_ids.as_deref(),
+            force_native_engine,
+        )?;
 
         // Proton/Wine only exists on Linux. On Windows, a Windows game runs natively, so
         // run its executable directly instead of routing through the Proton pipeline.
@@ -774,5 +781,36 @@ impl SteamClient {
         });
 
         Ok(rx)
+    }
+}
+
+/// Refuse protected games in stand-in mode.
+fn guard_stand_in(
+    app: &LibraryGame,
+    config: &crate::core::config::LauncherConfig,
+    category_ids: Option<&[u32]>,
+    force_native_engine: bool,
+) -> Result<()> {
+    use crate::launch::stand_in_guard::{self as guard, Verdict};
+    if !guard::stand_in_applies(config, app.app_id, force_native_engine) {
+        return Ok(());
+    }
+    let anticheats = app
+        .install_path
+        .as_deref()
+        .map(|p| crate::compat::anticheat::detect(Path::new(p)))
+        .unwrap_or_default();
+    let found = guard::protections(category_ids, &anticheats);
+    match guard::evaluate(app.app_id, found, config) {
+        Verdict::Clear => Ok(()),
+        Verdict::Allowed(found) => {
+            tracing::warn!("{}", guard::allowed_warning(app.app_id, &app.name, &found));
+            Ok(())
+        }
+        Verdict::Refused(found) => Err(crate::core::error::TypedError::new(
+            crate::core::error::ErrorKind::AccessDenied,
+            guard::refusal_message(app.app_id, &app.name, &found),
+        )
+        .into()),
     }
 }

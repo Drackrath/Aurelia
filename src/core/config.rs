@@ -194,6 +194,9 @@ pub struct LauncherConfig {
     /// Stand-in library file or directory.
     #[serde(default)]
     pub steamworks_client_path: Option<String>,
+    /// Anti-cheat games allowed with stand-in.
+    #[serde(default)]
+    pub steamworks_allowed_protected: Vec<u32>,
 }
 
 /// kbit/s to bytes/s.
@@ -264,6 +267,7 @@ impl Default for LauncherConfig {
             download_limit_kbit: 0,
             steamworks_client: false,
             steamworks_client_path: None,
+            steamworks_allowed_protected: Vec::new(),
         }
     }
 }

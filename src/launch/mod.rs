@@ -5,6 +5,7 @@ pub mod launch_script;
 pub mod pipeline;
 pub mod shaders;
 pub mod stages;
+pub mod stand_in_guard;
 #[cfg(target_os = "linux")]
 pub mod steamworks_overlay;
 pub mod validators;
@@ -12,6 +13,10 @@ pub mod validators;
 #[cfg(all(test, target_os = "linux"))]
 #[path = "steamworks_overlay_tests.rs"]
 mod steamworks_overlay_tests;
+
+#[cfg(test)]
+#[path = "stand_in_guard_tests.rs"]
+mod stand_in_guard_tests;
 
 #[cfg(test)]
 mod verification_tests;
