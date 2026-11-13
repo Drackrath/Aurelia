@@ -124,7 +124,7 @@ sync, and Proton or Wine launching all work today.
 | **Steam integration (opt-in)** | ✅ | Launch with real Steam integration (`play --steam`): the host Steam client bridged in, started silently if needed, or the in-Wine Steam runtime when no host Steam exists, for Steamworks and DRM. Auto-enabled on Family-Shared games |
 | **Depot browser** | ✅ | List depots, inspect manifest trees, download single files |
 | **Workshop** | ✅ | Browse and search, install and uninstall, subscribe, collections, rate, and read or post comments |
-| **Friends & chat** | ✅ | Friends roster with live persona status and current game, user profiles and wishlists over the Steam connection (by SteamID64, profile URL or friend name), send or cancel friend requests, plus direct messaging (send, history, and an interactive live session). Presence is configurable, defaulting to invisible |
+| **Friends & chat** | ✅ | Friends roster with live persona status and current game, user profiles and wishlists over the Steam connection (by SteamID64, profile URL or friend name), send or cancel friend requests, plus direct messaging (send, history, and an interactive live session). Presence is configurable, defaulting to invisible, and isn't announced while the Steam client runs on the same machine |
 | **Inventory & market** | ✅ Read-only | View your inventory, look up item prices, search the Community Market, and see your wallet and listings. Buying & selling are planned |
 | **Collections and categorization** | ✅ | Create, rename and delete library collections, add and remove games, a `list` COLLECTIONS column and `--collection` filter, and on-demand pull, push and sync with Steam's cloud collections |
 
@@ -414,6 +414,7 @@ aurelia collections show "RPGs"              # list a collection's games
 aurelia list --collection "RPGs"             # filter the library to one collection
 aurelia collections pull                     # fetch Steam's collections and merge them in
 aurelia collections push --yes               # upload local collections to your Steam account
+                                             # (refuses until you've pulled once; --force overrides)
 aurelia collections sync --yes               # pull then push (reconcile both sides)
 
 # umu-launcher plugin (Linux only, optional: Proton via umu-run, downloaded on demand)
@@ -524,6 +525,10 @@ The session daemon keeps running until `aurelia daemon stop`. Set
 used it for that long and no install or game is running. The next command starts a new
 daemon, which logs on to Steam again.
 
+`move`, `relink` and `import` edit Steam's library files, which a running Steam client
+overwrites when it exits, so they refuse to run while Steam is open. Add `--restart-steam` to
+have Aurelia stop Steam, make the change and start Steam again, even if the change fails.
+
 On Linux, `play` pre-compiles a game's Vulkan shaders before it starts, like Steam's
 "Processing Vulkan shaders" step. It replays the game's Steam pipeline cache
 (`steamapps/shadercache/<appid>`) with Steam's `fossilize_replay` and points the NVIDIA, Mesa
@@ -549,7 +554,7 @@ explanation, and `play` rejects `--proton`, `--platform linux`, `--steam-mode ru
 Aurelia stores its configuration and local data under `~/.config/Aurelia`
 (`%USERPROFILE%\.config\Aurelia` on Windows). Set **`AURELIA_CONFIG_DIR`** to relocate it.
 That is useful for an embedding driver (e.g. Heroic) that needs Aurelia's state isolated from
-a standalone install.
+a standalone install. Each config directory gets its own session daemon.
 
 - **Library path.** Aurelia auto-detects your existing Steam installation. Inspect the
   resolved configuration with `aurelia config show`.
