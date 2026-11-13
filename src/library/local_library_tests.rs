@@ -98,3 +98,85 @@ fn parses_minimal_v29_appinfo() {
     assert_eq!(app.name, "Test Game");
     assert_eq!(app.app_type, "game");
 }
+
+#[test]
+fn parses_friend_names_from_localconfig() {
+    let vdf = r#"
+"UserLocalConfigStore"
+{
+	"friends"
+	{
+		"96573820"
+		{
+			"NameHistory"
+			{
+				"0"		"OldSelf"
+			}
+			"avatar"		"ee61dc69"
+			"name"		"Self"
+		}
+		"PersonaName"		"Self"
+		"communitypreferences"		"18efc3"
+		"160429981"
+		{
+			"name"		"Jürgen 日本"
+			"NameHistory"
+			{
+				"0"		"Former"
+				"name"		"NotThis"
+			}
+		}
+		"78005893"
+		{
+			"name"		"Say \"hi\" \\o/"
+		}
+		"25420418"
+		{
+			"name"		""
+		}
+		"11111111"
+		{
+			"avatar"		"abc"
+		}
+	}
+	"Software"
+	{
+		"friends"
+		{
+			"22222222"
+			{
+				"name"		"Nested"
+			}
+		}
+	}
+}
+"#;
+    let names = parse_localconfig_friend_names(vdf);
+    assert_eq!(
+        names.get(&76561198056839548).map(String::as_str),
+        Some("Self")
+    );
+    assert_eq!(
+        names.get(&(STEAMID64_BASE + 160429981)).map(String::as_str),
+        Some("Jürgen 日本")
+    );
+    assert_eq!(
+        names.get(&(STEAMID64_BASE + 78005893)).map(String::as_str),
+        Some("Say \"hi\" \\o/")
+    );
+    assert!(!names.contains_key(&(STEAMID64_BASE + 25420418)));
+    assert!(!names.contains_key(&(STEAMID64_BASE + 11111111)));
+    assert!(!names.contains_key(&(STEAMID64_BASE + 22222222)));
+    assert_eq!(names.len(), 3);
+}
+
+#[test]
+fn friend_names_tolerate_garbage() {
+    assert!(parse_localconfig_friend_names("").is_empty());
+    assert!(parse_localconfig_friend_names("}}} \"x\" {").is_empty());
+    let unterminated = "\"Root\"\n{\n\"friends\"\n{\n\"5\"\n{\n\"name\" \"A";
+    assert_eq!(
+        parse_localconfig_friend_names(unterminated).get(&(STEAMID64_BASE + 5)),
+        Some(&"A".to_string())
+    );
+}

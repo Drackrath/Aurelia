@@ -235,6 +235,102 @@ fn parse_localconfig_apps(text: &str) -> HashMap<u32, u32> {
     result
 }
 
+/// Host client's cached friend names, best-effort.
+pub async fn cached_friend_names(own_steam_id: Option<u64>) -> HashMap<u64, String> {
+    let Some(root) = steam_install_root() else {
+        return HashMap::new();
+    };
+    let account = match own_steam_id.and_then(account_id_from_id64) {
+        Some(id) => Some(id),
+        None => most_recent_account_id(&root).await,
+    };
+    let Some(account) = account else {
+        return HashMap::new();
+    };
+    let path = root
+        .join("userdata")
+        .join(account.to_string())
+        .join("config/localconfig.vdf");
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => parse_localconfig_friend_names(&String::from_utf8_lossy(&bytes)),
+        Err(_) => HashMap::new(),
+    }
+}
+
+/// Text VDF token.
+#[derive(Debug, PartialEq)]
+enum VdfToken {
+    Str(String),
+    Open,
+    Close,
+}
+
+/// Tolerant text VDF tokenizer (escapes, comments).
+fn vdf_tokens(text: &str) -> Vec<VdfToken> {
+    let mut out = Vec::new();
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '{' => out.push(VdfToken::Open),
+            '}' => out.push(VdfToken::Close),
+            '"' => {
+                let mut s = String::new();
+                while let Some(c) = chars.next() {
+                    match c {
+                        '"' => break,
+                        '\\' => match chars.next() {
+                            Some('n') => s.push('\n'),
+                            Some('t') => s.push('\t'),
+                            Some(other) => s.push(other),
+                            None => {}
+                        },
+                        _ => s.push(c),
+                    }
+                }
+                out.push(VdfToken::Str(s));
+            }
+            '/' if chars.peek() == Some(&'/') => {
+                // Skip line comment.
+                for c in chars.by_ref() {
+                    if c == '\n' {
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// `friends/<accountid>/name` by SteamID64.
+fn parse_localconfig_friend_names(text: &str) -> HashMap<u64, String> {
+    let mut names = HashMap::new();
+    let mut path: Vec<String> = Vec::new();
+    let mut pending: Option<String> = None;
+    for token in vdf_tokens(text) {
+        match token {
+            VdfToken::Open => path.push(pending.take().unwrap_or_default()),
+            VdfToken::Close => {
+                path.pop();
+                pending = None;
+            }
+            VdfToken::Str(s) => match pending.take() {
+                None => pending = Some(s),
+                Some(key) => {
+                    let in_friend = path.len() == 3 && path[1].eq_ignore_ascii_case("friends");
+                    if in_friend && key.eq_ignore_ascii_case("name") && !s.is_empty() {
+                        if let Ok(account) = path[2].parse::<u32>() {
+                            names.insert(STEAMID64_BASE + u64::from(account), s);
+                        }
+                    }
+                }
+            },
+        }
+    }
+    names
+}
+
 /// `common` metadata extracted from appinfo.vdf for a single app.
 struct AppMeta {
     name: String,

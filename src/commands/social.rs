@@ -9,7 +9,23 @@ use anyhow::Result;
 
 /// Shown when presence stays unannounced.
 const HOST_STEAM_NOTE: &str = "Steam is running here, so Aurelia stays unannounced to keep it \
-signed in to Friends & Chat. Names, status and incoming messages may be missing.";
+signed in to Friends & Chat. Friend names come from Steam's local cache; status and incoming \
+messages are unavailable while it runs.";
+
+/// Fills missing names; returns filled ids.
+fn apply_cached_names(
+    friends: &mut [aurelia::steam_client::Friend],
+    cache: &std::collections::HashMap<u64, String>,
+) -> std::collections::HashSet<u64> {
+    let mut filled = std::collections::HashSet::new();
+    for f in friends.iter_mut().filter(|f| f.persona_name.is_none()) {
+        if let Some(name) = cache.get(&f.steam_id) {
+            f.persona_name = Some(name.clone());
+            filled.insert(f.steam_id);
+        }
+    }
+    filled
+}
 
 /// Named without status means offline.
 fn shown_state(f: &aurelia::steam_client::Friend) -> Option<u32> {
@@ -28,8 +44,8 @@ fn shown_state(f: &aurelia::steam_client::Friend) -> Option<u32> {
 /// standalone it does a short best-effort collection over a fresh connection
 /// (which may be partial — see `SteamClient::collect_friends`).
 pub(crate) async fn cmd_friends(json: bool) -> Result<()> {
-    let friends = if daemon::in_daemon() {
-        daemon::shared_roster().await
+    let (mut friends, own_id) = if daemon::in_daemon() {
+        (daemon::shared_roster().await, None)
     } else {
         let client = authed_client().await?;
         let mut all = client
@@ -37,14 +53,28 @@ pub(crate) async fn cmd_friends(json: bool) -> Result<()> {
             .await?;
         // Match the daemon view: only actual friends (relationship 3).
         all.retain(|f| f.relationship == 3);
-        all
+        (all, client.steam_id())
     };
+
+    let host_owns = aurelia::steam_client::host_steam_owns_presence();
+    let mut from_cache = std::collections::HashSet::new();
+    if host_owns && friends.iter().any(|f| f.persona_name.is_none()) {
+        let own_id = match own_id {
+            Some(id) => Some(id),
+            None => aurelia::core::config::load_session()
+                .await
+                .ok()
+                .and_then(|s| s.steam_id),
+        };
+        let cache = aurelia::library::local_library::cached_friend_names(own_id).await;
+        from_cache = apply_cached_names(&mut friends, &cache);
+    }
 
     if json {
         print_json(&friends);
         return Ok(());
     }
-    if aurelia::steam_client::host_steam_owns_presence() {
+    if host_owns {
         cli_eprintln!("{HOST_STEAM_NOTE}");
     }
 
@@ -66,7 +96,12 @@ pub(crate) async fn cmd_friends(json: bool) -> Result<()> {
         };
         cli_println!(
             "{:<20}  {:<17}  {:<12}  {}",
-            persona_state_label(shown_state(f)),
+            persona_state_label(if from_cache.contains(&f.steam_id) {
+                // Cached name, status unknown.
+                f.persona_state
+            } else {
+                shown_state(f)
+            }),
             f.steam_id,
             name,
             game
@@ -382,3 +417,7 @@ pub(crate) async fn cmd_chat_open(steamid: u64, json: bool) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "social_tests.rs"]
+mod tests;
