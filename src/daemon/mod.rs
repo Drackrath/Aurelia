@@ -172,9 +172,6 @@ const NAME_WAIT_CAP: Duration = Duration::from_secs(10);
 /// Stop once names stop arriving.
 const NAME_IDLE: Duration = Duration::from_millis(1500);
 
-/// EPersonaState for invisible.
-const PERSONA_INVISIBLE: u32 = 7;
-
 /// Gap between friend data chunks.
 const REQUEST_PACE: Duration = Duration::from_millis(250);
 
@@ -483,14 +480,11 @@ impl DaemonState {
     }
 }
 
-/// Name wait, or none when pointless.
+/// Name wait, or none without announce.
 ///
-/// Invisible sessions never get names.
+/// Invisible sessions get names too.
 fn name_wait(announced: Option<u32>, persona_wait_secs: u64) -> Option<Duration> {
-    match announced {
-        None | Some(PERSONA_INVISIBLE) => None,
-        Some(_) => Some(Duration::from_secs(persona_wait_secs).min(NAME_WAIT_CAP)),
-    }
+    announced.map(|_| Duration::from_secs(persona_wait_secs).min(NAME_WAIT_CAP))
 }
 
 /// Friends still lacking a name.

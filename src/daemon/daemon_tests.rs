@@ -132,9 +132,24 @@ async fn named_or_non_friend_roster_returns_at_once() {
     assert!(start.elapsed() < Duration::from_millis(200));
 }
 
+/// EPersonaState for invisible.
+const PERSONA_INVISIBLE: u32 = 7;
+
 #[test]
-fn invisible_session_skips_the_name_wait() {
-    assert_eq!(name_wait(Some(PERSONA_INVISIBLE), 30), None);
+fn invisible_session_waits_like_online() {
+    assert_eq!(name_wait(Some(PERSONA_INVISIBLE), 30), Some(NAME_WAIT_CAP));
+    assert_eq!(
+        name_wait(Some(PERSONA_INVISIBLE), 3),
+        Some(Duration::from_secs(3))
+    );
+    assert_eq!(
+        name_wait(Some(PERSONA_INVISIBLE), 30),
+        name_wait(Some(1), 30)
+    );
+}
+
+#[test]
+fn no_announce_skips_the_name_wait() {
     assert_eq!(name_wait(None, 30), None);
 }
 
