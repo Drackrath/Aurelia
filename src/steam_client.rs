@@ -560,6 +560,7 @@ mod collections;
 mod manifests;
 pub mod playing;
 mod process;
+pub mod steamworks_info;
 mod storequery;
 mod tags;
 pub mod tags_table;

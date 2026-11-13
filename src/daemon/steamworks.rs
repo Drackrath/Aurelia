@@ -12,9 +12,10 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 
-use aurelia::steam_client::SteamClient;
 use aurelia::steam_client::auth_ticket::{AuthSessionTicket, TicketAuthEvent, TicketKind};
 use aurelia::steam_client::playing::{self, GAMES, Launch};
+use aurelia::steam_client::steamworks_info::{AppInstallInfo, DlcInfo};
+use aurelia::steam_client::{EncryptedTicketOutcome, SteamClient};
 
 use super::proto::{self, SharedWriter};
 
@@ -43,6 +44,19 @@ pub mod cmd {
     pub const OWNERSHIP_TICKET: u8 = 2;
     pub const CREATE_AUTH_TICKET: u8 = 3;
     pub const CANCEL_AUTH_TICKET: u8 = 4;
+    pub const ENCRYPTED_APP_TICKET: u8 = 5;
+    pub const DLC_LIST: u8 = 6;
+    pub const APP_INFO: u8 = 7;
+    pub const SESSION_INFO: u8 = 8;
+}
+
+/// Per-DLC flag bits.
+pub mod dlc_flag {
+    /// Has a store page.
+    pub const AVAILABLE: u8 = 1;
+    /// Depots on disk or none.
+    pub const CONTENT_READY: u8 = 2;
+    pub const DISABLED: u8 = 4;
 }
 
 /// Pushed message kinds.
@@ -196,6 +210,65 @@ pub fn auth_ticket_body(ticket: &AuthSessionTicket) -> Vec<u8> {
     out
 }
 
+/// `EResult` OK.
+const ERESULT_OK: i32 = 1;
+
+/// Encrypted ticket body: eresult, blob.
+pub fn encrypted_ticket_body(outcome: &EncryptedTicketOutcome) -> Vec<u8> {
+    let (eresult, ticket): (i32, &[u8]) = match outcome {
+        EncryptedTicketOutcome::Issued(t) => (ERESULT_OK, t),
+        EncryptedTicketOutcome::Refused(e) => (*e, &[]),
+    };
+    let mut out = eresult.to_le_bytes().to_vec();
+    put_blob(&mut out, ticket);
+    out
+}
+
+/// DLC list body.
+pub fn dlc_list_body(dlcs: &[DlcInfo]) -> Vec<u8> {
+    let count = u32::try_from(dlcs.len()).unwrap_or(u32::MAX);
+    let mut out = count.to_le_bytes().to_vec();
+    for dlc in dlcs.iter().take(count as usize) {
+        out.extend_from_slice(&dlc.app_id.to_le_bytes());
+        let mut flags = 0;
+        if dlc.name.is_some() {
+            flags |= dlc_flag::AVAILABLE;
+        }
+        if dlc.content_ready {
+            flags |= dlc_flag::CONTENT_READY;
+        }
+        if dlc.disabled {
+            flags |= dlc_flag::DISABLED;
+        }
+        out.push(flags);
+        put_blob(&mut out, dlc.name.as_deref().unwrap_or_default().as_bytes());
+    }
+    out
+}
+
+/// App info body: build, folder, language.
+pub fn app_info_body(info: &AppInstallInfo) -> Vec<u8> {
+    let mut out = info.build_id.to_le_bytes().to_vec();
+    let dir = info
+        .install_dir
+        .as_ref()
+        .map(|d| d.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    put_blob(&mut out, dir.as_bytes());
+    put_blob(
+        &mut out,
+        info.language.as_deref().unwrap_or_default().as_bytes(),
+    );
+    out
+}
+
+/// Session body: server time, country.
+pub fn session_info_body(server_time: u32, country: &str) -> Vec<u8> {
+    let mut out = server_time.to_le_bytes().to_vec();
+    put_blob(&mut out, country.as_bytes());
+    out
+}
+
 /// What the daemon offers games.
 pub trait Backend: Send + Sync + 'static {
     /// SteamID when logged on.
@@ -222,6 +295,17 @@ pub trait Backend: Send + Sync + 'static {
     fn cancel_auth_ticket(&self, handle: u32) -> impl Future<Output = Result<bool>> + Send;
     /// Drains Steam's ticket verdicts.
     fn ticket_events(&self) -> impl Future<Output = Vec<TicketAuthEvent>> + Send;
+    fn encrypted_app_ticket(
+        &self,
+        app_id: u32,
+        userdata: Vec<u8>,
+    ) -> impl Future<Output = Result<EncryptedTicketOutcome>> + Send;
+    /// DLC from PICS, store, manifest.
+    fn dlcs(&self, app_id: u32) -> impl Future<Output = Result<Vec<DlcInfo>>> + Send;
+    /// Language resolved, never empty.
+    fn app_info(&self, app_id: u32) -> impl Future<Output = Result<AppInstallInfo>> + Send;
+    /// Server time and logon country.
+    fn session_info(&self) -> impl Future<Output = Result<(u32, String)>> + Send;
 }
 
 /// Routes pushes to owning connections.
@@ -459,7 +543,13 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
     }
     if !matches!(
         req.command,
-        cmd::OWNERSHIP_TICKET | cmd::CREATE_AUTH_TICKET | cmd::CANCEL_AUTH_TICKET
+        cmd::OWNERSHIP_TICKET
+            | cmd::CREATE_AUTH_TICKET
+            | cmd::CANCEL_AUTH_TICKET
+            | cmd::ENCRYPTED_APP_TICKET
+            | cmd::DLC_LIST
+            | cmd::APP_INFO
+            | cmd::SESSION_INFO
     ) {
         return (status::UNSUPPORTED, b"unknown command".to_vec());
     }
@@ -485,6 +575,25 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
     match req.command {
         cmd::OWNERSHIP_TICKET => match conn.backend.ownership_ticket(app_id).await {
             Ok(ticket) => (status::OK, ticket),
+            Err(e) => failed(&e),
+        },
+        cmd::ENCRYPTED_APP_TICKET => {
+            let userdata = f.rest().to_vec();
+            match conn.backend.encrypted_app_ticket(app_id, userdata).await {
+                Ok(outcome) => (status::OK, encrypted_ticket_body(&outcome)),
+                Err(e) => failed(&e),
+            }
+        }
+        cmd::DLC_LIST => match conn.backend.dlcs(app_id).await {
+            Ok(dlcs) => (status::OK, dlc_list_body(&dlcs)),
+            Err(e) => failed(&e),
+        },
+        cmd::APP_INFO => match conn.backend.app_info(app_id).await {
+            Ok(info) => (status::OK, app_info_body(&info)),
+            Err(e) => failed(&e),
+        },
+        cmd::SESSION_INFO => match conn.backend.session_info().await {
+            Ok((time, country)) => (status::OK, session_info_body(time, &country)),
             Err(e) => failed(&e),
         },
         cmd::CREATE_AUTH_TICKET => {
@@ -595,6 +704,51 @@ impl Backend for DaemonBackend {
             Some(client) => client.take_ticket_auth_events(),
             None => Vec::new(),
         }
+    }
+
+    async fn encrypted_app_ticket(
+        &self,
+        app_id: u32,
+        userdata: Vec<u8>,
+    ) -> Result<EncryptedTicketOutcome> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        client
+            .request_encrypted_app_ticket_with_data(app_id, &userdata)
+            .await
+    }
+
+    async fn dlcs(&self, app_id: u32) -> Result<Vec<DlcInfo>> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        let language = game_language(&client, app_id).await;
+        client.steamworks_dlcs(app_id, &language).await
+    }
+
+    async fn app_info(&self, app_id: u32) -> Result<AppInstallInfo> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        let mut info = client.app_install_info(app_id).await?;
+        if info.language.is_none() {
+            info.language = Some(crate::commands::common::resolve_steam_language(None).await);
+        }
+        Ok(info)
+    }
+
+    async fn session_info(&self) -> Result<(u32, String)> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| u32::try_from(d.as_secs()).unwrap_or(u32::MAX));
+        Ok((now, client.ip_country().unwrap_or_default()))
+    }
+}
+
+/// Manifest language, else configured.
+async fn game_language(client: &SteamClient, app_id: u32) -> String {
+    match client.app_install_info(app_id).await {
+        Ok(AppInstallInfo {
+            language: Some(lang),
+            ..
+        }) => lang,
+        _ => crate::commands::common::resolve_steam_language(None).await,
     }
 }
 

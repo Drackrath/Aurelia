@@ -1,0 +1,128 @@
+//! App and DLC facts for games.
+//!
+//! DLC ids from PICS, names
+//! from the store, install state
+//! from appmanifests.
+
+use super::*;
+
+/// One DLC of an app.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DlcInfo {
+    pub app_id: u32,
+    /// Store name; `None` without store page.
+    pub name: Option<String>,
+    /// Depots on disk, or none needed.
+    pub content_ready: bool,
+    /// Listed in `DisabledDLC`.
+    pub disabled: bool,
+}
+
+/// Local install facts of an app.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AppInstallInfo {
+    pub build_id: u32,
+    /// Set only when installed.
+    pub install_dir: Option<PathBuf>,
+    /// `UserConfig/language` from the appmanifest.
+    pub language: Option<String>,
+}
+
+/// DLC ids owning a depot.
+pub(crate) fn dlcs_with_depots(section: &steam_vdf_parser::Value) -> HashSet<u32> {
+    let Some(depots) = section.get_obj(&["depots"]) else {
+        return HashSet::new();
+    };
+    depots
+        .values()
+        .filter_map(|node| node.get("dlcappid")?.as_str()?.trim().parse().ok())
+        .collect()
+}
+
+/// Joins PICS, store and manifest facts.
+pub(crate) fn build_dlc_list(
+    ids: &[u32],
+    with_depots: &HashSet<u32>,
+    installed: &HashSet<u32>,
+    disabled: &HashSet<u32>,
+    names: &HashMap<u32, String>,
+) -> Vec<DlcInfo> {
+    ids.iter()
+        .map(|&id| DlcInfo {
+            app_id: id,
+            name: names.get(&id).filter(|n| !n.is_empty()).cloned(),
+            content_ready: installed.contains(&id) || !with_depots.contains(&id),
+            disabled: disabled.contains(&id),
+        })
+        .collect()
+}
+
+impl SteamClient {
+    /// DLC of `appid` in PICS order.
+    pub async fn steamworks_dlcs(&self, appid: u32, language: &str) -> Result<Vec<DlcInfo>> {
+        let buffer = self
+            .pics_buffer(appid, "failed requesting appinfo for DLC list")
+            .await?;
+        let (ids, with_depots) = {
+            let vdf = find_vdf_in_pics(&buffer).context("failed to parse product info VDF")?;
+            let section = pics_app_section(vdf.value());
+            (dlc_ids_from_section(section), dlcs_with_depots(section))
+        };
+        let (installed, disabled) = match self.appmanifest_path(appid).await {
+            Ok(path) if path.exists() => {
+                let raw = std::fs::read_to_string(&path)
+                    .with_context(|| format!("failed reading {}", path.display()))?;
+                (
+                    parse_installed_dlc_appids(&raw),
+                    parse_disabled_dlc_appids(&raw),
+                )
+            }
+            _ => (HashSet::new(), HashSet::new()),
+        };
+        let country = self.require_connection()?.ip_country_code().to_string();
+        let names: HashMap<u32, String> = if ids.is_empty() {
+            HashMap::new()
+        } else {
+            self.fetch_store_apps(&ids, language, &country)
+                .await
+                .context("failed fetching DLC store records")?
+                .into_iter()
+                .map(|app| (app.app_id, app.name))
+                .collect()
+        };
+        Ok(build_dlc_list(
+            &ids,
+            &with_depots,
+            &installed,
+            &disabled,
+            &names,
+        ))
+    }
+
+    /// Build, folder and language.
+    pub async fn app_install_info(&self, appid: u32) -> Result<AppInstallInfo> {
+        let path = self.appmanifest_path(appid).await?;
+        if !path.exists() {
+            return Ok(AppInstallInfo::default());
+        }
+        let raw = std::fs::read_to_string(&path)
+            .with_context(|| format!("failed reading {}", path.display()))?;
+        let manifest = crate::core::acf::parse_app_manifest(&raw);
+        let dir = self.install_root_for_app(appid).await?;
+        Ok(AppInstallInfo {
+            build_id: u32::try_from(manifest.build_id).unwrap_or(0),
+            install_dir: (manifest.fully_installed() && dir.is_dir()).then_some(dir),
+            language: manifest.language,
+        })
+    }
+
+    /// Country Steam saw at logon.
+    pub fn ip_country(&self) -> Option<String> {
+        let code = self.connection.as_ref()?.ip_country_code();
+        (!code.is_empty()).then(|| code.to_string())
+    }
+}
+
+#[cfg(test)]
+#[path = "steamworks_info_tests.rs"]
+mod tests;
