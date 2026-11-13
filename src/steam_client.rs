@@ -534,6 +534,8 @@ pub struct SteamClient {
 
 // SteamClient methods are implemented across these submodules.
 mod anticheat;
+pub mod auth_ticket;
+pub use auth_ticket::{AuthSessionTicket, TicketAuthEvent, TicketKind};
 mod chat;
 mod client;
 pub use client::CodeReader;
