@@ -76,3 +76,14 @@ fn config_dir_mismatch_refuses_only_differing_dirs() {
     let msg = config_dir_mismatch(Some(b), Some(a)).unwrap();
     assert!(msg.contains("/tmp/iso") && msg.contains("AURELIA_DAEMON_SOCKET"));
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn launches_learn_the_daemon_socket() {
+    publish_socket_path();
+    let published = aurelia::launch::steamworks_overlay::daemon_socket();
+    assert_eq!(
+        published,
+        Some(std::path::PathBuf::from(transport::endpoint()))
+    );
+}

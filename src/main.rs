@@ -194,6 +194,8 @@ async fn async_main() {
         }
     }
 
+    // Local runs point at the daemon too.
+    daemon::publish_socket_path();
     let code = run_and_report(cli).await;
     std::process::exit(code);
 }

@@ -160,6 +160,7 @@ pub async fn run_server() -> Result<()> {
         }
     };
     tracing::info!("aurelia daemon listening on {}", transport::endpoint());
+    super::publish_socket_path();
 
     // Record our version + pid so a differently-versioned thin client can detect the
     // mismatch and restart us instead of forwarding a command our CLI can't parse.

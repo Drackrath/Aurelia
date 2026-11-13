@@ -7,6 +7,24 @@ use std::path::{Path, PathBuf};
 /// Overlaid entries, hidden from the mirror.
 const OVERLAID: [&str; 4] = ["sdk32", "sdk64", "steam.pid", "registry.vdf"];
 
+/// Env var the stand-in reads.
+pub const DAEMON_SOCKET_ENV: &str = "AURELIA_DAEMON_SOCKET";
+
+/// Paths pressure-vessel shares read-write.
+const PV_FILESYSTEMS_RW: &str = "PRESSURE_VESSEL_FILESYSTEMS_RW";
+
+static DAEMON_SOCKET: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Record the daemon's socket path.
+pub fn set_daemon_socket(path: PathBuf) {
+    let _ = DAEMON_SOCKET.set(path);
+}
+
+/// Daemon socket for stand-in launches.
+pub fn daemon_socket() -> Option<PathBuf> {
+    DAEMON_SOCKET.get().cloned()
+}
+
 /// Writes pid files, execs the game.
 const WRAPPER_SCRIPT: &str = r#"d=$1; head=$2; tail=$3; shift 3
 printf '%s\n' "$$" > "$d/steam.pid" || exit 127
@@ -45,6 +63,7 @@ pub struct OverlayPlan {
     pub mirror: Vec<MirrorEntry>,
     pub app_id: u32,
     pub account_id: Option<u32>,
+    pub daemon_socket: Option<PathBuf>,
 }
 
 /// Default stand-in install directory.
@@ -196,12 +215,30 @@ pub fn wrap_command(spec: &CommandSpec, plan: &OverlayPlan) -> CommandSpec {
     env.entry("SteamGameId".into()).or_insert(id);
     // Proton must keep lsteamclient enabled.
     env.remove("PROTON_DISABLE_LSTEAMCLIENT");
+    if let Some(socket) = &plan.daemon_socket {
+        add_daemon_socket(&mut env, socket);
+    }
 
     CommandSpec {
         program: plan.bwrap.clone(),
         args,
         cwd: spec.cwd.clone(),
         env,
+    }
+}
+
+/// Point the stand-in at the daemon.
+///
+/// Also shares it into pressure-vessel.
+pub fn add_daemon_socket(env: &mut std::collections::HashMap<String, String>, socket: &Path) {
+    let path = socket.to_string_lossy().into_owned();
+    env.insert(DAEMON_SOCKET_ENV.into(), path.clone());
+    let shared = env.entry(PV_FILESYSTEMS_RW.into()).or_default();
+    if !shared.split(':').any(|p| p == path) {
+        if !shared.is_empty() {
+            shared.push(':');
+        }
+        shared.push_str(&path);
     }
 }
 
@@ -254,6 +291,7 @@ pub fn plan_for(
         mirror: scan_steam_dir(&steam),
         app_id,
         account_id,
+        daemon_socket: daemon_socket(),
     })
 }
 
