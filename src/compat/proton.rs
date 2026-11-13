@@ -187,18 +187,47 @@ pub fn compat_tools_dir() -> Result<PathBuf> {
 // Discovery
 // ---------------------------------------------------------------------------
 
-/// Scan disk for installed Proton/Wine runtimes: Steam-managed Proton under
-/// `<steam_library>/steamapps/common`, plus everything under `compatibilitytools.d`.
+/// Installed runtimes across all Steam libraries.
 pub fn list_installed(steam_library_path: &Path) -> Vec<InstalledProton> {
+    let tools = compat_tools_dir().ok();
+    let libraries = crate::core::utils::runner_library_roots(
+        steam_library_path,
+        &crate::library::steam_root_candidates(),
+    );
+    let mut out: Vec<InstalledProton> = Vec::new();
+    for (i, lib) in libraries.iter().enumerate() {
+        // Tools dir scanned once.
+        let tools = if i == 0 { tools.as_deref() } else { None };
+        out.extend(list_installed_in(&lib.join("steamapps/common"), tools));
+    }
+    let mut seen_paths = std::collections::HashSet::new();
+    out.retain(|p| {
+        let key = std::fs::canonicalize(&p.path).unwrap_or_else(|_| p.path.clone());
+        seen_paths.insert(key)
+    });
+    // Stable sort keeps configured first.
+    out.sort_by(|a, b| {
+        a.name
+            .to_ascii_lowercase()
+            .cmp(&b.name.to_ascii_lowercase())
+    });
+    out.dedup_by(|a, b| a.name == b.name);
+    out
+}
+
+/// Scan given common and tools dirs.
+pub fn list_installed_in(common: &Path, tools: Option<&Path>) -> Vec<InstalledProton> {
     let mut out = Vec::new();
 
     // Steam-managed Proton under steamapps/common.
-    let common = steam_library_path.join("steamapps/common");
-    if let Ok(entries) = std::fs::read_dir(&common) {
+    if let Ok(entries) = std::fs::read_dir(common) {
         for entry in entries.flatten() {
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
-            if path.is_dir() && name.to_ascii_lowercase().contains("proton") {
+            if path.is_dir()
+                && name.to_ascii_lowercase().contains("proton")
+                && path.join("proton").is_file()
+            {
                 out.push(InstalledProton {
                     name,
                     location: "steam",
@@ -209,17 +238,15 @@ pub fn list_installed(steam_library_path: &Path) -> Vec<InstalledProton> {
     }
 
     // Custom tools (GE etc.).
-    if let Ok(custom) = compat_tools_dir() {
-        if let Ok(entries) = std::fs::read_dir(&custom) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    out.push(InstalledProton {
-                        name: entry.file_name().to_string_lossy().to_string(),
-                        location: "custom",
-                        path,
-                    });
-                }
+    if let Some(Ok(entries)) = tools.map(std::fs::read_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() && is_custom_tool_dir(&path) {
+                out.push(InstalledProton {
+                    name: entry.file_name().to_string_lossy().to_string(),
+                    location: "custom",
+                    path,
+                });
             }
         }
     }
@@ -240,6 +267,13 @@ pub fn list_installed(steam_library_path: &Path) -> Vec<InstalledProton> {
     });
     out.dedup_by(|a, b| a.name == b.name);
     out
+}
+
+/// Tools dir entry looks runnable.
+fn is_custom_tool_dir(path: &Path) -> bool {
+    path.join("proton").is_file()
+        || path.join("compatibilitytool.vdf").is_file()
+        || path.join("bin/wine").is_file()
 }
 
 /// Build the [`ProtonPackage`] for a curated Valve entry (name + Steam app id).

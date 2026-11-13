@@ -27,7 +27,63 @@ pub(crate) fn prefer_https(hosts: Vec<ContentHost>) -> Vec<ContentHost> {
     hosts
 }
 
+/// CDN pool from hosts; never empty.
+pub(crate) fn cdn_pool(
+    hosts: &[ContentHost],
+    cell_id: u32,
+    tokens: Vec<Option<String>>,
+) -> Result<Vec<steam_cdn::web_api::content_service::CDNServer>> {
+    if hosts.is_empty() {
+        bail!("Steam offered no usable content servers");
+    }
+    let tokens = tokens.into_iter().chain(std::iter::repeat(None));
+    Ok(hosts
+        .iter()
+        .zip(tokens)
+        .map(|(host, token)| super::install::cdn_server_for(host, cell_id, token))
+        .collect())
+}
+
 impl SteamClient {
+    /// Pool with per-host auth tokens.
+    pub(crate) async fn cdn_servers(
+        &self,
+        app_id: u32,
+        depot_id: u32,
+        hosts: &[ContentHost],
+        cell_id: u32,
+    ) -> Result<Vec<steam_cdn::web_api::content_service::CDNServer>> {
+        let mut tokens = Vec::with_capacity(hosts.len());
+        for host in hosts {
+            let token = match self.get_cdn_auth_token(app_id, depot_id, &host.host).await {
+                Ok(t) => Some(t),
+                Err(e) => {
+                    tracing::warn!("Failed to get auth token for host {}: {}", host.host, e);
+                    None
+                }
+            };
+            tokens.push(token);
+        }
+        cdn_pool(hosts, cell_id, tokens)
+    }
+
+    /// CDN client over live content servers.
+    pub(crate) async fn browser_cdn_client(
+        &self,
+        app_id: u32,
+        depot_id: u32,
+    ) -> Result<steam_cdn::CDNClient> {
+        let connection = self.require_connection()?;
+        let cell_id = connection.cell_id();
+        let hosts = self.get_content_servers(cell_id).await?;
+        let pool = &hosts[..hosts.len().min(super::install::HOST_POOL_SIZE)];
+        let servers = self.cdn_servers(app_id, depot_id, pool, cell_id).await?;
+        Ok(steam_cdn::CDNClient::with_servers(
+            Arc::new(connection.clone()),
+            servers,
+        ))
+    }
+
     pub(crate) async fn get_content_servers(&self, cell_id: u32) -> Result<Vec<ContentHost>> {
         let connection = self.require_connection()?;
         let mut request = CContentServerDirectory_GetServersForSteamPipe_Request::new();
@@ -501,7 +557,8 @@ impl SteamClient {
         manifest_ref: &str,
     ) -> Result<Vec<ManifestFileEntry>> {
         let connection = self.require_connection()?;
-        depot_browser::fetch_manifest_files(connection, appid, depot_id, manifest_ref).await
+        let cdn = self.browser_cdn_client(appid, depot_id).await?;
+        depot_browser::fetch_manifest_files(connection, &cdn, appid, depot_id, manifest_ref).await
     }
 
     pub fn download_single_file(
@@ -513,8 +570,12 @@ impl SteamClient {
         output_dir: &Path,
     ) -> Result<()> {
         let connection = self.require_connection()?;
+        let runtime = tokio::runtime::Runtime::new()?;
+        let cdn = runtime.block_on(self.browser_cdn_client(appid, depot_id))?;
         depot_browser::download_single_file(
+            &runtime,
             connection,
+            &cdn,
             appid,
             depot_id,
             manifest_ref,

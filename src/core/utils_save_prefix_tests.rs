@@ -23,10 +23,13 @@ fn proton_prefix_wins_once_proton_has_set_it_up() {
     let config = config_with_library(library);
     let store = crate::core::models::UserConfigStore::new();
 
-    assert_eq!(game_save_prefix(&config, 1903340, &store), proton_prefix);
+    assert_eq!(
+        game_save_prefix(&config, 1903340, &store, None),
+        proton_prefix
+    );
     // The configured WINEPREFIX still points elsewhere — that's the split.
     assert_ne!(
-        steam_wineprefix_for_game(&config, 1903340, &store),
+        steam_wineprefix_for_game(&config, 1903340, &store, None),
         proton_prefix
     );
 }
@@ -44,8 +47,8 @@ fn bare_compatdata_dir_is_not_enough() {
     let store = crate::core::models::UserConfigStore::new();
 
     assert_eq!(
-        game_save_prefix(&config, 1903340, &store),
-        steam_wineprefix_for_game(&config, 1903340, &store),
+        game_save_prefix(&config, 1903340, &store, None),
+        steam_wineprefix_for_game(&config, 1903340, &store, None),
     );
 }
 
@@ -56,7 +59,7 @@ fn proton_compat_prefix_matches_steam_compat_data_path() {
     let tmp = tempfile::tempdir().unwrap();
     let config = config_with_library(tmp.path());
     assert_eq!(
-        proton_compat_prefix(&config, 42),
+        proton_compat_prefix(&config, 42, None),
         tmp.path()
             .join("steamapps")
             .join("compatdata")

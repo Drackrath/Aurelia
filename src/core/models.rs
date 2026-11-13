@@ -530,7 +530,7 @@ pub struct WorkshopItem {
     pub file_size: u64,
     pub time_updated: i64,
     pub kind: WorkshopItemKind,
-    /// Collection member ids (empty for plain items).
+    /// Collection members or required items.
     pub children: Vec<u64>,
 }
 

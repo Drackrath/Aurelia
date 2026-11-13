@@ -26,6 +26,50 @@ pub fn extract_quoted_values(line: &str) -> Vec<String> {
     out
 }
 
+/// Writes `steam_appid.txt` only when missing.
+pub fn ensure_steam_appid(dir: &Path, app_id: u32) -> std::io::Result<bool> {
+    let path = dir.join("steam_appid.txt");
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(file) => {
+            write_appid_or_remove(&path, file, app_id)?;
+            Ok(true)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+/// Writes; removes `path` on failure.
+fn write_appid_or_remove(
+    path: &Path,
+    mut file: impl std::io::Write,
+    app_id: u32,
+) -> std::io::Result<()> {
+    let result = file
+        .write_all(app_id.to_string().as_bytes())
+        .and_then(|()| file.flush());
+    drop(file);
+    if let Err(e) = result {
+        // Partial file blocks later retries.
+        let _ = std::fs::remove_file(path);
+        return Err(e);
+    }
+    Ok(())
+}
+
+/// [`ensure_steam_appid`] that logs instead of failing.
+pub fn ensure_steam_appid_logged(dir: &Path, app_id: u32) {
+    match ensure_steam_appid(dir, app_id) {
+        Ok(true) => tracing::debug!("wrote steam_appid.txt in {}", dir.display()),
+        Ok(false) => tracing::debug!("keeping existing steam_appid.txt in {}", dir.display()),
+        Err(e) => tracing::warn!("could not write steam_appid.txt in {}: {e}", dir.display()),
+    }
+}
+
 /// True only for one plain directory name.
 pub fn is_safe_dir_name(name: &str) -> bool {
     let mut parts = Path::new(name).components();
@@ -150,16 +194,54 @@ pub fn resolve_runner(name: &str, library_root: &Path) -> PathBuf {
 /// name matches no on-disk runtime. Use this when you want to *check* whether a runner
 /// resolves without emitting the not-found warning [`resolve_runner`] logs.
 pub fn resolve_runner_opt(name: &str, library_root: &Path) -> Option<PathBuf> {
+    resolve_runner_opt_in(name, library_root, &crate::library::steam_root_candidates())
+}
+
+/// Configured library first, then all others.
+pub fn runner_library_roots(configured: &Path, steam_roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut libraries = vec![configured.to_path_buf()];
+    libraries.extend(steam_roots.iter().cloned());
+    let mut roots = vec![configured.to_path_buf()];
+    roots.extend(steam_roots.iter().cloned());
+    for root in &roots {
+        for vdf in [
+            root.join("steamapps").join("libraryfolders.vdf"),
+            root.join("config").join("libraryfolders.vdf"),
+        ] {
+            if let Ok(raw) = std::fs::read_to_string(&vdf) {
+                libraries.extend(crate::library::library_folder_paths(&raw));
+            }
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    libraries.retain(|p| seen.insert(std::fs::canonicalize(p).unwrap_or_else(|_| p.clone())));
+    libraries
+}
+
+/// Testable core of [`resolve_runner_opt`].
+pub fn resolve_runner_opt_in(
+    name: &str,
+    library_root: &Path,
+    steam_roots: &[PathBuf],
+) -> Option<PathBuf> {
     let name_path = Path::new(name);
     if name_path.is_absolute() || name_path.exists() {
         return Some(name_path.to_path_buf());
     }
 
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let libraries = runner_library_roots(library_root, steam_roots);
+    // Configured library wins ties.
     let mut search_dirs: Vec<PathBuf> = vec![
         library_root.join("steamapps/common"),
         library_root.join("compatibilitytools.d"),
     ];
+    for lib in libraries.iter().skip(1) {
+        search_dirs.push(lib.join("steamapps/common"));
+    }
+    for root in steam_roots {
+        search_dirs.push(root.join("compatibilitytools.d"));
+    }
     // The Steam root's compatibilitytools.d (handles a non-standard / Flatpak Steam
     // whose root differs from `library_root`).
     if let Ok(compat) = crate::compat::proton::compat_tools_dir() {
@@ -572,9 +654,70 @@ pub fn setup_fake_steam_trap(config_dir: &Path) -> Result<PathBuf> {
 /// The host's real Steam client install directory, suitable as
 /// `STEAM_COMPAT_CLIENT_INSTALL_PATH` so Proton's `lsteamclient` bridge can reach
 /// the running Steam client (Steamworks online features, Family-Sharing licences).
-/// Returns the first existing standard location, or `None` if Steam isn't found.
+/// `None` unless a client is installed.
 pub fn host_steam_client_path() -> Option<PathBuf> {
-    crate::core::config::detect_steam_path()
+    let root = crate::core::config::detect_steam_path()?;
+    #[cfg(not(target_os = "windows"))]
+    {
+        let path_env = std::env::var_os("PATH");
+        let flatpak_dirs = steam_flatpak_app_dirs();
+        if !steam_client_installed(&root, path_env.as_deref(), &flatpak_dirs) {
+            tracing::debug!(
+                "no Steam client found for {}; ignoring host Steam",
+                root.display()
+            );
+            return None;
+        }
+    }
+    Some(root)
+}
+
+/// Flatpak app dirs for Valve's Steam.
+pub fn steam_flatpak_app_dirs() -> Vec<PathBuf> {
+    let mut dirs = vec![PathBuf::from(
+        "/var/lib/flatpak/app/com.valvesoftware.Steam",
+    )];
+    if let Ok(home) = crate::core::config::home_dir() {
+        dirs.push(home.join(".local/share/flatpak/app/com.valvesoftware.Steam"));
+    }
+    dirs
+}
+
+/// First executable named `name` on `path_env`.
+pub fn find_on_path(name: &str, path_env: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+    let path_env = path_env?;
+    std::env::split_paths(path_env)
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .map(|dir| dir.join(name))
+        .find(|candidate| is_executable_file(candidate))
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        meta.is_file() && meta.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        meta.is_file()
+    }
+}
+
+/// Whether a real Steam client exists.
+pub fn steam_client_installed(
+    root: &Path,
+    path_env: Option<&std::ffi::OsStr>,
+    flatpak_dirs: &[PathBuf],
+) -> bool {
+    ["ubuntu12_32/steam", "steam.sh", "steam.exe"]
+        .iter()
+        .any(|rel| root.join(rel).is_file())
+        || find_on_path("steam", path_env).is_some()
+        || flatpak_dirs.iter().any(|d| d.is_dir())
 }
 
 /// Whether the host's Steam client is currently running. Checks `~/.steam/steam.pid`
@@ -584,17 +727,24 @@ pub fn host_steam_client_path() -> Option<PathBuf> {
 /// brings the already-open client to the foreground (the opposite of `-silent`).
 #[cfg(target_os = "linux")]
 pub fn is_steam_running() -> bool {
-    // ~/.steam/steam.pid holds the running client's PID.
-    if let Ok(home) = std::env::var("HOME") {
-        if let Ok(pid) = std::fs::read_to_string(format!("{home}/.steam/steam.pid")) {
-            if let Ok(pid) = pid.trim().parse::<u32>() {
-                if std::path::Path::new(&format!("/proc/{pid}")).exists() {
-                    return true;
-                }
-            }
-        }
+    let pid_file = std::env::var("HOME")
+        .ok()
+        .map(|home| PathBuf::from(home).join(".steam/steam.pid"));
+    steam_running_in(Path::new("/proc"), pid_file.as_deref())
+}
+
+/// Testable core of [`is_steam_running`].
+#[cfg(target_os = "linux")]
+fn steam_running_in(proc_root: &Path, pid_file: Option<&Path>) -> bool {
+    // Pid file names the client.
+    if let Some(pid) = pid_file
+        .and_then(|f| std::fs::read_to_string(f).ok())
+        .and_then(|pid| pid.trim().parse::<u32>().ok())
+        && proc_entry_is_live(&proc_root.join(pid.to_string()))
+    {
+        return true;
     }
-    let Ok(entries) = std::fs::read_dir("/proc") else {
+    let Ok(entries) = std::fs::read_dir(proc_root) else {
         return false;
     };
     for entry in entries.flatten() {
@@ -605,12 +755,27 @@ pub fn is_steam_running() -> bool {
         }
         if let Ok(comm) = std::fs::read_to_string(entry.path().join("comm")) {
             let comm = comm.trim();
-            if comm == "steam" || comm == "steamwebhelper" {
+            if (comm == "steam" || comm == "steamwebhelper") && proc_entry_is_live(&entry.path()) {
                 return true;
             }
         }
     }
     false
+}
+
+/// Existing, non-zombie `/proc/<pid>` entry.
+#[cfg(target_os = "linux")]
+fn proc_entry_is_live(proc_dir: &Path) -> bool {
+    if !proc_dir.exists() {
+        return false;
+    }
+    let Ok(status) = std::fs::read_to_string(proc_dir.join("status")) else {
+        return true;
+    };
+    !status
+        .lines()
+        .find_map(|l| l.strip_prefix("State:"))
+        .is_some_and(|state| state.trim_start().starts_with('Z'))
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -629,14 +794,127 @@ pub fn ensure_steam_running() {
         return;
     }
     tracing::info!("Steam client not running; starting `steam -silent` (tray)");
-    let mut cmd = std::process::Command::new("steam");
-    cmd.arg("-silent")
+    match start_steam_detached(&["-silent"]) {
+        Ok(()) => tracing::info!("Launched Steam client (-silent)"),
+        Err(e) => tracing::warn!("could not start Steam client: {e:#}"),
+    }
+}
+
+/// Polls `done` until true or timeout.
+pub fn wait_until(
+    mut done: impl FnMut() -> bool,
+    timeout: std::time::Duration,
+    interval: std::time::Duration,
+) -> bool {
+    let start = std::time::Instant::now();
+    loop {
+        if done() {
+            return true;
+        }
+        if start.elapsed() >= timeout {
+            return false;
+        }
+        std::thread::sleep(interval);
+    }
+}
+
+/// Flatpak app id of Valve's Steam.
+pub const STEAM_FLATPAK_APP_ID: &str = "com.valvesoftware.Steam";
+
+/// Program plus leading args starting Steam.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SteamLauncher {
+    pub program: PathBuf,
+    pub prefix_args: Vec<String>,
+}
+
+/// Sandboxed packaging of a Steam root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SteamRootKind {
+    Native,
+    Flatpak,
+    Snap,
+}
+
+/// Classifies a Steam root by path.
+pub fn steam_root_kind(root: &Path) -> SteamRootKind {
+    let check = |p: &Path| {
+        let text = p.to_string_lossy();
+        if text.contains(&format!("/.var/app/{STEAM_FLATPAK_APP_ID}/"))
+            || text.ends_with(&format!("/.var/app/{STEAM_FLATPAK_APP_ID}"))
+        {
+            Some(SteamRootKind::Flatpak)
+        } else if text.contains("/snap/steam/") {
+            Some(SteamRootKind::Snap)
+        } else {
+            None
+        }
+    };
+    check(root)
+        .or_else(|| std::fs::canonicalize(root).ok().and_then(|c| check(&c)))
+        .unwrap_or(SteamRootKind::Native)
+}
+
+/// Steam launcher; sandboxed roots skip `steam.sh`.
+pub fn steam_launcher(
+    path_env: Option<&std::ffi::OsStr>,
+    root: Option<&Path>,
+    flatpak_dirs: &[PathBuf],
+) -> Option<SteamLauncher> {
+    let kind = root.map_or(SteamRootKind::Native, steam_root_kind);
+    let flatpak_run = || {
+        let installed = kind == SteamRootKind::Flatpak || flatpak_dirs.iter().any(|d| d.is_dir());
+        if !installed {
+            return None;
+        }
+        find_on_path("flatpak", path_env).map(|program| SteamLauncher {
+            program,
+            prefix_args: vec!["run".into(), STEAM_FLATPAK_APP_ID.into()],
+        })
+    };
+    // Live Flatpak root: use flatpak.
+    if kind == SteamRootKind::Flatpak
+        && let Some(launcher) = flatpak_run()
+    {
+        return Some(launcher);
+    }
+    if let Some(program) = find_on_path("steam", path_env) {
+        return Some(SteamLauncher {
+            program,
+            prefix_args: Vec::new(),
+        });
+    }
+    if kind == SteamRootKind::Native
+        && let Some(script) = root
+            .map(|r| r.join("steam.sh"))
+            .filter(|script| script.is_file())
+    {
+        return Some(SteamLauncher {
+            program: script,
+            prefix_args: Vec::new(),
+        });
+    }
+    flatpak_run()
+}
+
+/// Spawns Steam detached and reaps it.
+#[cfg(target_os = "linux")]
+pub fn start_steam_detached(args: &[&str]) -> Result<()> {
+    let path_env = std::env::var_os("PATH");
+    let root = crate::core::config::detect_steam_path();
+    let flatpak_dirs = steam_flatpak_app_dirs();
+    let Some(launcher) = steam_launcher(path_env.as_deref(), root.as_deref(), &flatpak_dirs) else {
+        tracing::warn!("no usable Steam launcher found");
+        bail!("no `steam` on PATH, no host steam.sh and no Flatpak Steam");
+    };
+    let program = launcher.program;
+    let mut cmd = std::process::Command::new(&program);
+    cmd.args(&launcher.prefix_args)
+        .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    // Detach into its own session/process group so Steam keeps running independently
-    // of this launch (and isn't torn down with the game's process tree on stop).
-    #[cfg(unix)]
+    // Own session; outlives the game.
     {
         use std::os::unix::process::CommandExt;
         unsafe {
@@ -646,10 +924,14 @@ pub fn ensure_steam_running() {
             });
         }
     }
-    match cmd.spawn() {
-        Ok(_) => tracing::info!("Launched Steam client (-silent)"),
-        Err(e) => tracing::warn!("could not start Steam client: {e:#}"),
-    }
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| anyhow!("could not start {}: {e}", program.display()))?;
+    // Reap it; avoid daemon zombies.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
 }
 
 /// Latest logged-on state in connection-log text.
@@ -1193,6 +1475,114 @@ fn extract_version_from_dll(dll_path: &Path) -> Option<String> {
     candidates.into_iter().next()
 }
 
+/// Lowercase DLL name without `.dll`.
+pub fn normalize_dll_name(name: &str) -> String {
+    let lower = name.trim().to_lowercase();
+    lower.strip_suffix(".dll").unwrap_or(&lower).to_string()
+}
+
+/// Splits into `(names, mode, raw)` groups.
+fn parse_dll_override_groups(overrides: &str) -> Vec<(Vec<String>, Option<String>, String)> {
+    overrides
+        .split(';')
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+        .map(|entry| match entry.split_once('=') {
+            Some((names, mode)) => (
+                names
+                    .split(',')
+                    .map(|n| n.trim().to_string())
+                    .filter(|n| !n.is_empty())
+                    .collect(),
+                Some(mode.trim().to_string()),
+                entry.to_string(),
+            ),
+            None => (Vec::new(), None, entry.to_string()),
+        })
+        .collect()
+}
+
+/// Current mode for `dll`, if any.
+pub fn dll_override_mode(overrides: &str, dll: &str) -> Option<String> {
+    let key = normalize_dll_name(dll);
+    parse_dll_override_groups(overrides)
+        .into_iter()
+        .rev()
+        .find_map(|(names, mode, _)| {
+            names
+                .iter()
+                .any(|n| normalize_dll_name(n) == key)
+                .then_some(mode)
+                .flatten()
+        })
+}
+
+/// Normalised DLL names in overrides.
+pub fn dll_override_names(overrides: &str) -> std::collections::HashSet<String> {
+    parse_dll_override_groups(overrides)
+        .into_iter()
+        .flat_map(|(names, _, _)| names)
+        .map(|n| normalize_dll_name(&n))
+        .collect()
+}
+
+/// Merges by DLL name; `entries` win.
+pub fn merge_dll_overrides(existing: &str, entries: &[(String, String)]) -> String {
+    // Last entry wins per DLL.
+    let mut new_entries: Vec<(String, String, String)> = Vec::new();
+    for (name, mode) in entries {
+        let key = normalize_dll_name(name);
+        if key.is_empty() {
+            continue;
+        }
+        new_entries.retain(|(k, _, _)| *k != key);
+        new_entries.push((key, name.trim().to_string(), mode.trim().to_string()));
+    }
+    let replaced: std::collections::HashSet<&str> =
+        new_entries.iter().map(|(k, _, _)| k.as_str()).collect();
+
+    let mut out: Vec<String> = Vec::new();
+    for (names, mode, raw) in parse_dll_override_groups(existing) {
+        let Some(mode) = mode else {
+            out.push(raw);
+            continue;
+        };
+        let kept: Vec<String> = names
+            .into_iter()
+            .filter(|n| !replaced.contains(normalize_dll_name(n).as_str()))
+            .collect();
+        if !kept.is_empty() {
+            out.push(format!("{}={}", kept.join(","), mode));
+        }
+    }
+    out.extend(
+        new_entries
+            .into_iter()
+            .map(|(_, name, mode)| format!("{name}={mode}")),
+    );
+    out.join(";")
+}
+
+/// Adds only DLLs not yet present.
+pub fn fill_dll_overrides(existing: &str, entries: &[(String, String)]) -> String {
+    let present = dll_override_names(existing);
+    let missing: Vec<(String, String)> = entries
+        .iter()
+        .filter(|(name, _)| !present.contains(&normalize_dll_name(name)))
+        .cloned()
+        .collect();
+    merge_dll_overrides(existing, &missing)
+}
+
+/// Parses user overrides into entries.
+pub fn dll_override_entries(overrides: &str) -> Vec<(String, String)> {
+    parse_dll_override_groups(overrides)
+        .into_iter()
+        .filter_map(|(names, mode, _)| mode.map(|m| (names, m)))
+        .flat_map(|(names, mode)| names.into_iter().map(move |n| (n, mode.clone())))
+        .collect()
+}
+
 /// Returns the WINEDLLOVERRIDES string needed to activate installed layers.
 pub fn build_dll_overrides(
     dxvk_active: bool,
@@ -1665,14 +2055,16 @@ pub fn steam_wineprefix_for_game(
     config: &crate::core::config::LauncherConfig,
     app_id: u32,
     user_configs: &crate::core::models::UserConfigStore,
+    install_path: Option<&Path>,
 ) -> std::path::PathBuf {
-    wineprefix_for_game(config, app_id, user_configs.get(&app_id))
+    wineprefix_for_game(config, app_id, user_configs.get(&app_id), install_path)
 }
 
 pub fn wineprefix_for_game(
     config: &crate::core::config::LauncherConfig,
     app_id: u32,
     user_config: Option<&crate::core::models::UserAppConfig>,
+    install_path: Option<&Path>,
 ) -> std::path::PathBuf {
     let use_steam_runtime = match user_config.map(|c| &c.steam_runtime_policy) {
         Some(crate::core::models::SteamRuntimePolicy::Enabled) => true,
@@ -1690,7 +2082,7 @@ pub fn wineprefix_for_game(
         .unwrap_or(config.use_shared_compat_data);
 
     if use_per_game_compat_data {
-        proton_compat_prefix(config, app_id)
+        proton_compat_prefix(config, app_id, install_path)
     } else {
         resolve_master_wineprefix()
     }
@@ -1701,8 +2093,94 @@ pub fn wineprefix_for_game(
 pub fn proton_compat_prefix(
     config: &crate::core::config::LauncherConfig,
     app_id: u32,
+    install_path: Option<&Path>,
 ) -> std::path::PathBuf {
-    compat_data_dir(std::path::Path::new(&config.steam_library_path), app_id).join("pfx")
+    game_compat_data_dir(config, app_id, install_path).join("pfx")
+}
+
+/// Compatdata dir in the game's library.
+pub fn game_compat_data_dir(
+    config: &crate::core::config::LauncherConfig,
+    app_id: u32,
+    install_path: Option<&Path>,
+) -> PathBuf {
+    let configured = Path::new(&config.steam_library_path);
+    let root = game_library_root(config, app_id, install_path);
+    let dir = compat_data_dir(&root, app_id);
+    if root != configured {
+        let old = compat_data_dir(configured, app_id);
+        if old.is_dir() && !dir.exists() {
+            tracing::warn!(
+                "app {app_id}: prefix now lives in its own library ({}); \
+                 an older prefix exists at {} (move it there to keep saves)",
+                dir.display(),
+                old.display()
+            );
+        }
+    }
+    dir
+}
+
+/// Library holding the game's appmanifest.
+pub fn game_library_root(
+    config: &crate::core::config::LauncherConfig,
+    app_id: u32,
+    install_path: Option<&Path>,
+) -> PathBuf {
+    // Install path beats the library walk.
+    if let Some(lib) = install_path.and_then(|p| library_from_install_path(p, app_id)) {
+        return lib;
+    }
+    game_library_root_in(
+        Path::new(&config.steam_library_path),
+        &crate::library::steam_root_candidates(),
+        app_id,
+    )
+}
+
+/// Install dir's library, if manifest present.
+pub fn library_from_install_path(install_path: &Path, app_id: u32) -> Option<PathBuf> {
+    let common = install_path.parent()?;
+    let steamapps = common.parent()?;
+    let is = |p: &Path, name: &str| {
+        p.file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.eq_ignore_ascii_case(name))
+    };
+    if !is(common, "common") || !is(steamapps, "steamapps") {
+        return None;
+    }
+    steamapps
+        .join(format!("appmanifest_{app_id}.acf"))
+        .is_file()
+        .then(|| steamapps.parent().map(Path::to_path_buf))
+        .flatten()
+}
+
+/// Testable core of [`game_library_root`].
+pub fn game_library_root_in(configured: &Path, steam_roots: &[PathBuf], app_id: u32) -> PathBuf {
+    let manifest = format!("appmanifest_{app_id}.acf");
+    let has_manifest = |lib: &Path| lib.join("steamapps").join(&manifest).is_file();
+    if has_manifest(configured) {
+        return configured.to_path_buf();
+    }
+    let mut roots = vec![configured.to_path_buf()];
+    roots.extend(steam_roots.iter().cloned());
+    let mut candidates: Vec<PathBuf> = steam_roots.to_vec();
+    for root in &roots {
+        for vdf in [
+            root.join("steamapps").join("libraryfolders.vdf"),
+            root.join("config").join("libraryfolders.vdf"),
+        ] {
+            if let Ok(raw) = std::fs::read_to_string(&vdf) {
+                candidates.extend(crate::library::library_folder_paths(&raw));
+            }
+        }
+    }
+    candidates
+        .into_iter()
+        .find(|lib| has_manifest(lib))
+        .unwrap_or_else(|| configured.to_path_buf())
 }
 
 /// `steamapps/compatdata/<appid>` under a library root.
@@ -1735,12 +2213,13 @@ pub fn game_save_prefix(
     config: &crate::core::config::LauncherConfig,
     app_id: u32,
     user_configs: &crate::core::models::UserConfigStore,
+    install_path: Option<&Path>,
 ) -> std::path::PathBuf {
-    let proton_prefix = proton_compat_prefix(config, app_id);
+    let proton_prefix = proton_compat_prefix(config, app_id, install_path);
     if proton_prefix.join("drive_c").is_dir() {
         return proton_prefix;
     }
-    steam_wineprefix_for_game(config, app_id, user_configs)
+    steam_wineprefix_for_game(config, app_id, user_configs, install_path)
 }
 
 /// Resolve `rel` under `base`, ignoring case.
@@ -1812,3 +2291,27 @@ mod safe_dir_name_tests;
 #[cfg(all(test, target_os = "linux"))]
 #[path = "utils_steam_logon_tests.rs"]
 mod steam_logon_tests;
+
+#[cfg(test)]
+#[path = "utils_steam_appid_tests.rs"]
+mod steam_appid_tests;
+
+#[cfg(test)]
+#[path = "utils_dll_overrides_tests.rs"]
+mod dll_overrides_tests;
+
+#[cfg(test)]
+#[path = "utils_steam_client_tests.rs"]
+mod steam_client_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "utils_steam_launcher_tests.rs"]
+mod steam_launcher_tests;
+
+#[cfg(test)]
+#[path = "utils_wait_until_tests.rs"]
+mod wait_until_tests;
+
+#[cfg(test)]
+#[path = "utils_game_library_tests.rs"]
+mod game_library_tests;

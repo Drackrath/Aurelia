@@ -3,7 +3,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use sha1::{Digest, Sha1};
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, UNIX_EPOCH};
 use steam_vent::ConnectionTrait;
 use steam_vent::connection::Connection;
 use steam_vent_proto::steammessages_cloud_steamclient::{
@@ -11,6 +11,7 @@ use steam_vent_proto::steammessages_cloud_steamclient::{
     CCloud_ClientCommitFileUpload_Request, CCloud_ClientCommitFileUpload_Response,
     CCloud_ClientFileDownload_Request, CCloud_ClientFileDownload_Response,
     CCloud_EnumerateUserFiles_Request, CCloud_EnumerateUserFiles_Response,
+    ClientCloudFileUploadBlockDetails,
 };
 
 #[derive(Debug, Clone)]
@@ -232,6 +233,42 @@ pub struct UfsSaveSpec {
     pub recursive: bool,
 }
 
+/// One `ufs/rootoverrides` rule.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct UfsRootOverride {
+    /// Token being overridden, e.g. `WinAppDataRoaming`.
+    pub root: String,
+    /// OS name: `Windows`, `Linux`, `MacOS`.
+    pub os: String,
+    /// `=` (default) or `!=`.
+    pub os_compare: String,
+    /// Replacement root token.
+    pub use_instead: String,
+    /// Sub-path appended to the replacement.
+    pub add_path: String,
+    /// `(find, replace)` applied to paths.
+    pub path_transforms: Vec<(String, String)>,
+}
+
+impl UfsRootOverride {
+    /// Whether it applies to `target_os`.
+    pub fn applies_to(&self, target_os: &str) -> bool {
+        let same = self.os.is_empty() || self.os.eq_ignore_ascii_case(target_os);
+        if self.os_compare.trim() == "!=" {
+            !same
+        } else {
+            same
+        }
+    }
+}
+
+/// An app's UFS appinfo section.
+#[derive(Debug, Clone, Default)]
+pub struct UfsConfig {
+    pub savefiles: Vec<UfsSaveSpec>,
+    pub root_overrides: Vec<UfsRootOverride>,
+}
+
 /// Translates Steam Cloud filenames to real on-disk paths.
 ///
 /// Steam Auto-Cloud filenames embed the real save location as a leading root token,
@@ -249,6 +286,9 @@ pub struct CloudPathResolver {
     remote_root: PathBuf,
     install_dir: Option<PathBuf>,
     wine_prefix: Option<PathBuf>,
+    /// Overrides for the target OS only.
+    overrides: Vec<UfsRootOverride>,
+    steam_id: Option<u64>,
 }
 
 impl CloudPathResolver {
@@ -257,7 +297,55 @@ impl CloudPathResolver {
             remote_root,
             install_dir,
             wine_prefix: None,
+            overrides: Vec::new(),
+            steam_id: None,
         }
+    }
+
+    /// Keep overrides matching `target_os`.
+    #[must_use]
+    pub fn with_root_overrides(mut self, overrides: &[UfsRootOverride], target_os: &str) -> Self {
+        self.overrides = overrides
+            .iter()
+            .filter(|o| o.applies_to(target_os))
+            .cloned()
+            .collect();
+        self
+    }
+
+    /// Steam id for path placeholders.
+    #[must_use]
+    pub fn with_steam_id(mut self, steam_id: u64) -> Self {
+        self.steam_id = Some(steam_id);
+        self
+    }
+
+    fn override_for(&self, token: &str) -> Option<&UfsRootOverride> {
+        self.overrides
+            .iter()
+            .find(|o| o.root.eq_ignore_ascii_case(token))
+    }
+
+    /// Apply the token's path transforms.
+    pub fn transform_path(&self, token: &str, path: &str) -> String {
+        let mut out = path.to_string();
+        if let Some(o) = self.override_for(token) {
+            for (find, replace) in &o.path_transforms {
+                if out.contains(find.as_str()) {
+                    out = out.replacen(find.as_str(), replace, 1);
+                }
+            }
+        }
+        out
+    }
+
+    /// Fill `{64BitSteamID}` and `{Steam3AccountID}`.
+    pub fn substitute_ids(&self, path: &str) -> String {
+        let Some(id) = self.steam_id else {
+            return path.to_string();
+        };
+        path.replace("{64BitSteamID}", &id.to_string())
+            .replace("{Steam3AccountID}", &(id as u32).to_string())
     }
 
     /// Point `%Win*%` root tokens at a Proton/wine prefix (the `pfx` directory that
@@ -276,7 +364,7 @@ impl CloudPathResolver {
                 let base = self.resolve_root(token).with_context(|| {
                     format!("unsupported Steam Cloud root token '%{token}%' on this platform")
                 })?;
-                Ok(join_relative(&base, rest))
+                Ok(join_relative(&base, &self.transform_path(token, rest)))
             }
             None => Ok(join_relative(&self.remote_root, filename)),
         }
@@ -286,11 +374,25 @@ impl CloudPathResolver {
     /// `None` if it isn't applicable on this platform (e.g. a `%Linux*%` root on
     /// Windows, or a `%Win*%` root with no wine prefix). Used by UFS save discovery.
     pub fn resolve_root(&self, root_token: &str) -> Option<PathBuf> {
-        resolve_root_token(
-            root_token,
-            self.install_dir.as_deref(),
-            self.wine_prefix.as_deref(),
-        )
+        let lookup = |token: &str| {
+            resolve_root_token(
+                token,
+                self.install_dir.as_deref(),
+                self.wine_prefix.as_deref(),
+            )
+        };
+        match self.override_for(root_token) {
+            Some(o) => {
+                let target = if o.use_instead.is_empty() {
+                    o.root.as_str()
+                } else {
+                    o.use_instead.as_str()
+                };
+                let base = lookup(target)?;
+                Some(join_relative(&base, &self.substitute_ids(&o.add_path)))
+            }
+            None => lookup(root_token),
+        }
     }
 }
 
@@ -307,7 +409,9 @@ fn discover_local_saves(
         let Some(base) = resolver.resolve_root(&spec.root) else {
             continue;
         };
-        let search_root = join_relative(&base, &spec.path);
+        // Cloud names keep the untransformed path.
+        let spec_path = normalize_rel(&resolver.substitute_ids(&spec.path));
+        let search_root = join_relative(&base, &resolver.transform_path(&spec.root, &spec_path));
         if !search_root.is_dir() {
             continue;
         }
@@ -327,14 +431,15 @@ fn discover_local_saves(
             if !glob_matches(&spec.pattern, &name) {
                 continue;
             }
-            let Ok(rel) = entry.path().strip_prefix(&base) else {
+            let Ok(rel) = entry.path().strip_prefix(&search_root) else {
                 continue;
             };
-            let cloud_name = format!(
-                "%{}%{}",
-                spec.root,
-                rel.to_string_lossy().replace('\\', "/")
-            );
+            let rel = rel.to_string_lossy().replace('\\', "/");
+            let cloud_name = if spec_path.is_empty() {
+                format!("%{}%{rel}", spec.root)
+            } else {
+                format!("%{}%{spec_path}/{rel}", spec.root)
+            };
             out.push((cloud_name, entry.path().to_path_buf()));
         }
     }
@@ -368,6 +473,14 @@ fn split_root_token(filename: &str) -> Option<(&str, &str)> {
     let after = filename.strip_prefix('%')?;
     let end = after.find('%')?;
     Some((&after[..end], &after[end + 1..]))
+}
+
+/// Clean relative path, `/`-separated.
+fn normalize_rel(rel: &str) -> String {
+    rel.split(['/', '\\'])
+        .filter(|c| !c.is_empty() && *c != "." && *c != "..")
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// Join a `/`- or `\`-separated cloud-relative path onto `base`, skipping empty,
@@ -566,13 +679,119 @@ pub struct CloudClient {
     http: reqwest::Client,
 }
 
+/// Cloud RPC response timeout.
+const CLOUD_RPC_TIMEOUT: Duration = Duration::from_secs(30);
+/// Cloud HTTP connect timeout.
+const CLOUD_CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+/// Cloud HTTP read (idle) timeout.
+const CLOUD_READ_TIMEOUT: Duration = Duration::from_secs(60);
+/// Waits between transfer attempts.
+const TRANSFER_BACKOFF: [Duration; 3] = [
+    Duration::from_secs(2),
+    Duration::from_secs(4),
+    Duration::from_secs(8),
+];
+/// Upload deadline floor rate, bytes/second.
+const UPLOAD_FLOOR_RATE: u64 = 32 * 1024;
+/// Minimum per-block upload deadline.
+const UPLOAD_MIN_DEADLINE: Duration = Duration::from_secs(60);
+
+/// HTTP client with cloud timeouts.
+fn cloud_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .user_agent("aurelia")
+        .connect_timeout(CLOUD_CONNECT_TIMEOUT)
+        .read_timeout(CLOUD_READ_TIMEOUT)
+        .build()
+        .unwrap_or_else(|e| {
+            tracing::warn!("cloud HTTP client fallback: {e}");
+            reqwest::Client::new()
+        })
+}
+
+/// How an HTTP transfer failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TransferFailure {
+    Connect,
+    Timeout,
+    Body,
+    Status(u16),
+    Other,
+}
+
+/// Classify first HTTP error in chain.
+fn transfer_failure(err: &anyhow::Error) -> TransferFailure {
+    for cause in err.chain() {
+        if let Some(e) = cause.downcast_ref::<reqwest::Error>() {
+            return if e.is_timeout() {
+                TransferFailure::Timeout
+            } else if e.is_connect() {
+                TransferFailure::Connect
+            } else if let Some(status) = e.status() {
+                TransferFailure::Status(status.as_u16())
+            } else if e.is_body() || e.is_decode() {
+                TransferFailure::Body
+            } else {
+                TransferFailure::Other
+            };
+        }
+    }
+    TransferFailure::Other
+}
+
+/// Worth retrying: network, timeout, 5xx/429.
+fn is_transient(failure: TransferFailure) -> bool {
+    match failure {
+        TransferFailure::Connect | TransferFailure::Timeout | TransferFailure::Body => true,
+        TransferFailure::Status(code) => code == 429 || (500..600).contains(&code),
+        TransferFailure::Other => false,
+    }
+}
+
+/// Drop the (signed) URL from errors.
+fn http_error(e: reqwest::Error) -> anyhow::Error {
+    anyhow::Error::new(e.without_url())
+}
+
+/// Per-block deadline scaled by size.
+fn upload_deadline(len: usize) -> Duration {
+    let secs = (len as u64).div_ceil(UPLOAD_FLOOR_RATE);
+    Duration::from_secs(secs).max(UPLOAD_MIN_DEADLINE)
+}
+
+/// Run `op`; retry transient failures.
+async fn retry_transfer<T, F, Fut>(what: &str, delays: &[Duration], mut op: F) -> Result<T>
+where
+    F: FnMut(usize) -> Fut,
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    let mut attempt = 0usize;
+    loop {
+        attempt += 1;
+        match op(attempt).await {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                let Some(delay) = delays.get(attempt - 1) else {
+                    return Err(e);
+                };
+                if !is_transient(transfer_failure(&e)) {
+                    return Err(e);
+                }
+                tracing::warn!("{what}: attempt {attempt} failed ({e:#}); retrying in {delay:?}");
+                tokio::time::sleep(*delay).await;
+            }
+        }
+    }
+}
+
 impl CloudClient {
-    pub fn new(connection: Connection) -> Self {
+    pub fn new(mut connection: Connection) -> Self {
         let steam_id = u64::from(connection.steam_id());
+        connection.set_timeout(CLOUD_RPC_TIMEOUT);
         Self {
             connection,
             steam_id,
-            http: reqwest::Client::new(),
+            http: cloud_http_client(),
         }
     }
 
@@ -834,12 +1053,14 @@ impl CloudClient {
                 format!("failed to create parent directory {}", parent.display())
             })?;
         }
-        let body = self
-            .download_file(appid, filename, cloud.sha_hash.as_deref())
-            .await
-            .with_context(|| {
-                format!("failed downloading cloud file '{filename}' for app {appid}")
-            })?;
+        let what = format!("cloud download '{filename}'");
+        let body = retry_transfer(&what, &TRANSFER_BACKOFF, |attempt| {
+            tracing::info!("{what} for app {appid} (attempt {attempt})");
+            // Fresh signed URL per attempt.
+            self.download_file(appid, filename, cloud.sha_hash.as_deref())
+        })
+        .await
+        .with_context(|| format!("failed downloading cloud file '{filename}' for app {appid}"))?;
         tokio::fs::write(local_path, &body)
             .await
             .with_context(|| format!("failed writing {}", local_path.display()))?;
@@ -902,13 +1123,16 @@ impl CloudClient {
             .headers(headers)
             .send()
             .await
+            .map_err(http_error)
             .context("failed cloud HTTP GET")?
             .error_for_status()
+            .map_err(http_error)
             .context("cloud HTTP GET returned failure status")?;
 
         let body = http_response
             .bytes()
             .await
+            .map_err(http_error)
             .context("failed reading cloud download body")?
             .to_vec();
 
@@ -952,7 +1176,45 @@ impl CloudClient {
             .await
             .context("failed calling Cloud.ClientBeginFileUpload")?;
 
-        for mut block in begin_response.block_requests {
+        let blocks = self
+            .upload_blocks(filename, &data, begin_response.block_requests)
+            .await;
+        // Failed uploads still commit, as failed.
+        let succeeded = blocks.is_ok();
+
+        let commit_request = CCloud_ClientCommitFileUpload_Request {
+            transfer_succeeded: Some(succeeded),
+            appid: Some(appid),
+            file_sha: Some(file_sha),
+            filename: Some(filename.to_string()),
+            ..Default::default()
+        };
+
+        let commit: Result<CCloud_ClientCommitFileUpload_Response> = self
+            .connection
+            .service_method(commit_request)
+            .await
+            .context("failed calling Cloud.ClientCommitFileUpload");
+        blocks?;
+        let commit_response = commit?;
+
+        if !commit_response.file_committed() {
+            return Err(anyhow!(
+                "Cloud.ClientCommitFileUpload returned file_committed=false"
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Send every upload block, each retried.
+    async fn upload_blocks(
+        &self,
+        filename: &str,
+        data: &[u8],
+        block_requests: Vec<ClientCloudFileUploadBlockDetails>,
+    ) -> Result<()> {
+        for mut block in block_requests {
             let url = cloud_transfer_url(
                 block.use_https(),
                 block.url_host(),
@@ -968,7 +1230,7 @@ impl CloudClient {
             } else if block_offset < data.len() {
                 data[block_offset..end].to_vec()
             } else {
-                data.clone()
+                data.to_vec()
             };
 
             let method = match block.http_method() {
@@ -983,37 +1245,31 @@ impl CloudClient {
                 )
             }))?;
 
-            self.http
-                .request(method, url)
-                .headers(headers)
-                .body(payload)
-                .send()
-                .await
-                .context("failed cloud HTTP upload")?
-                .error_for_status()
-                .context("cloud HTTP upload returned failure status")?;
+            let deadline = upload_deadline(payload.len());
+            let what = format!("cloud upload block of '{filename}'");
+            // Blocks retry on their own URL.
+            retry_transfer(&what, &TRANSFER_BACKOFF, |attempt| {
+                tracing::info!("{what} ({} bytes, attempt {attempt})", payload.len());
+                let request = self
+                    .http
+                    .request(method.clone(), &url)
+                    .headers(headers.clone())
+                    .timeout(deadline)
+                    .body(payload.clone());
+                async move {
+                    request
+                        .send()
+                        .await
+                        .map_err(http_error)
+                        .context("failed cloud HTTP upload")?
+                        .error_for_status()
+                        .map_err(http_error)
+                        .context("cloud HTTP upload returned failure status")?;
+                    Ok(())
+                }
+            })
+            .await?;
         }
-
-        let commit_request = CCloud_ClientCommitFileUpload_Request {
-            transfer_succeeded: Some(true),
-            appid: Some(appid),
-            file_sha: Some(file_sha),
-            filename: Some(filename.to_string()),
-            ..Default::default()
-        };
-
-        let commit_response: CCloud_ClientCommitFileUpload_Response = self
-            .connection
-            .service_method(commit_request)
-            .await
-            .context("failed calling Cloud.ClientCommitFileUpload")?;
-
-        if !commit_response.file_committed() {
-            return Err(anyhow!(
-                "Cloud.ClientCommitFileUpload returned file_committed=false"
-            ));
-        }
-
         Ok(())
     }
 }

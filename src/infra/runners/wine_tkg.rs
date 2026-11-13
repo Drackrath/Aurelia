@@ -62,8 +62,14 @@ impl SteamLayout {
         } else {
             PathBuf::new()
         };
+        // Compatdata follows the game's library.
+        let game_library = crate::core::utils::game_library_root(
+            &ctx.launcher_config,
+            ctx.app.app_id,
+            ctx.app.install_path.as_deref().map(std::path::Path::new),
+        );
         let compat_data_path = game_compat_data_path(
-            &library_root,
+            &game_library,
             ctx.app.app_id,
             steam_mode,
             steam_prefix_mode.clone(),
@@ -283,7 +289,7 @@ impl Runner for WineTkgRunner {
             });
 
             if steam_running {
-                println!("✅ Steam already running in prefix — skipping spawn");
+                tracing::info!("Steam already running in prefix — skipping spawn");
             } else {
                 // Background Steam is hosted on a DEDICATED Steam-runtime runner —
                 // NOT the game runner's `proton run` wrapper. It must run under a
@@ -345,7 +351,7 @@ impl Runner for WineTkgRunner {
                 });
 
                 let readiness_timeout = 8;
-                println!(
+                tracing::info!(
                     "Waiting for Steam to initialise (max {}s)...",
                     readiness_timeout
                 );
@@ -366,8 +372,8 @@ impl Runner for WineTkgRunner {
 
                         // Crash detection — bail immediately
                         if let Ok(Some(status)) = steam_process.try_wait() {
-                            println!(
-                                "❌ FATAL: Background Steam exited after {}s with: {}",
+                            tracing::error!(
+                                "Background Steam exited after {}s with: {}",
                                 i + 1,
                                 status
                             );
@@ -383,21 +389,21 @@ impl Runner for WineTkgRunner {
 
                         // Signal 1: pid file (some Wine/Steam combos do write this)
                         if steam_pid_path.exists() {
-                            println!("✅ Steam ready after {}s (steam.pid found)", i + 1);
+                            tracing::info!("Steam ready after {}s (steam.pid found)", i + 1);
                             ready_signal = Some(format!("steam.pid after {}s", i + 1));
                             break;
                         }
 
                         // Signal 2: .steampath in temp (Proton-style)
                         if steam_pipe.exists() {
-                            println!("✅ Steam ready after {}s (.steampath found)", i + 1);
+                            tracing::info!("Steam ready after {}s (.steampath found)", i + 1);
                             ready_signal = Some(format!(".steampath after {}s", i + 1));
                             break;
                         }
 
                         // Signal 3: config.vdf written — Steam has finished early init
                         if steam_config_vdf.exists() {
-                            println!("✅ Steam ready after {}s (config.vdf found)", i + 1);
+                            tracing::info!("Steam ready after {}s (config.vdf found)", i + 1);
                             ready_signal = Some(format!("config.vdf after {}s", i + 1));
                             break;
                         }
@@ -407,8 +413,8 @@ impl Runner for WineTkgRunner {
                             .map(|d| d.count())
                             .unwrap_or(0);
                         if log_count >= 2 {
-                            println!(
-                                "✅ Steam ready after {}s ({} log files found)",
+                            tracing::info!(
+                                "Steam ready after {}s ({} log files found)",
                                 i + 1,
                                 log_count
                             );
@@ -421,7 +427,7 @@ impl Runner for WineTkgRunner {
                             break;
                         }
 
-                        println!("  Waiting... {}s", i + 1);
+                        tracing::debug!("Waiting... {}s", i + 1);
                     }
 
                     // Liveness grace window: after a readiness heuristic fires, a
@@ -436,9 +442,11 @@ impl Runner for WineTkgRunner {
                             .await;
                         match reclassify_after_grace(&mut steam_process) {
                             ReadinessGrace::ExitedEarly { code } => {
-                                println!(
-                                    "❌ FATAL: Background Steam signalled ready ({}) but exited within {}s grace (code {:?})",
-                                    reason, READINESS_GRACE_SECS, code
+                                tracing::error!(
+                                    "Background Steam signalled ready ({}) but exited within {}s grace (code {:?})",
+                                    reason,
+                                    READINESS_GRACE_SECS,
+                                    code
                                 );
                                 ctx.with_verification(|v| {
                                     v.steam_runtime_exit_code = code;
@@ -454,8 +462,8 @@ impl Runner for WineTkgRunner {
                         }
                     }
 
-                    println!(
-                        "⚠️ Steam did not signal ready after {}s, launching game anyway",
+                    tracing::warn!(
+                        "Steam did not signal ready after {}s, launching game anyway",
                         readiness_timeout
                     );
                     ctx.with_verification(|v| {
@@ -476,12 +484,10 @@ impl Runner for WineTkgRunner {
             }
         }
 
-        // Write steam_appid.txt to the game working directory
+        // Keep any shipped steam_appid.txt
         let (_install_dir, _executable, game_working_dir) = ctx.game_paths()?;
 
-        let app_id_str = ctx.app.app_id.to_string();
-        let app_id_path = game_working_dir.join("steam_appid.txt");
-        let _ = std::fs::write(&app_id_path, &app_id_str);
+        crate::core::utils::ensure_steam_appid_logged(&game_working_dir, ctx.app.app_id);
 
         Ok(())
     }
@@ -616,14 +622,20 @@ impl Runner for WineTkgRunner {
                     == crate::launch::dll_provider_resolver::DllProvider::Runner
                     && res.name.contains("nvapi"))
             {
-                // Ensure native wins for game-local or non-symlinked custom DLLs
-                if !dll_overrides.contains(&format!("{}=n", res.name)) {
+                // Native must win; replace by name.
+                let already_native =
+                    crate::core::utils::dll_override_mode(&dll_overrides, &res.name)
+                        .is_some_and(|m| m.starts_with('n'));
+                if !already_native {
                     tracing::info!(
                         "Adding native override for resolved DLL: {} (provider: {:?})",
                         res.name,
                         res.chosen_provider
                     );
-                    dll_overrides.push_str(&format!(";{}=n", res.name));
+                    dll_overrides = crate::core::utils::merge_dll_overrides(
+                        &dll_overrides,
+                        &[(res.name.clone(), "n".to_string())],
+                    );
                 }
             } else if res.chosen_provider
                 == crate::launch::dll_provider_resolver::DllProvider::Internal
@@ -639,14 +651,9 @@ impl Runner for WineTkgRunner {
         // entries (policy/provider-derived, i.e. the explicit resolution) WIN: a
         // fixup is only appended for a DLL not already present in the override string.
         if !ctx.game_fixups.dll_overrides.is_empty() {
-            let existing_names: std::collections::HashSet<String> = dll_overrides
-                .split(';')
-                .filter_map(|e| e.split('=').next())
-                .map(|s| s.trim().trim_end_matches(".dll").to_lowercase())
-                .filter(|s| !s.is_empty())
-                .collect();
+            let existing_names = crate::core::utils::dll_override_names(&dll_overrides);
             for (dll, mode) in &ctx.game_fixups.dll_overrides {
-                let key = dll.trim_end_matches(".dll").to_lowercase();
+                let key = crate::core::utils::normalize_dll_name(dll);
                 if existing_names.contains(&key) {
                     tracing::info!(
                         "Skipping fixup DLL override {}={} (explicit override already present)",
@@ -656,10 +663,10 @@ impl Runner for WineTkgRunner {
                     continue;
                 }
                 tracing::info!("Applying fixup DLL override: {}={}", dll, mode);
-                if !dll_overrides.is_empty() {
-                    dll_overrides.push(';');
-                }
-                dll_overrides.push_str(&format!("{}={}", dll, mode));
+                dll_overrides = crate::core::utils::merge_dll_overrides(
+                    &dll_overrides,
+                    &[(dll.clone(), mode.clone())],
+                );
             }
         }
 
@@ -905,6 +912,17 @@ impl Runner for WineTkgRunner {
                     .is_some_and(|c| c.env_variables.contains_key(key))
             };
             for (key, val) in &ctx.game_fixups.env {
+                if key == "WINEDLLOVERRIDES" {
+                    // Fill gaps; computed entries win.
+                    let computed = env.get(key).cloned().unwrap_or_default();
+                    let merged = crate::core::utils::fill_dll_overrides(
+                        &computed,
+                        &crate::core::utils::dll_override_entries(val),
+                    );
+                    tracing::info!("Applying fixup DLL overrides: {}", merged);
+                    env.insert(key.clone(), merged);
+                    continue;
+                }
                 if user_has(key) {
                     tracing::info!(
                         "Skipping fixup env {} (explicit per-game value present)",
@@ -919,6 +937,17 @@ impl Runner for WineTkgRunner {
 
         if let Some(config) = &ctx.user_config {
             for (key, val) in &config.env_variables {
+                if key == "WINEDLLOVERRIDES" {
+                    // User wins per DLL only.
+                    let computed = env.get(key).cloned().unwrap_or_default();
+                    let merged = crate::core::utils::merge_dll_overrides(
+                        &computed,
+                        &crate::core::utils::dll_override_entries(val),
+                    );
+                    tracing::info!("Final WINEDLLOVERRIDES (with per-game env): {}", merged);
+                    env.insert(key.clone(), merged);
+                    continue;
+                }
                 env.insert(key.clone(), val.clone());
             }
 
@@ -956,7 +985,7 @@ impl Runner for WineTkgRunner {
                     env.insert("MANGOHUD_DLSYM".to_string(), "1".to_string());
                 }
                 None => {
-                    println!("⚠️  MangoHud requested but libMangoHud.so not found — skipping");
+                    tracing::warn!("MangoHud requested but libMangoHud.so not found — skipping");
                 }
             }
         }
@@ -1146,6 +1175,7 @@ fn effective_game_prefix(ctx: &LaunchContext) -> PathBuf {
         &ctx.launcher_config,
         ctx.app.app_id,
         ctx.user_config.as_ref(),
+        ctx.app.install_path.as_deref().map(std::path::Path::new),
     )
 }
 

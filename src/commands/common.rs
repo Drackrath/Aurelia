@@ -270,13 +270,29 @@ pub(crate) fn confirm_write(action: &str, prompt: &str, yes: bool, json: bool) -
 }
 
 /// Cloud-collections wrapper over [`confirm_write`].
-pub(crate) fn confirm_cloud_write(action: &str, count: usize, yes: bool, json: bool) -> Result<()> {
+pub(crate) fn confirm_cloud_write(
+    action: &str,
+    count: usize,
+    deletions: usize,
+    yes: bool,
+    json: bool,
+) -> Result<()> {
     confirm_write(
         action,
-        &format!("About to {action} {count} collection(s) to your Steam account. Continue? [y/N] "),
+        &cloud_write_prompt(action, count, deletions),
         yes,
         json,
     )
+}
+
+/// Confirmation text, deletions called out.
+pub(crate) fn cloud_write_prompt(action: &str, count: usize, deletions: usize) -> String {
+    let warn = if deletions > 0 {
+        format!(" WARNING: this DELETES {deletions} collection(s) from your Steam account.")
+    } else {
+        String::new()
+    };
+    format!("About to {action} {count} collection(s) to your Steam account.{warn} Continue? [y/N] ")
 }
 
 /// Human label for a raw EPersonaState value.
@@ -445,6 +461,32 @@ pub(crate) fn steam_guard_restart(managed: bool, json: bool) -> Result<()> {
         SteamClient::start_steam()?;
     }
     Ok(())
+}
+
+/// Always restart; op error wins.
+pub(crate) fn settle_with_restart<T>(
+    op: Result<T>,
+    restart: impl FnOnce() -> Result<()>,
+) -> Result<T> {
+    match (op, restart()) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Ok(_), Err(restart_err)) => Err(restart_err),
+        (Err(op_err), Ok(())) => Err(op_err),
+        (Err(op_err), Err(restart_err)) => {
+            tracing::error!("failed restarting Steam after an error: {restart_err:#}");
+            Err(op_err)
+        }
+    }
+}
+
+/// Runs `op`, then restarts Steam.
+pub(crate) async fn with_steam_stopped<T>(
+    managed: bool,
+    json: bool,
+    op: impl Future<Output = Result<T>>,
+) -> Result<T> {
+    let result = op.await;
+    settle_with_restart(result, || steam_guard_restart(managed, json))
 }
 
 /// Non-default branch suffix, else empty.
@@ -786,10 +828,10 @@ pub(crate) fn prompt_line(prompt: &str) -> Result<String> {
     // Write the prompt to stderr so stdout stays clean (important for --json).
     cli_eprint!("{prompt}");
     std::io::stderr().flush().ok();
-    let mut input = String::new();
-    std::io::stdin()
-        .read_line(&mut input)
-        .context("failed reading input")?;
+    // Shared reader keeps buffered stdin intact.
+    let input = crate::output::read_line_opt_blocking()
+        .context("failed reading input")?
+        .unwrap_or_default();
     Ok(input.trim().to_string())
 }
 

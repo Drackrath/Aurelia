@@ -185,7 +185,15 @@ pub(crate) async fn cmd_login(args: crate::cli::LoginArgs, json: bool) -> Result
     // (handled inside `login`); otherwise we wait for mobile-app approval and only
     // prompt for a code on the retry path below.
     let attempt = client
-        .login(username.clone(), password.clone().into(), guard.clone(), code)
+        .login(
+            username.clone(),
+            password.clone().into(),
+            guard.clone(),
+            // Never hand stdin to steam-vent.
+            code.then(|| {
+                Box::pin(crate::output::read_line_opt()) as aurelia::steam_client::CodeReader
+            }),
+        )
         .await;
 
     match attempt {
@@ -206,7 +214,7 @@ pub(crate) async fn cmd_login(args: crate::cli::LoginArgs, json: bool) -> Result
                 tracing::info!("Login method awaited: Steam Guard code");
                 let code = prompt_line("Steam Guard code: ")?;
                 client
-                    .login(username, password.clone().into(), Some(code), false)
+                    .login(username, password.clone().into(), Some(code), None)
                     .await
                     .context("login failed after providing Steam Guard code")?;
                 secure_session(&client).await;
@@ -518,7 +526,7 @@ pub(crate) async fn login_with_timeout(
 ) -> Result<aurelia::core::models::SessionState> {
     match tokio::time::timeout(
         LOGIN_TIMEOUT,
-        client.login(username.to_string(), password.into(), guard, false),
+        client.login(username.to_string(), password.into(), guard, None),
     )
     .await
     {

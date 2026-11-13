@@ -28,6 +28,21 @@ const KEY_PREFIX: &str = "user-collections.";
 /// (add/remove members) but never deleted.
 const BUILTIN_IDS: &[&str] = &["favorite", "hidden"];
 
+/// Steam's default built-in names.
+fn builtin_default_name(id: &str) -> Option<&'static str> {
+    match id {
+        "favorite" => Some("Favorites"),
+        "hidden" => Some("Hidden"),
+        _ => None,
+    }
+}
+
+/// Serializes load-edit-save within this process.
+static STORE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Pending ids with state, per collection.
+type PushSnapshot = Vec<(String, Vec<(u32, bool)>)>;
+
 /// A single Steam library collection (a named group of games).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Collection {
@@ -48,6 +63,9 @@ pub struct Collection {
     /// Marked for deletion; pushed to Steam as a tombstone, then dropped locally.
     #[serde(default)]
     pub deleted: bool,
+    /// App ids edited locally since push.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending: Vec<u32>,
 }
 
 impl Collection {
@@ -110,6 +128,7 @@ impl Collection {
             removed: parse_app_ids(v.get("removed")),
             filter_spec: v.get("filterSpec").cloned(),
             deleted: false,
+            pending: Vec::new(),
         })
     }
 }
@@ -135,6 +154,26 @@ pub struct CollectionsStore {
     pub namespace_version: u64,
     #[serde(default)]
     pub collections: Vec<Collection>,
+    /// Store format; 0 predates `pending`.
+    #[serde(default)]
+    pub format: u32,
+    /// Set after any pull or push.
+    #[serde(default)]
+    pub synced: bool,
+}
+
+/// Format with `pending` tracking.
+pub const STORE_FORMAT: u32 = 1;
+
+/// Explicit membership: added, removed, neither.
+fn membership(added: &[u32], removed: &[u32], app: u32) -> Option<bool> {
+    if removed.contains(&app) {
+        Some(false)
+    } else if added.contains(&app) {
+        Some(true)
+    } else {
+        None
+    }
 }
 
 /// Path to the local collections store.
@@ -149,7 +188,10 @@ impl CollectionsStore {
         match std::fs::read_to_string(&path) {
             Ok(text) => serde_json::from_str(&text)
                 .with_context(|| format!("failed parsing {}", path.display())),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(CollectionsStore::default()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(CollectionsStore {
+                format: STORE_FORMAT,
+                ..CollectionsStore::default()
+            }),
             Err(e) => Err(e).with_context(|| format!("failed reading {}", path.display())),
         }
     }
@@ -159,6 +201,15 @@ impl CollectionsStore {
         let path = store_path()?;
         let text = serde_json::to_string_pretty(self).context("failed serializing collections")?;
         crate::core::atomic::write_atomic(&path, text.as_bytes())
+    }
+
+    /// Locked load-edit-save; never across network.
+    pub fn edit<T>(f: impl FnOnce(&mut CollectionsStore) -> Result<T>) -> Result<(T, Self)> {
+        let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut store = Self::load()?;
+        let out = f(&mut store)?;
+        store.save()?;
+        Ok((out, store))
     }
 
     /// Resolve a collection by exact id or case-insensitive name. Errors on
@@ -199,7 +250,30 @@ impl CollectionsStore {
 
     // ---- Local (offline) operations -------------------------------------
 
-    /// Create a new **static** collection and save. Returns its generated id.
+    /// Index, creating a missing built-in.
+    fn resolve_or_create_builtin(&mut self, name_or_id: &str) -> Result<usize> {
+        match self.resolve_index(name_or_id) {
+            Ok(i) => Ok(i),
+            Err(e) => {
+                let Some(name) = builtin_default_name(name_or_id) else {
+                    return Err(e);
+                };
+                // Remote name wins on pull.
+                self.collections.push(Collection {
+                    id: name_or_id.to_string(),
+                    name: name.to_string(),
+                    added: Vec::new(),
+                    removed: Vec::new(),
+                    filter_spec: None,
+                    deleted: false,
+                    pending: Vec::new(),
+                });
+                Ok(self.collections.len() - 1)
+            }
+        }
+    }
+
+    /// Create a static collection; returns id.
     pub fn create(&mut self, name: &str) -> Result<String> {
         let name = name.trim();
         if name.is_empty() {
@@ -213,13 +287,12 @@ impl CollectionsStore {
             removed: Vec::new(),
             filter_spec: None,
             deleted: false,
+            pending: Vec::new(),
         });
-        self.save()?;
         Ok(id)
     }
 
-    /// Mark a collection deleted and save. Built-ins can't be deleted (only
-    /// cleared); dynamic collections aren't editable via the CLI.
+    /// Mark deleted; refuses built-ins, dynamic.
     pub fn delete(&mut self, name_or_id: &str) -> Result<()> {
         let idx = self.resolve_index(name_or_id)?;
         let c = &self.collections[idx];
@@ -236,10 +309,10 @@ impl CollectionsStore {
             );
         }
         self.collections[idx].deleted = true;
-        self.save()
+        Ok(())
     }
 
-    /// Rename a collection and save.
+    /// Rename a collection.
     pub fn rename(&mut self, name_or_id: &str, new_name: &str) -> Result<()> {
         let new_name = new_name.trim();
         if new_name.is_empty() {
@@ -247,35 +320,39 @@ impl CollectionsStore {
         }
         let idx = self.resolve_index(name_or_id)?;
         self.collections[idx].name = new_name.to_string();
-        self.save()
+        Ok(())
     }
 
-    /// Add app ids to a static collection and save.
+    /// Add app ids to a collection.
     pub fn add(&mut self, name_or_id: &str, app_ids: &[u32]) -> Result<()> {
-        let idx = self.resolve_index(name_or_id)?;
-        self.ensure_static(idx)?;
-        let c = &mut self.collections[idx];
-        for &app in app_ids {
-            c.removed.retain(|&x| x != app);
-            if !c.added.contains(&app) {
-                c.added.push(app);
-            }
-        }
-        self.save()
+        self.set_membership(name_or_id, app_ids, true)
     }
 
-    /// Remove app ids from a static collection (tombstone them) and save.
+    /// Tombstone app ids in a collection.
     pub fn remove(&mut self, name_or_id: &str, app_ids: &[u32]) -> Result<()> {
-        let idx = self.resolve_index(name_or_id)?;
+        self.set_membership(name_or_id, app_ids, false)
+    }
+
+    /// Add or tombstone ids; mark pending.
+    fn set_membership(&mut self, name_or_id: &str, app_ids: &[u32], member: bool) -> Result<()> {
+        let idx = self.resolve_or_create_builtin(name_or_id)?;
         self.ensure_static(idx)?;
         let c = &mut self.collections[idx];
         for &app in app_ids {
-            c.added.retain(|&x| x != app);
-            if !c.removed.contains(&app) {
-                c.removed.push(app);
+            let (keep, drop) = if member {
+                (&mut c.added, &mut c.removed)
+            } else {
+                (&mut c.removed, &mut c.added)
+            };
+            drop.retain(|&x| x != app);
+            if !keep.contains(&app) {
+                keep.push(app);
+            }
+            if !c.pending.contains(&app) {
+                c.pending.push(app);
             }
         }
-        self.save()
+        Ok(())
     }
 
     /// Error if the collection at `idx` is dynamic (not editable via the CLI).
@@ -293,12 +370,28 @@ impl CollectionsStore {
 
     // ---- Sync -----------------------------------------------------------
 
-    /// Merge a downloaded remote snapshot into the local store (pure; no I/O).
-    ///
-    /// Semantics: union `added`/`removed` per id; remote wins for `name` and
-    /// `filter_spec`; brand-new remote collections are added; a remote deletion
-    /// (tombstone) drops the local collection. Sets `namespace_version` from the
-    /// remote.
+    /// Pulled or pushed at least once.
+    pub fn has_remote_baseline(&self) -> bool {
+        self.synced || self.namespace_version > 0
+    }
+
+    /// Collections marked for deletion on Steam.
+    pub fn pending_deletions(&self) -> usize {
+        self.collections.iter().filter(|c| c.deleted).count()
+    }
+
+    /// Never-pulled stores need `force`.
+    pub fn check_push_allowed(&self, force: bool) -> Result<()> {
+        if force || self.has_remote_baseline() {
+            return Ok(());
+        }
+        bail!(
+            "refusing to push: local collections were never pulled from Steam. \
+             Run `aurelia collections pull` first, or pass `--force` to upload anyway."
+        );
+    }
+
+    /// Merge remote; pending ids stay local.
     fn apply_remote(&mut self, remote: RemoteNamespace) {
         for (key, value) in remote.entries {
             let id = key.strip_prefix(KEY_PREFIX).unwrap_or(&key).to_string();
@@ -313,19 +406,26 @@ impl CollectionsStore {
                             continue;
                         }
                     };
+                    let legacy = self.format < STORE_FORMAT;
                     match self.collections.iter_mut().find(|c| c.id == incoming.id) {
                         Some(local) => {
-                            // Union memberships; remote wins for name/filter.
-                            for a in &incoming.added {
-                                if !local.added.contains(a) {
-                                    local.added.push(*a);
-                                }
+                            if legacy {
+                                seed_pending(local, &incoming);
                             }
-                            for r in &incoming.removed {
-                                if !local.removed.contains(r) {
-                                    local.removed.push(*r);
-                                }
-                            }
+                            let pending = &local.pending;
+                            let merge = |remote: &[u32], local: &[u32]| -> Vec<u32> {
+                                let mut out: Vec<u32> = remote
+                                    .iter()
+                                    .copied()
+                                    .filter(|a| !pending.contains(a))
+                                    .collect();
+                                out.extend(local.iter().copied().filter(|a| pending.contains(a)));
+                                out
+                            };
+                            let added = merge(&incoming.added, &local.added);
+                            let removed = merge(&incoming.removed, &local.removed);
+                            local.added = added;
+                            local.removed = removed;
                             local.name = incoming.name;
                             local.filter_spec = incoming.filter_spec;
                         }
@@ -335,56 +435,122 @@ impl CollectionsStore {
             }
         }
         self.namespace_version = remote.version;
+        self.format = STORE_FORMAT;
+        self.synced = true;
+    }
+
+    /// Upload entries plus pending-state snapshot.
+    fn push_snapshot(&self) -> (Vec<(String, Option<String>)>, PushSnapshot) {
+        let entries = self.collections.iter().map(Collection::to_entry).collect();
+        let snapshot = self
+            .collections
+            .iter()
+            .map(|c| {
+                let state = c.pending.iter().map(|&a| (a, c.contains(a))).collect();
+                (c.id.clone(), state)
+            })
+            .collect();
+        (entries, snapshot)
+    }
+
+    /// Clear sent pending ids, drop deleted.
+    fn finish_push(&mut self, snapshot: &PushSnapshot, deleted: &[String], new_version: u64) {
+        for c in &mut self.collections {
+            let Some((_, sent)) = snapshot.iter().find(|(id, _)| *id == c.id) else {
+                continue;
+            };
+            let current: Vec<(u32, bool)> = c.pending.iter().map(|&a| (a, c.contains(a))).collect();
+            c.pending = current
+                .into_iter()
+                .filter(|entry| !sent.contains(entry))
+                .map(|(a, _)| a)
+                .collect();
+        }
+        // Tombstoned server-side now.
+        self.collections
+            .retain(|c| !(c.deleted && deleted.contains(&c.id)));
+        self.namespace_version = new_version;
+        self.format = STORE_FORMAT;
+        self.synced = true;
     }
 }
 
-/// Pull remote collections from Steam, merge into `store`, and save.
-pub async fn pull(store: &mut CollectionsStore, client: &SteamClient) -> Result<()> {
+/// Steam has a newer version.
+fn is_version_conflict(e: &anyhow::Error) -> bool {
+    let text = format!("{e:#}").to_ascii_lowercase();
+    text.contains("conflict") || text.contains("version") || text.contains("out of date")
+}
+
+/// Clear message for a rejected upload.
+fn upload_error(e: anyhow::Error) -> anyhow::Error {
+    if is_version_conflict(&e) {
+        anyhow::anyhow!(
+            "Steam has newer collections; run `aurelia collections pull` first, then push again. ({e:#})"
+        )
+    } else {
+        e.context("failed uploading collections to Steam")
+    }
+}
+
+/// Legacy: local explicit diffs become pending.
+fn seed_pending(local: &mut Collection, remote: &Collection) {
+    let explicit: Vec<u32> = local.added.iter().chain(&local.removed).copied().collect();
+    for app in explicit {
+        let mine = membership(&local.added, &local.removed, app);
+        let theirs = membership(&remote.added, &remote.removed, app);
+        if mine != theirs && !local.pending.contains(&app) {
+            local.pending.push(app);
+        }
+    }
+}
+
+/// Pull, merge and save remote collections.
+pub async fn pull(client: &SteamClient) -> Result<CollectionsStore> {
     let remote = client
         .download_collections()
         .await
         .context("failed downloading collections from Steam")?;
-    store.apply_remote(remote);
-    store.save()?;
-    Ok(())
+    let ((), store) = CollectionsStore::edit(|store| {
+        store.apply_remote(remote);
+        Ok(())
+    })?;
+    Ok(store)
 }
 
 /// Push every local collection to Steam, then save. On a version conflict the
 /// error tells the user to `pull` first.
-pub async fn push(store: &mut CollectionsStore, client: &SteamClient) -> Result<()> {
-    let entries: Vec<(String, Option<String>)> =
-        store.collections.iter().map(Collection::to_entry).collect();
+pub async fn push(client: &SteamClient, force: bool) -> Result<CollectionsStore> {
+    let store = {
+        let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        CollectionsStore::load()?
+    };
+    store.check_push_allowed(force)?;
+    let (entries, snapshot) = store.push_snapshot();
+    let deleted: Vec<String> = store
+        .collections
+        .iter()
+        .filter(|c| c.deleted)
+        .map(|c| c.id.clone())
+        .collect();
 
-    let new_version = match client
+    let new_version = client
         .upload_collections(store.namespace_version, entries)
         .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            let text = e.to_string().to_ascii_lowercase();
-            if text.contains("version") || text.contains("conflict") || text.contains("out of date")
-            {
-                bail!(
-                    "Steam rejected the upload — your local collections are out of date. \
-                     Run `aurelia collections pull` first, then push again. ({e})"
-                );
-            }
-            return Err(e).context("failed uploading collections to Steam");
-        }
-    };
+        .map_err(upload_error)?;
 
-    store.namespace_version = new_version;
-    // Deleted collections are now tombstoned server-side; drop them locally.
-    store.collections.retain(|c| !c.deleted);
-    store.save()?;
-    Ok(())
+    // Reload: keep edits made during upload.
+    let ((), store) = CollectionsStore::edit(|store| {
+        store.finish_push(&snapshot, &deleted, new_version);
+        Ok(())
+    })?;
+    Ok(store)
 }
 
 /// Full sync: `pull` (merge remote in) then `push` (send the merged result).
-pub async fn sync(store: &mut CollectionsStore, client: &SteamClient) -> Result<()> {
-    pull(store, client).await?;
-    push(store, client).await?;
-    Ok(())
+pub async fn sync(client: &SteamClient) -> Result<CollectionsStore> {
+    pull(client).await?;
+    // Pull just set the baseline.
+    push(client, false).await
 }
 
 #[cfg(test)]

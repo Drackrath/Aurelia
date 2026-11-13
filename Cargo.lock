@@ -304,6 +304,7 @@ dependencies = [
  "filetime",
  "flate2",
  "hex",
+ "http",
  "keyring",
  "keyvalues-serde",
  "libc",
@@ -338,9 +339,9 @@ dependencies = [
 
 [[package]]
 name = "aurelia-steam-cdn"
-version = "3.2.0"
+version = "3.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc302dd4e84e1064fa2f25efe38f22c5ba54f75b8c29df3bbc04a018c8c72c01"
+checksum = "46573a43f21e7149cb99770c50308bab3d803c57876563a76b60cf1fe09d6945"
 dependencies = [
  "aes",
  "aurelia-steam-vent",
@@ -366,9 +367,9 @@ dependencies = [
 
 [[package]]
 name = "aurelia-steam-vent"
-version = "0.7.1"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b5584812b396982b997d8a538caca69e22c79a5b1d6c454c8e69a359398c67b"
+checksum = "46a00e99a41665334e545be13c6d78dffe2b14530e9047e25da3d4c20642b6ec"
 dependencies = [
  "another-steam-totp",
  "async-stream",
@@ -405,6 +406,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "webpki-roots 1.0.6",
+ "zeroize",
 ]
 
 [[package]]

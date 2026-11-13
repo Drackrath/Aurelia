@@ -26,7 +26,10 @@ pub async fn write_atomic_async(path: PathBuf, bytes: Vec<u8>, private: bool) ->
 }
 
 fn temp_path(path: &Path) -> PathBuf {
-    let name = path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy())
+        .unwrap_or_default();
     let n = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
     path.with_file_name(format!(".{name}.{}.{n}.tmp", std::process::id()))
 }

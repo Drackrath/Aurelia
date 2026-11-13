@@ -7,6 +7,10 @@ use crate::commands::common::*;
 
 use anyhow::Result;
 
+/// Shown when presence stays unannounced.
+const HOST_STEAM_NOTE: &str = "Steam is running here, so Aurelia stays unannounced to keep it \
+signed in to Friends & Chat. Names, status and incoming messages may be missing.";
+
 /// `aurelia friends`: list the logged-in user's friends with status and game.
 ///
 /// Inside the daemon the roster is served from the background watcher's cache;
@@ -28,6 +32,9 @@ pub(crate) async fn cmd_friends(json: bool) -> Result<()> {
     if json {
         print_json(&friends);
         return Ok(());
+    }
+    if aurelia::steam_client::host_steam_owns_presence() {
+        cli_eprintln!("{HOST_STEAM_NOTE}");
     }
 
     if friends.is_empty() {
@@ -305,10 +312,13 @@ pub(crate) async fn cmd_chat_open(steamid: u64, json: bool) -> Result<()> {
     use tokio_stream::StreamExt;
 
     let client = authed_client().await?;
-    // Ensure the session is announced online so Steam delivers incoming messages
-    // (a no-op effect if the daemon's watcher already did this).
+    // Steam delivers incoming messages only then.
     if let Err(e) = client.announce_configured_presence().await {
         tracing::warn!("could not announce presence: {e:#}");
+    }
+
+    if !json && aurelia::steam_client::host_steam_owns_presence() {
+        cli_eprintln!("{HOST_STEAM_NOTE}");
     }
 
     let chat = client.chat_client()?;

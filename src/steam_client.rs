@@ -7,7 +7,9 @@ use crate::core::models::{
     ManifestSelection, OwnedGame, QrEvent, SessionState, SteamGuardReq,
 };
 use crate::core::utils::extract_quoted_values;
-use crate::library::cloud_sync::{CloudClient, CloudPathResolver, UfsSaveSpec, default_cloud_root};
+use crate::library::cloud_sync::{
+    CloudClient, CloudPathResolver, UfsConfig, UfsRootOverride, UfsSaveSpec, default_cloud_root,
+};
 use crate::library::depot_browser::{self, DepotInfo as BrowserDepotInfo, ManifestFileEntry};
 use crate::web::cm_list::get_cm_endpoints;
 use anyhow::{Context, Result, anyhow, bail};
@@ -534,6 +536,7 @@ pub struct SteamClient {
 mod anticheat;
 mod chat;
 mod client;
+pub use client::CodeReader;
 mod friends;
 mod install;
 mod market;
@@ -571,7 +574,7 @@ pub mod genres_table;
 
 pub use chat::{PlayingSession, check_invite};
 pub use collections::RemoteNamespace;
-pub use friends::{AddedFriend, Friend, Roster, WatcherEnd};
+pub use friends::{AddedFriend, Friend, Roster, WatcherEnd, host_steam_owns_presence};
 pub use market::{
     InventoryItem, MarketPrice, MarketSearchResult, MyMarketState, WalletBalance, inventory_via,
     market_price, market_search, my_listings_via, wallet_via,
@@ -672,6 +675,24 @@ pub fn sanitize_install_dir(name: &str) -> String {
         sanitized
     } else {
         "_".to_string()
+    }
+}
+
+/// Install folder, never `App N` placeholder.
+pub(crate) fn choose_install_dir(
+    appid: u32,
+    pics_installdir: Option<String>,
+    existing_installdir: Option<String>,
+) -> Result<String> {
+    let is_placeholder = |d: &str| d.trim().eq_ignore_ascii_case(&format!("App {appid}"));
+    match (existing_installdir, pics_installdir) {
+        (Some(dir), Some(_)) => Ok(dir),
+        (Some(dir), None) if !is_placeholder(&dir) => Ok(dir),
+        (None, Some(dir)) => Ok(dir),
+        _ => bail!(
+            "Steam's app info for app {appid} has no install directory, so Aurelia won't guess a \
+             folder name. Try again later; if it keeps failing, the app may not be installable."
+        ),
     }
 }
 
@@ -1860,11 +1881,69 @@ pub(crate) fn ufs_save_specs_from_section(section: &steam_vdf_parser::Value) -> 
                 root,
                 path: get("path").unwrap_or("").to_string(),
                 pattern: get("pattern").unwrap_or("*").to_string(),
-                recursive: get("recursive") == Some("1"),
+                recursive: entry.get("recursive").is_some_and(vdf_flag),
             });
         }
     }
     specs
+}
+
+/// Flag: string "1" or int 1.
+pub(crate) fn vdf_flag(value: &steam_vdf_parser::Value) -> bool {
+    match value.as_str() {
+        Some(s) => s.trim() == "1",
+        None => value.as_i32().is_some_and(|n| n != 0) || value.as_u64().is_some_and(|n| n != 0),
+    }
+}
+
+/// `ufs/rootoverrides` rules from PICS.
+pub(crate) fn ufs_root_overrides_from_section(
+    section: &steam_vdf_parser::Value,
+) -> Vec<UfsRootOverride> {
+    let Some(overrides) = section.get_obj(&["ufs", "rootoverrides"]) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (_, entry) in overrides.iter() {
+        let get = |k: &str| {
+            entry
+                .get(k)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        };
+        let root = get("root");
+        if root.is_empty() {
+            continue;
+        }
+        let mut path_transforms = Vec::new();
+        if let Some(transforms) = entry.get("pathtransforms").and_then(|v| v.as_obj()) {
+            for (_, t) in transforms.iter() {
+                let find = t.get("find").and_then(|v| v.as_str()).unwrap_or("");
+                let replace = t.get("replace").and_then(|v| v.as_str()).unwrap_or("");
+                if !find.is_empty() {
+                    path_transforms.push((find.to_string(), replace.to_string()));
+                }
+            }
+        }
+        out.push(UfsRootOverride {
+            root,
+            os: get("os"),
+            os_compare: get("oscompare"),
+            use_instead: get("useinstead"),
+            add_path: get("addpath"),
+            path_transforms,
+        });
+    }
+    out
+}
+
+/// Full UFS config from PICS.
+pub(crate) fn ufs_config_from_section(section: &steam_vdf_parser::Value) -> UfsConfig {
+    UfsConfig {
+        savefiles: ufs_save_specs_from_section(section),
+        root_overrides: ufs_root_overrides_from_section(section),
+    }
 }
 
 /// DLC app ids declared by an app's PICS section, read from the canonical
@@ -2241,6 +2320,17 @@ pub(crate) async fn pics_app_buffer(
         return Ok(app.buffer().to_vec());
     }
     // Token-gated app: fetch token, retry.
+    let token = pics_access_token(connection, appid).await?;
+    let app = pics_app_info(connection, appid, Some(token), job_context).await?;
+    Ok(app.buffer().to_vec())
+}
+
+/// PICS buffer, fetched with access token.
+pub(crate) async fn pics_app_buffer_with_token(
+    connection: &Connection,
+    appid: u32,
+    job_context: &'static str,
+) -> Result<Vec<u8>> {
     let token = pics_access_token(connection, appid).await?;
     let app = pics_app_info(connection, appid, Some(token), job_context).await?;
     Ok(app.buffer().to_vec())

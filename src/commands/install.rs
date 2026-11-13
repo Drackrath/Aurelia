@@ -78,10 +78,6 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
     // Note whether this is a DLC so we can refresh Steam's view afterward.
     let is_dlc = client.resolve_dlc_parent(app_id).await.is_some();
 
-    // For a DLC, stop Steam before editing its base appmanifest (Steam overwrites it
-    // on exit), then restart it afterward so the running client picks up the change.
-    let manage_steam = steam_guard_stop_optional(restart_steam && is_dlc, json)?;
-
     let (platform, cached_vdf) = match platform {
         Some(p) => (p.into(), None),
         None => {
@@ -131,6 +127,9 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
     // Verified chunks count themselves; don't seed.
     let state = Arc::new(RwLock::new(DownloadState::default()));
     let _install_guard = InstallGuard::register(app_id, Arc::clone(&state))?;
+
+    // Stop late; nothing below `?`-returns.
+    let manage_steam = steam_guard_stop_optional(restart_steam && is_dlc, json)?;
 
     // Recorded first, so a crash stays resumable.
     let platform_name = format!("{platform:?}").to_lowercase();
@@ -193,15 +192,7 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
     // failed or was cancelled. Otherwise a failed DLC install can leave Steam
     // stopped and hide the original install error behind cleanup failure.
     let settled = finish_backlog(app_id, record, &state, outcome);
-    let restart = steam_guard_restart(manage_steam, json);
-    if let Err(restart_err) = restart {
-        if settled.is_err() {
-            tracing::error!("failed restarting Steam after an install error: {restart_err:#}");
-        } else {
-            return Err(restart_err);
-        }
-    }
-    settled?;
+    settle_with_restart(settled, || steam_guard_restart(manage_steam, json))?;
     let steam_restarted = manage_steam;
 
     // A newly installed DLC is invisible to an already-running Steam client until it
@@ -706,13 +697,16 @@ pub(crate) async fn cmd_move(
     // Steam rewrites appmanifests and libraryfolders.vdf on exit, so it must not be
     // running while we move things.
     let managed = steam_guard_stop(restart_steam, json)?;
-    let rx = client
-        .move_install(app_id, library.clone())
-        .await
-        .with_context(|| format!("failed to start moving app {app_id}"))?;
-    let outcome = drive_progress(rx, json).await;
-    steam_guard_restart(managed, json)?;
-    outcome.with_context(|| format!("failed to move app {app_id}"))?;
+    with_steam_stopped(managed, json, async {
+        let rx = client
+            .move_install(app_id, library.clone())
+            .await
+            .with_context(|| format!("failed to start moving app {app_id}"))?;
+        drive_progress(rx, json)
+            .await
+            .with_context(|| format!("failed to move app {app_id}"))
+    })
+    .await?;
 
     if json {
         print_json(&serde_json::json!({
@@ -744,9 +738,12 @@ where
 {
     let client = authed_client().await?;
     let managed = steam_guard_stop(restart_steam, json)?;
-    let result = op(client, library.clone()).await;
-    steam_guard_restart(managed, json)?;
-    let path = result.with_context(|| format!("failed to {verb} app {app_id}"))?;
+    let path = with_steam_stopped(managed, json, async {
+        op(client, library.clone())
+            .await
+            .with_context(|| format!("failed to {verb} app {app_id}"))
+    })
+    .await?;
 
     if json {
         print_json(&serde_json::json!({

@@ -110,3 +110,51 @@ fn launcher_config_without_anticheat_flag_defaults_on() {
     assert!(cfg.anticheat_auto_install);
     assert!(LauncherConfig::default().anticheat_auto_install);
 }
+
+fn steam_root_with_login(base: &Path, name: &str, age_secs: u64) -> PathBuf {
+    let root = base.join(name);
+    std::fs::create_dir_all(root.join("config")).unwrap();
+    let file = std::fs::File::create(root.join("config/loginusers.vdf")).unwrap();
+    let when = std::time::SystemTime::now() - std::time::Duration::from_secs(age_secs);
+    file.set_modified(when).unwrap();
+    root
+}
+
+#[test]
+fn pick_steam_root_prefers_newest_login() {
+    let tmp = tempfile::tempdir().unwrap();
+    let native = steam_root_with_login(tmp.path(), "native", 3600);
+    let flatpak = steam_root_with_login(tmp.path(), "flatpak", 10);
+    assert_eq!(pick_steam_root(&[native, flatpak.clone()]), Some(flatpak));
+}
+
+#[test]
+fn pick_steam_root_falls_back_to_first_existing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let missing = tmp.path().join("missing");
+    let a = tmp.path().join("a");
+    let b = tmp.path().join("b");
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    assert_eq!(pick_steam_root(&[missing.clone(), a.clone(), b]), Some(a));
+    assert_eq!(pick_steam_root(&[missing]), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn pick_steam_root_ignores_symlinked_duplicates() {
+    let tmp = tempfile::tempdir().unwrap();
+    let real = steam_root_with_login(tmp.path(), "real", 10);
+    let link = tmp.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let other = steam_root_with_login(tmp.path(), "other", 3600);
+    assert_eq!(
+        pick_steam_root(&[link.clone(), other.clone(), real.clone()]),
+        Some(link.clone())
+    );
+    // Duplicate must not beat newer root.
+    let older = steam_root_with_login(tmp.path(), "older", 7200);
+    std::fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink(&older, &link).unwrap();
+    assert_eq!(pick_steam_root(&[link, other.clone(), older]), Some(other));
+}

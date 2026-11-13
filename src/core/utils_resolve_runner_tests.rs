@@ -53,3 +53,83 @@ fn steam_runtime_is_linux_only() {
         assert!(msg.contains(std::env::consts::OS), "{msg}");
     }
 }
+
+fn write_libraryfolders(root: &std::path::Path, libs: &[&std::path::Path]) {
+    let mut body = String::from("\"libraryfolders\"\n{\n");
+    for (i, lib) in libs.iter().enumerate() {
+        body.push_str(&format!(
+            "\t\"{i}\"\n\t{{\n\t\t\"path\"\t\t\"{}\"\n\t}}\n",
+            lib.display()
+        ));
+    }
+    body.push_str("}\n");
+    std::fs::create_dir_all(root.join("steamapps")).unwrap();
+    std::fs::write(root.join("steamapps/libraryfolders.vdf"), body).unwrap();
+}
+
+#[test]
+fn runner_in_other_library_resolves() {
+    let tmp = tempfile::tempdir().unwrap();
+    let main = tmp.path().join("Steam");
+    let secondary = tmp.path().join("SteamLibrary");
+    std::fs::create_dir_all(secondary.join("steamapps/common")).unwrap();
+    let proton = main.join("steamapps/common/Proton - Experimental");
+    std::fs::create_dir_all(&proton).unwrap();
+    write_libraryfolders(&main, &[&main, &secondary]);
+
+    // Configured: secondary; Proton: main.
+    let roots = vec![main.clone()];
+    let got = resolve_runner_opt_in("experimental", &secondary, &roots);
+    assert_eq!(got, Some(proton.clone()));
+    let got = resolve_runner_opt_in("Proton - Experimental", &secondary, &roots);
+    assert_eq!(got, Some(proton));
+}
+
+#[test]
+fn runner_found_via_vdf_only_library() {
+    let tmp = tempfile::tempdir().unwrap();
+    let main = tmp.path().join("Steam");
+    let configured = tmp.path().join("Configured");
+    let other = tmp.path().join("Other");
+    std::fs::create_dir_all(configured.join("steamapps/common")).unwrap();
+    let proton = other.join("steamapps/common/Proton 9.0");
+    std::fs::create_dir_all(&proton).unwrap();
+    write_libraryfolders(&main, &[&main, &configured, &other]);
+
+    let got = resolve_runner_opt_in("Proton 9.0", &configured, &[main]);
+    assert_eq!(got, Some(proton));
+}
+
+#[test]
+fn configured_library_wins_ties() {
+    let tmp = tempfile::tempdir().unwrap();
+    let main = tmp.path().join("Steam");
+    let configured = tmp.path().join("SteamLibrary");
+    let theirs = main.join("steamapps/common/Proton - Experimental");
+    let ours = configured.join("steamapps/common/Proton - Experimental");
+    std::fs::create_dir_all(&theirs).unwrap();
+    std::fs::create_dir_all(&ours).unwrap();
+    write_libraryfolders(&main, &[&main, &configured]);
+
+    let roots = vec![main];
+    assert_eq!(
+        resolve_runner_opt_in("experimental", &configured, &roots),
+        Some(ours.clone())
+    );
+    assert_eq!(
+        resolve_runner_opt_in("Proton - Experimental", &configured, &roots),
+        Some(ours)
+    );
+}
+
+#[test]
+fn library_roots_dedupe_and_order() {
+    let tmp = tempfile::tempdir().unwrap();
+    let main = tmp.path().join("Steam");
+    let lib = tmp.path().join("Lib");
+    std::fs::create_dir_all(&lib).unwrap();
+    write_libraryfolders(&main, &[&main, &lib]);
+
+    let roots = runner_library_roots(&lib, &[main.clone()]);
+    assert_eq!(roots, vec![lib, main]);
+}

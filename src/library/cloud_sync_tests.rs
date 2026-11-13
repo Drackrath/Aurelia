@@ -174,6 +174,86 @@ fn discovers_local_saves_from_ufs_specs() {
     );
 }
 
+fn linux_override() -> UfsRootOverride {
+    UfsRootOverride {
+        root: "WinAppDataRoaming".into(),
+        os: "Linux".into(),
+        os_compare: "=".into(),
+        use_instead: "GameInstall".into(),
+        add_path: "linuxsaves".into(),
+        path_transforms: vec![("Company/".into(), "company/".into())],
+    }
+}
+
+#[cfg(not(windows))]
+#[test]
+fn root_override_applies_only_to_its_os() {
+    let overrides = [linux_override()];
+    let linux = CloudPathResolver::new(PathBuf::from("/r"), Some(PathBuf::from("/game")))
+        .with_wine_prefix(Some(PathBuf::from("/pfx")))
+        .with_root_overrides(&overrides, "linux");
+    assert_eq!(
+        linux
+            .resolve("%WinAppDataRoaming%Company/Game/s.dat")
+            .unwrap(),
+        Path::new("/game/linuxsaves/company/Game/s.dat")
+    );
+
+    let windows = CloudPathResolver::new(PathBuf::from("/r"), Some(PathBuf::from("/game")))
+        .with_wine_prefix(Some(PathBuf::from("/pfx")))
+        .with_root_overrides(&overrides, "windows");
+    assert_eq!(
+        windows
+            .resolve("%WinAppDataRoaming%Company/Game/s.dat")
+            .unwrap(),
+        Path::new("/pfx/drive_c/users/steamuser/AppData/Roaming/Company/Game/s.dat")
+    );
+
+    // `!=` inverts the match.
+    let mut not_linux = linux_override();
+    not_linux.os_compare = "!=".into();
+    assert!(!not_linux.applies_to("Linux"));
+    assert!(not_linux.applies_to("windows"));
+}
+
+#[test]
+fn steam_id_placeholders_substituted() {
+    let r = CloudPathResolver::new(PathBuf::from("/r"), None).with_steam_id(76561197960287930);
+    assert_eq!(
+        r.substitute_ids("saves/{64BitSteamID}/{Steam3AccountID}"),
+        "saves/76561197960287930/22202"
+    );
+    // Without an id: unchanged.
+    let bare = CloudPathResolver::new(PathBuf::from("/r"), None);
+    assert_eq!(bare.substitute_ids("{64BitSteamID}"), "{64BitSteamID}");
+}
+
+#[test]
+fn discovery_finds_saves_under_substituted_id_and_override() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("linuxsaves/company/Game/76561197960287930");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("s.dat"), b"x").unwrap();
+
+    let resolver = CloudPathResolver::new(PathBuf::from("/r"), Some(tmp.path().to_path_buf()))
+        .with_root_overrides(&[linux_override()], "linux")
+        .with_steam_id(76561197960287930);
+    let specs = [UfsSaveSpec {
+        root: "WinAppDataRoaming".into(),
+        path: "Company/Game/{64BitSteamID}".into(),
+        pattern: "*.dat".into(),
+        recursive: false,
+    }];
+    let found = discover_local_saves(&specs, &resolver);
+    assert_eq!(found.len(), 1);
+    // Cloud name keeps Steam's Windows form.
+    assert_eq!(
+        found[0].0,
+        "%WinAppDataRoaming%Company/Game/76561197960287930/s.dat"
+    );
+    assert_eq!(resolver.resolve(&found[0].0).unwrap(), dir.join("s.dat"));
+}
+
 #[test]
 fn non_recursive_spec_skips_subdirectories() {
     let tmp = tempfile::tempdir().unwrap();
@@ -402,5 +482,93 @@ fn oversized_cloud_unzip_keeps_raw_body() {
 #[test]
 fn huge_size_hint_is_not_preallocated() {
     let body = zip_wrap(b"save");
-    assert_eq!(unzip_single_entry(&body, Some(u32::MAX)).as_deref(), Some(&b"save"[..]));
+    assert_eq!(
+        unzip_single_entry(&body, Some(u32::MAX)).as_deref(),
+        Some(&b"save"[..])
+    );
+}
+
+/// Offline reqwest status error, with URL.
+fn status_error(code: u16) -> reqwest::Error {
+    use reqwest::ResponseBuilderExt;
+    let resp = http::Response::builder()
+        .status(code)
+        .url("https://cdn.example/ugc/1?sig=SECRET".parse().unwrap())
+        .body(Vec::<u8>::new())
+        .unwrap();
+    reqwest::Response::from(resp)
+        .error_for_status()
+        .unwrap_err()
+}
+
+#[test]
+fn transient_classification() {
+    let e503 = http_error(status_error(503));
+    assert_eq!(transfer_failure(&e503), TransferFailure::Status(503));
+    assert!(is_transient(transfer_failure(&e503)));
+    assert!(is_transient(TransferFailure::Status(429)));
+    assert!(is_transient(TransferFailure::Timeout));
+    assert!(is_transient(TransferFailure::Connect));
+    assert!(!is_transient(transfer_failure(&http_error(status_error(
+        404
+    )))));
+    assert!(!is_transient(transfer_failure(&anyhow!("rpc failed"))));
+}
+
+#[test]
+fn http_errors_carry_no_signed_url() {
+    let raw = status_error(500);
+    assert!(raw.to_string().contains("SECRET"));
+    let e = http_error(raw).context("cloud HTTP GET returned failure status");
+    let text = format!("{e:#}");
+    assert!(!text.contains("SECRET") && !text.contains('?'), "{text}");
+}
+
+#[test]
+fn backoff_schedule_and_deadline_scaling() {
+    assert_eq!(TRANSFER_BACKOFF.map(|d| d.as_secs()), [2, 4, 8]);
+    assert_eq!(upload_deadline(10), UPLOAD_MIN_DEADLINE);
+    // 8 MiB at 32 KiB/s.
+    assert_eq!(upload_deadline(8 * 1024 * 1024), Duration::from_secs(256));
+}
+
+#[tokio::test]
+async fn retry_stops_after_four_attempts() {
+    let delays = [Duration::ZERO; 3];
+    let mut calls = 0;
+    let res: Result<()> = retry_transfer("t", &delays, |_| {
+        calls += 1;
+        async { Err(http_error(status_error(503))) }
+    })
+    .await;
+    assert!(res.is_err());
+    assert_eq!(calls, 4);
+}
+
+#[tokio::test]
+async fn retry_fails_fast_on_client_error_and_recovers() {
+    let delays = [Duration::ZERO; 3];
+    let mut calls = 0;
+    let res: Result<()> = retry_transfer("t", &delays, |_| {
+        calls += 1;
+        async { Err(http_error(status_error(403))) }
+    })
+    .await;
+    assert!(res.is_err());
+    assert_eq!(calls, 1);
+
+    let mut calls = 0;
+    let res = retry_transfer("t", &delays, |attempt| {
+        calls += 1;
+        async move {
+            if attempt < 3 {
+                Err(http_error(status_error(503)))
+            } else {
+                Ok(attempt)
+            }
+        }
+    })
+    .await;
+    assert_eq!(res.unwrap(), 3);
+    assert_eq!(calls, 3);
 }

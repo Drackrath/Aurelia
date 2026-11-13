@@ -30,6 +30,11 @@ impl PipelineStage for PreparePrefixStage {
             &runner_ctx.launcher_config,
             app_id,
             ctx.user_config.as_ref(),
+            runner_ctx
+                .app
+                .install_path
+                .as_deref()
+                .map(std::path::Path::new),
         );
 
         if !use_symlinks {

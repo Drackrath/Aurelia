@@ -73,7 +73,12 @@ impl SteamClient {
         tracing::info!("host Steam logged on; proceeding with launch");
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    pub fn steam_is_running() -> bool {
+        crate::core::utils::is_steam_running()
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     pub fn steam_is_running() -> bool {
         false
     }
@@ -115,14 +120,40 @@ impl SteamClient {
         Ok(())
     }
 
-    #[cfg(not(target_os = "windows"))]
+    /// Stop host Steam and wait (Linux).
+    #[cfg(target_os = "linux")]
     pub fn shutdown_steam() -> Result<()> {
-        bail!("automatic Steam control is only supported on Windows")
+        // `-shutdown` would start a stopped Steam.
+        if !SteamClient::steam_is_running() {
+            return Ok(());
+        }
+        crate::core::utils::start_steam_detached(&["-shutdown"])
+            .context("failed to signal Steam shutdown")?;
+        let stopped = crate::core::utils::wait_until(
+            || !SteamClient::steam_is_running(),
+            std::time::Duration::from_secs(30),
+            std::time::Duration::from_millis(250),
+        );
+        if !stopped {
+            bail!("Steam did not shut down within 30s");
+        }
+        Ok(())
     }
 
-    #[cfg(not(target_os = "windows"))]
+    /// Start host Steam silently (Linux).
+    #[cfg(target_os = "linux")]
     pub fn start_steam() -> Result<()> {
-        bail!("automatic Steam control is only supported on Windows")
+        crate::core::utils::start_steam_detached(&["-silent"]).context("failed to start Steam")
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    pub fn shutdown_steam() -> Result<()> {
+        bail!("automatic Steam control is only supported on Windows and Linux")
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    pub fn start_steam() -> Result<()> {
+        bail!("automatic Steam control is only supported on Windows and Linux")
     }
 
     /// Stop a game previously launched by `aurelia play`. Looks up the launch
@@ -436,8 +467,7 @@ NoSavePersonalInfo=1
             .await?;
 
         // Standard Steam identity fallback so the game can resolve its app id.
-        let app_id_path = game_working_dir.join("steam_appid.txt");
-        std::fs::write(&app_id_path, app.app_id.to_string()).unwrap_or_default();
+        crate::core::utils::ensure_steam_appid_logged(&game_working_dir, app.app_id);
 
         let mut cmd = Command::new(&executable);
         cmd.args(&args);
@@ -522,12 +552,10 @@ NoSavePersonalInfo=1
         let (install_dir, executable, args, game_working_dir) = self
             .resolve_exec_plan(app, launch_info, user_config)
             .await?;
-        let app_id_str = app.app_id.to_string();
 
         match launch_info.target {
             LaunchTarget::NativeLinux => {
-                let app_id_path = game_working_dir.join("steam_appid.txt");
-                std::fs::write(&app_id_path, &app_id_str).unwrap_or_default();
+                crate::core::utils::ensure_steam_appid_logged(&game_working_dir, app.app_id);
 
                 #[cfg(unix)]
                 {

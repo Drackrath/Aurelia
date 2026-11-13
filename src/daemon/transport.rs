@@ -10,6 +10,53 @@ pub fn endpoint() -> String {
     imp::endpoint()
 }
 
+/// Endpoint suffix for non-default config.
+fn config_dir_tag() -> Option<String> {
+    let dir = std::env::var_os("AURELIA_CONFIG_DIR").filter(|v| !v.is_empty())?;
+    let default = aurelia::core::config::home_dir()
+        .ok()
+        .map(|h| canonical(&h.join(".config").join("Aurelia")));
+    config_tag_for(&canonical(std::path::Path::new(&dir)), default.as_deref())
+}
+
+/// Canonical path, else the input.
+pub(crate) fn canonical(p: &std::path::Path) -> std::path::PathBuf {
+    std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
+}
+
+/// Short hash tag, none for default.
+pub(super) fn config_tag_for(
+    dir: &std::path::Path,
+    default: Option<&std::path::Path>,
+) -> Option<String> {
+    if default == Some(dir) {
+        return None;
+    }
+    let key = dir.to_string_lossy();
+    Some(format!(
+        "{:08x}",
+        aurelia::steam_client::stable_logon_id(&key)
+    ))
+}
+
+/// Socket name from override, tag, base.
+#[cfg_attr(not(unix), allow(dead_code))]
+pub(super) fn unix_endpoint_for(
+    socket_override: Option<String>,
+    tag: Option<&str>,
+    base: &std::path::Path,
+    uid: u32,
+) -> String {
+    if let Some(p) = socket_override {
+        return p;
+    }
+    let name = match tag {
+        Some(t) => format!("aurelia-{uid}-{t}.sock"),
+        None => format!("aurelia-{uid}.sock"),
+    };
+    base.join(name).to_string_lossy().into_owned()
+}
+
 /// Filesystem path of the daemon's identity marker (version + pid), written by the
 /// running daemon and read by thin clients to detect a version mismatch. Kept next to
 /// the socket so a custom `AURELIA_DAEMON_SOCKET` gets its own isolated marker.
@@ -51,13 +98,10 @@ mod imp {
     }
 
     pub fn endpoint() -> String {
-        if let Ok(p) = std::env::var("AURELIA_DAEMON_SOCKET") {
-            return p;
-        }
-        base_dir()
-            .join(format!("aurelia-{}.sock", uid()))
-            .to_string_lossy()
-            .into_owned()
+        let socket = std::env::var("AURELIA_DAEMON_SOCKET").ok();
+        // Skip hashing when overridden anyway.
+        let tag = socket.is_none().then(super::config_dir_tag).flatten();
+        super::unix_endpoint_for(socket, tag.as_deref(), &base_dir(), uid())
     }
 
     pub fn version_marker_path() -> PathBuf {
@@ -67,16 +111,18 @@ mod imp {
 
     /// Ours, a directory, not group/other-writable.
     pub(super) fn dir_is_private(dir: &Path) -> bool {
-        std::fs::symlink_metadata(dir).is_ok_and(|m| {
-            m.file_type().is_dir() && m.uid() == uid() && m.mode() & 0o022 == 0
-        })
+        std::fs::symlink_metadata(dir)
+            .is_ok_and(|m| m.file_type().is_dir() && m.uid() == uid() && m.mode() & 0o022 == 0)
     }
 
     /// Create or tighten the endpoint's directory.
     pub(super) fn ensure_private_dir(dir: &Path) -> std::io::Result<()> {
         match std::fs::symlink_metadata(dir) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
+                std::fs::DirBuilder::new()
+                    .recursive(true)
+                    .mode(0o700)
+                    .create(dir)?;
             }
             Err(e) => return Err(e),
             Ok(_) => {}
@@ -177,7 +223,10 @@ mod imp {
             return p;
         }
         let user = std::env::var("USERNAME").unwrap_or_else(|_| "default".to_string());
-        format!(r"\\.\pipe\aurelia-{user}")
+        match super::config_dir_tag() {
+            Some(tag) => format!(r"\\.\pipe\aurelia-{user}-{tag}"),
+            None => format!(r"\\.\pipe\aurelia-{user}"),
+        }
     }
 
     pub fn location_trusted() -> bool {

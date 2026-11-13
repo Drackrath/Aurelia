@@ -36,6 +36,37 @@ pub use server::run_server;
 #[derive(Debug, Serialize, Deserialize)]
 struct Header {
     argv: Vec<String>,
+    /// Client's canonical config dir.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    config_dir: Option<std::path::PathBuf>,
+    /// Client's working directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cwd: Option<std::path::PathBuf>,
+}
+
+/// This process's canonical config dir.
+fn own_config_dir() -> Option<std::path::PathBuf> {
+    aurelia::core::config::config_dir()
+        .ok()
+        .map(|d| transport::canonical(&d))
+}
+
+/// Refusal message when config dirs differ.
+fn config_dir_mismatch(
+    client: Option<&std::path::Path>,
+    own: Option<&std::path::Path>,
+) -> Option<String> {
+    // Old clients send none: accept.
+    let (client, own) = (client?, own?);
+    if client == own {
+        return None;
+    }
+    Some(format!(
+        "this session daemon serves the config directory {}, not {}; set \
+         AURELIA_DAEMON_SOCKET to a separate socket or AURELIA_NO_DAEMON=1",
+        own.display(),
+        client.display()
+    ))
 }
 
 /// Identity marker a running daemon writes next to its socket so a thin client can tell
@@ -131,6 +162,9 @@ const LIVENESS_PROBE_INTERVAL: Duration = Duration::from_secs(60);
 /// single failure can be a transient hiccup, and a needless reconnect drops a working
 /// session and burns a logon.
 const LIVENESS_RECHECK_DELAY: Duration = Duration::from_secs(2);
+
+/// Bounds the first `friends` call.
+const ANNOUNCE_NAME_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 struct DaemonState {
     slot: RwLock<Slot>,
@@ -327,6 +361,34 @@ impl DaemonState {
         *guard = Some(handle);
     }
 
+    /// Announce, then wait for persona names.
+    async fn announce_and_await_names(&self) {
+        let client = self.slot.read().await.client.clone();
+        let Some(client) = client else { return };
+        let fresh = client.announced_persona().is_none();
+        if let Err(e) = client.announce_configured_presence().await {
+            tracing::warn!("could not announce presence: {e:#}");
+            return;
+        }
+        if !fresh || client.announced_persona().is_none() {
+            return;
+        }
+        // Watcher folds the reply in.
+        let deadline = tokio::time::Instant::now() + ANNOUNCE_NAME_WAIT;
+        while tokio::time::Instant::now() < deadline {
+            let unnamed = self
+                .roster
+                .read()
+                .unwrap()
+                .values()
+                .any(|f| f.relationship == 3 && f.persona_name.is_none());
+            if !unnamed {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+    }
+
     /// Drop the session if still `session_id`.
     ///
     /// Lazy: the next command reconnects, not the liveness loop.
@@ -435,6 +497,7 @@ pub async fn shared_restored_client() -> SteamClient {
 pub async fn shared_roster() -> Vec<Friend> {
     let state = init_state();
     state.ensure_session().await;
+    state.announce_and_await_names().await;
     // Brief read lock: clone out the friends we care about, then release before sorting.
     let mut friends: Vec<Friend> = {
         let roster = state.roster.read().unwrap();

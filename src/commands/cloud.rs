@@ -16,7 +16,7 @@ pub(crate) async fn cmd_cloud_sync(
 ) -> Result<()> {
     use aurelia::library::cloud_sync::{ConflictPolicy, SyncDirection};
 
-    let client = authed_client().await?;
+    let mut client = authed_client().await?;
     let cloud = client.cloud_client()?;
 
     // Classic (token-less) remote-storage files live under `<appid>/remote`; Auto-Cloud
@@ -36,13 +36,22 @@ pub(crate) async fn cmd_cloud_sync(
     // Must be the prefix the game *runs* in, not the WINEPREFIX the launcher sets:
     // under Proton those differ, and syncing to the wrong one silently leaves the
     // game with no saves.
-    let wine_prefix =
-        aurelia::core::utils::game_save_prefix(&launcher_config, app_id, &user_configs);
+    let wine_prefix = aurelia::core::utils::game_save_prefix(
+        &launcher_config,
+        app_id,
+        &user_configs,
+        install_path.as_deref().map(std::path::Path::new),
+    );
+    // UFS rules and per-OS overrides.
+    let ufs = client.fetch_ufs_config(app_id).await.unwrap_or_default();
+    let target_os = cloud_target_os(&mut client, app_id, &launcher_config).await;
     let resolver = aurelia::library::cloud_sync::CloudPathResolver::new(
         remote_root.clone(),
         install_path.map(PathBuf::from),
     )
-    .with_wine_prefix(Some(wine_prefix.clone()));
+    .with_wine_prefix((target_os == "windows").then(|| wine_prefix.clone()))
+    .with_root_overrides(&ufs.root_overrides, target_os)
+    .with_steam_id(cloud.steam_id());
 
     // No flag = full sync (down then up); `--down`/`--up` restrict the direction.
     let direction = if up {
@@ -63,12 +72,8 @@ pub(crate) async fn cmd_cloud_sync(
     let policy = resolve.map_or(ConflictPolicy::Detect, ConflictPolicy::from);
 
     // UFS save rules let the upload pass discover brand-new local saves.
-    let specs = client
-        .fetch_ufs_save_specs(app_id)
-        .await
-        .unwrap_or_default();
     let outcome = cloud
-        .sync(app_id, &resolver, &specs, direction, policy)
+        .sync(app_id, &resolver, &ufs.savefiles, direction, policy)
         .await
         .with_context(|| format!("cloud sync failed for app {app_id}"))?;
 
@@ -205,6 +210,34 @@ pub(crate) async fn cmd_cloud_sync(
         cli_println!("These saves are still safe in the Cloud; nothing was overwritten.");
     }
     Ok(())
+}
+
+/// Launch OS like `play`; default Windows.
+async fn cloud_target_os(
+    client: &mut aurelia::steam_client::SteamClient,
+    app_id: u32,
+    launcher_config: &aurelia::core::config::LauncherConfig,
+) -> &'static str {
+    if cfg!(target_os = "windows") {
+        return "windows";
+    }
+    let Ok(game) = find_game(client, app_id).await else {
+        return "windows";
+    };
+    let Ok(options) = client.get_product_info(app_id).await else {
+        return "windows";
+    };
+    let game_cfg = launcher_config.game_configs.get(&app_id);
+    let platform = game_cfg.and_then(|c| c.platform_preference.as_deref());
+    let prefer_windows =
+        platform == Some("windows") || game_cfg.is_some_and(|c| c.forced_proton_version.is_some());
+    let prefer_native = platform == Some("linux");
+    match aurelia::steam_client::select_launch_entry(&options, &game, prefer_windows, prefer_native)
+        .map(|e| e.target)
+    {
+        Some(aurelia::steam_client::LaunchTarget::NativeLinux) => "linux",
+        _ => "windows",
+    }
 }
 
 /// How many skipped filenames to print before collapsing into a count — enough to

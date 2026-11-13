@@ -23,17 +23,18 @@ pub(crate) async fn cmd_set_dlc(
     // Steam is stopped to survive. With --restart-steam: stop → edit → start.
     let manage_steam = steam_guard_stop_optional(restart_steam, json)?;
 
-    let base = client
-        .set_dlc_enabled(app_id, enable)
-        .await
-        .with_context(|| {
-            format!(
-                "failed to {} DLC {app_id}",
-                if enable { "enable" } else { "disable" }
-            )
-        })?;
-
-    steam_guard_restart(manage_steam, json)?;
+    let base = with_steam_stopped(manage_steam, json, async {
+        client
+            .set_dlc_enabled(app_id, enable)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to {} DLC {app_id}",
+                    if enable { "enable" } else { "disable" }
+                )
+            })
+    })
+    .await?;
     let steam_restarted = manage_steam;
 
     let action = if enable { "enabled" } else { "disabled" };

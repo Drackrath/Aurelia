@@ -117,8 +117,7 @@ pub(crate) async fn cmd_collections_show(name: String, json: bool) -> Result<()>
 
 /// `collections create <name>`: make a new static collection (offline).
 pub(crate) async fn cmd_collections_create(name: String, json: bool) -> Result<()> {
-    let mut store = CollectionsStore::load()?;
-    let id = store.create(&name)?;
+    let (id, _) = CollectionsStore::edit(|store| store.create(&name))?;
     if json {
         print_json(&serde_json::json!({ "status": "created", "id": id, "name": name }));
     } else {
@@ -131,8 +130,7 @@ pub(crate) async fn cmd_collections_create(name: String, json: bool) -> Result<(
 
 /// `collections delete <name>`: mark a collection for deletion (offline).
 pub(crate) async fn cmd_collections_delete(name: String, json: bool) -> Result<()> {
-    let mut store = CollectionsStore::load()?;
-    store.delete(&name)?;
+    CollectionsStore::edit(|store| store.delete(&name))?;
     if json {
         print_json(&serde_json::json!({ "status": "deleted", "name": name }));
     } else {
@@ -148,8 +146,7 @@ pub(crate) async fn cmd_collections_rename(
     new_name: String,
     json: bool,
 ) -> Result<()> {
-    let mut store = CollectionsStore::load()?;
-    store.rename(&name, &new_name)?;
+    CollectionsStore::edit(|store| store.rename(&name, &new_name))?;
     if json {
         print_json(&serde_json::json!({ "status": "renamed", "from": name, "to": new_name }));
     } else {
@@ -160,8 +157,7 @@ pub(crate) async fn cmd_collections_rename(
 
 /// `collections add <name> <appid>...` (offline).
 pub(crate) async fn cmd_collections_add(name: String, app_ids: Vec<u32>, json: bool) -> Result<()> {
-    let mut store = CollectionsStore::load()?;
-    store.add(&name, &app_ids)?;
+    CollectionsStore::edit(|store| store.add(&name, &app_ids))?;
     if json {
         print_json(&serde_json::json!({ "status": "added", "name": name, "app_ids": app_ids }));
     } else {
@@ -176,8 +172,7 @@ pub(crate) async fn cmd_collections_remove(
     app_ids: Vec<u32>,
     json: bool,
 ) -> Result<()> {
-    let mut store = CollectionsStore::load()?;
-    store.remove(&name, &app_ids)?;
+    CollectionsStore::edit(|store| store.remove(&name, &app_ids))?;
     if json {
         print_json(&serde_json::json!({ "status": "removed", "name": name, "app_ids": app_ids }));
     } else {
@@ -189,8 +184,7 @@ pub(crate) async fn cmd_collections_remove(
 /// `collections pull`: download and merge Steam's collections into the local store.
 pub(crate) async fn cmd_collections_pull(json: bool) -> Result<()> {
     let client = authed_client().await?;
-    let mut store = CollectionsStore::load()?;
-    collections::pull(&mut store, &client).await?;
+    let store = collections::pull(&client).await?;
     let count = store.collections.iter().filter(|c| !c.deleted).count();
     if json {
         print_json(&serde_json::json!({
@@ -208,11 +202,18 @@ pub(crate) async fn cmd_collections_pull(json: bool) -> Result<()> {
 }
 
 /// `collections push`: upload local collections to Steam (mutates the account).
-pub(crate) async fn cmd_collections_push(yes: bool, json: bool) -> Result<()> {
-    let mut store = CollectionsStore::load()?;
-    confirm_cloud_write("upload", store.collections.len(), yes, json)?;
+pub(crate) async fn cmd_collections_push(yes: bool, force: bool, json: bool) -> Result<()> {
+    let local = CollectionsStore::load()?;
+    local.check_push_allowed(force)?;
+    confirm_cloud_write(
+        "upload",
+        local.collections.len(),
+        local.pending_deletions(),
+        yes,
+        json,
+    )?;
     let client = authed_client().await?;
-    collections::push(&mut store, &client).await?;
+    let store = collections::push(&client, force).await?;
     let count = store.collections.len();
     if json {
         print_json(&serde_json::json!({
@@ -231,10 +232,16 @@ pub(crate) async fn cmd_collections_push(yes: bool, json: bool) -> Result<()> {
 
 /// `collections sync`: pull then push (mutates the account).
 pub(crate) async fn cmd_collections_sync(yes: bool, json: bool) -> Result<()> {
-    let mut store = CollectionsStore::load()?;
-    confirm_cloud_write("sync", store.collections.len(), yes, json)?;
+    let local = CollectionsStore::load()?;
+    confirm_cloud_write(
+        "sync",
+        local.collections.len(),
+        local.pending_deletions(),
+        yes,
+        json,
+    )?;
     let client = authed_client().await?;
-    collections::sync(&mut store, &client).await?;
+    let store = collections::sync(&client).await?;
     let count = store.collections.len();
     if json {
         print_json(&serde_json::json!({

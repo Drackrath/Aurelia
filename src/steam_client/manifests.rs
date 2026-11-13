@@ -243,11 +243,7 @@ impl SteamClient {
                         {
                             display_name = name.to_string();
                         }
-                        installdir = section
-                            .get_str(&["config", "installdir"])
-                            .map(str::trim)
-                            .filter(|d| crate::core::utils::is_safe_dir_name(d))
-                            .map(str::to_string);
+                        installdir = pics_section_installdir(section);
                     }
                     Err(e) => tracing::warn!("could not parse PICS appinfo for app {appid}: {e:#}"),
                 },
@@ -266,6 +262,21 @@ impl SteamClient {
         }
 
         (display_name, installdir)
+    }
+
+    /// Retry PICS installdir with access token.
+    pub(crate) async fn retry_pics_installdir(&self, appid: u32) -> Option<String> {
+        let conn = self.connection.as_ref()?;
+        let buffer = pics_app_buffer_with_token(
+            conn,
+            appid,
+            "failed requesting appinfo product info for install dir",
+        )
+        .await
+        .inspect_err(|e| tracing::warn!("PICS token retry failed for app {appid}: {e:#}"))
+        .ok()?;
+        let vdf = find_vdf_in_pics(&buffer).ok()?;
+        pics_section_installdir(pics_app_section(vdf.value()))
     }
 
     pub(crate) async fn resolve_install_game_name(&self, appid: u32) -> String {
@@ -502,4 +513,13 @@ impl SteamClient {
         }
         Ok(out)
     }
+}
+
+/// Safe `config/installdir` from PICS section.
+fn pics_section_installdir(section: &steam_vdf_parser::Value) -> Option<String> {
+    section
+        .get_str(&["config", "installdir"])
+        .map(str::trim)
+        .filter(|d| crate::core::utils::is_safe_dir_name(d))
+        .map(str::to_string)
 }

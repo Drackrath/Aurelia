@@ -191,6 +191,130 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_user_dll_overrides_merge_per_dll() {
+        use crate::core::models::UserAppConfig;
+        let runner = WineTkgRunner;
+        let mut ctx = mock_context();
+        // Standalone regardless of host Steam.
+        ctx.launcher_config.steam_runtime_policy =
+            crate::core::models::SteamRuntimePolicy::Disabled;
+        let base = runner.build_env(&ctx).await.unwrap();
+        let computed = base.get("WINEDLLOVERRIDES").unwrap().clone();
+        assert!(computed.contains("steamclient=n"), "computed: {computed}");
+
+        let mut user = UserAppConfig::default();
+        user.env_variables
+            .insert("WINEDLLOVERRIDES".to_string(), "dxgi=b".to_string());
+        ctx.user_config = Some(user);
+        let env = runner.build_env(&ctx).await.unwrap();
+        let merged = env.get("WINEDLLOVERRIDES").unwrap();
+        // Stubs survive, dxgi changed only.
+        assert!(merged.contains("steamclient=n"), "merged: {merged}");
+        assert!(merged.contains("lsteamclient="), "merged: {merged}");
+        assert_eq!(
+            crate::core::utils::dll_override_mode(merged, "dxgi").as_deref(),
+            Some("b")
+        );
+        assert_eq!(
+            crate::core::utils::dll_override_entries(merged)
+                .iter()
+                .filter(|(n, _)| n == "dxgi")
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fixup_env_dll_overrides_fill_only() {
+        let runner = WineTkgRunner;
+        let mut ctx = mock_context();
+        // Standalone regardless of host Steam.
+        ctx.launcher_config.steam_runtime_policy =
+            crate::core::models::SteamRuntimePolicy::Disabled;
+        ctx.game_fixups = crate::launch::fixups::GameFixups {
+            env: vec![(
+                "WINEDLLOVERRIDES".to_string(),
+                "steamclient=b;xlive=n".to_string(),
+            )],
+            dll_overrides: vec![],
+        };
+        let env = runner.build_env(&ctx).await.unwrap();
+        let merged = env.get("WINEDLLOVERRIDES").unwrap();
+        // Computed stub wins; xlive added.
+        assert_eq!(
+            crate::core::utils::dll_override_mode(merged, "steamclient").as_deref(),
+            Some("n"),
+            "{merged}"
+        );
+        assert_eq!(
+            crate::core::utils::dll_override_mode(merged, "xlive").as_deref(),
+            Some("n"),
+            "{merged}"
+        );
+        assert!(merged.contains("lsteamclient="), "{merged}");
+    }
+
+    #[tokio::test]
+    async fn test_resolver_entry_replaces_policy_entry() {
+        use crate::core::models::{GraphicsBackendPolicy, UserAppConfig};
+        use crate::launch::dll_provider_resolver::{DllProvider, DllResolution};
+        let runner = WineTkgRunner;
+        let mut ctx = mock_context();
+        let mut user = UserAppConfig::default();
+        user.graphics_layers.graphics_backend_policy = GraphicsBackendPolicy::WineD3D;
+        ctx.user_config = Some(user);
+        ctx.dll_resolutions = vec![DllResolution {
+            name: "d3d11".to_string(),
+            chosen_provider: DllProvider::GameLocal,
+            chosen_path: None,
+            fallback_reason: None,
+            candidates: Vec::new(),
+        }];
+        let env = runner.build_env(&ctx).await.unwrap();
+        let overrides = env.get("WINEDLLOVERRIDES").unwrap();
+        let d3d11: Vec<_> = crate::core::utils::dll_override_entries(overrides)
+            .into_iter()
+            .filter(|(n, _)| n == "d3d11")
+            .collect();
+        assert_eq!(
+            d3d11,
+            vec![("d3d11".to_string(), "n".to_string())],
+            "{overrides}"
+        );
+        assert!(!overrides.starts_with(';'));
+    }
+
+    #[tokio::test]
+    async fn test_compat_data_path_follows_game_library() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("A");
+        let b = tmp.path().join("B");
+        std::fs::create_dir_all(a.join("steamapps")).unwrap();
+        std::fs::write(
+            a.join("steamapps/libraryfolders.vdf"),
+            format!(
+                "\"libraryfolders\"\n{{\n\t\"0\"\n\t{{\n\t\t\"path\"\t\t\"{}\"\n\t}}\n}}\n",
+                b.display()
+            ),
+        )
+        .unwrap();
+        // Unlikely real app id.
+        let app_id = 3_999_999_919;
+        std::fs::create_dir_all(b.join("steamapps")).unwrap();
+        std::fs::write(b.join(format!("steamapps/appmanifest_{app_id}.acf")), "").unwrap();
+
+        let mut ctx = mock_context();
+        ctx.app.app_id = app_id;
+        ctx.launcher_config.steam_library_path = a.to_string_lossy().into_owned();
+        let env = WineTkgRunner.build_env(&ctx).await.unwrap();
+        let compat = env.get("STEAM_COMPAT_DATA_PATH").unwrap();
+        assert_eq!(
+            PathBuf::from(compat),
+            b.join(format!("steamapps/compatdata/{app_id}"))
+        );
+    }
+
+    #[tokio::test]
     async fn test_wine_tkg_runner_stubs() {
         // We can only test stubs that don't hit the filesystem hard or expect real Proton/Wine
         let runner = WineTkgRunner;

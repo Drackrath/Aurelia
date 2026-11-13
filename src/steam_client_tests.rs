@@ -316,6 +316,54 @@ fn parses_ufs_savefile_rules() {
 }
 
 #[test]
+fn vdf_flag_accepts_binary_int() {
+    use steam_vdf_parser::Value;
+    assert!(vdf_flag(&Value::I32(1)));
+    assert!(!vdf_flag(&Value::I32(0)));
+    assert!(vdf_flag(&Value::Str("1".into())));
+    assert!(!vdf_flag(&Value::Str("0".into())));
+}
+
+#[test]
+fn parses_ufs_root_overrides() {
+    let raw = r#""2784470"
+{
+  "ufs"
+  {
+"savefiles"
+{
+  "0" { "root" "WinAppDataRoaming" "path" "Co/Game" "pattern" "*" }
+}
+"rootoverrides"
+{
+  "0"
+  {
+    "root" "WinAppDataRoaming"
+    "os" "Linux"
+    "oscompare" "="
+    "useinstead" "LinuxXdgDataHome"
+    "addpath" "co"
+    "pathtransforms"
+    {
+      "0" { "find" "Co/" "replace" "co/" }
+    }
+  }
+}
+  }
+}"#;
+    let vdf = find_vdf_in_pics(raw.as_bytes()).expect("parse pics vdf");
+    let cfg = ufs_config_from_section(pics_app_section(vdf.value()));
+    assert_eq!(cfg.savefiles.len(), 1);
+    assert_eq!(cfg.root_overrides.len(), 1);
+    let o = &cfg.root_overrides[0];
+    assert_eq!(o.root, "WinAppDataRoaming");
+    assert_eq!(o.use_instead, "LinuxXdgDataHome");
+    assert_eq!(o.add_path, "co");
+    assert_eq!(o.path_transforms, vec![("Co/".into(), "co/".into())]);
+    assert!(o.applies_to("linux") && !o.applies_to("windows"));
+}
+
+#[test]
 fn acf_name_and_last_owner_parse() {
     let raw = "\"AppState\"\n{\n\t\"appid\"\t\t\"960090\"\n\t\"name\"\t\t\"Bloons TD 6\"\n\t\"LastOwner\"\t\t\"76561198000000001\"\n}\n";
     assert_eq!(parse_name_from_acf(raw).as_deref(), Some("Bloons TD 6"));
@@ -690,6 +738,30 @@ fn sanitize_install_dir_never_escapes_common() {
 }
 
 #[test]
+fn missing_pics_installdir_fails_install() {
+    let err = choose_install_dir(620, None, None).unwrap_err();
+    assert!(err.to_string().contains("no install directory"), "{err}");
+    // Placeholder folders are never reused.
+    assert!(choose_install_dir(620, None, Some("App 620".into())).is_err());
+    assert!(choose_install_dir(620, None, Some("app 620".into())).is_err());
+}
+
+#[test]
+fn install_dir_prefers_existing_then_pics() {
+    let pics = || Some("Portal 2".to_string());
+    assert_eq!(choose_install_dir(620, pics(), None).unwrap(), "Portal 2");
+    assert_eq!(
+        choose_install_dir(620, pics(), Some("Portal2Old".into())).unwrap(),
+        "Portal2Old"
+    );
+    // Real existing folder survives PICS outage.
+    assert_eq!(
+        choose_install_dir(620, None, Some("Portal 2".into())).unwrap(),
+        "Portal 2"
+    );
+}
+
+#[test]
 fn launch_targets_lists_installed_builds_and_steam_modes() {
     use crate::infra::runners::SteamMode;
     let tmp = tempfile::tempdir().unwrap();
@@ -931,8 +1003,33 @@ fn cdn_errors_map_to_kinds() {
 }
 
 #[test]
+fn cdn_pool_is_never_empty() {
+    let hosts = vec![
+        ContentHost {
+            host: "cache1.steamcontent.com".into(),
+            https: true,
+        },
+        ContentHost {
+            host: "cache2.steamcontent.com".into(),
+            https: true,
+        },
+    ];
+    // Missing tokens default to none.
+    let pool = content::cdn_pool(&hosts, 7, vec![Some("t".into())]).unwrap();
+    assert_eq!(pool.len(), 2);
+    assert_eq!(pool[0].auth_token.as_deref(), Some("t"));
+    assert_eq!(pool[1].auth_token, None);
+    assert!(pool.iter().all(|s| s.cell_id == 7 && s.port == 443));
+    // No hosts: error, not empty pool.
+    assert!(content::cdn_pool(&[], 7, Vec::new()).is_err());
+}
+
+#[test]
 fn cdn_server_parses_host_and_port() {
-    let host = |h: &str, https| ContentHost { host: h.into(), https };
+    let host = |h: &str, https| ContentHost {
+        host: h.into(),
+        https,
+    };
     let s = install::cdn_server_for(&host("cache1.steamcontent.com", false), 7, Some("t".into()));
     assert_eq!(
         (s.host.as_str(), s.port, s.https),
@@ -961,7 +1058,10 @@ fn https_support_values_map_to_tls() {
 
 #[test]
 fn https_hosts_are_preferred() {
-    let host = |h: &str, https| ContentHost { host: h.into(), https };
+    let host = |h: &str, https| ContentHost {
+        host: h.into(),
+        https,
+    };
     let kept = content::prefer_https(vec![host("a", false), host("b", true), host("c", true)]);
     assert_eq!(kept, vec![host("b", true), host("c", true)]);
     let only_http = vec![host("a", false)];
@@ -988,4 +1088,43 @@ fn process_logon_id_is_nonzero_and_stable() {
     let first = super::logon_id();
     assert_ne!(first, 0);
     assert_eq!(first, super::logon_id());
+}
+
+#[tokio::test]
+async fn guard_code_is_fed_through_duplex() {
+    use tokio::io::AsyncBufReadExt;
+    let (writer, reader) = tokio::io::duplex(64);
+    let work = async move {
+        let mut line = String::new();
+        tokio::io::BufReader::new(reader)
+            .read_line(&mut line)
+            .await
+            .unwrap();
+        line
+    };
+    let code: CodeReader = Box::pin(async { Ok(Some(" 12345 ".to_string())) });
+    let got = client::feed_code_while(work, code, writer).await;
+    assert_eq!(got, "12345\n");
+}
+
+#[tokio::test]
+async fn login_finishing_first_stops_waiting_for_code() {
+    let (writer, _reader) = tokio::io::duplex(64);
+    // Never yields, like idle stdin.
+    let code: CodeReader = Box::pin(std::future::pending());
+    let got = client::feed_code_while(async { 7 }, code, writer).await;
+    assert_eq!(got, 7);
+}
+
+#[tokio::test]
+async fn stdin_eof_ends_reader() {
+    use tokio::io::AsyncReadExt;
+    let (writer, mut reader) = tokio::io::duplex(64);
+    let work = async move {
+        let mut buf = Vec::new();
+        reader.read_to_end(&mut buf).await.unwrap();
+        buf.len()
+    };
+    let code: CodeReader = Box::pin(async { Ok(None) });
+    assert_eq!(client::feed_code_while(work, code, writer).await, 0);
 }
