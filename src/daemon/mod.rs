@@ -15,6 +15,7 @@
 pub mod client;
 mod proto;
 mod server;
+mod steamworks;
 mod transport;
 
 use std::sync::Arc;
@@ -497,6 +498,11 @@ pub async fn last_restore_error() -> Option<(ErrorKind, Option<Duration>, String
     let state = DAEMON.get()?;
     let failure = state.slot.read().await.last_error.clone()?;
     Some((failure.kind, failure.retry_after, failure.reason))
+}
+
+/// Live client without a restore.
+async fn current_client() -> Option<SteamClient> {
+    DAEMON.get()?.slot.read().await.client.clone()
 }
 
 /// Daemon-side replacement for `restored_client()`: returns a client backed by the

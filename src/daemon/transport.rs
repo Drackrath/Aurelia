@@ -199,6 +199,12 @@ mod imp {
         }
     }
 
+    /// Peer process id, if known.
+    pub fn peer_pid(stream: &UnixStream) -> Option<u32> {
+        let pid = stream.peer_cred().ok()?.pid()?;
+        u32::try_from(pid).ok()
+    }
+
     pub async fn connect() -> std::io::Result<UnixStream> {
         if !location_trusted() {
             return Err(std::io::Error::new(
@@ -276,6 +282,11 @@ mod imp {
         }
     }
 
+    /// Peer process id, if known.
+    pub fn peer_pid(_stream: &NamedPipeServer) -> Option<u32> {
+        None
+    }
+
     pub async fn connect() -> std::io::Result<NamedPipeClient> {
         let name = endpoint();
         loop {
@@ -291,4 +302,4 @@ mod imp {
     }
 }
 
-pub use imp::{Listener, connect};
+pub use imp::{Listener, connect, peer_pid};

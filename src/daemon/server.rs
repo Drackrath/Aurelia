@@ -8,7 +8,7 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 
 use super::transport::{self, Listener};
-use super::{Header, proto};
+use super::{Header, proto, steamworks};
 use crate::output::{OutChunk, OutputCtx, Stream};
 
 /// Number of forwarded commands currently running, so the upgrade watcher only
@@ -193,8 +193,9 @@ pub async fn run_server() -> Result<()> {
     loop {
         match listener.next().await {
             Ok(stream) => {
+                let peer_pid = transport::peer_pid(&stream);
                 tokio::spawn(async move {
-                    if let Err(e) = handle(stream).await {
+                    if let Err(e) = handle(stream, peer_pid).await {
                         tracing::warn!("daemon: request failed: {e:#}");
                     }
                 });
@@ -242,18 +243,28 @@ async fn auto_resume_installs() {
 /// background stdout/stderr pump.
 use proto::SharedWriter;
 
-/// Read the opening frame and parse the argv header. The first frame on a connection
-/// must be the [`proto::C_HEADER`] frame carrying the request's argv.
-async fn read_header<R>(reader: &mut R) -> Result<Header>
-where
-    R: AsyncRead + Unpin,
-{
-    let (channel, payload) = proto::read_frame(reader)
-        .await?
-        .context("client closed before sending a request header")?;
+/// Parse the argv header frame.
+fn parse_header(channel: u8, payload: &[u8]) -> Result<Header> {
     anyhow::ensure!(channel == proto::C_HEADER, "expected a header frame first");
-    let header: Header = serde_json::from_slice(&payload).context("malformed request header")?;
+    let header: Header = serde_json::from_slice(payload).context("malformed request header")?;
     Ok(header)
+}
+
+/// Steamworks backend and push router.
+type Steamworks = (
+    std::sync::Arc<steamworks::DaemonBackend>,
+    std::sync::Arc<steamworks::Router>,
+);
+
+/// Shared backend; starts the event pump.
+fn steamworks_backend() -> &'static Steamworks {
+    static SW: std::sync::OnceLock<Steamworks> = std::sync::OnceLock::new();
+    SW.get_or_init(|| {
+        let backend = std::sync::Arc::new(steamworks::DaemonBackend);
+        let router = std::sync::Arc::new(steamworks::Router::default());
+        tokio::spawn(steamworks::pump_events(backend.clone(), router.clone()));
+        (backend, router)
+    })
 }
 
 /// Print a config-dir refusal; exit 2.
@@ -369,7 +380,7 @@ fn output_relay(
 
 /// Handle one forwarded command: read the header, run it with stdio routed over the
 /// socket, then send the exit code.
-async fn handle<S>(stream: S) -> Result<()>
+async fn handle<S>(stream: S, peer_pid: Option<u32>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -378,7 +389,23 @@ where
 
     let (mut reader, writer) = proto::split_shared(stream);
 
-    let header = read_header(&mut reader).await?;
+    let (channel, payload) = proto::read_frame(&mut reader)
+        .await?
+        .context("client closed before sending a request header")?;
+    if channel == proto::C_SW_HELLO {
+        // Game stays busy while connected.
+        let (backend, router) = steamworks_backend();
+        return steamworks::serve(
+            reader,
+            writer,
+            &payload,
+            peer_pid,
+            backend.clone(),
+            router.clone(),
+        )
+        .await;
+    }
+    let header = parse_header(channel, &payload)?;
     let argv = header.argv;
     // Client path canonicalized here too.
     let client_dir = header.config_dir.as_deref().map(transport::canonical);
