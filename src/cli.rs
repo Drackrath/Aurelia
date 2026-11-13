@@ -640,6 +640,20 @@ pub(crate) enum ConfigCommand {
                 Pass \"\" to use the default directory."
         )]
         path: Option<String>,
+        /// Allow one anti-cheat game anyway.
+        #[arg(
+            long,
+            value_name = "APPID",
+            long_help = "Allow the stand-in for one VAC, EasyAntiCheat or BattlEye \
+                game. Anti-cheat may ban the real account; asks for confirmation."
+        )]
+        allow: Option<u32>,
+        /// Remove a game from the allow-list.
+        #[arg(long, value_name = "APPID")]
+        disallow: Option<u32>,
+        /// Skip the confirmation prompt.
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
     /// View or set the network proxy used for all HTTP(S) communication.
     ///

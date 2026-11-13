@@ -376,20 +376,48 @@ pub(crate) async fn cmd_config_anticheat_auto_install(
     Ok(())
 }
 
+/// `config steamworks-client` arguments.
+pub(crate) struct SteamworksClientArgs {
+    pub mode: Option<OnOffArg>,
+    pub path: Option<String>,
+    pub allow: Option<u32>,
+    pub disallow: Option<u32>,
+    pub yes: bool,
+}
+
 /// `config steamworks-client [on|off] [--path]`.
 pub(crate) async fn cmd_config_steamworks_client(
-    mode: Option<OnOffArg>,
-    path: Option<String>,
+    args: SteamworksClientArgs,
     json: bool,
 ) -> Result<()> {
-    let change = (mode.is_some() || path.is_some()).then_some((mode, path));
-    let (config, changed) = view_or_set(change, |c, (mode, path)| {
+    if let Some(app_id) = args.allow {
+        let prompt = aurelia::launch::stand_in_guard::allow_prompt(app_id);
+        confirm_write("allow an anti-cheat game", &prompt, args.yes, json)?;
+    }
+    let SteamworksClientArgs {
+        mode,
+        path,
+        allow,
+        disallow,
+        ..
+    } = args;
+    let any = mode.is_some() || path.is_some() || allow.is_some() || disallow.is_some();
+    let change = any.then_some((mode, path, allow, disallow));
+    let (config, changed) = view_or_set(change, |c, (mode, path, allow, disallow)| {
         if let Some(mode) = mode {
             c.steamworks_client = matches!(mode, OnOffArg::On);
         }
         if let Some(path) = path {
             let path = path.trim();
             c.steamworks_client_path = (!path.is_empty()).then(|| path.to_string());
+        }
+        let allowed = &mut c.steamworks_allowed_protected;
+        if let Some(id) = allow.filter(|id| !allowed.contains(id)) {
+            allowed.push(id);
+            allowed.sort_unstable();
+        }
+        if let Some(id) = disallow {
+            allowed.retain(|a| *a != id);
         }
     })
     .await?;
@@ -403,6 +431,7 @@ pub(crate) async fn cmd_config_steamworks_client(
             "steamworks_client": config.steamworks_client,
             "steamworks_client_path": config.steamworks_client_path,
             "effective_path": effective_path,
+            "steamworks_allowed_protected": config.steamworks_allowed_protected,
         }));
         return Ok(());
     }
@@ -414,6 +443,14 @@ pub(crate) async fn cmd_config_steamworks_client(
     cli_println!("Stand-in steamclient.so: {label}");
     if let Some(path) = effective_path {
         cli_println!("Path: {path}");
+    }
+    if !config.steamworks_allowed_protected.is_empty() {
+        let ids: Vec<String> = config
+            .steamworks_allowed_protected
+            .iter()
+            .map(u32::to_string)
+            .collect();
+        cli_println!("Anti-cheat games allowed: {}", ids.join(", "));
     }
     if changed {
         cli_println!("Saved. Applies to the next launch.");

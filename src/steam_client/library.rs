@@ -366,6 +366,14 @@ impl SteamClient {
     }
 
     pub async fn get_product_info(&mut self, appid: u32) -> Result<Vec<LaunchInfo>> {
+        Ok(self.get_product_info_and_categories(appid).await?.0)
+    }
+
+    /// Launch entries plus store category ids.
+    pub async fn get_product_info_and_categories(
+        &mut self,
+        appid: u32,
+    ) -> Result<(Vec<LaunchInfo>, Option<Vec<u32>>)> {
         let buffer = match self
             .pics_buffer(
                 appid,
@@ -401,9 +409,18 @@ impl SteamClient {
             bail!("empty appinfo payload returned for app {appid}")
         }
 
-        parse_launch_info_from_vdf(appid, &raw_vdf)
-            .context("failed to parse launch metadata from PICS appinfo")
+        let options = parse_launch_info_from_vdf(appid, &raw_vdf)
+            .context("failed to parse launch metadata from PICS appinfo")?;
+        Ok((options, category_ids_from_pics(&buffer)))
     }
+}
+
+/// Category ids; `None` when unparseable.
+pub(crate) fn category_ids_from_pics(buffer: &[u8]) -> Option<Vec<u32>> {
+    let vdf = find_vdf_in_pics(buffer).ok()?;
+    let section = pics_app_section(vdf.value());
+    section.get_obj(&["common"])?;
+    Some(store_meta_from_section(section).category_ids)
 }
 
 /// Storefront-ish fields PICS carries.

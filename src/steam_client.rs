@@ -548,6 +548,7 @@ mod content;
 pub(crate) use content::ContentHost;
 mod launch;
 mod library;
+pub(crate) use library::category_ids_from_pics;
 mod manage;
 pub use launch::{
     LaunchTargetChoice, check_launch_option_target, find_launch_option,
