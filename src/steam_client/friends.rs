@@ -29,7 +29,10 @@ pub const RELATIONSHIP_FRIEND: u32 = 3;
 /// Status(1) | PlayerName(2) | Presence(16) | GameExtraInfo(256) |
 /// GameDataBlob(512) = 787. These cover online status, display name, and the
 /// currently-played game.
-pub const PERSONA_REQUEST_FLAGS: u32 = 1 | 2 | 16 | 256 | 512;
+pub const PERSONA_REQUEST_FLAGS: u32 = PERSONA_FLAG_STATUS | 2 | 16 | 256 | 512;
+
+/// EClientPersonaStateFlag Status bit.
+const PERSONA_FLAG_STATUS: u32 = 1;
 
 /// Maximum friends per `CMsgClientRequestFriendData` request. Steam answers each
 /// request with a burst of `CMsgClientPersonaState` messages, and steam-vent's
@@ -37,7 +40,7 @@ pub const PERSONA_REQUEST_FLAGS: u32 = 1 | 2 | 16 | 256 | 512;
 /// draining the responses between them) keeps a burst from overflowing that
 /// buffer, which would otherwise drop persona updates as the stream reports
 /// `Lagged`.
-const PERSONA_REQUEST_CHUNK: usize = 8;
+pub const PERSONA_REQUEST_CHUNK: usize = 8;
 
 /// Interval between unnamed-friend retries.
 const UNNAMED_RETRY_EVERY: std::time::Duration = std::time::Duration::from_secs(5);
@@ -180,6 +183,8 @@ pub fn apply_friends_list(roster: &mut Roster, msg: &CMsgClientFriendsList) {
 /// An empty incoming name never clobbers a known one; an app id of 0 clears the
 /// in-game fields.
 pub fn apply_persona_state(roster: &mut Roster, msg: &CMsgClientPersonaState) {
+    // Status flag set: omitted means offline.
+    let carries_status = msg.status_flags() & PERSONA_FLAG_STATUS != 0;
     for fr in &msg.friends {
         let id = fr.friendid();
         let entry = roster.entry(id).or_insert_with(|| Friend::new(id, 0));
@@ -189,7 +194,7 @@ pub fn apply_persona_state(roster: &mut Roster, msg: &CMsgClientPersonaState) {
             entry.persona_name = Some(name.to_string());
         }
         // Replies may omit status; keep known.
-        if fr.has_persona_state() {
+        if fr.has_persona_state() || carries_status {
             entry.persona_state = Some(fr.persona_state());
         }
         if fr.has_game_played_app_id() {

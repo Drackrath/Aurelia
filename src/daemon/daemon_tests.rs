@@ -82,7 +82,7 @@ fn bare_friend(steam_id: u64, name: Option<&str>) -> Friend {
         steam_id,
         relationship: 3,
         persona_name: name.map(str::to_owned),
-        persona_state: None,
+        persona_state: name.map(|_| 1),
         game_app_id: None,
         game_name: None,
     }
@@ -163,4 +163,33 @@ async fn stalled_name_burst_returns_early() {
     let elapsed = start.elapsed();
     assert!(elapsed >= Duration::from_millis(500) && elapsed < Duration::from_secs(3));
     assert!(roster.read().unwrap()[&2].persona_name.is_none());
+}
+
+#[test]
+fn pending_covers_missing_name_or_status() {
+    let mut roster = Roster::new();
+    roster.insert(1, bare_friend(1, Some("Alice")));
+    roster.insert(2, bare_friend(2, None));
+    let mut stateless = bare_friend(3, Some("Bob"));
+    stateless.persona_state = None;
+    roster.insert(3, stateless);
+    let mut pending = bare_friend(4, None);
+    pending.relationship = 2;
+    roster.insert(4, pending);
+    assert_eq!(pending_friend_ids(&roster), vec![2, 3]);
+}
+
+#[tokio::test]
+async fn named_friend_without_status_is_awaited() {
+    let roster = Arc::new(StdRwLock::new(Roster::new()));
+    let mut stateless = bare_friend(1, Some("Alice"));
+    stateless.persona_state = None;
+    roster.write().unwrap().insert(1, stateless);
+    let writer = Arc::clone(&roster);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        writer.write().unwrap().get_mut(&1).unwrap().persona_state = Some(0);
+    });
+    await_roster_names(&roster, Duration::from_secs(5), NAME_IDLE).await;
+    assert_eq!(roster.read().unwrap()[&1].persona_state, Some(0));
 }

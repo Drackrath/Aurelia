@@ -230,3 +230,16 @@ fn clan_ids_are_not_friends() {
     assert!(!roster.contains_key(&clan));
     assert_eq!(friend_ids(&roster), vec![person]);
 }
+
+#[test]
+fn status_flagged_reply_without_state_is_offline() {
+    let mut roster = Roster::new();
+    apply_friends_list(
+        &mut roster,
+        &friends_list(false, &[(10, RELATIONSHIP_FRIEND)]),
+    );
+    let mut msg = name_only(10, "Alice");
+    msg.set_status_flags(PERSONA_REQUEST_FLAGS);
+    apply_persona_state(&mut roster, &msg);
+    assert_eq!(roster[&10].persona_state, Some(0));
+}

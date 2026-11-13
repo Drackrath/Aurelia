@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use aurelia::core::error::ErrorKind;
-use aurelia::steam_client::{Friend, Roster, SteamClient};
+use aurelia::steam_client::{Friend, PERSONA_REQUEST_CHUNK, Roster, SteamClient};
 
 pub use server::run_server;
 
@@ -174,6 +174,9 @@ const NAME_IDLE: Duration = Duration::from_millis(1500);
 
 /// EPersonaState for invisible.
 const PERSONA_INVISIBLE: u32 = 7;
+
+/// Gap between friend data chunks.
+const REQUEST_PACE: Duration = Duration::from_millis(250);
 
 struct DaemonState {
     slot: RwLock<Slot>,
@@ -386,10 +389,21 @@ impl DaemonState {
             .await
             .map(|c| c.persona_wait_secs)
             .unwrap_or(aurelia::core::config::DEFAULT_PERSONA_WAIT_SECS);
-        // Watcher folds the reply in.
-        if let Some(wait) = name_wait(client.announced_persona(), secs) {
-            await_roster_names(&self.roster, wait, NAME_IDLE).await;
+        let Some(wait) = name_wait(client.announced_persona(), secs) else {
+            return;
+        };
+        // Pre-announce requests were dropped.
+        let pending = pending_friend_ids(&self.roster.read().unwrap());
+        for chunk in pending.chunks(PERSONA_REQUEST_CHUNK) {
+            if let Err(e) = client.request_friend_data(chunk).await {
+                tracing::debug!("friend data request failed: {e:#}");
+                break;
+            }
+            // Let the watcher drain replies.
+            tokio::time::sleep(REQUEST_PACE).await;
         }
+        // Watcher folds the reply in.
+        await_roster_names(&self.roster, wait, NAME_IDLE).await;
     }
 
     /// Drop the session if still `session_id`.
@@ -479,34 +493,33 @@ fn name_wait(announced: Option<u32>, persona_wait_secs: u64) -> Option<Duration>
     }
 }
 
-/// Wait until names arrive or stall.
+/// Friends lacking name or status.
+fn pending_friend_ids(roster: &Roster) -> Vec<u64> {
+    let mut ids: Vec<u64> = roster
+        .values()
+        .filter(|f| f.relationship == 3)
+        .filter(|f| f.persona_name.is_none() || f.persona_state.is_none())
+        .map(|f| f.steam_id)
+        .collect();
+    ids.sort_unstable();
+    ids
+}
+
+/// Wait until personas arrive or stall.
 async fn await_roster_names(roster: &StdRwLock<Roster>, wait: Duration, idle: Duration) {
-    let start = tokio::time::Instant::now();
-    let deadline = start + wait;
-    let count = || {
-        let roster = roster.read().unwrap();
-        let friends = roster.values().filter(|f| f.relationship == 3);
-        let (mut named, mut unnamed) = (0usize, 0usize);
-        for f in friends {
-            if f.persona_name.is_some() {
-                named += 1;
-            } else {
-                unnamed += 1;
-            }
-        }
-        (named, unnamed)
-    };
-    let (mut last_named, _) = count();
+    let deadline = tokio::time::Instant::now() + wait;
+    let pending = || pending_friend_ids(&roster.read().unwrap()).len();
+    let mut last_pending = pending();
     let mut last_progress: Option<tokio::time::Instant> = None;
     loop {
-        let (named, unnamed) = count();
+        let now_pending = pending();
         let now = tokio::time::Instant::now();
-        if named > last_named {
-            last_named = named;
+        if now_pending < last_pending {
+            last_pending = now_pending;
             last_progress = Some(now);
         }
         let stalled = last_progress.is_some_and(|t| now - t >= idle);
-        if unnamed == 0 || stalled || now >= deadline {
+        if now_pending == 0 || stalled || now >= deadline {
             return;
         }
         tokio::time::sleep(NAME_POLL_INTERVAL.min(deadline - now)).await;
