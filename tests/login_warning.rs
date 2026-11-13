@@ -5,8 +5,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 use tempfile::tempdir;
 
-// No TTY here: login fails at the password
-// prompt, before any Steam contact.
+// Null stdin: login stops at username.
 fn login(config_dir: &Path) -> Output {
     Command::new(env!("CARGO_BIN_EXE_aurelia"))
         .arg("login")
@@ -106,6 +105,16 @@ fn no_session_prints_no_warning() {
     let tmp = tempdir().unwrap();
     let err = stderr(&login(tmp.path()));
     assert!(!err.contains("Warning:"), "unexpected warning: {err}");
+}
+
+// Never reaches the tty password prompt.
+#[test]
+fn empty_username_stops_before_password() {
+    let tmp = tempdir().unwrap();
+    let out = login(tmp.path());
+    assert!(!out.status.success());
+    let err = stderr(&out);
+    assert!(err.contains("no Steam username given"), "{err}");
 }
 
 #[test]

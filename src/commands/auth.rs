@@ -168,6 +168,10 @@ pub(crate) async fn cmd_login(args: crate::cli::LoginArgs, json: bool) -> Result
             prompt_line("Steam username: ")?
         }
     };
+    // Empty or closed stdin: stop here.
+    if username.is_empty() {
+        bail!("no Steam username given");
+    }
     let account = username.clone();
     let password = match password.or_else(|| std::env::var("AURELIA_PASSWORD").ok()) {
         Some(p) => p,
