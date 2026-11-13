@@ -296,6 +296,7 @@ impl DaemonState {
                     s.last_error = None;
                     // Rebind watcher to the new connection.
                     self.spawn_watcher(s.client.as_ref().unwrap());
+                    resend_games_played(s.client.as_ref().unwrap());
                 }
                 Ok(_) => {
                     tracing::warn!("daemon: session restore did not authenticate");
@@ -464,6 +465,17 @@ impl DaemonState {
             None => true,
         }
     }
+}
+
+/// Re-report running games after reconnect.
+fn resend_games_played(client: &SteamClient) {
+    let client = client.clone();
+    tokio::spawn(async move {
+        let games = &aurelia::steam_client::playing::GAMES;
+        if let Err(e) = games.lock().await.resend(&client).await {
+            tracing::warn!("daemon: could not re-report games played: {e:#}");
+        }
+    });
 }
 
 /// Why the daemon's last restore failed.

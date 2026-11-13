@@ -554,6 +554,7 @@ pub use launch::{
 mod cloudconfig;
 mod collections;
 mod manifests;
+pub mod playing;
 mod process;
 mod storequery;
 mod tags;
