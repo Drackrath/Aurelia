@@ -622,6 +622,25 @@ pub(crate) enum ConfigCommand {
         /// `on` or `off`. Omit to print the current setting.
         mode: Option<OnOffArg>,
     },
+    /// View or set the stand-in steamclient.so.
+    #[command(long_about = "View or set the stand-in steamclient.so.\n\n\
+        When on (Linux, off by default), `play` runs native and Proton games in a \
+        private mount namespace (bubblewrap) where `~/.steam/sdk64/steamclient.so` \
+        is Aurelia's stand-in, which answers Steamworks calls through the daemon. \
+        The real `~/.steam` is never written. Experimental.")]
+    SteamworksClient {
+        /// `on` or `off`; omit to print.
+        mode: Option<OnOffArg>,
+        /// Library file or sdk64/sdk32 directory.
+        #[arg(
+            long,
+            value_name = "PATH",
+            long_help = "The stand-in libsteamclient.so, or a directory with \
+                sdk64/steamclient.so (and optionally sdk32/steamclient.so). \
+                Pass \"\" to use the default directory."
+        )]
+        path: Option<String>,
+    },
     /// View or set the network proxy used for all HTTP(S) communication.
     ///
     /// Applies to the Steam web endpoints, depot downloads, and Proton/plugin

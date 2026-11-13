@@ -598,7 +598,9 @@ impl Runner for WineTkgRunner {
         // `lsteamclient` bridges to the host client). The in-Wine runtime and
         // standalone modes both want the native/neutralised set (`steamclient=n`, …)
         // so the game loads the in-Wine `steamclient.dll` (or none at all).
-        let host_bridge = steam_mode == SteamMode::HostBridge;
+        let host_bridge = steam_mode == SteamMode::HostBridge
+            || (steam_mode == SteamMode::Standalone
+                && stand_in_client_active(&ctx.launcher_config));
 
         let use_symlinks = glc.use_symlinks_in_prefix;
         let mut dll_overrides = crate::core::utils::build_dll_overrides(
@@ -1245,6 +1247,11 @@ fn resolve_steam_mode(ctx: &LaunchContext) -> (SteamMode, &'static str) {
         &ctx.launcher_config,
         ctx.steam_enabled,
     )
+}
+
+/// Stand-in steamclient.so replaces lsteamclient's target.
+pub fn stand_in_client_active(config: &crate::core::config::LauncherConfig) -> bool {
+    cfg!(target_os = "linux") && config.steamworks_client
 }
 
 /// [`resolve_steam_mode`] without a launch context.

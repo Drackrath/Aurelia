@@ -23,6 +23,9 @@ impl PipelineStage for SpawnProcessStage {
             }
         }
 
+        #[cfg(target_os = "linux")]
+        apply_steamworks_overlay(ctx).await?;
+
         if let Some(runner) = &ctx.runner {
             if let Some(spec) = &ctx.command_spec {
                 // Stringify env only when logging.
@@ -111,4 +114,37 @@ impl PipelineStage for SpawnProcessStage {
         }
         Ok(())
     }
+}
+
+/// Wrap the command in the overlay.
+#[cfg(target_os = "linux")]
+async fn apply_steamworks_overlay(ctx: &mut PipelineContext) -> Result<(), LaunchError> {
+    use crate::launch::steamworks_overlay as overlay;
+    let Some(config) = ctx.launcher_config.as_ref() else {
+        return Ok(());
+    };
+    if !config.steamworks_client {
+        return Ok(());
+    }
+    let runner = ctx.runner.as_ref().map(|r| r.name().to_string());
+    let (Some(runner), Some(spec)) = (runner, ctx.command_spec.as_ref()) else {
+        tracing::warn!("steamworks_client is on, but this launch path has no overlay");
+        return Ok(());
+    };
+    if !overlay::runner_supported(&runner) {
+        tracing::warn!("steamworks_client is on, but runner {runner} has no overlay");
+        return Ok(());
+    }
+    let account_id = crate::core::config::load_session()
+        .await
+        .ok()
+        .and_then(|s| s.steam_id)
+        .map(|id| (id & 0xffff_ffff) as u32);
+    let plan = overlay::plan_for(config, spec, ctx.app_id, account_id)?;
+    tracing::info!(
+        sdk64 = %plan.libs.sdk64.display(),
+        "launching with the stand-in steamclient.so"
+    );
+    ctx.command_spec = Some(overlay::wrap_command(spec, &plan));
+    Ok(())
 }

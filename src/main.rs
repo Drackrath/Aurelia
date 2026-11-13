@@ -587,6 +587,9 @@ async fn run(mut cli: Cli) -> Result<()> {
             ConfigCommand::HideUninstalledLaunchOptions { mode } => {
                 cmd_config_hide_uninstalled_launch_options(mode, json).await
             }
+            ConfigCommand::SteamworksClient { mode, path } => {
+                cmd_config_steamworks_client(mode, path, json).await
+            }
             ConfigCommand::AnticheatAutoInstall { mode } => {
                 cmd_config_anticheat_auto_install(mode, json).await
             }

@@ -376,6 +376,64 @@ pub(crate) async fn cmd_config_anticheat_auto_install(
     Ok(())
 }
 
+/// `config steamworks-client [on|off] [--path]`.
+pub(crate) async fn cmd_config_steamworks_client(
+    mode: Option<OnOffArg>,
+    path: Option<String>,
+    json: bool,
+) -> Result<()> {
+    let change = (mode.is_some() || path.is_some()).then_some((mode, path));
+    let (config, changed) = view_or_set(change, |c, (mode, path)| {
+        if let Some(mode) = mode {
+            c.steamworks_client = matches!(mode, OnOffArg::On);
+        }
+        if let Some(path) = path {
+            let path = path.trim();
+            c.steamworks_client_path = (!path.is_empty()).then(|| path.to_string());
+        }
+    })
+    .await?;
+    let default_dir = steamworks_default_dir();
+    let effective_path = config
+        .steamworks_client_path
+        .clone()
+        .or_else(|| default_dir.clone());
+    if json {
+        print_json(&serde_json::json!({
+            "steamworks_client": config.steamworks_client,
+            "steamworks_client_path": config.steamworks_client_path,
+            "effective_path": effective_path,
+        }));
+        return Ok(());
+    }
+    let label = if config.steamworks_client {
+        "on (`play` loads the stand-in steamclient.so in a private namespace)"
+    } else {
+        "off"
+    };
+    cli_println!("Stand-in steamclient.so: {label}");
+    if let Some(path) = effective_path {
+        cli_println!("Path: {path}");
+    }
+    if changed {
+        cli_println!("Saved. Applies to the next launch.");
+    }
+    Ok(())
+}
+
+/// Default stand-in directory, Linux only.
+fn steamworks_default_dir() -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        aurelia::launch::steamworks_overlay::default_client_dir()
+            .map(|d| d.to_string_lossy().into_owned())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
 /// Human form of a kbit/s limit.
 pub(crate) fn describe_download_limit(kbit: u64) -> String {
     if kbit == 0 {
