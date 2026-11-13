@@ -500,6 +500,15 @@ pub async fn last_restore_error() -> Option<(ErrorKind, Option<Duration>, String
     Some((failure.kind, failure.retry_after, failure.reason))
 }
 
+/// Tell stand-in launches our socket.
+pub fn publish_socket_path() {
+    #[cfg(target_os = "linux")]
+    {
+        let path = std::path::PathBuf::from(transport::endpoint());
+        aurelia::launch::steamworks_overlay::set_daemon_socket(path);
+    }
+}
+
 /// Live client without a restore.
 async fn current_client() -> Option<SteamClient> {
     DAEMON.get()?.slot.read().await.client.clone()

@@ -22,6 +22,7 @@ fn plan(home: &Path, sdk32: Option<PathBuf>, mirror: Vec<MirrorEntry>) -> Overla
         mirror,
         app_id: 480,
         account_id: Some(7),
+        daemon_socket: None,
     }
 }
 
@@ -392,6 +393,9 @@ fn overlay_runs_under_bwrap_without_touching_real_dir() {
     std::os::unix::fs::symlink(&data, steam.join("root")).unwrap();
     let so = dir.path().join("stand-in.so");
     write(&so, "stand-in");
+    let socket = dir.path().join("run/aurelia-test.sock");
+    std::fs::create_dir_all(socket.parent().unwrap()).unwrap();
+    let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
 
     let p = OverlayPlan {
         bwrap,
@@ -403,11 +407,13 @@ fn overlay_runs_under_bwrap_without_touching_real_dir() {
         mirror: scan_steam_dir(&steam),
         app_id: 480,
         account_id: None,
+        daemon_socket: Some(socket.clone()),
     };
     let script = "s=\"$HOME/.steam\"; cat \"$s/sdk64/steamclient.so\"; echo; \
                   [ \"$(cat \"$s/steam.pid\")\" = \"$$\" ] && echo pid-ok; \
                   grep -q \"\\\"pid\\\".*\\\"$$\\\"\" \"$s/registry.vdf\" && echo reg-ok; \
-                  cat \"$s/root/marker\" \"$s/keep/file\"; echo; echo \"$SteamAppId\"";
+                  cat \"$s/root/marker\" \"$s/keep/file\"; echo; echo \"$SteamAppId\"; \
+                  [ -S \"$AURELIA_DAEMON_SOCKET\" ] && echo sock-ok";
     let mut original = spec("/bin/sh", &["-c", script]);
     original.cwd = Some(dir.path().to_path_buf());
     original
@@ -422,7 +428,7 @@ fn overlay_runs_under_bwrap_without_touching_real_dir() {
         .unwrap();
     assert!(out.status.success(), "{out:?}");
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(stdout, "stand-in\npid-ok\nreg-ok\ndatakept\n480\n");
+    assert_eq!(stdout, "stand-in\npid-ok\nreg-ok\ndatakept\n480\nsock-ok\n");
 
     // Real directory is untouched.
     assert_eq!(
@@ -434,4 +440,44 @@ fn overlay_runs_under_bwrap_without_touching_real_dir() {
         "1\n"
     );
     assert!(!steam.join("registry.vdf").exists());
+}
+
+#[test]
+fn wrap_command_passes_daemon_socket() {
+    let mut p = plan(Path::new("/home/u"), None, Vec::new());
+    p.daemon_socket = Some(PathBuf::from("/run/user/1000/aurelia-1000-ab.sock"));
+    let mut original = spec("/games/x/game", &[]);
+    original
+        .env
+        .insert("PRESSURE_VESSEL_FILESYSTEMS_RW".into(), "/mnt/games".into());
+    let wrapped = wrap_command(&original, &p);
+    assert_eq!(
+        wrapped.env.get(DAEMON_SOCKET_ENV).map(String::as_str),
+        Some("/run/user/1000/aurelia-1000-ab.sock")
+    );
+    assert_eq!(
+        wrapped
+            .env
+            .get("PRESSURE_VESSEL_FILESYSTEMS_RW")
+            .map(String::as_str),
+        Some("/mnt/games:/run/user/1000/aurelia-1000-ab.sock")
+    );
+}
+
+#[test]
+fn daemon_socket_is_shared_once() {
+    let mut env = HashMap::new();
+    let socket = Path::new("/tmp/a.sock");
+    add_daemon_socket(&mut env, socket);
+    add_daemon_socket(&mut env, socket);
+    assert_eq!(env["PRESSURE_VESSEL_FILESYSTEMS_RW"], "/tmp/a.sock");
+    assert_eq!(env[DAEMON_SOCKET_ENV], "/tmp/a.sock");
+}
+
+#[test]
+fn no_socket_leaves_env_alone() {
+    let p = plan(Path::new("/home/u"), None, Vec::new());
+    let wrapped = wrap_command(&spec("/games/x/game", &[]), &p);
+    assert!(!wrapped.env.contains_key(DAEMON_SOCKET_ENV));
+    assert!(!wrapped.env.contains_key("PRESSURE_VESSEL_FILESYSTEMS_RW"));
 }
