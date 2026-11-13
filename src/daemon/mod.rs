@@ -527,6 +527,15 @@ pub async fn shared_restored_client() -> SteamClient {
     }
 }
 
+/// Every roster entry, own persona included.
+pub async fn shared_full_roster() -> Vec<Friend> {
+    let state = init_state();
+    state.ensure_session().await;
+    state.announce_and_await_names().await;
+    let roster = state.roster.read().unwrap();
+    roster.values().cloned().collect()
+}
+
 /// The daemon's shared friends list: every actual friend (`relationship == 3`) in the
 /// roster cache, sorted by persona name (those without a name last) then steam id.
 ///
@@ -536,18 +545,11 @@ pub async fn shared_restored_client() -> SteamClient {
 /// the daemon (re)establishes a session may therefore return an empty or partial list
 /// until those broadcasts arrive; a slightly later call returns the full roster.
 pub async fn shared_roster() -> Vec<Friend> {
-    let state = init_state();
-    state.ensure_session().await;
-    state.announce_and_await_names().await;
-    // Brief read lock: clone out the friends we care about, then release before sorting.
-    let mut friends: Vec<Friend> = {
-        let roster = state.roster.read().unwrap();
-        roster
-            .values()
-            .filter(|f| f.relationship == 3)
-            .cloned()
-            .collect()
-    };
+    let mut friends: Vec<Friend> = shared_full_roster()
+        .await
+        .into_iter()
+        .filter(|f| f.relationship == 3)
+        .collect();
     // Stable, predictable ordering for callers/CLI output: by name (unnamed entries —
     // personas not yet received — sort last), tie-broken by the always-present steam id.
     friends.sort_by(|a, b| match (&a.persona_name, &b.persona_name) {

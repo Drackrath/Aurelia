@@ -15,7 +15,7 @@ use tokio::task::JoinSet;
 use aurelia::steam_client::auth_ticket::{AuthSessionTicket, TicketAuthEvent, TicketKind};
 use aurelia::steam_client::playing::{self, GAMES, Launch};
 use aurelia::steam_client::steamworks_info::{AppInstallInfo, DlcInfo};
-use aurelia::steam_client::{EncryptedTicketOutcome, SteamClient};
+use aurelia::steam_client::{EncryptedTicketOutcome, Friend, SteamClient};
 
 use super::proto::{self, SharedWriter};
 
@@ -48,6 +48,17 @@ pub mod cmd {
     pub const DLC_LIST: u8 = 6;
     pub const APP_INFO: u8 = 7;
     pub const SESSION_INFO: u8 = 8;
+    pub const FRIENDS: u8 = 50;
+    pub const SET_RICH_PRESENCE: u8 = 51;
+    pub const FRIEND_RICH_PRESENCE: u8 = 52;
+    pub const OPEN_URL: u8 = 53;
+}
+
+/// Rich presence limits Steam enforces.
+pub mod rich_presence {
+    pub const MAX_KEYS: usize = 30;
+    pub const MAX_KEY_LEN: usize = 64;
+    pub const MAX_VALUE_LEN: usize = 256;
 }
 
 /// Per-DLC flag bits.
@@ -104,7 +115,6 @@ impl<'a> Fields<'a> {
             .map(|b| i32::from_le_bytes(b.try_into().unwrap()))
     }
 
-    #[cfg(test)]
     pub fn u64(&mut self) -> Option<u64> {
         self.take(8)
             .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
@@ -269,6 +279,73 @@ pub fn session_info_body(server_time: u32, country: &str) -> Vec<u8> {
     out
 }
 
+/// Own persona plus roster.
+#[derive(Debug, Clone, Default)]
+pub struct FriendsSnapshot {
+    pub name: String,
+    pub state: u32,
+    pub friends: Vec<Friend>,
+}
+
+/// Friends body: self, then entries.
+pub fn friends_body(snapshot: &FriendsSnapshot) -> Vec<u8> {
+    let mut out = Vec::new();
+    put_blob(&mut out, snapshot.name.as_bytes());
+    out.extend_from_slice(&snapshot.state.to_le_bytes());
+    let count = u32::try_from(snapshot.friends.len()).unwrap_or(u32::MAX);
+    out.extend_from_slice(&count.to_le_bytes());
+    for f in snapshot.friends.iter().take(count as usize) {
+        out.extend_from_slice(&f.steam_id.to_le_bytes());
+        out.extend_from_slice(&f.relationship.to_le_bytes());
+        out.extend_from_slice(&f.persona_state.unwrap_or(0).to_le_bytes());
+        out.extend_from_slice(&f.game_app_id.unwrap_or(0).to_le_bytes());
+        put_blob(
+            &mut out,
+            f.persona_name.as_deref().unwrap_or_default().as_bytes(),
+        );
+    }
+    out
+}
+
+/// Key/value list body.
+pub fn pairs_body(pairs: &[(String, String)]) -> Vec<u8> {
+    let count = u32::try_from(pairs.len()).unwrap_or(u32::MAX);
+    let mut out = count.to_le_bytes().to_vec();
+    for (key, value) in pairs.iter().take(count as usize) {
+        put_blob(&mut out, key.as_bytes());
+        put_blob(&mut out, value.as_bytes());
+    }
+    out
+}
+
+/// Parses a key/value list within limits.
+pub fn parse_pairs(f: &mut Fields) -> Option<Vec<(String, String)>> {
+    let count = usize::try_from(f.u32()?).ok()?;
+    if count > rich_presence::MAX_KEYS {
+        return None;
+    }
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        let key = std::str::from_utf8(f.blob()?).ok()?;
+        let value = std::str::from_utf8(f.blob()?).ok()?;
+        let fits = !key.is_empty()
+            && key.len() <= rich_presence::MAX_KEY_LEN
+            && value.len() <= rich_presence::MAX_VALUE_LEN;
+        if !fits || out.iter().any(|(k, _): &(String, String)| k == key) {
+            return None;
+        }
+        out.push((key.to_string(), value.to_string()));
+    }
+    Some(out)
+}
+
+/// Web pages only.
+pub fn openable_url(url: &str) -> bool {
+    let lower = url.trim().to_ascii_lowercase();
+    (lower.starts_with("https://") || lower.starts_with("http://"))
+        && !url.chars().any(|c| c.is_control() || c.is_whitespace())
+}
+
 /// What the daemon offers games.
 pub trait Backend: Send + Sync + 'static {
     /// SteamID when logged on.
@@ -306,6 +383,21 @@ pub trait Backend: Send + Sync + 'static {
     fn app_info(&self, app_id: u32) -> impl Future<Output = Result<AppInstallInfo>> + Send;
     /// Server time and logon country.
     fn session_info(&self) -> impl Future<Output = Result<(u32, String)>> + Send;
+    /// Own persona and friends roster.
+    fn friends(&self) -> impl Future<Output = Result<FriendsSnapshot>> + Send;
+    /// Replace the app's rich presence.
+    fn set_rich_presence(
+        &self,
+        app_id: u32,
+        pairs: Vec<(String, String)>,
+    ) -> impl Future<Output = Result<()>> + Send;
+    /// A user's rich presence.
+    fn friend_rich_presence(
+        &self,
+        steam_id: u64,
+    ) -> impl Future<Output = Result<Vec<(String, String)>>> + Send;
+    /// Opens a web page, if possible.
+    fn open_url(&self, url: String) -> impl Future<Output = Result<bool>> + Send;
 }
 
 /// Routes pushes to owning connections.
@@ -550,6 +642,10 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
             | cmd::DLC_LIST
             | cmd::APP_INFO
             | cmd::SESSION_INFO
+            | cmd::FRIENDS
+            | cmd::SET_RICH_PRESENCE
+            | cmd::FRIEND_RICH_PRESENCE
+            | cmd::OPEN_URL
     ) {
         return (status::UNSUPPORTED, b"unknown command".to_vec());
     }
@@ -596,6 +692,39 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
             Ok((time, country)) => (status::OK, session_info_body(time, &country)),
             Err(e) => failed(&e),
         },
+        cmd::FRIENDS => match conn.backend.friends().await {
+            Ok(snapshot) => (status::OK, friends_body(&snapshot)),
+            Err(e) => failed(&e),
+        },
+        cmd::SET_RICH_PRESENCE => {
+            let Some(pairs) = parse_pairs(&mut f) else {
+                return (status::MALFORMED, b"bad rich presence".to_vec());
+            };
+            // Always the connected game's.
+            match conn.backend.set_rich_presence(conn.app_id, pairs).await {
+                Ok(()) => (status::OK, Vec::new()),
+                Err(e) => failed(&e),
+            }
+        }
+        cmd::FRIEND_RICH_PRESENCE => {
+            let Some(id) = f.u64() else {
+                return (status::MALFORMED, b"no steam id".to_vec());
+            };
+            match conn.backend.friend_rich_presence(id).await {
+                Ok(pairs) => (status::OK, pairs_body(&pairs)),
+                Err(e) => failed(&e),
+            }
+        }
+        cmd::OPEN_URL => {
+            let url = f.blob().map(String::from_utf8_lossy);
+            let Some(url) = url.filter(|u| openable_url(u)) else {
+                return (status::MALFORMED, b"not a web page".to_vec());
+            };
+            match conn.backend.open_url(url.into_owned()).await {
+                Ok(opened) => (status::OK, vec![u8::from(opened)]),
+                Err(e) => failed(&e),
+            }
+        }
         cmd::CREATE_AUTH_TICKET => {
             let kind = match (f.u8(), f.blob()) {
                 (Some(ticket_kind::SESSION), Some(_)) => TicketKind::Session,
@@ -732,6 +861,39 @@ impl Backend for DaemonBackend {
         Ok(info)
     }
 
+    async fn friends(&self) -> Result<FriendsSnapshot> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        let me = client.steam_id().ok_or_else(not_logged_in)?;
+        let roster = super::shared_full_roster().await;
+        let own = roster.iter().find(|f| f.steam_id == me);
+        let configured = aurelia::core::config::load_launcher_config()
+            .await
+            .map(|c| c.chat_presence.persona_state())
+            .unwrap_or(1);
+        Ok(FriendsSnapshot {
+            name: own.and_then(|f| f.persona_name.clone()).unwrap_or_default(),
+            state: own.and_then(|f| f.persona_state).unwrap_or(configured),
+            friends: roster
+                .into_iter()
+                .filter(|f| f.steam_id != me && f.relationship != 0)
+                .collect(),
+        })
+    }
+
+    async fn set_rich_presence(&self, app_id: u32, pairs: Vec<(String, String)>) -> Result<()> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        client.upload_rich_presence(app_id, &pairs).await
+    }
+
+    async fn friend_rich_presence(&self, steam_id: u64) -> Result<Vec<(String, String)>> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        client.friend_rich_presence(steam_id).await
+    }
+
+    async fn open_url(&self, url: String) -> Result<bool> {
+        Ok(tokio::task::spawn_blocking(move || spawn_browser(&url)).await?)
+    }
+
     async fn session_info(&self) -> Result<(u32, String)> {
         let client = authed_client().await.ok_or_else(not_logged_in)?;
         let now = std::time::SystemTime::now()
@@ -739,6 +901,33 @@ impl Backend for DaemonBackend {
             .map_or(0, |d| u32::try_from(d.as_secs()).unwrap_or(u32::MAX));
         Ok((now, client.ip_country().unwrap_or_default()))
     }
+}
+
+/// Launch a browser, else log.
+fn spawn_browser(url: &str) -> bool {
+    let has_display =
+        std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some();
+    let opener = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    if has_display || cfg!(target_os = "macos") {
+        let spawned = std::process::Command::new(opener)
+            .arg(url)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        if let Ok(mut child) = spawned {
+            // Reap it off-thread.
+            std::thread::spawn(move || child.wait());
+            tracing::info!("steamworks: opened {url} for a game");
+            return true;
+        }
+    }
+    tracing::warn!("steamworks: a game wants {url} shown; open it in a browser");
+    false
 }
 
 /// Manifest language, else configured.

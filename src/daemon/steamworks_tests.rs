@@ -2,6 +2,9 @@ use super::*;
 use anyhow::bail;
 use tokio::io::DuplexStream;
 
+/// Rich presence pairs.
+type Pairs = Vec<(String, String)>;
+
 /// Scriptable daemon state.
 #[derive(Default)]
 struct Fake {
@@ -13,6 +16,8 @@ struct Fake {
     events: Mutex<Vec<TicketAuthEvent>>,
     offline_id: Option<u64>,
     cached: HashMap<u32, Vec<u8>>,
+    presence: Mutex<Vec<(u32, Pairs)>>,
+    opened: Mutex<Vec<String>>,
 }
 
 const SID: u64 = 76_561_197_960_287_930;
@@ -139,6 +144,39 @@ impl Backend for Fake {
 
     async fn session_info(&self) -> Result<(u32, String)> {
         Ok((1_800_000_000, "DE".into()))
+    }
+
+    async fn friends(&self) -> Result<FriendsSnapshot> {
+        Ok(FriendsSnapshot {
+            name: "Me".into(),
+            state: 1,
+            friends: vec![Friend {
+                steam_id: SID + 1,
+                relationship: 3,
+                persona_name: Some("Pal".into()),
+                persona_state: Some(3),
+                game_app_id: Some(480),
+                game_name: None,
+            }],
+        })
+    }
+
+    async fn set_rich_presence(&self, app_id: u32, pairs: Vec<(String, String)>) -> Result<()> {
+        self.presence.lock().unwrap().push((app_id, pairs));
+        Ok(())
+    }
+
+    async fn friend_rich_presence(&self, steam_id: u64) -> Result<Vec<(String, String)>> {
+        if steam_id == SID + 1 {
+            Ok(vec![("status".into(), "Lobby".into())])
+        } else {
+            bail!("Steam sent no rich presence for {steam_id}")
+        }
+    }
+
+    async fn open_url(&self, url: String) -> Result<bool> {
+        self.opened.lock().unwrap().push(url);
+        Ok(true)
     }
 }
 
@@ -654,4 +692,152 @@ async fn offline_connection_stays_cache_only() {
     );
     game.hang_up().await;
     assert!(fake.started.lock().unwrap().is_empty());
+}
+
+fn kv_body(pairs: &[(&str, &str)]) -> Vec<u8> {
+    let mut out = (pairs.len() as u32).to_le_bytes().to_vec();
+    for (k, v) in pairs {
+        put_blob(&mut out, k.as_bytes());
+        put_blob(&mut out, v.as_bytes());
+    }
+    out
+}
+
+#[tokio::test]
+async fn friends_snapshot_on_the_wire() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake, router, hello(480), None).await;
+    let (code, body) = game.ask(1, cmd::FRIENDS, &[]).await;
+    assert_eq!(code, status::OK);
+    let mut f = Fields::new(&body);
+    assert_eq!(f.blob(), Some(&b"Me"[..]));
+    assert_eq!(f.u32(), Some(1));
+    assert_eq!(f.u32(), Some(1));
+    assert_eq!(f.u64(), Some(SID + 1));
+    assert_eq!((f.u32(), f.u32(), f.u32()), (Some(3), Some(3), Some(480)));
+    assert_eq!(f.blob(), Some(&b"Pal"[..]));
+    assert!(f.rest().is_empty());
+    game.hang_up().await;
+}
+
+#[tokio::test]
+async fn rich_presence_set_for_connected_app_only() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router, hello(480), None).await;
+    let body = kv_body(&[("status", "In menu"), ("steam_display", "#Menu")]);
+    let mut req = request(1, cmd::SET_RICH_PRESENCE, &body);
+    req[4..8].copy_from_slice(&70u32.to_le_bytes());
+    proto::write_frame(&mut game.stream, proto::C_SW_REQUEST, &req)
+        .await
+        .unwrap();
+    let (_, payload) = game.next().await;
+    assert_eq!(payload[4], status::OK);
+    let set = fake.presence.lock().unwrap().clone();
+    assert_eq!(set.len(), 1);
+    assert_eq!(set[0].0, 480, "other apps are not ours");
+    assert_eq!(
+        set[0].1[1],
+        ("steam_display".to_string(), "#Menu".to_string())
+    );
+    game.hang_up().await;
+}
+
+#[tokio::test]
+async fn rich_presence_limits_are_enforced() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router, hello(480), None).await;
+    let long_key = "k".repeat(65);
+    let long_value = "v".repeat(257);
+    let many: Vec<(String, String)> = (0..31).map(|i| (format!("k{i}"), "v".into())).collect();
+    let many: Vec<(&str, &str)> = many.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let bad = [
+        kv_body(&[(&long_key, "v")]),
+        kv_body(&[("k", &long_value)]),
+        kv_body(&[("", "v")]),
+        kv_body(&[("a", "1"), ("a", "2")]),
+        kv_body(&many),
+        vec![1, 0, 0, 0],
+    ];
+    for (i, body) in bad.iter().enumerate() {
+        let (code, _) = game.ask(i as u32 + 1, cmd::SET_RICH_PRESENCE, body).await;
+        assert_eq!(code, status::MALFORMED, "case {i}");
+    }
+    assert_eq!(
+        game.ask(9, cmd::SET_RICH_PRESENCE, &kv_body(&[])).await.0,
+        status::OK,
+        "clearing is allowed"
+    );
+    assert_eq!(fake.presence.lock().unwrap().len(), 1);
+    game.hang_up().await;
+}
+
+#[tokio::test]
+async fn friend_rich_presence_round_trip() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake, router, hello(480), None).await;
+    let (code, body) = game
+        .ask(1, cmd::FRIEND_RICH_PRESENCE, &(SID + 1).to_le_bytes())
+        .await;
+    assert_eq!((code, body), (status::OK, kv_body(&[("status", "Lobby")])));
+    let (code, _) = game
+        .ask(2, cmd::FRIEND_RICH_PRESENCE, &(SID + 9).to_le_bytes())
+        .await;
+    assert_eq!(code, status::FAILED);
+    assert_eq!(
+        game.ask(3, cmd::FRIEND_RICH_PRESENCE, &[1]).await.0,
+        status::MALFORMED
+    );
+    game.hang_up().await;
+}
+
+#[tokio::test]
+async fn open_url_accepts_web_pages_only() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router, hello(480), None).await;
+    let url = |u: &str| {
+        let mut out = Vec::new();
+        put_blob(&mut out, u.as_bytes());
+        out
+    };
+    let page = "https://store.steampowered.com/app/480";
+    assert_eq!(
+        game.ask(1, cmd::OPEN_URL, &url(page)).await,
+        (status::OK, vec![1])
+    );
+    for bad in [
+        "file:///etc/passwd",
+        "javascript:alert(1)",
+        "https://a b",
+        "steam://run/1",
+    ] {
+        assert_eq!(
+            game.ask(2, cmd::OPEN_URL, &url(bad)).await.0,
+            status::MALFORMED,
+            "{bad}"
+        );
+    }
+    assert_eq!(*fake.opened.lock().unwrap(), vec![page.to_string()]);
+    game.hang_up().await;
+}
+
+#[tokio::test]
+async fn offline_friends_fail_closed() {
+    let fake = offline(&[(480, vec![0xCC])]);
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router, hello(480), None).await;
+    for command in [
+        cmd::FRIENDS,
+        cmd::SET_RICH_PRESENCE,
+        cmd::FRIEND_RICH_PRESENCE,
+        cmd::OPEN_URL,
+    ] {
+        assert_eq!(game.ask(1, command, &[]).await.0, status::NO_SESSION);
+    }
+    assert!(fake.presence.lock().unwrap().is_empty());
+    game.hang_up().await;
 }
