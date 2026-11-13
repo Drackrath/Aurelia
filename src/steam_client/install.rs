@@ -233,7 +233,7 @@ impl SteamClient {
         // follow their base game's library (handled below).
         let library_root = library_override.unwrap_or_else(|| cfg.steam_library_path.clone());
         let (mut game_name, pics_installdir) = self.resolve_install_game_info(appid).await;
-        let mut installdir = pics_installdir.unwrap_or_else(|| sanitize_install_dir(&game_name));
+        let mut existing_installdir = None;
 
         // Re-installing / resuming into a library that already registers this app
         let existing_manifest = Path::new(&library_root)
@@ -247,7 +247,7 @@ impl SteamClient {
                     .join("common")
                     .join(&dir);
                 if existing_dir.is_dir() && crate::core::utils::is_safe_dir_name(&dir) {
-                    installdir = dir;
+                    existing_installdir = Some(dir);
                 }
             }
             if game_name.starts_with("App ") {
@@ -263,7 +263,7 @@ impl SteamClient {
         let dlc_parent = self.resolve_dlc_parent(appid).await;
         let dlc_appid = dlc_parent.map(|_| appid);
 
-        let (install_dir, manifest_path) = if let Some(base_appid) = dlc_parent {
+        let (install_dir, manifest_path, installdir) = if let Some(base_appid) = dlc_parent {
             let base_manifest = self.appmanifest_path(base_appid).await?;
             if !base_manifest.exists() {
                 bail!(
@@ -283,8 +283,14 @@ impl SteamClient {
                 "DLC {appid} -> installing into base game {base_appid} at {}",
                 dir.display()
             );
-            (dir, base_manifest)
+            (dir, base_manifest, base_installdir)
         } else {
+            // DLCs lack installdir; check only here.
+            let pics_installdir = match pics_installdir {
+                Some(dir) => Some(dir),
+                None => self.retry_pics_installdir(appid).await,
+            };
+            let installdir = choose_install_dir(appid, pics_installdir, existing_installdir)?;
             let dir = Path::new(&library_root)
                 .join("steamapps")
                 .join("common")
@@ -292,7 +298,7 @@ impl SteamClient {
             let mp = Path::new(&library_root)
                 .join("steamapps")
                 .join(format!("appmanifest_{appid}.acf"));
-            (dir, mp)
+            (dir, mp, installdir)
         };
 
         std::fs::create_dir_all(&install_dir)

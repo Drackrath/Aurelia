@@ -678,6 +678,24 @@ pub fn sanitize_install_dir(name: &str) -> String {
     }
 }
 
+/// Install folder, never `App N` placeholder.
+pub(crate) fn choose_install_dir(
+    appid: u32,
+    pics_installdir: Option<String>,
+    existing_installdir: Option<String>,
+) -> Result<String> {
+    let is_placeholder = |d: &str| d.trim().eq_ignore_ascii_case(&format!("App {appid}"));
+    match (existing_installdir, pics_installdir) {
+        (Some(dir), Some(_)) => Ok(dir),
+        (Some(dir), None) if !is_placeholder(&dir) => Ok(dir),
+        (None, Some(dir)) => Ok(dir),
+        _ => bail!(
+            "Steam's app info for app {appid} has no install directory, so Aurelia won't guess a \
+             folder name. Try again later; if it keeps failing, the app may not be installable."
+        ),
+    }
+}
+
 /// Steam wraps the entire VDF in a top-level key that is the numeric app ID.
 /// This wrapper accepts that outer key transparently.
 #[derive(Debug, serde::Deserialize)]
@@ -2302,6 +2320,17 @@ pub(crate) async fn pics_app_buffer(
         return Ok(app.buffer().to_vec());
     }
     // Token-gated app: fetch token, retry.
+    let token = pics_access_token(connection, appid).await?;
+    let app = pics_app_info(connection, appid, Some(token), job_context).await?;
+    Ok(app.buffer().to_vec())
+}
+
+/// PICS buffer, fetched with access token.
+pub(crate) async fn pics_app_buffer_with_token(
+    connection: &Connection,
+    appid: u32,
+    job_context: &'static str,
+) -> Result<Vec<u8>> {
     let token = pics_access_token(connection, appid).await?;
     let app = pics_app_info(connection, appid, Some(token), job_context).await?;
     Ok(app.buffer().to_vec())
