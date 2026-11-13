@@ -166,6 +166,15 @@ const LIVENESS_RECHECK_DELAY: Duration = Duration::from_secs(2);
 /// Poll step while awaiting names.
 const NAME_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
+/// Upper bound for the friends wait.
+const NAME_WAIT_CAP: Duration = Duration::from_secs(10);
+
+/// Stop once names stop arriving.
+const NAME_IDLE: Duration = Duration::from_millis(1500);
+
+/// EPersonaState for invisible.
+const PERSONA_INVISIBLE: u32 = 7;
+
 struct DaemonState {
     slot: RwLock<Slot>,
     /// The shared friends cache. Populated asynchronously by the single watcher task
@@ -370,15 +379,17 @@ impl DaemonState {
             tracing::warn!("could not announce presence: {e:#}");
             return;
         }
-        if !fresh || client.announced_persona().is_none() {
+        if !fresh {
             return;
         }
-        // Watcher folds the reply in.
-        let wait = aurelia::core::config::load_launcher_config()
+        let secs = aurelia::core::config::load_launcher_config()
             .await
             .map(|c| c.persona_wait_secs)
             .unwrap_or(aurelia::core::config::DEFAULT_PERSONA_WAIT_SECS);
-        await_roster_names(&self.roster, Duration::from_secs(wait)).await;
+        // Watcher folds the reply in.
+        if let Some(wait) = name_wait(client.announced_persona(), secs) {
+            await_roster_names(&self.roster, wait, NAME_IDLE).await;
+        }
     }
 
     /// Drop the session if still `session_id`.
@@ -458,17 +469,44 @@ impl DaemonState {
     }
 }
 
-/// Wait until every friend has a name.
-async fn await_roster_names(roster: &StdRwLock<Roster>, wait: Duration) {
-    let deadline = tokio::time::Instant::now() + wait;
+/// Name wait, or none when pointless.
+///
+/// Invisible sessions never get names.
+fn name_wait(announced: Option<u32>, persona_wait_secs: u64) -> Option<Duration> {
+    match announced {
+        None | Some(PERSONA_INVISIBLE) => None,
+        Some(_) => Some(Duration::from_secs(persona_wait_secs).min(NAME_WAIT_CAP)),
+    }
+}
+
+/// Wait until names arrive or stall.
+async fn await_roster_names(roster: &StdRwLock<Roster>, wait: Duration, idle: Duration) {
+    let start = tokio::time::Instant::now();
+    let deadline = start + wait;
+    let count = || {
+        let roster = roster.read().unwrap();
+        let friends = roster.values().filter(|f| f.relationship == 3);
+        let (mut named, mut unnamed) = (0usize, 0usize);
+        for f in friends {
+            if f.persona_name.is_some() {
+                named += 1;
+            } else {
+                unnamed += 1;
+            }
+        }
+        (named, unnamed)
+    };
+    let (mut last_named, _) = count();
+    let mut last_progress: Option<tokio::time::Instant> = None;
     loop {
-        let unnamed = roster
-            .read()
-            .unwrap()
-            .values()
-            .any(|f| f.relationship == 3 && f.persona_name.is_none());
+        let (named, unnamed) = count();
         let now = tokio::time::Instant::now();
-        if !unnamed || now >= deadline {
+        if named > last_named {
+            last_named = named;
+            last_progress = Some(now);
+        }
+        let stalled = last_progress.is_some_and(|t| now - t >= idle);
+        if unnamed == 0 || stalled || now >= deadline {
             return;
         }
         tokio::time::sleep(NAME_POLL_INTERVAL.min(deadline - now)).await;

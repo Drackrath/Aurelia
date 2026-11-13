@@ -101,7 +101,7 @@ async fn names_arriving_within_wait_are_awaited() {
             .insert(1, bare_friend(1, Some("Alice")));
     });
     let start = Instant::now();
-    await_roster_names(&roster, Duration::from_secs(5)).await;
+    await_roster_names(&roster, Duration::from_secs(5), NAME_IDLE).await;
     assert!(start.elapsed() < Duration::from_secs(4));
     let name = roster.read().unwrap()[&1].persona_name.clone();
     assert_eq!(name.as_deref(), Some("Alice"));
@@ -112,7 +112,7 @@ async fn missing_names_give_up_at_deadline() {
     let roster = StdRwLock::new(Roster::new());
     roster.write().unwrap().insert(1, bare_friend(1, None));
     let start = Instant::now();
-    await_roster_names(&roster, Duration::from_millis(300)).await;
+    await_roster_names(&roster, Duration::from_millis(300), NAME_IDLE).await;
     let elapsed = start.elapsed();
     assert!(elapsed >= Duration::from_millis(300) && elapsed < Duration::from_secs(2));
 }
@@ -128,6 +128,39 @@ async fn named_or_non_friend_roster_returns_at_once() {
     pending.relationship = 2;
     roster.write().unwrap().insert(2, pending);
     let start = Instant::now();
-    await_roster_names(&roster, Duration::from_secs(5)).await;
+    await_roster_names(&roster, Duration::from_secs(5), NAME_IDLE).await;
     assert!(start.elapsed() < Duration::from_millis(200));
+}
+
+#[test]
+fn invisible_session_skips_the_name_wait() {
+    assert_eq!(name_wait(Some(PERSONA_INVISIBLE), 30), None);
+    assert_eq!(name_wait(None, 30), None);
+}
+
+#[test]
+fn name_wait_is_capped() {
+    assert_eq!(name_wait(Some(1), 30), Some(NAME_WAIT_CAP));
+    assert_eq!(name_wait(Some(1), 3), Some(Duration::from_secs(3)));
+}
+
+#[tokio::test]
+async fn stalled_name_burst_returns_early() {
+    let roster = Arc::new(StdRwLock::new(Roster::new()));
+    for id in 1..=2 {
+        roster.write().unwrap().insert(id, bare_friend(id, None));
+    }
+    let writer = Arc::clone(&roster);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        writer
+            .write()
+            .unwrap()
+            .insert(1, bare_friend(1, Some("Alice")));
+    });
+    let start = Instant::now();
+    await_roster_names(&roster, Duration::from_secs(10), Duration::from_millis(400)).await;
+    let elapsed = start.elapsed();
+    assert!(elapsed >= Duration::from_millis(500) && elapsed < Duration::from_secs(3));
+    assert!(roster.read().unwrap()[&2].persona_name.is_none());
 }
