@@ -316,6 +316,12 @@ pub(crate) async fn cmd_config_shader_precache(
         ShaderPrecache::Off => "off (shaders compile while the game runs)",
     };
     cli_println!("Shader pre-caching: {label}");
+    let cloud = if config.steamworks_cloud_write {
+        "games may write"
+    } else {
+        "read-only"
+    };
+    cli_println!("Steam Cloud for stand-in games: {cloud}");
     if changed {
         cli_println!("Saved. Applies to the next launch.");
     }
@@ -382,7 +388,16 @@ pub(crate) struct SteamworksClientArgs {
     pub path: Option<String>,
     pub allow: Option<u32>,
     pub disallow: Option<u32>,
+    pub cloud_write: Option<OnOffArg>,
     pub yes: bool,
+}
+
+/// Warning before enabling Cloud writes.
+pub(crate) fn cloud_write_enable_prompt() -> String {
+    "Let stand-in games write and delete their Steam Cloud files? Files they \
+     write are uploaded by the Cloud sync after the game exits; a game that \
+     writes a broken save spreads it to every device. [y/N] "
+        .to_string()
 }
 
 /// `config steamworks-client [on|off] [--path]`.
@@ -394,16 +409,25 @@ pub(crate) async fn cmd_config_steamworks_client(
         let prompt = aurelia::launch::stand_in_guard::allow_prompt(app_id);
         confirm_write("allow an anti-cheat game", &prompt, args.yes, json)?;
     }
+    if matches!(args.cloud_write, Some(OnOffArg::On)) {
+        let prompt = cloud_write_enable_prompt();
+        confirm_write("enable Cloud writes", &prompt, args.yes, json)?;
+    }
     let SteamworksClientArgs {
         mode,
         path,
         allow,
         disallow,
+        cloud_write,
         ..
     } = args;
-    let any = mode.is_some() || path.is_some() || allow.is_some() || disallow.is_some();
-    let change = any.then_some((mode, path, allow, disallow));
-    let (config, changed) = view_or_set(change, |c, (mode, path, allow, disallow)| {
+    let any = mode.is_some()
+        || path.is_some()
+        || allow.is_some()
+        || disallow.is_some()
+        || cloud_write.is_some();
+    let change = any.then_some((mode, path, allow, disallow, cloud_write));
+    let (config, changed) = view_or_set(change, |c, (mode, path, allow, disallow, cloud_write)| {
         if let Some(mode) = mode {
             c.steamworks_client = matches!(mode, OnOffArg::On);
         }
@@ -419,6 +443,9 @@ pub(crate) async fn cmd_config_steamworks_client(
         if let Some(id) = disallow {
             allowed.retain(|a| *a != id);
         }
+        if let Some(cloud_write) = cloud_write {
+            c.steamworks_cloud_write = matches!(cloud_write, OnOffArg::On);
+        }
     })
     .await?;
     let default_dir = steamworks_default_dir();
@@ -432,6 +459,7 @@ pub(crate) async fn cmd_config_steamworks_client(
             "steamworks_client_path": config.steamworks_client_path,
             "effective_path": effective_path,
             "steamworks_allowed_protected": config.steamworks_allowed_protected,
+            "steamworks_cloud_write": config.steamworks_cloud_write,
         }));
         return Ok(());
     }

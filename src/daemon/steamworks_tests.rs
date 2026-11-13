@@ -140,6 +140,17 @@ impl Backend for Fake {
     async fn session_info(&self) -> Result<(u32, String)> {
         Ok((1_800_000_000, "DE".into()))
     }
+
+    async fn cloud_info(&self, steam_id: u64, app_id: u32) -> Result<RemoteStorageInfo> {
+        if app_id == 70 {
+            bail!("no home directory");
+        }
+        Ok(RemoteStorageInfo {
+            enabled: true,
+            writable: false,
+            remote_dir: format!("/cloud/{steam_id}/{app_id}/remote").into(),
+        })
+    }
 }
 
 /// Offline daemon with cached tickets.
@@ -497,6 +508,7 @@ async fn licensing_needs_a_session() {
         cmd::DLC_LIST,
         cmd::APP_INFO,
         cmd::SESSION_INFO,
+        cmd::CLOUD_INFO,
     ]
     .into_iter()
     .enumerate()
@@ -612,6 +624,10 @@ async fn offline_fails_closed_for_everything_else() {
         .await;
     assert_eq!(code, status::NO_SESSION);
     assert_eq!(game.ask(3, 0x7F, &[]).await.0, status::UNSUPPORTED);
+    assert_eq!(
+        game.ask(4, cmd::CLOUD_INFO, &[]).await.0,
+        status::NO_SESSION
+    );
     assert!(router.is_empty());
     game.hang_up().await;
     assert!(fake.cancelled.lock().unwrap().is_empty());
@@ -654,4 +670,34 @@ async fn offline_connection_stays_cache_only() {
     );
     game.hang_up().await;
     assert!(fake.started.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn cloud_info_round_trip() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake, router, hello(480), None).await;
+    let (code, body) = game.ask(1, cmd::CLOUD_INFO, &[]).await;
+    assert_eq!(code, status::OK);
+    let mut f = Fields::new(&body);
+    assert_eq!(f.u8(), Some(cloud_flag::ENABLED));
+    let dir = format!("/cloud/{SID}/480/remote");
+    assert_eq!(f.blob(), Some(dir.as_bytes()));
+    game.hang_up().await;
+
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake, router, hello(70), None).await;
+    assert_eq!(game.ask(1, cmd::CLOUD_INFO, &[]).await.0, status::FAILED);
+    game.hang_up().await;
+}
+
+#[test]
+fn cloud_info_golden_bytes() {
+    let info = RemoteStorageInfo {
+        enabled: true,
+        writable: true,
+        remote_dir: "/r".into(),
+    };
+    assert_eq!(cloud_info_body(&info), [3, 2, 0, 0, 0, b'/', b'r']);
 }

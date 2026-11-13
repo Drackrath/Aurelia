@@ -289,6 +289,8 @@ pub struct CloudPathResolver {
     /// Overrides for the target OS only.
     overrides: Vec<UfsRootOverride>,
     steam_id: Option<u64>,
+    /// Upload new `remote` folder files.
+    remote_uploads: bool,
 }
 
 impl CloudPathResolver {
@@ -299,7 +301,36 @@ impl CloudPathResolver {
             wine_prefix: None,
             overrides: Vec::new(),
             steam_id: None,
+            remote_uploads: false,
         }
+    }
+
+    /// Also offer new `remote` files.
+    ///
+    /// For games writing via ISteamRemoteStorage.
+    #[must_use]
+    pub fn with_remote_uploads(mut self, on: bool) -> Self {
+        self.remote_uploads = on;
+        self
+    }
+
+    /// Files under the classic root.
+    pub fn remote_files(&self) -> Vec<(String, PathBuf)> {
+        if !self.remote_uploads || !self.remote_root.is_dir() {
+            return Vec::new();
+        }
+        walkdir::WalkDir::new(&self.remote_root)
+            .min_depth(1)
+            .into_iter()
+            .filter_map(std::result::Result::ok)
+            .filter(|e| e.file_type().is_file())
+            .filter_map(|e| {
+                let rel = e.path().strip_prefix(&self.remote_root).ok()?;
+                let name = rel.to_string_lossy().replace('\\', "/");
+                // Partial writes never upload.
+                (!name.ends_with(".aurelia-tmp")).then(|| (name, e.path().to_path_buf()))
+            })
+            .collect()
     }
 
     /// Keep overrides matching `target_os`.
@@ -892,7 +923,10 @@ impl CloudClient {
         // surface that aren't in the cloud yet (so first-time uploads are included).
         let mut names: BTreeSet<String> = remote_map.keys().cloned().collect();
         let mut local_only: HashMap<String, PathBuf> = HashMap::new();
-        for (cloud_name, local_path) in discover_local_saves(specs, resolver) {
+        let found = discover_local_saves(specs, resolver)
+            .into_iter()
+            .chain(resolver.remote_files());
+        for (cloud_name, local_path) in found {
             if !remote_map.contains_key(&cloud_name) {
                 names.insert(cloud_name.clone());
                 local_only.insert(cloud_name, local_path);

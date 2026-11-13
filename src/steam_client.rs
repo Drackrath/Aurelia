@@ -561,6 +561,7 @@ mod collections;
 mod manifests;
 pub mod playing;
 mod process;
+pub mod remote_storage;
 pub mod steamworks_info;
 mod storequery;
 mod tags;

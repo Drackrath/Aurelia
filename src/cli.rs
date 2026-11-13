@@ -651,6 +651,16 @@ pub(crate) enum ConfigCommand {
         /// Remove a game from the allow-list.
         #[arg(long, value_name = "APPID")]
         disallow: Option<u32>,
+        /// Let games write Steam Cloud files.
+        #[arg(
+            long,
+            value_name = "MODE",
+            long_help = "Let stand-in games write and delete Steam Cloud files \
+                (ISteamRemoteStorage). Off by default: games can only read their \
+                Cloud files. Written files reach Steam with the after-exit Cloud \
+                sync. Turning it on asks for confirmation."
+        )]
+        cloud_write: Option<OnOffArg>,
         /// Skip the confirmation prompt.
         #[arg(short = 'y', long)]
         yes: bool,

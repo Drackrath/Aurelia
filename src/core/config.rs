@@ -197,6 +197,9 @@ pub struct LauncherConfig {
     /// Anti-cheat games allowed with stand-in.
     #[serde(default)]
     pub steamworks_allowed_protected: Vec<u32>,
+    /// Stand-in games may write Cloud files.
+    #[serde(default)]
+    pub steamworks_cloud_write: bool,
 }
 
 /// kbit/s to bytes/s.
@@ -268,6 +271,7 @@ impl Default for LauncherConfig {
             steamworks_client: false,
             steamworks_client_path: None,
             steamworks_allowed_protected: Vec::new(),
+            steamworks_cloud_write: false,
         }
     }
 }
