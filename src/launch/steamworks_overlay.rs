@@ -10,6 +10,12 @@ const OVERLAID: [&str; 4] = ["sdk32", "sdk64", "steam.pid", "registry.vdf"];
 /// Env var the stand-in reads.
 pub const DAEMON_SOCKET_ENV: &str = "AURELIA_DAEMON_SOCKET";
 
+/// Env var naming the stand-in log.
+pub const LOG_ENV: &str = "AURELIA_STEAMWORKS_LOG";
+
+/// Prefix of stand-in log lines.
+const LOG_PREFIX: &str = "[aurelia-steamworks] ";
+
 /// Paths pressure-vessel shares read-write.
 const PV_FILESYSTEMS_RW: &str = "PRESSURE_VESSEL_FILESYSTEMS_RW";
 
@@ -64,6 +70,7 @@ pub struct OverlayPlan {
     pub app_id: u32,
     pub account_id: Option<u32>,
     pub daemon_socket: Option<PathBuf>,
+    pub log_path: Option<PathBuf>,
 }
 
 /// Default stand-in install directory.
@@ -218,6 +225,9 @@ pub fn wrap_command(spec: &CommandSpec, plan: &OverlayPlan) -> CommandSpec {
     if let Some(socket) = &plan.daemon_socket {
         add_daemon_socket(&mut env, socket);
     }
+    if let Some(log) = &plan.log_path {
+        add_log_path(&mut env, log);
+    }
 
     CommandSpec {
         program: plan.bwrap.clone(),
@@ -231,8 +241,23 @@ pub fn wrap_command(spec: &CommandSpec, plan: &OverlayPlan) -> CommandSpec {
 ///
 /// Also shares it into pressure-vessel.
 pub fn add_daemon_socket(env: &mut std::collections::HashMap<String, String>, socket: &Path) {
-    let path = socket.to_string_lossy().into_owned();
-    env.insert(DAEMON_SOCKET_ENV.into(), path.clone());
+    env.insert(
+        DAEMON_SOCKET_ENV.into(),
+        socket.to_string_lossy().into_owned(),
+    );
+    share_rw(env, socket);
+}
+
+/// Point the stand-in log at `log`.
+pub fn add_log_path(env: &mut std::collections::HashMap<String, String>, log: &Path) {
+    env.insert(LOG_ENV.into(), log.to_string_lossy().into_owned());
+    // Share directory; file may be new.
+    share_rw(env, log.parent().unwrap_or(log));
+}
+
+/// Share `path` read-write into pressure-vessel.
+fn share_rw(env: &mut std::collections::HashMap<String, String>, path: &Path) {
+    let path = path.to_string_lossy().into_owned();
     let shared = env.entry(PV_FILESYSTEMS_RW.into()).or_default();
     if !shared.split(':').any(|p| p == path) {
         if !shared.is_empty() {
@@ -240,6 +265,76 @@ pub fn add_daemon_socket(env: &mut std::collections::HashMap<String, String>, so
         }
         shared.push_str(&path);
     }
+}
+
+/// Deduplicated findings from a stand-in log.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct LogSummary {
+    pub missing: Vec<String>,
+    pub networking: Vec<String>,
+}
+
+impl LogSummary {
+    pub fn is_empty(&self) -> bool {
+        self.missing.is_empty() && self.networking.is_empty()
+    }
+
+    /// User-facing lines, log path last.
+    pub fn lines(&self, log: &Path) -> Vec<String> {
+        let mut out = Vec::new();
+        if !self.missing.is_empty() {
+            out.push(format!(
+                "stand-in steamclient.so: game asked for missing interfaces: {}",
+                self.missing.join(", ")
+            ));
+        }
+        if !self.networking.is_empty() {
+            out.push(format!(
+                "stand-in steamclient.so: game used Steam networking ({}); \
+                 multiplayer may not have connected",
+                self.networking.join(", ")
+            ));
+        }
+        if !out.is_empty() {
+            out.push(format!("stand-in log: {}", log.display()));
+        }
+        out
+    }
+}
+
+/// Collect missing and networking interfaces.
+pub fn summarize_log(text: &str) -> LogSummary {
+    let mut summary = LogSummary::default();
+    let push = |list: &mut Vec<String>, v: &str| {
+        let v = v.trim();
+        if !v.is_empty() && !list.iter().any(|x| x == v) {
+            list.push(v.to_string());
+        }
+    };
+    for line in text.lines() {
+        let Some(msg) = line.strip_prefix(LOG_PREFIX) else {
+            continue;
+        };
+        if let Some(rest) = msg.strip_prefix("missing interface: ") {
+            push(&mut summary.missing, rest);
+        } else if let Some(rest) = msg.strip_prefix("game reports missing interface: ") {
+            let version = rest.split(" (pipe ").next().unwrap_or(rest);
+            push(&mut summary.missing, version);
+        } else if let Some((version, _)) = msg
+            .strip_prefix("game created ")
+            .and_then(|rest| rest.split_once(": Steam networking"))
+        {
+            push(&mut summary.networking, version);
+        }
+    }
+    summary
+}
+
+/// Summary of a finished launch's log.
+pub fn summarize_log_file(log: &Path) -> Vec<String> {
+    std::fs::read_to_string(log)
+        .map(|text| summarize_log(&text).lines(log))
+        .unwrap_or_default()
 }
 
 /// Build the plan for one launch.
@@ -292,6 +387,7 @@ pub fn plan_for(
         app_id,
         account_id,
         daemon_socket: daemon_socket(),
+        log_path: None,
     })
 }
 

@@ -140,7 +140,13 @@ async fn apply_steamworks_overlay(ctx: &mut PipelineContext) -> Result<(), Launc
         .ok()
         .and_then(|s| s.steam_id)
         .map(|id| (id & 0xffff_ffff) as u32);
-    let plan = overlay::plan_for(config, spec, ctx.app_id, account_id)?;
+    let mut plan = overlay::plan_for(config, spec, ctx.app_id, account_id)?;
+    plan.log_path = ctx.session.as_ref().and_then(|session| {
+        let log = session.log_dir.join("steamworks.log");
+        std::fs::create_dir_all(&session.log_dir).ok()?;
+        Some(log)
+    });
+    ctx.steamworks_log = plan.log_path.clone();
     tracing::info!(
         sdk64 = %plan.libs.sdk64.display(),
         "launching with the stand-in steamclient.so"

@@ -548,7 +548,7 @@ NoSavePersonalInfo=1
         disable_launch_script: bool,
         steam_enabled: bool,
         shaders: crate::launch::shaders::ShaderLaunch,
-    ) -> Result<std::process::Child> {
+    ) -> Result<(std::process::Child, Option<PathBuf>)> {
         use crate::infra::logging::{EventLogger, LaunchSession};
         use crate::launch::pipeline::{LaunchPipeline, PipelineContext};
 
@@ -577,8 +577,10 @@ NoSavePersonalInfo=1
         let pipeline = LaunchPipeline::with_default_stages();
         pipeline.run(&mut ctx).await.map_err(|e| anyhow!(e))?;
 
-        ctx.child
-            .ok_or_else(|| anyhow!("Pipeline finished without spawning a process"))
+        let child = ctx
+            .child
+            .ok_or_else(|| anyhow!("Pipeline finished without spawning a process"))?;
+        Ok((child, ctx.steamworks_log))
     }
 
     /// Internal legacy ad-hoc launch path.
