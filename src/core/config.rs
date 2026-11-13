@@ -188,6 +188,12 @@ pub struct LauncherConfig {
     /// Global download limit in kbit/s; 0 is unlimited.
     #[serde(default)]
     pub download_limit_kbit: u64,
+    /// Launch games with stand-in steamclient.so.
+    #[serde(default)]
+    pub steamworks_client: bool,
+    /// Stand-in library file or directory.
+    #[serde(default)]
+    pub steamworks_client_path: Option<String>,
 }
 
 /// kbit/s to bytes/s.
@@ -256,6 +262,8 @@ impl Default for LauncherConfig {
             encrypt_session: false,
             persona_wait_secs: DEFAULT_PERSONA_WAIT_SECS,
             download_limit_kbit: 0,
+            steamworks_client: false,
+            steamworks_client_path: None,
         }
     }
 }
