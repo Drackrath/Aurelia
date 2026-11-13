@@ -23,6 +23,7 @@ fn plan(home: &Path, sdk32: Option<PathBuf>, mirror: Vec<MirrorEntry>) -> Overla
         app_id: 480,
         account_id: Some(7),
         daemon_socket: None,
+        log_path: None,
     }
 }
 
@@ -397,6 +398,7 @@ fn overlay_runs_under_bwrap_without_touching_real_dir() {
     std::fs::create_dir_all(socket.parent().unwrap()).unwrap();
     let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
 
+    std::fs::create_dir_all(dir.path().join("logs")).unwrap();
     let p = OverlayPlan {
         bwrap,
         home: home.clone(),
@@ -408,12 +410,14 @@ fn overlay_runs_under_bwrap_without_touching_real_dir() {
         app_id: 480,
         account_id: None,
         daemon_socket: Some(socket.clone()),
+        log_path: Some(dir.path().join("logs/steamworks.log")),
     };
     let script = "s=\"$HOME/.steam\"; cat \"$s/sdk64/steamclient.so\"; echo; \
                   [ \"$(cat \"$s/steam.pid\")\" = \"$$\" ] && echo pid-ok; \
                   grep -q \"\\\"pid\\\".*\\\"$$\\\"\" \"$s/registry.vdf\" && echo reg-ok; \
                   cat \"$s/root/marker\" \"$s/keep/file\"; echo; echo \"$SteamAppId\"; \
-                  [ -S \"$AURELIA_DAEMON_SOCKET\" ] && echo sock-ok";
+                  [ -S \"$AURELIA_DAEMON_SOCKET\" ] && echo sock-ok; \
+                  echo '[aurelia-steamworks] missing interface: X1' >> \"$AURELIA_STEAMWORKS_LOG\"";
     let mut original = spec("/bin/sh", &["-c", script]);
     original.cwd = Some(dir.path().to_path_buf());
     original
@@ -429,6 +433,8 @@ fn overlay_runs_under_bwrap_without_touching_real_dir() {
     assert!(out.status.success(), "{out:?}");
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert_eq!(stdout, "stand-in\npid-ok\nreg-ok\ndatakept\n480\nsock-ok\n");
+    let log = dir.path().join("logs/steamworks.log");
+    assert_eq!(summarize_log_file(&log).len(), 2);
 
     // Real directory is untouched.
     assert_eq!(
@@ -480,4 +486,70 @@ fn no_socket_leaves_env_alone() {
     let wrapped = wrap_command(&spec("/games/x/game", &[]), &p);
     assert!(!wrapped.env.contains_key(DAEMON_SOCKET_ENV));
     assert!(!wrapped.env.contains_key("PRESSURE_VESSEL_FILESYSTEMS_RW"));
+}
+
+const SAMPLE_LOG: &str = "\
+[aurelia-steamworks] missing interface: SteamFoo001
+[aurelia-steamworks] unimplemented: SteamUser021::GetSteamID (slot 2) returns 0
+[aurelia-steamworks] game reports missing interface: SteamBar002 (pipe 1)
+[aurelia-steamworks] game reports missing interface: SteamFoo001 (pipe 1)
+[aurelia-steamworks] game created SteamNetworkingSockets012: Steam networking (SDR and P2P) is not supported yet, so its multiplayer may not connect
+[aurelia-steamworks] game created SteamNetworkingSockets012: Steam networking (SDR and P2P) is not supported yet, so its multiplayer may not connect
+[aurelia-steamworks] game created SteamNetworking006: Steam networking (SDR and P2P) is not supported yet, so its multiplayer may not connect
+missing interface: NotOurs001
+";
+
+#[test]
+fn summary_dedupes_missing_and_networking() {
+    let summary = summarize_log(SAMPLE_LOG);
+    assert_eq!(summary.missing, vec!["SteamFoo001", "SteamBar002"]);
+    assert_eq!(
+        summary.networking,
+        vec!["SteamNetworkingSockets012", "SteamNetworking006"]
+    );
+}
+
+#[test]
+fn summary_lines_name_log_path() {
+    let lines = summarize_log(SAMPLE_LOG).lines(Path::new("/l/steamworks.log"));
+    assert_eq!(lines.len(), 3);
+    assert!(lines[0].contains("SteamFoo001, SteamBar002"));
+    assert!(lines[1].contains("SteamNetworkingSockets012, SteamNetworking006"));
+    assert!(lines[1].contains("multiplayer may not have connected"));
+    assert_eq!(lines[2], "stand-in log: /l/steamworks.log");
+}
+
+#[test]
+fn quiet_log_has_no_summary() {
+    let summary = summarize_log("[aurelia-steamworks] unimplemented: A::b (slot 1) x\n");
+    assert!(summary.is_empty());
+    assert!(summary.lines(Path::new("/l")).is_empty());
+    assert!(summarize_log_file(Path::new("/nonexistent/aurelia/steamworks.log")).is_empty());
+}
+
+#[test]
+fn log_path_is_set_and_shared_once() {
+    let mut env = HashMap::new();
+    env.insert(
+        "PRESSURE_VESSEL_FILESYSTEMS_RW".to_string(),
+        "/run/a.sock".to_string(),
+    );
+    let log = Path::new("/home/u/.config/Aurelia/logs/s1/steamworks.log");
+    add_log_path(&mut env, log);
+    add_log_path(&mut env, log);
+    assert_eq!(env[LOG_ENV], log.to_string_lossy());
+    assert_eq!(
+        env["PRESSURE_VESSEL_FILESYSTEMS_RW"],
+        "/run/a.sock:/home/u/.config/Aurelia/logs/s1"
+    );
+}
+
+#[test]
+fn wrap_command_sets_log_env() {
+    let mut p = plan(Path::new("/h"), None, Vec::new());
+    p.log_path = Some(PathBuf::from("/logs/s/steamworks.log"));
+    let wrapped = wrap_command(&spec("/g", &[]), &p);
+    assert_eq!(wrapped.env[LOG_ENV], "/logs/s/steamworks.log");
+    let without = wrap_command(&spec("/g", &[]), &plan(Path::new("/h"), None, Vec::new()));
+    assert!(!without.env.contains_key(LOG_ENV));
 }

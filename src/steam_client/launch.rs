@@ -488,25 +488,29 @@ impl SteamClient {
             cloud_specs = ufs.savefiles;
         }
 
-        let mut child = if native_windows {
-            self.spawn_windows_native(app, &launch_info, user_config)
-                .await?
-        } else {
-            self.spawn_game_process(
-                app,
-                &launch_info,
-                chosen_proton_path,
-                &launcher_config,
-                user_config,
-                force_native_engine,
-                force_umu,
-                launch_script_override,
-                disable_launch_script,
-                steam_enabled,
-                shaders,
+        let (mut child, stand_in_log) = if native_windows {
+            (
+                self.spawn_windows_native(app, &launch_info, user_config)
+                    .await?,
+                None,
             )
-            .await?
-            .into()
+        } else {
+            let (child, log) = self
+                .spawn_game_process(
+                    app,
+                    &launch_info,
+                    chosen_proton_path,
+                    &launcher_config,
+                    user_config,
+                    force_native_engine,
+                    force_umu,
+                    launch_script_override,
+                    disable_launch_script,
+                    steam_enabled,
+                    shaders,
+                )
+                .await?;
+            (child.into(), log)
         };
 
         // Record the launch so a separate `aurelia stop <app_id>` invocation can
@@ -553,6 +557,7 @@ impl SteamClient {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
         crate::compat::running::clear(app.app_id);
+        report_stand_in_log(stand_in_log.as_deref());
         wait_result?;
 
         if cloud_enabled {
@@ -813,4 +818,16 @@ fn guard_stand_in(
         )
         .into()),
     }
+}
+
+/// Surface the stand-in log summary.
+fn report_stand_in_log(log: Option<&Path>) {
+    #[cfg(target_os = "linux")]
+    if let Some(log) = log {
+        for line in crate::launch::steamworks_overlay::summarize_log_file(log) {
+            tracing::warn!("{line}");
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = log;
 }
