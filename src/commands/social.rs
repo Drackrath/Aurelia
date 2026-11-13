@@ -68,6 +68,13 @@ pub(crate) async fn cmd_friends(json: bool) -> Result<()> {
         };
         let cache = aurelia::library::local_library::cached_friend_names(own_id).await;
         from_cache = apply_cached_names(&mut friends, &cache);
+        // Re-sort: cached names arrived late.
+        friends.sort_by(|a, b| match (&a.persona_name, &b.persona_name) {
+            (Some(x), Some(y)) => x.cmp(y).then(a.steam_id.cmp(&b.steam_id)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.steam_id.cmp(&b.steam_id),
+        });
     }
 
     if json {
