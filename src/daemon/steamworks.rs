@@ -205,6 +205,14 @@ pub trait Backend: Send + Sync + 'static {
     /// Clear one launch.
     fn stop(&self, launch: u64) -> impl Future<Output = ()> + Send;
     fn ownership_ticket(&self, app_id: u32) -> impl Future<Output = Result<Vec<u8>>> + Send;
+    /// Stored account while Steam is unreachable.
+    fn offline_steam_id(&self) -> impl Future<Output = Option<u64>> + Send;
+    /// Valid cached ticket only, never Steam.
+    fn cached_ownership_ticket(
+        &self,
+        steam_id: u64,
+        app_id: u32,
+    ) -> impl Future<Output = Result<Vec<u8>>> + Send;
     fn create_auth_ticket(
         &self,
         app_id: u32,
@@ -262,6 +270,8 @@ struct Conn<B> {
     backend: Arc<B>,
     router: Arc<Router>,
     app_id: u32,
+    /// Offline account; cache-only answers.
+    offline: Option<u64>,
     owned: Mutex<HashSet<u32>>,
     push_tx: mpsc::UnboundedSender<Vec<u8>>,
 }
@@ -305,22 +315,43 @@ where
             return Ok(());
         }
     };
-    let Some(steam_id) = backend.steam_id().await else {
-        let payload = welcome_payload(welcome::NO_SESSION, 0, "not logged in");
-        send(&writer, proto::C_SW_WELCOME, &payload).await;
-        return Ok(());
+    let (steam_id, offline) = match backend.steam_id().await {
+        Some(id) => (id, None),
+        None => match offline_admission(&*backend, hello.app_id).await {
+            Some(id) => (id, Some(id)),
+            None => {
+                let payload = welcome_payload(welcome::NO_SESSION, 0, "not logged in");
+                send(&writer, proto::C_SW_WELCOME, &payload).await;
+                return Ok(());
+            }
+        },
     };
     let pid = peer_pid.or((hello.pid != 0).then_some(hello.pid));
-    let launch = match backend.start(hello.app_id, pid).await {
-        Ok(id) => id,
-        Err(e) => {
-            tracing::warn!(app_id = hello.app_id, "steamworks: launch refused: {e:#}");
-            send(&writer, proto::C_SW_WELCOME, &refuse(format!("{e:#}"))).await;
-            return Ok(());
+    // Offline: nothing reported to Steam.
+    let launch = if offline.is_some() {
+        None
+    } else {
+        match backend.start(hello.app_id, pid).await {
+            Ok(id) => Some(id),
+            Err(e) => {
+                tracing::warn!(app_id = hello.app_id, "steamworks: launch refused: {e:#}");
+                send(&writer, proto::C_SW_WELCOME, &refuse(format!("{e:#}"))).await;
+                return Ok(());
+            }
         }
     };
-    tracing::info!(app_id = hello.app_id, ?pid, "steamworks: game connected");
-    let payload = welcome_payload(welcome::OK, steam_id, "");
+    let note = if offline.is_some() {
+        tracing::info!(
+            app_id = hello.app_id,
+            ?pid,
+            "steamworks: game connected offline (cached ownership only)"
+        );
+        OFFLINE_WELCOME
+    } else {
+        tracing::info!(app_id = hello.app_id, ?pid, "steamworks: game connected");
+        ""
+    };
+    let payload = welcome_payload(welcome::OK, steam_id, note);
     send(&writer, proto::C_SW_WELCOME, &payload).await;
 
     let (push_tx, mut push_rx) = mpsc::unbounded_channel::<Vec<u8>>();
@@ -328,6 +359,7 @@ where
         backend,
         router,
         app_id: hello.app_id,
+        offline,
         owned: Mutex::new(HashSet::new()),
         push_tx,
     });
@@ -377,9 +409,26 @@ where
             tracing::warn!(handle, "steamworks: ticket cancel failed: {e:#}");
         }
     }
-    conn.backend.stop(launch).await;
+    if let Some(launch) = launch {
+        conn.backend.stop(launch).await;
+    }
     tracing::info!(app_id = hello.app_id, "steamworks: game disconnected");
     Ok(())
+}
+
+/// Welcome note for offline sessions.
+pub const OFFLINE_WELCOME: &str = "offline: cached ownership only";
+
+/// Offline account with a cached ticket.
+async fn offline_admission<B: Backend>(backend: &B, app_id: u32) -> Option<u64> {
+    let steam_id = backend.offline_steam_id().await?;
+    match backend.cached_ownership_ticket(steam_id, app_id).await {
+        Ok(_) => Some(steam_id),
+        Err(e) => {
+            tracing::info!(app_id, "steamworks: offline game refused: {e:#}");
+            None
+        }
+    }
 }
 
 /// Answer one request payload.
@@ -413,6 +462,21 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
         cmd::OWNERSHIP_TICKET | cmd::CREATE_AUTH_TICKET | cmd::CANCEL_AUTH_TICKET
     ) {
         return (status::UNSUPPORTED, b"unknown command".to_vec());
+    }
+    if let Some(offline_id) = conn.offline {
+        return match req.command {
+            cmd::OWNERSHIP_TICKET => {
+                match conn
+                    .backend
+                    .cached_ownership_ticket(offline_id, app_id)
+                    .await
+                {
+                    Ok(ticket) => (status::OK, ticket),
+                    Err(e) => failed(&e),
+                }
+            }
+            _ => (status::NO_SESSION, b"offline".to_vec()),
+        };
     }
     if steam_id.is_none() {
         return (status::NO_SESSION, b"not logged in".to_vec());
@@ -490,6 +554,24 @@ impl Backend for DaemonBackend {
     async fn ownership_ticket(&self, app_id: u32) -> Result<Vec<u8>> {
         let client = authed_client().await.ok_or_else(not_logged_in)?;
         client.ownership_ticket(app_id).await
+    }
+
+    async fn offline_steam_id(&self) -> Option<u64> {
+        if authed_client().await.is_some() {
+            return None;
+        }
+        aurelia::core::config::load_session().await.ok()?.steam_id
+    }
+
+    async fn cached_ownership_ticket(&self, steam_id: u64, app_id: u32) -> Result<Vec<u8>> {
+        use aurelia::steam_client::ticket_cache::{TicketCache, TicketSource, now_rtime};
+        let source = TicketSource::Offline {
+            steam_id: Some(steam_id),
+        };
+        tokio::task::spawn_blocking(move || {
+            TicketCache::open()?.resolve(source, app_id, now_rtime())
+        })
+        .await?
     }
 
     async fn create_auth_ticket(
