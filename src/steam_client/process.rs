@@ -461,7 +461,7 @@ NoSavePersonalInfo=1
         app: &LibraryGame,
         launch_info: &LaunchInfo,
         user_config: Option<&crate::core::models::UserAppConfig>,
-    ) -> Result<std::process::Child> {
+    ) -> Result<crate::launch::game_process::GameProcess> {
         let (_install_dir, executable, args, game_working_dir) = self
             .resolve_exec_plan(app, launch_info, user_config)
             .await?;
@@ -488,9 +488,51 @@ NoSavePersonalInfo=1
             executable,
             args
         );
-        cmd.spawn()
-            .map(crate::infra::logging::relay::attach)
-            .with_context(|| format!("failed to spawn windows game {}", executable.display()))
+        match cmd.spawn() {
+            Ok(child) => Ok(crate::infra::logging::relay::attach(child).into()),
+            #[cfg(windows)]
+            Err(e) if crate::launch::game_process::needs_elevation(&e) => {
+                self.spawn_windows_elevated(app, executable, args, game_working_dir, user_config)
+                    .await
+            }
+            Err(e) => Err(e)
+                .with_context(|| format!("failed to spawn windows game {}", executable.display())),
+        }
+    }
+
+    /// Retry through UAC, like Steam.
+    #[cfg(windows)]
+    async fn spawn_windows_elevated(
+        &self,
+        app: &LibraryGame,
+        executable: PathBuf,
+        args: Vec<String>,
+        game_working_dir: PathBuf,
+        user_config: Option<&crate::core::models::UserAppConfig>,
+    ) -> Result<crate::launch::game_process::GameProcess> {
+        tracing::info!(
+            appid = app.app_id,
+            "{} requires administrator rights; requesting elevation (UAC prompt)",
+            executable.display()
+        );
+        let custom_env = user_config.is_some_and(|c| !c.env_variables.is_empty());
+        let dropped = if custom_env {
+            "SteamAppId and per-game environment variables"
+        } else {
+            "SteamAppId"
+        };
+        tracing::warn!(
+            appid = app.app_id,
+            "Elevated launch: {dropped} do not reach the game; it relies on steam_appid.txt"
+        );
+        let exe = executable.clone();
+        let process = tokio::task::spawn_blocking(move || {
+            crate::launch::game_process::elevated::spawn(&exe, &args, &game_working_dir)
+        })
+        .await
+        .context("elevated launch task failed")?
+        .with_context(|| format!("failed to launch {} as administrator", executable.display()))?;
+        Ok(crate::launch::game_process::GameProcess::Elevated(process))
     }
 
     pub(crate) async fn spawn_game_process(

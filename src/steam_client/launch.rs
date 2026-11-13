@@ -499,6 +499,7 @@ impl SteamClient {
                 shaders,
             )
             .await?
+            .into()
         };
 
         // Record the launch so a separate `aurelia stop <app_id>` invocation can
