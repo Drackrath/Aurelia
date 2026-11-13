@@ -202,11 +202,18 @@ pub(crate) async fn cmd_collections_pull(json: bool) -> Result<()> {
 }
 
 /// `collections push`: upload local collections to Steam (mutates the account).
-pub(crate) async fn cmd_collections_push(yes: bool, json: bool) -> Result<()> {
+pub(crate) async fn cmd_collections_push(yes: bool, force: bool, json: bool) -> Result<()> {
     let local = CollectionsStore::load()?;
-    confirm_cloud_write("upload", local.collections.len(), yes, json)?;
+    local.check_push_allowed(force)?;
+    confirm_cloud_write(
+        "upload",
+        local.collections.len(),
+        local.pending_deletions(),
+        yes,
+        json,
+    )?;
     let client = authed_client().await?;
-    let store = collections::push(&client).await?;
+    let store = collections::push(&client, force).await?;
     let count = store.collections.len();
     if json {
         print_json(&serde_json::json!({
@@ -226,7 +233,13 @@ pub(crate) async fn cmd_collections_push(yes: bool, json: bool) -> Result<()> {
 /// `collections sync`: pull then push (mutates the account).
 pub(crate) async fn cmd_collections_sync(yes: bool, json: bool) -> Result<()> {
     let local = CollectionsStore::load()?;
-    confirm_cloud_write("sync", local.collections.len(), yes, json)?;
+    confirm_cloud_write(
+        "sync",
+        local.collections.len(),
+        local.pending_deletions(),
+        yes,
+        json,
+    )?;
     let client = authed_client().await?;
     let store = collections::sync(&client).await?;
     let count = store.collections.len();

@@ -157,6 +157,9 @@ pub struct CollectionsStore {
     /// Store format; 0 predates `pending`.
     #[serde(default)]
     pub format: u32,
+    /// Set after any pull or push.
+    #[serde(default)]
+    pub synced: bool,
 }
 
 /// Format with `pending` tracking.
@@ -367,6 +370,27 @@ impl CollectionsStore {
 
     // ---- Sync -----------------------------------------------------------
 
+    /// Pulled or pushed at least once.
+    pub fn has_remote_baseline(&self) -> bool {
+        self.synced || self.namespace_version > 0
+    }
+
+    /// Collections marked for deletion on Steam.
+    pub fn pending_deletions(&self) -> usize {
+        self.collections.iter().filter(|c| c.deleted).count()
+    }
+
+    /// Never-pulled stores need `force`.
+    pub fn check_push_allowed(&self, force: bool) -> Result<()> {
+        if force || self.has_remote_baseline() {
+            return Ok(());
+        }
+        bail!(
+            "refusing to push: local collections were never pulled from Steam. \
+             Run `aurelia collections pull` first, or pass `--force` to upload anyway."
+        );
+    }
+
     /// Merge remote; pending ids stay local.
     fn apply_remote(&mut self, remote: RemoteNamespace) {
         for (key, value) in remote.entries {
@@ -412,6 +436,7 @@ impl CollectionsStore {
         }
         self.namespace_version = remote.version;
         self.format = STORE_FORMAT;
+        self.synced = true;
     }
 
     /// Upload entries plus pending-state snapshot.
@@ -446,6 +471,24 @@ impl CollectionsStore {
             .retain(|c| !(c.deleted && deleted.contains(&c.id)));
         self.namespace_version = new_version;
         self.format = STORE_FORMAT;
+        self.synced = true;
+    }
+}
+
+/// Steam has a newer version.
+fn is_version_conflict(e: &anyhow::Error) -> bool {
+    let text = format!("{e:#}").to_ascii_lowercase();
+    text.contains("conflict") || text.contains("version") || text.contains("out of date")
+}
+
+/// Clear message for a rejected upload.
+fn upload_error(e: anyhow::Error) -> anyhow::Error {
+    if is_version_conflict(&e) {
+        anyhow::anyhow!(
+            "Steam has newer collections; run `aurelia collections pull` first, then push again. ({e:#})"
+        )
+    } else {
+        e.context("failed uploading collections to Steam")
     }
 }
 
@@ -476,11 +519,12 @@ pub async fn pull(client: &SteamClient) -> Result<CollectionsStore> {
 
 /// Push every local collection to Steam, then save. On a version conflict the
 /// error tells the user to `pull` first.
-pub async fn push(client: &SteamClient) -> Result<CollectionsStore> {
+pub async fn push(client: &SteamClient, force: bool) -> Result<CollectionsStore> {
     let store = {
         let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         CollectionsStore::load()?
     };
+    store.check_push_allowed(force)?;
     let (entries, snapshot) = store.push_snapshot();
     let deleted: Vec<String> = store
         .collections
@@ -489,23 +533,10 @@ pub async fn push(client: &SteamClient) -> Result<CollectionsStore> {
         .map(|c| c.id.clone())
         .collect();
 
-    let new_version = match client
+    let new_version = client
         .upload_collections(store.namespace_version, entries)
         .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            let text = e.to_string().to_ascii_lowercase();
-            if text.contains("version") || text.contains("conflict") || text.contains("out of date")
-            {
-                bail!(
-                    "Steam rejected the upload — your local collections are out of date. \
-                     Run `aurelia collections pull` first, then push again. ({e})"
-                );
-            }
-            return Err(e).context("failed uploading collections to Steam");
-        }
-    };
+        .map_err(upload_error)?;
 
     // Reload: keep edits made during upload.
     let ((), store) = CollectionsStore::edit(|store| {
@@ -518,7 +549,8 @@ pub async fn push(client: &SteamClient) -> Result<CollectionsStore> {
 /// Full sync: `pull` (merge remote in) then `push` (send the merged result).
 pub async fn sync(client: &SteamClient) -> Result<CollectionsStore> {
     pull(client).await?;
-    push(client).await
+    // Pull just set the baseline.
+    push(client, false).await
 }
 
 #[cfg(test)]

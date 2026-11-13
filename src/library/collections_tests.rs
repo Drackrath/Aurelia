@@ -68,6 +68,7 @@ fn merge_follows_remote_and_honors_remote_deletion() {
     let mut store = CollectionsStore {
         namespace_version: 5,
         format: STORE_FORMAT,
+        synced: false,
         collections: vec![
             Collection {
                 id: "uc-a".into(),
@@ -159,6 +160,7 @@ fn pending_local_edits_survive_stale_remote() {
     let mut store = CollectionsStore {
         namespace_version: 1,
         format: STORE_FORMAT,
+        synced: false,
         collections: vec![coll("uc-a", vec![5], vec![10])],
     };
     // Re-add 10 locally, remove 5.
@@ -178,6 +180,7 @@ fn non_pending_ids_follow_remote() {
     let mut store = CollectionsStore {
         namespace_version: 1,
         format: STORE_FORMAT,
+        synced: false,
         collections: vec![coll("uc-a", vec![1, 2], vec![])],
     };
     store.apply_remote(remote_of(2, &[coll("uc-a", vec![2], vec![1])]));
@@ -278,6 +281,7 @@ fn resolve_by_name_id_and_ambiguity() {
     let store = CollectionsStore {
         namespace_version: 0,
         format: STORE_FORMAT,
+        synced: false,
         collections: vec![
             Collection {
                 id: "uc-1".into(),
@@ -316,4 +320,62 @@ fn resolve_by_name_id_and_ambiguity() {
     assert!(store.resolve("nope").is_err());
     // Ambiguous name.
     assert!(store.resolve("Dupe").is_err());
+}
+
+#[test]
+fn never_pulled_store_refuses_push_without_force() {
+    let mut store = CollectionsStore::default();
+    store.create("RPGs").unwrap();
+    let err = store.check_push_allowed(false).unwrap_err().to_string();
+    assert!(err.contains("never pulled"), "{err}");
+    assert!(err.contains("collections pull"), "{err}");
+    assert!(err.contains("--force"), "{err}");
+    assert!(store.check_push_allowed(true).is_ok());
+}
+
+#[test]
+fn pulled_store_allows_push() {
+    let mut store = CollectionsStore::default();
+    // Empty remote, version 0.
+    store.apply_remote(remote_of(0, &[]));
+    assert!(store.check_push_allowed(false).is_ok());
+
+    // Old store with a version only.
+    let legacy = CollectionsStore {
+        namespace_version: 7,
+        ..CollectionsStore::default()
+    };
+    assert!(legacy.check_push_allowed(false).is_ok());
+}
+
+#[test]
+fn finished_push_sets_baseline() {
+    let mut store = CollectionsStore::default();
+    let (_, snapshot) = store.push_snapshot();
+    store.finish_push(&snapshot, &[], 0);
+    assert!(store.has_remote_baseline());
+}
+
+#[test]
+fn pending_deletions_counts_deleted() {
+    let mut store = CollectionsStore::default();
+    store.collections.push(coll("uc-a", vec![], vec![]));
+    store.collections.push(coll("uc-b", vec![], vec![]));
+    assert_eq!(store.pending_deletions(), 0);
+    store.delete("uc-a").unwrap();
+    assert_eq!(store.pending_deletions(), 1);
+}
+
+#[test]
+fn remote_file_conflict_maps_to_pull_hint() {
+    let raw = anyhow::anyhow!("RemoteFileConflict").context("CloudConfigStore.Upload failed");
+    let msg = upload_error(raw).to_string();
+    assert!(
+        msg.starts_with("Steam has newer collections; run `aurelia collections pull` first"),
+        "{msg}"
+    );
+    assert!(msg.contains("RemoteFileConflict"), "{msg}");
+
+    let other = upload_error(anyhow::anyhow!("connection reset")).to_string();
+    assert_eq!(other, "failed uploading collections to Steam");
 }

@@ -270,13 +270,29 @@ pub(crate) fn confirm_write(action: &str, prompt: &str, yes: bool, json: bool) -
 }
 
 /// Cloud-collections wrapper over [`confirm_write`].
-pub(crate) fn confirm_cloud_write(action: &str, count: usize, yes: bool, json: bool) -> Result<()> {
+pub(crate) fn confirm_cloud_write(
+    action: &str,
+    count: usize,
+    deletions: usize,
+    yes: bool,
+    json: bool,
+) -> Result<()> {
     confirm_write(
         action,
-        &format!("About to {action} {count} collection(s) to your Steam account. Continue? [y/N] "),
+        &cloud_write_prompt(action, count, deletions),
         yes,
         json,
     )
+}
+
+/// Confirmation text, deletions called out.
+pub(crate) fn cloud_write_prompt(action: &str, count: usize, deletions: usize) -> String {
+    let warn = if deletions > 0 {
+        format!(" WARNING: this DELETES {deletions} collection(s) from your Steam account.")
+    } else {
+        String::new()
+    };
+    format!("About to {action} {count} collection(s) to your Steam account.{warn} Continue? [y/N] ")
 }
 
 /// Human label for a raw EPersonaState value.

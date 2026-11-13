@@ -816,6 +816,9 @@ pub(crate) enum CollectionsCommand {
         /// Skip the confirmation prompt. Required in `--json` mode.
         #[arg(short, long)]
         yes: bool,
+        /// Push even if never pulled.
+        #[arg(long)]
+        force: bool,
     },
     /// Pull then push — reconcile local and Steam collections (needs login).
     /// This changes your real Steam library — confirm or pass `--yes`.

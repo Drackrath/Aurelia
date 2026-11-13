@@ -90,3 +90,11 @@ async fn unmanaged_guard_passes_result_through() {
     let err: Result<()> = with_steam_stopped(false, true, async { bail!("boom") }).await;
     assert_eq!(err.unwrap_err().to_string(), "boom");
 }
+
+#[test]
+fn cloud_write_prompt_calls_out_deletions() {
+    let plain = cloud_write_prompt("upload", 3, 0);
+    assert!(!plain.contains("DELETES"), "{plain}");
+    let warn = cloud_write_prompt("upload", 3, 2);
+    assert!(warn.contains("DELETES 2 collection(s)"), "{warn}");
+}

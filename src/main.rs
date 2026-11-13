@@ -347,7 +347,7 @@ async fn run(mut cli: Cli) -> Result<()> {
                 cmd_collections_remove(name, app_ids, json).await
             }
             CollectionsCommand::Pull => cmd_collections_pull(json).await,
-            CollectionsCommand::Push { yes } => cmd_collections_push(yes, json).await,
+            CollectionsCommand::Push { yes, force } => cmd_collections_push(yes, force, json).await,
             CollectionsCommand::Sync { yes } => cmd_collections_sync(yes, json).await,
         },
         Command::Friends { command } => match command {
