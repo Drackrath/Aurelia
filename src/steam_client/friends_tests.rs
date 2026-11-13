@@ -213,3 +213,20 @@ fn unnamed_friend_ids_skips_named_and_non_friends() {
     apply_persona_state(&mut roster, &persona_state(&[(10, "Alice", 1, 0)]));
     assert_eq!(unnamed_friend_ids(&roster), vec![20]);
 }
+
+#[test]
+fn clan_ids_are_not_friends() {
+    let person = 76561197960265738;
+    let clan = 103582791441395743;
+    let mut roster = Roster::new();
+    apply_friends_list(
+        &mut roster,
+        &friends_list(
+            false,
+            &[(person, RELATIONSHIP_FRIEND), (clan, RELATIONSHIP_FRIEND)],
+        ),
+    );
+    assert!(roster.contains_key(&person));
+    assert!(!roster.contains_key(&clan));
+    assert_eq!(friend_ids(&roster), vec![person]);
+}

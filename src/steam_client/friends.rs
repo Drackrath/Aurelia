@@ -120,12 +120,18 @@ fn add_friend_error(eresult: i32) -> String {
     }
 }
 
+/// Person account, not clan or server.
+fn is_person(steam_id: u64) -> bool {
+    // Type 0: synthetic test ids.
+    matches!((steam_id >> 52) & 0xF, 0 | 1)
+}
+
 /// SteamID64s of every entry that is an accepted friend (the ones worth
 /// requesting persona data for).
 fn friend_ids(roster: &Roster) -> Vec<u64> {
     roster
         .values()
-        .filter(|f| f.relationship == RELATIONSHIP_FRIEND)
+        .filter(|f| f.relationship == RELATIONSHIP_FRIEND && is_person(f.steam_id))
         .map(|f| f.steam_id)
         .collect()
 }
@@ -144,6 +150,7 @@ fn unnamed_friend_ids(roster: &Roster) -> Vec<u64> {
 /// Full snapshots keep surviving friends' persona.
 /// Relationship 0 (None) means the friend was removed; any other relationship is
 /// an upsert that preserves already-known persona fields.
+/// Clans and servers are dropped.
 pub fn apply_friends_list(roster: &mut Roster, msg: &CMsgClientFriendsList) {
     if !msg.bincremental() {
         let keep: std::collections::HashSet<u64> =
@@ -153,7 +160,7 @@ pub fn apply_friends_list(roster: &mut Roster, msg: &CMsgClientFriendsList) {
     for f in &msg.friends {
         let id = f.ulfriendid();
         let rel = f.efriendrelationship();
-        if rel == 0 {
+        if rel == 0 || !is_person(id) {
             roster.remove(&id);
             continue;
         }
