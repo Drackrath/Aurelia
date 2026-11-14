@@ -49,6 +49,7 @@ tar = "0.4" # Extract downloaded Proton/Wine-GE runtime tarballs (.tar.gz/.tar.x
 hex = "0.4"
 crc32fast = "1" # Auth ticket CRCs for ClientAuthList
 sha1 = { version = "0.10", features = ["oid"] } # oid for RSA PKCS#1 verify
+sha2 = "0.10" # Stand-in library hashes; already in the tree
 rsa = "0.9.10" # Verify ownership ticket signatures; matches steam-vent
 flate2 = "1"
 xz2 = "0.1"

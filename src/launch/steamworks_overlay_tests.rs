@@ -293,6 +293,61 @@ fn stand_in_is_off_by_default() {
     ));
 }
 
+/// Sidecar like `--path` writes.
+fn record_hash(lib: &Path) {
+    use crate::launch::stand_in_lib::{hash_file, sha256_hex};
+    std::fs::write(hash_file(lib), sha256_hex(lib).unwrap()).unwrap();
+}
+
+#[test]
+fn plan_refuses_a_changed_library() {
+    let dir = tempfile::tempdir().unwrap();
+    let so = dir.path().join("lib/sdk64/steamclient.so");
+    write(&so, "stand-in");
+    record_hash(&so);
+    write(&so, "swapped");
+    let config = LauncherConfig {
+        steamworks_client: true,
+        steamworks_client_path: Some(dir.path().join("lib").to_string_lossy().into()),
+        ..Default::default()
+    };
+    let mut s = spec("/g", &[]);
+    s.env
+        .insert("HOME".into(), dir.path().to_string_lossy().into());
+    let err = plan_for(&config, &s, 480, None).unwrap_err();
+    assert!(matches!(err.kind, LaunchErrorKind::Dependency));
+    assert!(
+        err.message.contains("changed since it was installed"),
+        "{}",
+        err.message
+    );
+    // Refused before any mount point.
+    assert!(!dir.path().join(".steam").exists());
+}
+
+#[test]
+fn libraries_are_bound_read_only() {
+    let p = plan(
+        Path::new("/home/u"),
+        Some(PathBuf::from("/opt/sw/sdk32/steamclient.so")),
+        Vec::new(),
+    );
+    let args = bwrap_args(&p, None);
+    for (src, dest) in [
+        (
+            "/opt/sw/sdk64/steamclient.so",
+            "/home/u/.steam/sdk64/steamclient.so",
+        ),
+        (
+            "/opt/sw/sdk32/steamclient.so",
+            "/home/u/.steam/sdk32/steamclient.so",
+        ),
+    ] {
+        let at = find_seq(&args, &[src, dest]).expect(src);
+        assert_eq!(args[at - 1], "--ro-bind", "{src}");
+    }
+}
+
 #[test]
 fn plan_fails_closed_without_library() {
     let dir = tempfile::tempdir().unwrap();
@@ -319,6 +374,7 @@ fn plan_uses_spec_home_and_mirrors_it() {
     let home = dir.path().join("home");
     let so = dir.path().join("lib/sdk64/steamclient.so");
     write(&so, "stand-in");
+    record_hash(&so);
     write(&home.join(".steam/registry.vdf"), "real");
     std::os::unix::fs::symlink("/data/Steam", home.join(".steam/root")).unwrap();
     let config = LauncherConfig {
@@ -352,6 +408,7 @@ fn plan_creates_only_empty_mount_point() {
     let dir = tempfile::tempdir().unwrap();
     let so = dir.path().join("libsteamclient.so");
     write(&so, "stand-in");
+    record_hash(&so);
     let config = LauncherConfig {
         steamworks_client: true,
         steamworks_client_path: Some(so.to_string_lossy().into()),

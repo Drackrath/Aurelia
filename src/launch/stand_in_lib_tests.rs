@@ -223,13 +223,63 @@ fn install_copies_by_arch_and_replaces() {
     install(&found, dest.path()).unwrap();
     assert_eq!(std::fs::read(&so64).unwrap(), rebuilt);
     // No temp files left over.
-    let names: Vec<_> = std::fs::read_dir(dest.path().join("sdk64"))
+    let mut names: Vec<String> = std::fs::read_dir(dest.path().join("sdk64"))
         .unwrap()
         .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
-    assert_eq!(names.len(), 1);
+    names.sort();
+    assert_eq!(names, vec!["steamclient.so", "steamclient.so.sha256"]);
     // Reinstalling the copy: no-op.
     let again = resolve(so64.to_str().unwrap(), Path::new("/"), Path::new("/")).unwrap();
     install(&again, dest.path()).unwrap();
     assert_eq!(std::fs::read(&so64).unwrap(), rebuilt);
+}
+
+#[test]
+fn install_records_and_verify_checks_the_hash() {
+    let src = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    write(&src.path().join("a.so"), &lib64());
+    let found = resolve("a.so", src.path(), src.path()).unwrap();
+    let so = install(&found, dest.path()).unwrap().sdk64.unwrap();
+    let recorded = std::fs::read_to_string(hash_file(&so)).unwrap();
+    assert_eq!(recorded.trim(), sha256_hex(&so).unwrap());
+    assert_eq!(recorded.trim().len(), 64);
+    // Matching hash passes.
+    verify(&so).unwrap();
+
+    // Modified file refuses, both hashes shown.
+    let mut changed = lib64();
+    changed.push(0);
+    std::fs::write(&so, &changed).unwrap();
+    let err = verify(&so).unwrap_err().to_string();
+    assert!(err.contains(recorded.trim()), "{err}");
+    assert!(err.contains(&sha256_hex(&so).unwrap()), "{err}");
+    assert!(err.contains(&so.display().to_string()), "{err}");
+
+    // Missing library refuses.
+    std::fs::remove_file(&so).unwrap();
+    assert!(verify(&so).unwrap_err().to_string().contains("missing"));
+
+    // No recorded hash refuses.
+    std::fs::write(&so, lib64()).unwrap();
+    std::fs::remove_file(hash_file(&so)).unwrap();
+    assert!(
+        verify(&so)
+            .unwrap_err()
+            .to_string()
+            .contains("no recorded hash")
+    );
+}
+
+#[test]
+fn known_sha256() {
+    let dir = tempfile::tempdir().unwrap();
+    let f = dir.path().join("abc");
+    std::fs::write(&f, b"abc").unwrap();
+    assert_eq!(
+        sha256_hex(&f).unwrap(),
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
 }

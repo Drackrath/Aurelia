@@ -558,7 +558,8 @@ impl SteamClient {
             app.name.clone(),
             child.id(),
             wineprefix,
-        );
+        )
+        .with_stand_in(stand_in);
         if let Err(e) = crate::compat::running::record_launch(&record) {
             tracing::warn!(appid = app.app_id, "could not record running game: {e:#}");
         }
