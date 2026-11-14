@@ -418,6 +418,11 @@ impl CloudPathResolver {
         path.starts_with(&self.remote_root)
     }
 
+    /// Remote root when `path` is inside.
+    pub fn strict_root(&self, path: &Path) -> Option<PathBuf> {
+        self.is_remote(path).then(|| self.remote_root.clone())
+    }
+
     /// Resolve a bare root token (e.g. `WinAppDataLocalLow`) to its OS directory, or
     /// `None` if it isn't applicable on this platform (e.g. a `%Linux*%` root on
     /// Windows, or a `%Win*%` root with no wine prefix). Used by UFS save discovery.
@@ -531,8 +536,6 @@ fn normalize_rel(rel: &str) -> String {
         .join("/")
 }
 
-/// Join a `/`- or `\`-separated cloud-relative path onto `base`, skipping empty,
-/// `.` and `..` components so a crafted filename can't escape the base directory.
 /// First symlink from `root` to `path`.
 pub fn first_link_below(root: &Path, path: &Path) -> Option<PathBuf> {
     let rel = path.strip_prefix(root).ok()?;
@@ -565,6 +568,107 @@ pub fn write_fresh(path: &Path, data: &[u8]) -> std::io::Result<()> {
     result
 }
 
+/// Write below `root`, links never followed.
+#[cfg(unix)]
+pub fn write_under(root: &Path, path: &Path, data: &[u8]) -> std::io::Result<()> {
+    use std::ffi::{CString, OsStr};
+    use std::io::{Error, ErrorKind, Write};
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::unix::ffi::OsStrExt;
+
+    let rel = path
+        .strip_prefix(root)
+        .map_err(|_| Error::new(ErrorKind::InvalidInput, "path is outside the root"))?;
+    let parts: Vec<_> = rel.components().map(|c| c.as_os_str().to_owned()).collect();
+    let Some((name, dirs)) = parts.split_last() else {
+        return Err(Error::new(ErrorKind::InvalidInput, "empty path"));
+    };
+    let c = |s: &OsStr| {
+        CString::new(s.as_bytes()).map_err(|_| Error::new(ErrorKind::InvalidInput, "NUL in name"))
+    };
+    let open_dir = |at: libc::c_int, name: &CString, follow: bool| -> std::io::Result<OwnedFd> {
+        let mut flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC;
+        if !follow {
+            flags |= libc::O_NOFOLLOW;
+        }
+        // SAFETY: valid fd and C string.
+        let fd = unsafe { libc::openat(at, name.as_ptr(), flags) };
+        if fd < 0 {
+            return Err(Error::last_os_error());
+        }
+        // SAFETY: fresh fd we own.
+        Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    };
+    std::fs::create_dir_all(root)?;
+    // Root may be a link.
+    let mut dir = open_dir(libc::AT_FDCWD, &c(root.as_os_str())?, true)?;
+    for part in dirs {
+        let part = c(part)?;
+        dir = match open_dir(dir.as_raw_fd(), &part, false) {
+            Ok(fd) => fd,
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                // SAFETY: valid fd and C string.
+                if unsafe { libc::mkdirat(dir.as_raw_fd(), part.as_ptr(), 0o755) } != 0 {
+                    let err = Error::last_os_error();
+                    if err.kind() != ErrorKind::AlreadyExists {
+                        return Err(err);
+                    }
+                }
+                open_dir(dir.as_raw_fd(), &part, false)?
+            }
+            Err(e) => return Err(e),
+        };
+    }
+    let target = c(name)?;
+    let mut tmp_name = name.clone();
+    tmp_name.push(".aurelia-tmp");
+    let tmp = c(&tmp_name)?;
+    // SAFETY: valid fd and C string.
+    unsafe { libc::unlinkat(dir.as_raw_fd(), tmp.as_ptr(), 0) };
+    let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+    // SAFETY: valid fd and C string.
+    let fd = unsafe { libc::openat(dir.as_raw_fd(), tmp.as_ptr(), flags, 0o644 as libc::c_uint) };
+    if fd < 0 {
+        return Err(Error::last_os_error());
+    }
+    // SAFETY: fresh fd we own.
+    let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+    let written = file.write_all(data);
+    drop(file);
+    let renamed = written.and_then(|()| {
+        // SAFETY: valid fds and C strings.
+        let rc = unsafe {
+            libc::renameat(
+                dir.as_raw_fd(),
+                tmp.as_ptr(),
+                dir.as_raw_fd(),
+                target.as_ptr(),
+            )
+        };
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err(Error::last_os_error())
+        }
+    });
+    if renamed.is_err() {
+        // SAFETY: valid fd and C string.
+        unsafe { libc::unlinkat(dir.as_raw_fd(), tmp.as_ptr(), 0) };
+    }
+    renamed
+}
+
+/// Non-Unix: plain fresh write.
+#[cfg(not(unix))]
+pub fn write_under(_root: &Path, path: &Path, data: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    write_fresh(path, data)
+}
+
+/// Join a `/`- or `\`-separated cloud-relative path onto `base`, skipping empty,
+/// `.` and `..` components so a crafted filename can't escape the base directory.
 fn join_relative(base: &Path, rel: &str) -> PathBuf {
     let mut out = base.to_path_buf();
     for comp in rel.split(['/', '\\']) {
@@ -1020,7 +1124,7 @@ impl CloudClient {
                         continue; // a pending down-change we're not applying now
                     }
                     let Some(c) = cloud else { continue };
-                    let strict = resolver.is_remote(&local_path);
+                    let strict = resolver.strict_root(&local_path);
                     self.apply_download(
                         appid,
                         &name,
@@ -1062,7 +1166,7 @@ impl CloudClient {
                                 appid,
                                 &name,
                                 &local_path,
-                                resolver.is_remote(&local_path),
+                                resolver.strict_root(&local_path),
                                 c,
                                 &mut baseline,
                                 &mut outcome,
@@ -1098,13 +1202,13 @@ impl CloudClient {
         appid: u32,
         name: &str,
         local_path: &Path,
-        strict: bool,
+        strict: Option<PathBuf>,
         cloud: &CloudFileEntry,
         baseline: &mut SyncBaseline,
         outcome: &mut SyncOutcome,
     ) {
         match self
-            .download_to(appid, name, local_path, strict, cloud)
+            .download_to(appid, name, local_path, strict.as_deref(), cloud)
             .await
         {
             Ok(()) => {
@@ -1144,10 +1248,11 @@ impl CloudClient {
         appid: u32,
         filename: &str,
         local_path: &Path,
-        strict: bool,
+        strict: Option<&Path>,
         cloud: &CloudFileEntry,
     ) -> Result<()> {
-        if let Some(parent) = local_path.parent() {
+        // Strict writes make their own dirs.
+        if let (None, Some(parent)) = (strict, local_path.parent()) {
             tokio::fs::create_dir_all(parent).await.with_context(|| {
                 format!("failed to create parent directory {}", parent.display())
             })?;
@@ -1160,11 +1265,10 @@ impl CloudClient {
         })
         .await
         .with_context(|| format!("failed downloading cloud file '{filename}' for app {appid}"))?;
-        let written = if strict {
-            // Fresh temp, rename over links.
-            write_fresh(local_path, &body)
-        } else {
-            tokio::fs::write(local_path, &body).await
+        let written = match strict {
+            // Dir fds: no link window.
+            Some(root) => write_under(root, local_path, &body),
+            None => tokio::fs::write(local_path, &body).await,
         };
         written.with_context(|| format!("failed writing {}", local_path.display()))?;
         set_file_mtime_secs(local_path, cloud.timestamp);

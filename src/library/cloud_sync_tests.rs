@@ -662,3 +662,52 @@ fn fresh_writes_never_follow_links() {
     assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
     assert_eq!(std::fs::read(&other).unwrap(), b"x");
 }
+
+/// T-193 return: swap after resolve.
+#[cfg(unix)]
+#[test]
+fn link_swapped_in_after_resolve_is_not_followed() {
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("remote");
+    std::fs::create_dir_all(root.join("saves")).unwrap();
+    let outside = dir.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    let resolver = CloudPathResolver::new(root.clone(), None);
+    let path = resolver.resolve("saves/s.sav").unwrap();
+    // Swap the dir for a link.
+    std::fs::remove_dir(root.join("saves")).unwrap();
+    symlink(&outside, root.join("saves")).unwrap();
+    let strict = resolver.strict_root(&path).unwrap();
+    assert!(write_under(&strict, &path, b"data").is_err());
+    assert!(!outside.join("s.sav").exists());
+    assert!(!outside.join("s.sav.aurelia-tmp").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn write_under_creates_dirs_and_replaces_links() {
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("remote");
+    // Root created when missing.
+    write_under(&root, &root.join("a/b/c.sav"), b"one").unwrap();
+    assert_eq!(std::fs::read(root.join("a/b/c.sav")).unwrap(), b"one");
+    // Final link replaced, temp link ignored.
+    let victim = dir.path().join("victim");
+    std::fs::write(&victim, b"keep").unwrap();
+    symlink(&victim, root.join("a/b/d.sav")).unwrap();
+    symlink(&victim, root.join("a/b/e.sav.aurelia-tmp")).unwrap();
+    write_under(&root, &root.join("a/b/d.sav"), b"two").unwrap();
+    write_under(&root, &root.join("a/b/e.sav"), b"three").unwrap();
+    assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
+    assert!(
+        !std::fs::symlink_metadata(root.join("a/b/d.sav"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(std::fs::read(root.join("a/b/e.sav")).unwrap(), b"three");
+    // Outside the root: refused.
+    assert!(write_under(&root, &dir.path().join("x.sav"), b"x").is_err());
+}
