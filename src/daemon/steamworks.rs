@@ -12,12 +12,14 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 
+use aurelia::core::models::DownloadState;
 use aurelia::steam_client::auth_ticket::{AuthSessionTicket, TicketAuthEvent, TicketKind};
 use aurelia::steam_client::microtxn::{self, MicroTxnRequest};
 use aurelia::steam_client::playing::{self, GAMES, Launch};
 use aurelia::steam_client::remote_storage::{RemoteStorageInfo, remote_storage_info};
 use aurelia::steam_client::steamworks_info::{AppInstallInfo, DlcInfo};
 use aurelia::steam_client::user_stats::{StoreOutcome, UserStats};
+use aurelia::steam_client::workshop_ugc::{UgcDetails, UgcInstall, UgcPage};
 use aurelia::steam_client::{EncryptedTicketOutcome, Friend, SteamClient};
 
 use super::proto::{self, SharedWriter};
@@ -64,6 +66,13 @@ pub mod cmd {
     pub const SET_RICH_PRESENCE: u8 = 51;
     pub const FRIEND_RICH_PRESENCE: u8 = 52;
     pub const OPEN_URL: u8 = 53;
+    /// Workshop range is 70-79.
+    pub const UGC_QUERY: u8 = 70;
+    pub const UGC_SUBSCRIBE: u8 = 71;
+    pub const UGC_UNSUBSCRIBE: u8 = 72;
+    pub const UGC_SUBSCRIBED: u8 = 73;
+    pub const UGC_ITEM_STATE: u8 = 74;
+    pub const UGC_DOWNLOAD: u8 = 75;
 }
 
 /// Cloud info flag bits.
@@ -71,6 +80,24 @@ pub mod cloud_flag {
     pub const ENABLED: u8 = 1;
     pub const WRITABLE: u8 = 2;
 }
+
+/// `UGC_QUERY` kinds.
+pub mod ugc_kind {
+    pub const ALL_PAGE: u8 = 0;
+    pub const ALL_CURSOR: u8 = 1;
+    pub const DETAILS: u8 = 2;
+    pub const SUBSCRIBED: u8 = 3;
+}
+
+/// `UGC_ITEM_STATE` flag bits.
+pub mod ugc_flag {
+    pub const INSTALLED: u8 = 1;
+    pub const NEEDS_UPDATE: u8 = 2;
+    pub const DOWNLOADING: u8 = 4;
+}
+
+/// Subscribed items per page.
+pub const UGC_PAGE_SIZE: usize = 50;
 
 /// User stats flag bits.
 pub mod stats_flag {
@@ -99,6 +126,8 @@ pub mod push {
     pub const TICKET_AUTH: u8 = 1;
     pub const MICROTXN_PENDING: u8 = 80;
     pub const MICROTXN_RESULT: u8 = 81;
+    /// Workshop download finished.
+    pub const UGC_DOWNLOADED: u8 = 70;
 }
 
 /// Auth ticket kinds on the wire.
@@ -417,6 +446,101 @@ pub fn pairs_body(pairs: &[(String, String)]) -> Vec<u8> {
     out
 }
 
+/// A game's Workshop query.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UgcQuery {
+    All {
+        query_type: u32,
+        page: u32,
+        cursor: Option<String>,
+        search: String,
+        tags: Vec<String>,
+    },
+    Details(Vec<u64>),
+    Subscribed {
+        page: u32,
+    },
+}
+
+impl UgcQuery {
+    pub fn parse(body: &[u8]) -> Option<Self> {
+        let mut f = Fields::new(body);
+        let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+        let kind = f.u8()?;
+        let query_type = f.u32()?;
+        let page = f.u32()?;
+        let cursor = text(f.blob()?);
+        let search = text(f.blob()?);
+        let tag_count = usize::try_from(f.u32()?).ok()?;
+        if tag_count > body.len() {
+            return None;
+        }
+        let mut tags = Vec::new();
+        for _ in 0..tag_count {
+            tags.push(text(f.blob()?));
+        }
+        let id_count = usize::try_from(f.u32()?).ok()?;
+        if id_count > body.len() / 8 {
+            return None;
+        }
+        let mut ids = Vec::new();
+        for _ in 0..id_count {
+            ids.push(f.u64()?);
+        }
+        Some(match kind {
+            ugc_kind::ALL_PAGE | ugc_kind::ALL_CURSOR => Self::All {
+                query_type,
+                page,
+                cursor: (kind == ugc_kind::ALL_CURSOR).then_some(cursor),
+                search,
+                tags,
+            },
+            ugc_kind::DETAILS => Self::Details(ids),
+            ugc_kind::SUBSCRIBED => Self::Subscribed { page },
+            _ => return None,
+        })
+    }
+}
+
+/// One item on the wire.
+pub fn put_ugc_item(out: &mut Vec<u8>, d: &UgcDetails) {
+    out.extend_from_slice(&d.id.to_le_bytes());
+    out.extend_from_slice(&d.result.to_le_bytes());
+    for v in [d.file_type, d.creator_app, d.consumer_app] {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    put_blob(out, d.title.as_bytes());
+    put_blob(out, d.description.as_bytes());
+    out.extend_from_slice(&d.owner.to_le_bytes());
+    for v in [d.created, d.updated, d.visibility] {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out.push(u8::from(d.banned));
+    out.push(u8::from(d.accepted));
+    put_blob(out, d.tags.as_bytes());
+    out.extend_from_slice(&d.file.to_le_bytes());
+    out.extend_from_slice(&d.preview_file.to_le_bytes());
+    put_blob(out, d.file_name.as_bytes());
+    out.extend_from_slice(&d.file_size.to_le_bytes());
+    out.extend_from_slice(&d.preview_size.to_le_bytes());
+    put_blob(out, d.url.as_bytes());
+    for v in [d.votes_up, d.votes_down, d.score.to_bits(), d.children] {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+}
+
+/// Query page body.
+pub fn ugc_page_body(page: &UgcPage) -> Vec<u8> {
+    let mut out = page.total.to_le_bytes().to_vec();
+    put_blob(&mut out, page.next_cursor.as_bytes());
+    let count = u32::try_from(page.items.len()).unwrap_or(u32::MAX);
+    out.extend_from_slice(&count.to_le_bytes());
+    for item in page.items.iter().take(count as usize) {
+        put_ugc_item(&mut out, item);
+    }
+    out
+}
+
 /// Parses a key/value list within limits.
 pub fn parse_pairs(f: &mut Fields) -> Option<Vec<(String, String)>> {
     let count = usize::try_from(f.u32()?).ok()?;
@@ -444,6 +568,52 @@ pub fn openable_url(url: &str) -> bool {
     (lower.starts_with("https://") || lower.starts_with("http://"))
         && !url.chars().any(|c| c.is_control() || c.is_whitespace())
 }
+
+/// Item state body.
+pub fn ugc_state_body(state: &UgcInstall, progress: Option<(u64, u64)>) -> Vec<u8> {
+    let mut flags = 0;
+    if state.installed {
+        flags |= ugc_flag::INSTALLED;
+    }
+    if state.needs_update {
+        flags |= ugc_flag::NEEDS_UPDATE;
+    }
+    if progress.is_some() {
+        flags |= ugc_flag::DOWNLOADING;
+    }
+    let mut out = vec![flags];
+    out.extend_from_slice(&state.size.to_le_bytes());
+    out.extend_from_slice(&state.timestamp.to_le_bytes());
+    put_blob(&mut out, state.folder.as_bytes());
+    let (done, total) = progress.unwrap_or_default();
+    out.extend_from_slice(&done.to_le_bytes());
+    out.extend_from_slice(&total.to_le_bytes());
+    out
+}
+
+/// Download finished push.
+pub fn ugc_downloaded_payload(app_id: u32, id: u64, result: i32) -> Vec<u8> {
+    let mut out = vec![push::UGC_DOWNLOADED];
+    out.extend_from_slice(&app_id.to_le_bytes());
+    out.extend_from_slice(&id.to_le_bytes());
+    out.extend_from_slice(&result.to_le_bytes());
+    out
+}
+
+/// Downloads in flight, per item.
+type Downloads = Mutex<HashMap<(u32, u64), Arc<std::sync::RwLock<DownloadState>>>>;
+
+static UGC_DOWNLOADS: std::sync::LazyLock<Downloads> = std::sync::LazyLock::new(Downloads::default);
+
+/// Bytes done and total.
+fn ugc_progress(app_id: u32, id: u64) -> Option<(u64, u64)> {
+    let downloads = UGC_DOWNLOADS.lock().unwrap();
+    let state = downloads.get(&(app_id, id))?.read().ok()?;
+    Some((state.downloaded_bytes, state.total_bytes))
+}
+
+/// `EResult` for a failed download.
+const ERESULT_FAIL: i32 = 2;
 
 /// What the daemon offers games.
 pub trait Backend: Send + Sync + 'static {
@@ -528,6 +698,26 @@ pub trait Backend: Send + Sync + 'static {
         &self,
         app_id: u32,
     ) -> impl Future<Output = Option<mpsc::UnboundedReceiver<LobbyEvent>>> + Send;
+    fn ugc_query(
+        &self,
+        app_id: u32,
+        query: UgcQuery,
+    ) -> impl Future<Output = Result<UgcPage>> + Send;
+    fn ugc_subscribe(
+        &self,
+        app_id: u32,
+        id: u64,
+        subscribe: bool,
+    ) -> impl Future<Output = Result<()>> + Send;
+    fn ugc_subscribed(&self, app_id: u32) -> impl Future<Output = Result<Vec<u64>>> + Send;
+    fn ugc_state(&self, app_id: u32, id: u64) -> impl Future<Output = Result<UgcInstall>> + Send;
+    /// Downloads and waits.
+    fn ugc_download(
+        &self,
+        app_id: u32,
+        id: u64,
+        progress: Arc<std::sync::RwLock<DownloadState>>,
+    ) -> impl Future<Output = Result<()>> + Send;
     /// Stats of `steam_id`, else ours.
     fn user_stats(
         &self,
@@ -933,6 +1123,12 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
             | cmd::SET_RICH_PRESENCE
             | cmd::FRIEND_RICH_PRESENCE
             | cmd::OPEN_URL
+            | cmd::UGC_QUERY
+            | cmd::UGC_SUBSCRIBE
+            | cmd::UGC_UNSUBSCRIBE
+            | cmd::UGC_SUBSCRIBED
+            | cmd::UGC_ITEM_STATE
+            | cmd::UGC_DOWNLOAD
     ) {
         return (status::UNSUPPORTED, b"unknown command".to_vec());
     }
@@ -992,6 +1188,52 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
             Ok(info) => (status::OK, cloud_info_body(&info)),
             Err(e) => failed(&e),
         },
+        cmd::UGC_QUERY => {
+            let Some(query) = UgcQuery::parse(&req.body) else {
+                return (status::MALFORMED, b"bad query".to_vec());
+            };
+            match conn.backend.ugc_query(app_id, query).await {
+                Ok(page) => (status::OK, ugc_page_body(&page)),
+                Err(e) => failed(&e),
+            }
+        }
+        cmd::UGC_SUBSCRIBE | cmd::UGC_UNSUBSCRIBE => {
+            let Some(id) = f.u64() else {
+                return (status::MALFORMED, b"no item".to_vec());
+            };
+            let on = req.command == cmd::UGC_SUBSCRIBE;
+            match conn.backend.ugc_subscribe(app_id, id, on).await {
+                Ok(()) => (status::OK, Vec::new()),
+                Err(e) => failed(&e),
+            }
+        }
+        cmd::UGC_SUBSCRIBED => match conn.backend.ugc_subscribed(app_id).await {
+            Ok(ids) => {
+                let count = u32::try_from(ids.len()).unwrap_or(u32::MAX);
+                let mut body = count.to_le_bytes().to_vec();
+                for id in ids.iter().take(count as usize) {
+                    body.extend_from_slice(&id.to_le_bytes());
+                }
+                (status::OK, body)
+            }
+            Err(e) => failed(&e),
+        },
+        cmd::UGC_ITEM_STATE => {
+            let Some(id) = f.u64() else {
+                return (status::MALFORMED, b"no item".to_vec());
+            };
+            match conn.backend.ugc_state(app_id, id).await {
+                Ok(state) => (status::OK, ugc_state_body(&state, ugc_progress(app_id, id))),
+                Err(e) => failed(&e),
+            }
+        }
+        cmd::UGC_DOWNLOAD => {
+            let Some(id) = f.u64() else {
+                return (status::MALFORMED, b"no item".to_vec());
+            };
+            start_ugc_download(conn, app_id, id);
+            (status::OK, Vec::new())
+        }
         cmd::USER_STATS => {
             let Some(target) = f.u64() else {
                 return (status::MALFORMED, b"no steam id".to_vec());
@@ -1161,6 +1403,33 @@ async fn answer_lobby<B: Backend>(
         Ok(body) => (status::OK, body),
         Err(e) => failed(&e),
     }
+}
+
+/// Starts once; pushes the result.
+fn start_ugc_download<B: Backend>(conn: &Conn<B>, app_id: u32, id: u64) {
+    let progress = {
+        let mut downloads = UGC_DOWNLOADS.lock().unwrap();
+        if downloads.contains_key(&(app_id, id)) {
+            return;
+        }
+        let progress = Arc::new(std::sync::RwLock::new(DownloadState::default()));
+        downloads.insert((app_id, id), Arc::clone(&progress));
+        progress
+    };
+    let backend = Arc::clone(&conn.backend);
+    let push_tx = conn.push_tx.clone();
+    tokio::spawn(async move {
+        let outcome = backend.ugc_download(app_id, id, progress).await;
+        UGC_DOWNLOADS.lock().unwrap().remove(&(app_id, id));
+        let result = match outcome {
+            Ok(()) => ERESULT_OK,
+            Err(e) => {
+                tracing::warn!(app_id, id, "steamworks: Workshop download failed: {e:#}");
+                ERESULT_FAIL
+            }
+        };
+        let _ = push_tx.send(ugc_downloaded_payload(app_id, id, result));
+    });
 }
 
 /// The daemon's real backend.
@@ -1366,6 +1635,84 @@ impl Backend for DaemonBackend {
     async fn cloud_info(&self, steam_id: u64, app_id: u32) -> Result<RemoteStorageInfo> {
         let config = aurelia::core::config::LauncherConfig::load().await?;
         remote_storage_info(&config, steam_id, app_id)
+    }
+
+    async fn ugc_query(&self, app_id: u32, query: UgcQuery) -> Result<UgcPage> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        match query {
+            UgcQuery::All {
+                query_type,
+                page,
+                cursor,
+                search,
+                tags,
+            } => {
+                let per_page = UGC_PAGE_SIZE as u32;
+                client
+                    .ugc_query(
+                        app_id,
+                        query_type,
+                        page,
+                        cursor.as_deref(),
+                        Some(&search),
+                        &tags,
+                        per_page,
+                    )
+                    .await
+            }
+            UgcQuery::Details(ids) => {
+                let items = client.ugc_details(&ids).await?;
+                Ok(UgcPage {
+                    total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+                    next_cursor: String::new(),
+                    items,
+                })
+            }
+            UgcQuery::Subscribed { page } => {
+                let ids = client.fetch_subscribed_items(app_id).await?;
+                let start = (page.max(1) as usize - 1).saturating_mul(UGC_PAGE_SIZE);
+                let slice: Vec<u64> = ids
+                    .iter()
+                    .skip(start)
+                    .take(UGC_PAGE_SIZE)
+                    .copied()
+                    .collect();
+                Ok(UgcPage {
+                    total: u32::try_from(ids.len()).unwrap_or(u32::MAX),
+                    next_cursor: String::new(),
+                    items: client.ugc_details(&slice).await?,
+                })
+            }
+        }
+    }
+
+    async fn ugc_subscribe(&self, app_id: u32, id: u64, subscribe: bool) -> Result<()> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        if subscribe {
+            client.subscribe_published_file(id, app_id).await
+        } else {
+            client.unsubscribe_published_file(id, app_id).await
+        }
+    }
+
+    async fn ugc_subscribed(&self, app_id: u32) -> Result<Vec<u64>> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        client.fetch_subscribed_items(app_id).await
+    }
+
+    async fn ugc_state(&self, app_id: u32, id: u64) -> Result<UgcInstall> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        client.ugc_install_state(app_id, id).await
+    }
+
+    async fn ugc_download(
+        &self,
+        app_id: u32,
+        id: u64,
+        progress: Arc<std::sync::RwLock<DownloadState>>,
+    ) -> Result<()> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        client.ugc_download(app_id, id, progress).await
     }
 
     async fn user_stats(&self, app_id: u32, steam_id: Option<u64>) -> Result<UserStats> {

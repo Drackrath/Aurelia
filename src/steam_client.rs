@@ -574,6 +574,7 @@ pub mod tags_table;
 pub mod user_stats;
 mod workshop;
 mod workshop_manifest;
+pub mod workshop_ugc;
 pub use storequery::{DealsScope, QueryPage};
 mod events;
 pub use events::StoreEvent;

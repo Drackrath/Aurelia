@@ -23,6 +23,8 @@ struct Fake {
     stored: Mutex<Vec<(u32, u32, bool, StatChanges)>>,
     presence: Mutex<Vec<(u32, Pairs)>>,
     opened: Mutex<Vec<String>>,
+    queries: Mutex<Vec<UgcQuery>>,
+    subscribed: Mutex<Vec<u64>>,
 }
 
 const SID: u64 = 76_561_197_960_287_930;
@@ -257,6 +259,54 @@ impl Backend for Fake {
         *self.lobby_tx.lock().unwrap() = Some(tx);
         Some(rx)
     }
+    async fn ugc_query(&self, app_id: u32, query: UgcQuery) -> Result<UgcPage> {
+        if app_id != 480 {
+            bail!("no workshop for {app_id}");
+        }
+        self.queries.lock().unwrap().push(query);
+        Ok(sample_page())
+    }
+
+    async fn ugc_subscribe(&self, _app_id: u32, id: u64, subscribe: bool) -> Result<()> {
+        let mut subs = self.subscribed.lock().unwrap();
+        subs.retain(|s| *s != id);
+        if subscribe {
+            subs.push(id);
+        }
+        Ok(())
+    }
+
+    async fn ugc_subscribed(&self, _app_id: u32) -> Result<Vec<u64>> {
+        Ok(self.subscribed.lock().unwrap().clone())
+    }
+
+    async fn ugc_state(&self, _app_id: u32, id: u64) -> Result<UgcInstall> {
+        Ok(if id == 42 {
+            UgcInstall {
+                installed: true,
+                needs_update: true,
+                size: 10,
+                timestamp: 20,
+                folder: "/w/42".into(),
+            }
+        } else {
+            UgcInstall::default()
+        })
+    }
+
+    async fn ugc_download(
+        &self,
+        _app_id: u32,
+        id: u64,
+        progress: Arc<std::sync::RwLock<DownloadState>>,
+    ) -> Result<()> {
+        progress.write().unwrap().total_bytes = 100;
+        if id == 13 {
+            bail!("no content");
+        }
+        Ok(())
+    }
+
     async fn user_stats(&self, app_id: u32, steam_id: Option<u64>) -> Result<UserStats> {
         if app_id != 480 {
             bail!("no stats for {app_id}");
@@ -350,6 +400,44 @@ fn offline(cached: &[(u32, Vec<u8>)]) -> Arc<Fake> {
         cached: cached.iter().cloned().collect(),
         ..Fake::default()
     })
+}
+
+fn sample_item() -> UgcDetails {
+    UgcDetails {
+        id: 42,
+        result: 1,
+        title: "Map".into(),
+        tags: "Maps".into(),
+        file: 999,
+        score: 0.5,
+        ..UgcDetails::default()
+    }
+}
+
+fn sample_page() -> UgcPage {
+    UgcPage {
+        total: 7,
+        next_cursor: "next".into(),
+        items: vec![sample_item()],
+    }
+}
+
+/// Query body like the .so sends.
+fn ugc_query_body(kind: u8, page: u32, cursor: &str, tags: &[&str], ids: &[u64]) -> Vec<u8> {
+    let mut out = vec![kind];
+    out.extend_from_slice(&3u32.to_le_bytes());
+    out.extend_from_slice(&page.to_le_bytes());
+    put_blob(&mut out, cursor.as_bytes());
+    put_blob(&mut out, b"castle");
+    out.extend_from_slice(&(tags.len() as u32).to_le_bytes());
+    for t in tags {
+        put_blob(&mut out, t.as_bytes());
+    }
+    out.extend_from_slice(&(ids.len() as u32).to_le_bytes());
+    for id in ids {
+        out.extend_from_slice(&id.to_le_bytes());
+    }
+    out
 }
 
 fn hello(app_id: u32) -> Vec<u8> {
@@ -1310,6 +1398,59 @@ async fn open_url_accepts_web_pages_only() {
 }
 
 #[tokio::test]
+async fn ugc_queries_parse_and_answer() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router, hello(480), None).await;
+    let bodies = [
+        ugc_query_body(ugc_kind::ALL_PAGE, 2, "", &["Maps"], &[]),
+        ugc_query_body(ugc_kind::ALL_CURSOR, 0, "abc", &[], &[]),
+        ugc_query_body(ugc_kind::DETAILS, 0, "", &[], &[42, 43]),
+        ugc_query_body(ugc_kind::SUBSCRIBED, 3, "", &[], &[]),
+    ];
+    for (i, body) in bodies.iter().enumerate() {
+        let (code, reply) = game.ask(i as u32, cmd::UGC_QUERY, body).await;
+        assert_eq!((code, reply), (status::OK, ugc_page_body(&sample_page())));
+    }
+    assert_eq!(
+        *fake.queries.lock().unwrap(),
+        vec![
+            UgcQuery::All {
+                query_type: 3,
+                page: 2,
+                cursor: None,
+                search: "castle".into(),
+                tags: vec!["Maps".into()],
+            },
+            UgcQuery::All {
+                query_type: 3,
+                page: 0,
+                cursor: Some("abc".into()),
+                search: "castle".into(),
+                tags: Vec::new(),
+            },
+            UgcQuery::Details(vec![42, 43]),
+            UgcQuery::Subscribed { page: 3 },
+        ]
+    );
+    let mut bad = ugc_query_body(9, 0, "", &[], &[]);
+    assert_eq!(game.ask(9, cmd::UGC_QUERY, &bad).await.0, status::MALFORMED);
+    bad = ugc_query_body(ugc_kind::DETAILS, 0, "", &[], &[]);
+    bad.truncate(bad.len() - 4);
+    bad.extend_from_slice(&u32::MAX.to_le_bytes());
+    assert_eq!(
+        game.ask(10, cmd::UGC_QUERY, &bad).await.0,
+        status::MALFORMED
+    );
+    let body = ugc_query_body(ugc_kind::ALL_PAGE, 1, "", &[], &[]);
+    assert_eq!(
+        game.ask_for(11, 70, cmd::UGC_QUERY, &body).await.0,
+        status::FAILED
+    );
+    game.hang_up().await;
+}
+
+#[tokio::test]
 async fn offline_friends_fail_closed() {
     let fake = offline(&[(480, vec![0xCC])]);
     let router = Arc::new(Router::default());
@@ -1433,4 +1574,114 @@ async fn offline_serves_local_app_info_and_saved_dlc() {
     assert_eq!(game.ask(1, cmd::DLC_LIST, &[]).await.0, status::NO_SESSION);
     assert_eq!(game.ask(2, cmd::APP_INFO, &[]).await.0, status::OK);
     game.hang_up().await;
+}
+
+#[tokio::test]
+async fn ugc_subscriptions_and_state() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router, hello(480), None).await;
+    for id in [42u64, 43] {
+        let (code, _) = game.ask(1, cmd::UGC_SUBSCRIBE, &id.to_le_bytes()).await;
+        assert_eq!(code, status::OK);
+    }
+    let (code, _) = game
+        .ask(2, cmd::UGC_UNSUBSCRIBE, &43u64.to_le_bytes())
+        .await;
+    assert_eq!(code, status::OK);
+    let (code, body) = game.ask(3, cmd::UGC_SUBSCRIBED, &[]).await;
+    let mut expected = 1u32.to_le_bytes().to_vec();
+    expected.extend_from_slice(&42u64.to_le_bytes());
+    assert_eq!((code, body), (status::OK, expected));
+    assert_eq!(
+        game.ask(4, cmd::UGC_SUBSCRIBE, &[1]).await.0,
+        status::MALFORMED
+    );
+
+    let (code, body) = game.ask(5, cmd::UGC_ITEM_STATE, &42u64.to_le_bytes()).await;
+    let state = fake.ugc_state(480, 42).await.unwrap();
+    assert_eq!((code, body), (status::OK, ugc_state_body(&state, None)));
+    game.hang_up().await;
+}
+
+#[tokio::test]
+async fn ugc_download_pushes_result() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake, router, hello(480), None).await;
+    let mut body = 42u64.to_le_bytes().to_vec();
+    body.push(1);
+    assert_eq!(game.ask(1, cmd::UGC_DOWNLOAD, &body).await.0, status::OK);
+    assert_eq!(
+        game.next().await,
+        (proto::C_SW_PUSH, ugc_downloaded_payload(480, 42, 1))
+    );
+    let mut body = 13u64.to_le_bytes().to_vec();
+    body.push(0);
+    assert_eq!(game.ask(2, cmd::UGC_DOWNLOAD, &body).await.0, status::OK);
+    assert_eq!(
+        game.next().await,
+        (proto::C_SW_PUSH, ugc_downloaded_payload(480, 13, 2))
+    );
+    assert!(UGC_DOWNLOADS.lock().unwrap().is_empty());
+    game.hang_up().await;
+}
+
+#[tokio::test]
+async fn ugc_needs_a_session() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router, hello(480), None).await;
+    *fake.steam_id.lock().unwrap() = None;
+    for command in [
+        cmd::UGC_QUERY,
+        cmd::UGC_SUBSCRIBE,
+        cmd::UGC_UNSUBSCRIBE,
+        cmd::UGC_SUBSCRIBED,
+        cmd::UGC_ITEM_STATE,
+        cmd::UGC_DOWNLOAD,
+    ] {
+        let (code, _) = game
+            .ask(u32::from(command), command, &42u64.to_le_bytes())
+            .await;
+        assert_eq!(code, status::NO_SESSION, "command {command}");
+    }
+    game.hang_up().await;
+}
+
+/// Same bytes the .so tests use.
+#[test]
+fn ugc_golden_bytes() {
+    let mut item = Vec::new();
+    put_ugc_item(&mut item, &sample_item());
+    let mut expected = 42u64.to_le_bytes().to_vec();
+    expected.extend_from_slice(&1i32.to_le_bytes());
+    expected.extend_from_slice(&[0; 12]);
+    expected.extend_from_slice(&[3, 0, 0, 0, b'M', b'a', b'p']);
+    expected.extend_from_slice(&[0; 4]);
+    expected.extend_from_slice(&[0; 8 + 12 + 2]);
+    expected.extend_from_slice(&[4, 0, 0, 0, b'M', b'a', b'p', b's']);
+    expected.extend_from_slice(&999u64.to_le_bytes());
+    expected.extend_from_slice(&[0; 8 + 4 + 16 + 4 + 8]);
+    expected.extend_from_slice(&0.5f32.to_bits().to_le_bytes());
+    expected.extend_from_slice(&[0; 4]);
+    assert_eq!(item, expected);
+    let state = UgcInstall {
+        installed: true,
+        needs_update: false,
+        size: 5,
+        timestamp: 6,
+        folder: "/f".into(),
+    };
+    assert_eq!(
+        ugc_state_body(&state, Some((1, 2))),
+        [
+            5, 5, 0, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 2, 0, 0, 0, b'/', b'f', //
+            1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0,
+        ]
+    );
+    assert_eq!(
+        ugc_downloaded_payload(480, 42, 1),
+        [70, 0xE0, 1, 0, 0, 42, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0]
+    );
 }
