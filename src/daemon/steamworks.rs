@@ -734,9 +734,17 @@ impl Backend for DaemonBackend {
 
     async fn session_info(&self) -> Result<(u32, String)> {
         let client = authed_client().await.ok_or_else(not_logged_in)?;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| u32::try_from(d.as_secs()).unwrap_or(u32::MAX));
+        let now = match client.server_time().await {
+            Ok(now) => now,
+            Err(e) => {
+                // Local clock until Steam answers.
+                tracing::debug!("steamworks: {e:#}; using local time");
+                aurelia::steam_client::server_time::apply(
+                    aurelia::steam_client::server_time::local_ms(),
+                    0,
+                )
+            }
+        };
         Ok((now, client.ip_country().unwrap_or_default()))
     }
 }
