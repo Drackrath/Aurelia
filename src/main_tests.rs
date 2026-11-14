@@ -330,3 +330,40 @@ fn relative_path_args_resolve_against_cwd() {
     assert_eq!(runner_of("GE-Proton9-20").as_deref(), Some("GE-Proton9-20"));
     assert_eq!(runner_of("").as_deref(), Some(""));
 }
+
+/// T-184: daemon gets the client cwd.
+#[tokio::test]
+async fn steamworks_path_resolves_against_the_client_cwd() {
+    use crate::output::{OutputCtx, scoped};
+    let path_of = |args: &[&str]| {
+        let mut argv = vec!["aurelia", "config", "steamworks-client"];
+        argv.extend_from_slice(args);
+        let mut cli = Cli::try_parse_from(argv).unwrap();
+        absolutize_path_args(&mut cli.command);
+        let Command::Config {
+            command: ConfigCommand::SteamworksClient { path, .. },
+        } = cli.command
+        else {
+            panic!("expected steamworks-client");
+        };
+        path
+    };
+    let (out_tx, _out_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (_in_tx, in_rx) = tokio::sync::mpsc::unbounded_channel();
+    let client = std::path::PathBuf::from("/home/u/src/aurelia-steamworks");
+    let ctx = OutputCtx::new(out_tx, in_rx, Some(client.clone()));
+    let (rel, abs, clear, home) = scoped(ctx, async {
+        (
+            path_of(&["--path", "target/release/libsteamclient.so"]),
+            path_of(&["--path", "/opt/lib.so"]),
+            path_of(&["--path", ""]),
+            path_of(&["--path", "~/lib.so"]),
+        )
+    })
+    .await;
+    let expected = client.join("target/release/libsteamclient.so");
+    assert_eq!(rel, Some(expected.to_string_lossy().into_owned()));
+    assert_eq!(abs.as_deref(), Some("/opt/lib.so"));
+    assert_eq!(clear.as_deref(), Some(""));
+    assert_eq!(home.as_deref(), Some("~/lib.so"));
+}

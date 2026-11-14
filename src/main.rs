@@ -314,6 +314,12 @@ pub(crate) fn absolutize_path_args(command: &mut Command) {
         Command::Config {
             command: ConfigCommand::SteamRuntimeRunner { runner },
         } => proton(runner),
+        // "" clears; `~` expands later.
+        Command::Config {
+            command: ConfigCommand::SteamworksClient { path: Some(p), .. },
+        } if !p.trim().is_empty() && !p.trim_start().starts_with('~') => {
+            *p = user_path_str(std::mem::take(p).trim().to_string());
+        }
         _ => {}
     }
 }
