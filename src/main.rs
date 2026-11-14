@@ -487,6 +487,7 @@ async fn run(mut cli: Cli) -> Result<()> {
             platform,
             steam_mode,
             steam_install,
+            no_ticket_check,
             launch_option,
             no_update,
             skip_shaders,
@@ -496,6 +497,7 @@ async fn run(mut cli: Cli) -> Result<()> {
                 platform,
                 steam_mode,
                 steam_install,
+                no_ticket_check,
                 launch_option,
                 extra_args: Vec::new(),
             };
@@ -632,6 +634,7 @@ async fn run(mut cli: Cli) -> Result<()> {
                 cloud_write,
                 workshop_publish,
                 steam_install,
+                ticket_check,
                 yes,
             } => {
                 cmd_config_steamworks_client(
@@ -639,6 +642,7 @@ async fn run(mut cli: Cli) -> Result<()> {
                         mode,
                         path,
                         steam_install,
+                        ticket_check,
                         stats_writes,
                         allow,
                         disallow,

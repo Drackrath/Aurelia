@@ -252,6 +252,9 @@ pub(crate) enum Command {
         /// Stand-in Steam install, this launch.
         #[arg(long, value_name = "host|in-wine|auto")]
         steam_install: Option<StandInInstallArg>,
+        /// Launch even without a Steam ticket.
+        #[arg(long)]
+        no_ticket_check: bool,
         /// Start this entry from `aurelia launch-options`, by its id, instead of
         /// the default one.
         #[arg(long, value_name = "ID")]
@@ -695,6 +698,16 @@ pub(crate) enum ConfigCommand {
                 Steam. `auto` (default): in-wine if installed, else host."
         )]
         steam_install: Option<StandInInstallArg>,
+        /// Refuse launches without a ticket.
+        #[arg(
+            long,
+            value_name = "on|off",
+            long_help = "Before a stand-in launch, report the game as playing and ask \
+                Steam for its app ownership ticket; refuse the launch when Steam issues \
+                none (default on). Turn off for games that run without Steam auth, or \
+                use `play --no-ticket-check` once."
+        )]
+        ticket_check: Option<OnOffArg>,
         /// Let games write stats and achievements.
         #[arg(
             long,

@@ -134,6 +134,9 @@ pub struct UserAppConfig {
     /// Per-game stand-in install override.
     #[serde(default)]
     pub stand_in_steam_install: Option<StandInSteamInstall>,
+    /// Skip the ownership ticket check.
+    #[serde(default)]
+    pub skip_ticket_check: bool,
     #[serde(default)]
     pub steam_launch_config: SteamLaunchConfig,
     #[serde(default)]

@@ -121,6 +121,7 @@ pub(crate) async fn cmd_join(args: JoinArgs, json: bool) -> Result<()> {
         platform: None,
         steam_mode: None,
         steam_install: None,
+        no_ticket_check: false,
         launch_option: None,
         extra_args: launch_args(&target),
     };

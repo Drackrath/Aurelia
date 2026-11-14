@@ -19,6 +19,8 @@ pub(crate) struct PlayTarget {
     pub(crate) steam_mode: Option<SteamModeArg>,
     /// Stand-in Steam install override.
     pub(crate) steam_install: Option<StandInInstallArg>,
+    /// Skip the ticket check once.
+    pub(crate) no_ticket_check: bool,
     pub(crate) launch_option: Option<String>,
     /// Appended to the game's arguments.
     pub(crate) extra_args: Vec<String>,
@@ -487,6 +489,11 @@ pub(crate) async fn cmd_play(
     let mut user_config = user_configs.get(&app_id).cloned();
     if let Some(mode) = target.steam_mode {
         apply_steam_mode(user_config.get_or_insert_with(Default::default), mode);
+    }
+    if target.no_ticket_check {
+        user_config
+            .get_or_insert_with(Default::default)
+            .skip_ticket_check = true;
     }
     if let Some(install) = target.steam_install {
         user_config
