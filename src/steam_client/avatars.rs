@@ -119,21 +119,26 @@ pub async fn fetch_avatar(hex: &str, size: AvatarSize) -> Result<Arc<Avatar>> {
     if let Some(hit) = cached(hex, size) {
         return Ok(hit);
     }
-    let http = crate::core::net::http_client(Duration::from_secs(15))?;
-    let response = http
-        .get(avatar_url(hex, size))
-        .send()
-        .await
-        .context("avatar download failed")?
-        .error_for_status()
-        .context("avatar download failed")?;
-    let bytes = response.bytes().await.context("avatar download failed")?;
-    if bytes.len() > MAX_BYTES {
-        bail!("avatar is {} bytes", bytes.len());
-    }
-    let avatar = Arc::new(tokio::task::spawn_blocking(move || decode_jpeg(&bytes)).await??);
+    let avatar = Arc::new(download_jpeg(&avatar_url(hex, size)).await?);
     remember(hex, size, Arc::clone(&avatar));
     Ok(avatar)
+}
+
+/// Downloads and decodes one JPEG.
+pub async fn download_jpeg(url: &str) -> Result<Avatar> {
+    let http = crate::core::net::http_client(Duration::from_secs(15))?;
+    let response = http
+        .get(url)
+        .send()
+        .await
+        .context("image download failed")?
+        .error_for_status()
+        .context("image download failed")?;
+    let bytes = response.bytes().await.context("image download failed")?;
+    if bytes.len() > MAX_BYTES {
+        bail!("image is {} bytes", bytes.len());
+    }
+    tokio::task::spawn_blocking(move || decode_jpeg(&bytes)).await?
 }
 
 #[cfg(test)]

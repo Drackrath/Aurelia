@@ -542,6 +542,7 @@ mod client;
 pub use client::CodeReader;
 pub mod binary_kv;
 mod friends;
+pub mod global_stats;
 mod install;
 mod market;
 pub mod microtxn;
@@ -1270,7 +1271,7 @@ async fn update_libraryfolders_for(from_lib: &Path, to_lib: &Path, appid: u32, i
 
 /// Build the full Steam Community CDN URL for an achievement icon hash. Returns
 /// it unchanged if it's already a URL, and empty for an empty hash.
-fn achievement_icon_url(appid: u32, icon: &str) -> String {
+pub(crate) fn achievement_icon_url(appid: u32, icon: &str) -> String {
     if icon.is_empty() {
         String::new()
     } else if icon.starts_with("http") {

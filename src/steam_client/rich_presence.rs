@@ -27,9 +27,9 @@ pub fn decode_kv(bytes: &[u8]) -> Option<Vec<(String, String)>> {
 
 /// Message sent with a routing app.
 #[derive(Debug)]
-struct AppRouted<M> {
-    msg: M,
-    app_id: u32,
+pub(crate) struct AppRouted<M> {
+    pub(crate) msg: M,
+    pub(crate) app_id: u32,
 }
 
 impl<M: RpcMessageWithKind + Send> EncodableMessage for AppRouted<M> {

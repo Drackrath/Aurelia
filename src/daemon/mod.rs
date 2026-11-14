@@ -18,6 +18,7 @@ mod server;
 mod steamworks;
 pub use steamworks::JoinTarget;
 mod steamworks_lobbies;
+mod steamworks_stats;
 mod transport;
 
 use std::sync::Arc;
