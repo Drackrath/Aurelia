@@ -19,6 +19,10 @@ use aurelia::steam_client::steamworks_info::{AppInstallInfo, DlcInfo};
 use aurelia::steam_client::{EncryptedTicketOutcome, SteamClient};
 
 use super::proto::{self, SharedWriter};
+use super::steamworks_lobbies as lobby;
+use aurelia::steam_client::lobbies::{
+    JoinedLobby, LobbyEvent, LobbyFilter, LobbyState, LobbyUpdate,
+};
 
 /// Bumped on incompatible changes.
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -113,7 +117,6 @@ impl<'a> Fields<'a> {
             .map(|b| i32::from_le_bytes(b.try_into().unwrap()))
     }
 
-    #[cfg(test)]
     pub fn u64(&mut self) -> Option<u64> {
         self.take(8)
             .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
@@ -335,6 +338,46 @@ pub trait Backend: Send + Sync + 'static {
         steam_id: u64,
         app_id: u32,
     ) -> impl Future<Output = Result<RemoteStorageInfo>> + Send;
+    /// Lobby calls; see `steam_client::lobbies`.
+    fn create_lobby(
+        &self,
+        app_id: u32,
+        lobby_type: i32,
+        max: i32,
+    ) -> impl Future<Output = Result<(i32, u64)>> + Send;
+    fn join_lobby(
+        &self,
+        app_id: u32,
+        lobby: u64,
+    ) -> impl Future<Output = Result<JoinedLobby>> + Send;
+    fn leave_lobby(&self, app_id: u32, lobby: u64) -> impl Future<Output = Result<i32>> + Send;
+    fn lobby_list(
+        &self,
+        app_id: u32,
+        count: i32,
+        filters: Vec<LobbyFilter>,
+    ) -> impl Future<Output = Result<(i32, Vec<LobbyState>)>> + Send;
+    fn set_lobby_data(
+        &self,
+        app_id: u32,
+        update: LobbyUpdate,
+    ) -> impl Future<Output = Result<()>> + Send;
+    fn send_lobby_chat(
+        &self,
+        app_id: u32,
+        lobby: u64,
+        message: Vec<u8>,
+    ) -> impl Future<Output = Result<()>> + Send;
+    fn request_lobby_data(
+        &self,
+        app_id: u32,
+        lobby: u64,
+    ) -> impl Future<Output = Result<()>> + Send;
+    /// Lobby pushes for this app.
+    fn lobby_events(
+        &self,
+        app_id: u32,
+    ) -> impl Future<Output = Option<mpsc::UnboundedReceiver<LobbyEvent>>> + Send;
 }
 
 /// Routes pushes to owning connections.
@@ -386,6 +429,8 @@ struct Conn<B> {
     /// Offline account; cache-only answers.
     offline: Option<u64>,
     owned: Mutex<HashSet<u32>>,
+    /// Lobbies to leave on disconnect.
+    lobbies: Mutex<HashSet<u64>>,
     push_tx: mpsc::UnboundedSender<Vec<u8>>,
 }
 
@@ -474,8 +519,22 @@ where
         app_id: hello.app_id,
         offline,
         owned: Mutex::new(HashSet::new()),
+        lobbies: Mutex::new(HashSet::new()),
         push_tx,
     });
+    let lobby_pump = match offline {
+        Some(_) => None,
+        None => conn.backend.lobby_events(hello.app_id).await.map(|mut rx| {
+            let tx = conn.push_tx.clone();
+            tokio::spawn(async move {
+                while let Some(event) = rx.recv().await {
+                    if tx.send(lobby::event_payload(&event)).is_err() {
+                        break;
+                    }
+                }
+            })
+        }),
+    };
     let push_writer = writer.clone();
     let pusher = tokio::spawn(async move {
         while let Some(payload) = push_rx.recv().await {
@@ -515,6 +574,15 @@ where
     tasks.shutdown().await;
     frames.abort();
     pusher.abort();
+    if let Some(pump) = lobby_pump {
+        pump.abort();
+    }
+    let joined: Vec<u64> = conn.lobbies.lock().unwrap().drain().collect();
+    for lobby in joined {
+        if let Err(e) = conn.backend.leave_lobby(hello.app_id, lobby).await {
+            tracing::warn!(lobby, "steamworks: lobby leave failed: {e:#}");
+        }
+    }
     let owned: Vec<u32> = conn.owned.lock().unwrap().drain().collect();
     for handle in owned {
         conn.router.unregister(handle);
@@ -569,6 +637,12 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
         let mut body = vec![u8::from(steam_id.is_some())];
         body.extend_from_slice(&steam_id.unwrap_or(0).to_le_bytes());
         return (status::OK, body);
+    }
+    if lobby::cmd::is_lobby(req.command) {
+        if conn.offline.is_some() || steam_id.is_none() {
+            return (status::NO_SESSION, b"not logged in".to_vec());
+        }
+        return answer_lobby(conn, app_id, req.command, &req.body).await;
     }
     if !matches!(
         req.command,
@@ -663,6 +737,83 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
                 Err(e) => failed(&e),
             }
         }
+    }
+}
+
+/// Lobby command answers.
+async fn answer_lobby<B: Backend>(
+    conn: &Conn<B>,
+    app_id: u32,
+    command: u8,
+    body: &[u8],
+) -> (u8, Vec<u8>) {
+    let malformed = || (status::MALFORMED, b"malformed lobby request".to_vec());
+    let b = &conn.backend;
+    let result = match command {
+        lobby::cmd::CREATE => {
+            let Some((ty, max)) = lobby::parse_create(body) else {
+                return malformed();
+            };
+            b.create_lobby(app_id, ty, max).await.map(|(eresult, id)| {
+                if eresult == 1 {
+                    conn.lobbies.lock().unwrap().insert(id);
+                }
+                lobby::created_body(eresult, id)
+            })
+        }
+        lobby::cmd::JOIN => {
+            let Some(id) = lobby::parse_lobby(body) else {
+                return malformed();
+            };
+            b.join_lobby(app_id, id).await.map(|j| {
+                // Enter response 1 is success.
+                if j.enter_response == 1 {
+                    conn.lobbies.lock().unwrap().insert(id);
+                }
+                lobby::joined_body(j.enter_response, &j.state)
+            })
+        }
+        lobby::cmd::LIST => {
+            let Some((count, filters)) = lobby::parse_list(body) else {
+                return malformed();
+            };
+            b.lobby_list(app_id, count, filters)
+                .await
+                .map(|(eresult, list)| lobby::list_body(eresult, &list))
+        }
+        lobby::cmd::LEAVE => {
+            let Some(id) = lobby::parse_lobby(body) else {
+                return malformed();
+            };
+            conn.lobbies.lock().unwrap().remove(&id);
+            b.leave_lobby(app_id, id)
+                .await
+                .map(|eresult| eresult.to_le_bytes().to_vec())
+        }
+        lobby::cmd::SET_DATA => {
+            let Some(update) = lobby::parse_update(body) else {
+                return malformed();
+            };
+            b.set_lobby_data(app_id, update).await.map(|()| Vec::new())
+        }
+        lobby::cmd::CHAT => {
+            let Some((id, message)) = lobby::parse_chat(body) else {
+                return malformed();
+            };
+            b.send_lobby_chat(app_id, id, message)
+                .await
+                .map(|()| Vec::new())
+        }
+        _ => {
+            let Some(id) = lobby::parse_lobby(body) else {
+                return malformed();
+            };
+            b.request_lobby_data(app_id, id).await.map(|()| Vec::new())
+        }
+    };
+    match result {
+        Ok(body) => (status::OK, body),
+        Err(e) => failed(&e),
     }
 }
 
@@ -764,6 +915,50 @@ impl Backend for DaemonBackend {
             info.language = Some(crate::commands::common::resolve_steam_language(None).await);
         }
         Ok(info)
+    }
+
+    async fn create_lobby(&self, app_id: u32, lobby_type: i32, max: i32) -> Result<(i32, u64)> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        client.create_lobby(app_id, lobby_type, max).await
+    }
+
+    async fn join_lobby(&self, app_id: u32, lobby: u64) -> Result<JoinedLobby> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        client.join_lobby(app_id, lobby).await
+    }
+
+    async fn leave_lobby(&self, app_id: u32, lobby: u64) -> Result<i32> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        client.leave_lobby(app_id, lobby).await
+    }
+
+    async fn lobby_list(
+        &self,
+        app_id: u32,
+        count: i32,
+        filters: Vec<LobbyFilter>,
+    ) -> Result<(i32, Vec<LobbyState>)> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        client.lobby_list(app_id, count, &filters).await
+    }
+
+    async fn set_lobby_data(&self, app_id: u32, update: LobbyUpdate) -> Result<()> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        client.set_lobby_data(app_id, &update).await
+    }
+
+    async fn send_lobby_chat(&self, app_id: u32, lobby: u64, message: Vec<u8>) -> Result<()> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        client.send_lobby_chat(app_id, lobby, message).await
+    }
+
+    async fn request_lobby_data(&self, app_id: u32, lobby: u64) -> Result<()> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        client.request_lobby_data(app_id, lobby).await
+    }
+
+    async fn lobby_events(&self, app_id: u32) -> Option<mpsc::UnboundedReceiver<LobbyEvent>> {
+        authed_client().await?.lobby_events(app_id).ok()
     }
 
     async fn session_info(&self) -> Result<(u32, String)> {

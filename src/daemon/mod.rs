@@ -16,6 +16,7 @@ pub mod client;
 mod proto;
 mod server;
 mod steamworks;
+mod steamworks_lobbies;
 mod transport;
 
 use std::sync::Arc;

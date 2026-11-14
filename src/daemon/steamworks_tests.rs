@@ -13,6 +13,9 @@ struct Fake {
     events: Mutex<Vec<TicketAuthEvent>>,
     offline_id: Option<u64>,
     cached: HashMap<u32, Vec<u8>>,
+    left: Mutex<Vec<u64>>,
+    lobby_tx: Mutex<Option<mpsc::UnboundedSender<LobbyEvent>>>,
+    lobby_calls: Mutex<Vec<String>>,
 }
 
 const SID: u64 = 76_561_197_960_287_930;
@@ -150,6 +153,69 @@ impl Backend for Fake {
             writable: false,
             remote_dir: format!("/cloud/{steam_id}/{app_id}/remote").into(),
         })
+    }
+
+    async fn create_lobby(&self, _app: u32, lobby_type: i32, max: i32) -> Result<(i32, u64)> {
+        self.lobby_calls
+            .lock()
+            .unwrap()
+            .push(format!("create {lobby_type} {max}"));
+        Ok((1, LOBBY))
+    }
+
+    async fn join_lobby(&self, _app: u32, lobby: u64) -> Result<JoinedLobby> {
+        if lobby != LOBBY {
+            bail!("no such lobby");
+        }
+        Ok(JoinedLobby {
+            enter_response: 1,
+            state: sample_lobby(),
+        })
+    }
+
+    async fn leave_lobby(&self, _app: u32, lobby: u64) -> Result<i32> {
+        self.left.lock().unwrap().push(lobby);
+        Ok(1)
+    }
+
+    async fn lobby_list(
+        &self,
+        _app: u32,
+        count: i32,
+        filters: Vec<LobbyFilter>,
+    ) -> Result<(i32, Vec<LobbyState>)> {
+        self.lobby_calls
+            .lock()
+            .unwrap()
+            .push(format!("list {count} {filters:?}"));
+        Ok((1, vec![sample_lobby()]))
+    }
+
+    async fn set_lobby_data(&self, _app: u32, update: LobbyUpdate) -> Result<()> {
+        self.lobby_calls.lock().unwrap().push(format!("{update:?}"));
+        Ok(())
+    }
+
+    async fn send_lobby_chat(&self, _app: u32, lobby: u64, message: Vec<u8>) -> Result<()> {
+        self.lobby_calls
+            .lock()
+            .unwrap()
+            .push(format!("chat {lobby} {message:?}"));
+        Ok(())
+    }
+
+    async fn request_lobby_data(&self, _app: u32, lobby: u64) -> Result<()> {
+        self.lobby_calls
+            .lock()
+            .unwrap()
+            .push(format!("request {lobby}"));
+        Ok(())
+    }
+
+    async fn lobby_events(&self, _app: u32) -> Option<mpsc::UnboundedReceiver<LobbyEvent>> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        *self.lobby_tx.lock().unwrap() = Some(tx);
+        Some(rx)
     }
 }
 
@@ -692,6 +758,116 @@ async fn cloud_info_round_trip() {
     game.hang_up().await;
 }
 
+const LOBBY: u64 = 109_775_240_000_000_001;
+
+fn sample_lobby() -> LobbyState {
+    LobbyState {
+        lobby: LOBBY,
+        owner: SID,
+        max_members: 4,
+        lobby_type: 2,
+        flags: 0,
+        num_members: 1,
+        metadata: vec![("mode".into(), "ctf".into())],
+        members: vec![aurelia::steam_client::lobbies::LobbyMember {
+            steam_id: SID,
+            name: "Owner".into(),
+            metadata: Vec::new(),
+        }],
+    }
+}
+
+#[tokio::test]
+async fn lobby_create_join_list_and_leave_on_disconnect() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router, hello(480), None).await;
+    let mut body = 2i32.to_le_bytes().to_vec();
+    body.extend_from_slice(&4i32.to_le_bytes());
+    let (code, reply) = game.ask(1, lobby::cmd::CREATE, &body).await;
+    assert_eq!(code, status::OK);
+    assert_eq!(reply, lobby::created_body(1, LOBBY));
+
+    let (code, reply) = game.ask(2, lobby::cmd::JOIN, &LOBBY.to_le_bytes()).await;
+    assert_eq!(code, status::OK);
+    assert_eq!(reply, lobby::joined_body(1, &sample_lobby()));
+    let (code, _) = game.ask(3, lobby::cmd::JOIN, &5u64.to_le_bytes()).await;
+    assert_eq!(code, status::FAILED);
+
+    let mut list = 10i32.to_le_bytes().to_vec();
+    list.extend_from_slice(&1u32.to_le_bytes());
+    put_blob(&mut list, b"mode");
+    put_blob(&mut list, b"ctf");
+    list.extend_from_slice(&0i32.to_le_bytes());
+    list.extend_from_slice(&0i32.to_le_bytes());
+    let (code, reply) = game.ask(4, lobby::cmd::LIST, &list).await;
+    assert_eq!(code, status::OK);
+    assert_eq!(reply, lobby::list_body(1, &[sample_lobby()]));
+    assert_eq!(
+        game.ask(5, lobby::cmd::LIST, &[1]).await.0,
+        status::MALFORMED
+    );
+    game.hang_up().await;
+    assert_eq!(*fake.left.lock().unwrap(), vec![LOBBY]);
+    let calls = fake.lobby_calls.lock().unwrap().join("|");
+    assert!(calls.contains("create 2 4"), "{calls}");
+    assert!(calls.contains("list 10"), "{calls}");
+}
+
+#[tokio::test]
+async fn lobby_data_chat_and_pushes() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router, hello(480), None).await;
+    let mut update = LOBBY.to_le_bytes().to_vec();
+    update.extend_from_slice(&SID.to_le_bytes());
+    for v in [4i32, 2, 0] {
+        update.extend_from_slice(&v.to_le_bytes());
+    }
+    lobby::put_metadata(&mut update, &vec![("ready".into(), "1".into())]);
+    assert_eq!(
+        game.ask(1, lobby::cmd::SET_DATA, &update).await.0,
+        status::OK
+    );
+    let mut chat = LOBBY.to_le_bytes().to_vec();
+    chat.extend_from_slice(b"hi");
+    assert_eq!(game.ask(2, lobby::cmd::CHAT, &chat).await.0, status::OK);
+    let req = game
+        .ask(3, lobby::cmd::REQUEST_DATA, &LOBBY.to_le_bytes())
+        .await;
+    assert_eq!(req.0, status::OK);
+    let calls = fake.lobby_calls.lock().unwrap().join("|");
+    assert!(calls.contains("member: 76561197960287930"), "{calls}");
+    assert!(
+        calls.contains("chat 109775240000000001 [104, 105]"),
+        "{calls}"
+    );
+
+    let event = LobbyEvent::Chat {
+        lobby: LOBBY,
+        sender: SID,
+        message: b"yo".to_vec(),
+    };
+    let tx = fake.lobby_tx.lock().unwrap().clone().unwrap();
+    tx.send(event.clone()).unwrap();
+    let (kind, payload) = game.next().await;
+    assert_eq!(kind, proto::C_SW_PUSH);
+    assert_eq!(payload, lobby::event_payload(&event));
+    game.hang_up().await;
+    assert!(fake.left.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn lobbies_need_a_session() {
+    let fake = offline(&[(480, vec![0xCC])]);
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router, hello(480), None).await;
+    let (code, _) = game.ask(1, lobby::cmd::JOIN, &LOBBY.to_le_bytes()).await;
+    assert_eq!(code, status::NO_SESSION);
+    assert!(fake.lobby_tx.lock().unwrap().is_none());
+    game.hang_up().await;
+}
+
 #[test]
 fn cloud_info_golden_bytes() {
     let info = RemoteStorageInfo {
@@ -700,4 +876,32 @@ fn cloud_info_golden_bytes() {
         remote_dir: "/r".into(),
     };
     assert_eq!(cloud_info_body(&info), [3, 2, 0, 0, 0, b'/', b'r']);
+}
+
+#[test]
+fn lobby_push_golden_bytes() {
+    let left = LobbyEvent::Left { lobby: 1, user: 2 };
+    assert_eq!(
+        lobby::event_payload(&left),
+        [62, 1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0]
+    );
+    let state = LobbyState {
+        lobby: 1,
+        owner: 2,
+        max_members: 3,
+        lobby_type: 2,
+        flags: 0,
+        num_members: 0,
+        metadata: vec![("k".into(), "v".into())],
+        members: Vec::new(),
+    };
+    let mut out = Vec::new();
+    lobby::put_state(&mut out, &state);
+    assert_eq!(
+        out,
+        [
+            1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, b'k', 1, 0, 0, 0, b'v', 0, 0, 0, 0
+        ]
+    );
 }
