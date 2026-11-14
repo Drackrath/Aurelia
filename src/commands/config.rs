@@ -390,6 +390,7 @@ pub(crate) struct SteamworksClientArgs {
     pub allow: Option<u32>,
     pub disallow: Option<u32>,
     pub cloud_write: Option<OnOffArg>,
+    pub workshop_publish: Option<OnOffArg>,
     pub yes: bool,
 }
 
@@ -421,6 +422,7 @@ pub(crate) async fn cmd_config_steamworks_client(
         allow,
         disallow,
         cloud_write,
+        workshop_publish,
         ..
     } = args;
     let any = mode.is_some()
@@ -428,11 +430,20 @@ pub(crate) async fn cmd_config_steamworks_client(
         || stats_writes.is_some()
         || allow.is_some()
         || disallow.is_some()
-        || cloud_write.is_some();
-    let change = any.then_some((mode, path, stats_writes, allow, disallow, cloud_write));
+        || cloud_write.is_some()
+        || workshop_publish.is_some();
+    let change = any.then_some((
+        mode,
+        path,
+        stats_writes,
+        allow,
+        disallow,
+        cloud_write,
+        workshop_publish,
+    ));
     let (config, changed) = view_or_set(
         change,
-        |c, (mode, path, writes, allow, disallow, cloud_write)| {
+        |c, (mode, path, writes, allow, disallow, cloud_write, publish)| {
             if let Some(mode) = mode {
                 c.steamworks_client = matches!(mode, OnOffArg::On);
             }
@@ -454,6 +465,9 @@ pub(crate) async fn cmd_config_steamworks_client(
             if let Some(cloud_write) = cloud_write {
                 c.steamworks_cloud_write = matches!(cloud_write, OnOffArg::On);
             }
+            if let Some(publish) = publish {
+                c.steamworks_workshop_publish = matches!(publish, OnOffArg::On);
+            }
         },
     )
     .await?;
@@ -470,6 +484,7 @@ pub(crate) async fn cmd_config_steamworks_client(
             "steamworks_allowed_protected": config.steamworks_allowed_protected,
             "steamworks_cloud_write": config.steamworks_cloud_write,
             "steamworks_stats_writes": config.steamworks_stats_writes,
+            "steamworks_workshop_publish": config.steamworks_workshop_publish,
         }));
         return Ok(());
     }
@@ -488,6 +503,12 @@ pub(crate) async fn cmd_config_steamworks_client(
         "off (games read stats only)"
     };
     cli_println!("Stats writes: {writes}");
+    let publish = if config.steamworks_workshop_publish {
+        "on (games may create and edit Workshop items)"
+    } else {
+        "off"
+    };
+    cli_println!("Workshop publishing: {publish}");
     if !config.steamworks_allowed_protected.is_empty() {
         let ids: Vec<String> = config
             .steamworks_allowed_protected

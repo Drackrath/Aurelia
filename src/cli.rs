@@ -706,6 +706,16 @@ pub(crate) enum ConfigCommand {
                 sync. Turning it on asks for confirmation."
         )]
         cloud_write: Option<OnOffArg>,
+        /// Let games publish Workshop items.
+        #[arg(
+            long,
+            value_name = "on|off",
+            long_help = "Let stand-in games create Workshop items and change their \
+                title, description, visibility and tags (ISteamUGC CreateItem, \
+                SubmitItemUpdate). Off by default. Content and preview uploads are \
+                not supported either way."
+        )]
+        workshop_publish: Option<OnOffArg>,
         /// Skip the confirmation prompt.
         #[arg(short = 'y', long)]
         yes: bool,
