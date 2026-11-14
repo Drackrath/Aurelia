@@ -611,3 +611,54 @@ fn remote_files_skip_symlinks() {
         .remote_files();
     assert_eq!(found, vec![("real.sav".to_string(), root.join("real.sav"))]);
 }
+
+/// T-193: downloads stay inside.
+#[test]
+fn remote_root_paths_refuse_links() {
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("remote");
+    std::fs::create_dir_all(&root).unwrap();
+    let outside = dir.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    symlink(&outside, root.join("saves")).unwrap();
+    symlink(outside.join("victim"), root.join("cfg.ini")).unwrap();
+    let resolver = CloudPathResolver::new(root.clone(), None);
+    for name in ["saves/slot1.sav", "cfg.ini"] {
+        let err = resolver.resolve(name).unwrap_err();
+        assert!(format!("{err:#}").contains("symlink"), "{name}: {err:#}");
+    }
+    assert_eq!(resolver.resolve("new.sav").unwrap(), root.join("new.sav"));
+    assert!(resolver.is_remote(&root.join("new.sav")));
+    assert!(!resolver.is_remote(&outside.join("x")));
+    assert_eq!(
+        first_link_below(&root, &root.join("saves/slot1.sav")),
+        Some(root.join("saves"))
+    );
+    assert_eq!(first_link_below(&root, &root.join("new.sav")), None);
+}
+
+#[test]
+fn fresh_writes_never_follow_links() {
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    let victim = dir.path().join("victim");
+    std::fs::write(&victim, b"keep").unwrap();
+    // Link at the target: replaced.
+    let target = dir.path().join("save.sav");
+    symlink(&victim, &target).unwrap();
+    write_fresh(&target, b"data").unwrap();
+    assert!(
+        !std::fs::symlink_metadata(&target)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(std::fs::read(&target).unwrap(), b"data");
+    // Planted temp link: not followed.
+    let other = dir.path().join("other.sav");
+    symlink(&victim, dir.path().join("other.sav.aurelia-tmp")).unwrap();
+    write_fresh(&other, b"x").unwrap();
+    assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
+    assert_eq!(std::fs::read(&other).unwrap(), b"x");
+}
