@@ -644,22 +644,136 @@ mod prefix_shim {
     const STEAM: &str = "drive_c/Program Files (x86)/Steam";
 
     #[test]
-    fn prefix_follows_compat_data_then_wineprefix() {
+    fn every_existing_prefix_is_checked_once() {
         let dir = tempfile::tempdir().unwrap();
         let compat = dir.path().join("compat");
-        std::fs::create_dir_all(compat.join("pfx")).unwrap();
+        std::fs::create_dir_all(compat.join("pfx/drive_c")).unwrap();
+        let master = dir.path().join("master/pfx");
+        std::fs::create_dir_all(master.join("drive_c")).unwrap();
         let mut env = HashMap::new();
-        env.insert(
-            "WINEPREFIX".into(),
-            dir.path().to_string_lossy().into_owned(),
-        );
-        assert_eq!(game_prefix(&env), Some(dir.path().to_path_buf()));
         env.insert(
             "STEAM_COMPAT_DATA_PATH".into(),
             compat.to_string_lossy().into_owned(),
         );
-        assert_eq!(game_prefix(&env), Some(compat.join("pfx")));
-        assert_eq!(game_prefix(&HashMap::new()), None);
+        env.insert("WINEPREFIX".into(), master.to_string_lossy().into_owned());
+        let real = |p: &Path| p.canonicalize().unwrap();
+        assert_eq!(
+            game_prefixes(&env),
+            vec![real(&compat.join("pfx")), real(&master)]
+        );
+        // umu: pfx links to itself.
+        std::os::unix::fs::symlink(".", master.join("pfx")).unwrap();
+        env.insert(
+            "STEAM_COMPAT_DATA_PATH".into(),
+            master.to_string_lossy().into_owned(),
+        );
+        assert_eq!(game_prefixes(&env), vec![real(&master)]);
+        // Dirs without drive_c are not prefixes.
+        env.insert(
+            "WINEPREFIX".into(),
+            dir.path().to_string_lossy().into_owned(),
+        );
+        env.remove("STEAM_COMPAT_DATA_PATH");
+        assert!(game_prefixes(&env).is_empty());
+    }
+
+    /// Live VRChat setup, T-181.
+    #[test]
+    fn shared_master_prefix_with_symlinked_legacycompat() {
+        let dir = tempfile::tempdir().unwrap();
+        // Host Steam: legacycompat symlinks.
+        let host = dir.path().join("Steam");
+        write(&host.join("steamclient64.dll"), "valve 64");
+        write(&host.join("steamclient.dll"), "valve 32");
+        std::fs::create_dir_all(host.join("legacycompat")).unwrap();
+        for name in ["steamclient64.dll", "steamclient.dll"] {
+            std::os::unix::fs::symlink(format!("../{name}"), host.join("legacycompat").join(name))
+                .unwrap();
+        }
+        // Master prefix with in-Wine Steam.
+        let master = dir.path().join("master_steam_prefix/pfx");
+        let steam = master.join(STEAM);
+        for name in [
+            "steamclient64.dll",
+            "steamclient64_aurelia.dll",
+            "steamclient.dll",
+        ] {
+            write(&steam.join(name), "in-wine steam");
+        }
+        // Per-game compatdata pfx exists, empty.
+        let compat = dir.path().join("library/steamapps/compatdata/438100");
+        std::fs::create_dir_all(compat.join("pfx/drive_c")).unwrap();
+        let mut env = HashMap::new();
+        env.insert(
+            "STEAM_COMPAT_DATA_PATH".into(),
+            compat.to_string_lossy().into_owned(),
+        );
+        env.insert("WINEPREFIX".into(), master.to_string_lossy().into_owned());
+
+        let (binds, notes) = plan_dll_binds(&env, Some(&host), None, false);
+        let steam = steam.canonicalize().unwrap();
+        let v64 = host.join("steamclient64.dll").canonicalize().unwrap();
+        let v32 = host.join("steamclient.dll").canonicalize().unwrap();
+        assert_eq!(
+            binds,
+            vec![
+                (v64.clone(), steam.join("steamclient64.dll")),
+                (v64, steam.join("steamclient64_aurelia.dll")),
+                (v32, steam.join("steamclient.dll")),
+            ]
+        );
+        let shadowed = notes.iter().filter(|n| n.contains("shadowed by")).count();
+        assert_eq!(shadowed, 3, "{notes:?}");
+        // Empty compat pfx: missing, said so.
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.contains("438100") && n.contains("missing")),
+            "{notes:?}"
+        );
+
+        // Override: runner lsteamclient instead.
+        let runner = dir.path().join("Proton");
+        write(
+            &runner.join("files/lib/wine/x86_64-windows/lsteamclient.dll"),
+            "b64",
+        );
+        let (binds, _) = plan_dll_binds(&env, Some(&host), Some(&runner), true);
+        assert_eq!(binds.len(), 2, "{binds:?}");
+        assert!(
+            binds
+                .iter()
+                .all(|(src, _)| src.ends_with("lsteamclient.dll"))
+        );
+    }
+
+    #[test]
+    fn identical_copies_are_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefix = dir.path().join("pfx");
+        write(&prefix.join(STEAM).join("steamclient64.dll"), "valve 64");
+        let shim = dir.path().join("shim.dll");
+        write(&shim, "valve 64");
+        let (binds, notes) = prefix_dll_plan(&prefix, &[Some(shim), None]);
+        assert!(binds.is_empty());
+        assert!(
+            notes.iter().any(|n| n.contains("already is the shim")),
+            "{notes:?}"
+        );
+    }
+
+    #[test]
+    fn skipped_shadowing_says_why() {
+        let dir = tempfile::tempdir().unwrap();
+        let (binds, notes) = plan_dll_binds(&HashMap::new(), None, None, false);
+        assert!(binds.is_empty());
+        assert_eq!(notes.len(), 1);
+        assert!(
+            notes[0].contains("no prefix steamclient DLL shadowed"),
+            "{notes:?}"
+        );
+        assert!(notes[0].contains("prefixes: none found"), "{notes:?}");
+        let _ = dir;
     }
 
     #[test]

@@ -78,17 +78,67 @@ pub struct OverlayPlan {
 /// Steam folder inside a Wine prefix.
 const PREFIX_STEAM_DIR: &str = "drive_c/Program Files (x86)/Steam";
 
-/// Prefix Proton runs the game in.
-pub fn game_prefix(env: &std::collections::HashMap<String, String>) -> Option<PathBuf> {
-    let compat = env
-        .get("STEAM_COMPAT_DATA_PATH")
-        .map(|p| Path::new(p).join("pfx"))
-        .filter(|p| p.is_dir());
-    compat.or_else(|| {
-        env.get("WINEPREFIX")
-            .map(PathBuf::from)
-            .filter(|p| p.is_dir())
-    })
+/// Proton or umu prefixes, existing.
+pub fn game_prefixes(env: &std::collections::HashMap<String, String>) -> Vec<PathBuf> {
+    let compat = env.get("STEAM_COMPAT_DATA_PATH").map(PathBuf::from);
+    let candidates = [
+        compat.as_ref().map(|c| c.join("pfx")),
+        compat,
+        env.get("WINEPREFIX").map(PathBuf::from),
+    ];
+    let mut out: Vec<PathBuf> = Vec::new();
+    for prefix in candidates.into_iter().flatten() {
+        if !prefix.join("drive_c").is_dir() {
+            continue;
+        }
+        // Same prefix via symlinks once.
+        let real = prefix.canonicalize().unwrap_or(prefix);
+        if !out.contains(&real) {
+            out.push(real);
+        }
+    }
+    out
+}
+
+/// Env override: `valve` or `lsteamclient`.
+pub const SHIM_ENV: &str = "AURELIA_STAND_IN_SHIM";
+
+/// Shadow binds plus a log line.
+pub fn plan_dll_binds(
+    env: &std::collections::HashMap<String, String>,
+    host_steam: Option<&Path>,
+    runner: Option<&Path>,
+    only_builtin: bool,
+) -> (Vec<(PathBuf, PathBuf)>, Vec<String>) {
+    let host = if only_builtin { None } else { host_steam };
+    let shims = shim_sources(host, runner);
+    let prefixes = game_prefixes(env);
+    let mut binds = Vec::new();
+    let mut notes = Vec::new();
+    for prefix in &prefixes {
+        let (b, n) = prefix_dll_plan(prefix, &shims);
+        binds.extend(b);
+        notes.extend(n);
+    }
+    if binds.is_empty() {
+        let shown = |p: &Option<PathBuf>| {
+            p.as_ref()
+                .map_or("none".to_string(), |p| p.display().to_string())
+        };
+        let checked: Vec<String> = prefixes.iter().map(|p| p.display().to_string()).collect();
+        notes.push(format!(
+            "stand-in: no prefix steamclient DLL shadowed (prefixes: {}; shim 64-bit: {}, \
+             32-bit: {}; only existing files that differ from the shim are shadowed)",
+            if checked.is_empty() {
+                "none found".to_string()
+            } else {
+                checked.join(", ")
+            },
+            shown(&shims[0]),
+            shown(&shims[1]),
+        ));
+    }
+    (binds, notes)
 }
 
 /// Proton root from env or argv.
@@ -126,22 +176,59 @@ pub fn shim_sources(host_steam: Option<&Path>, runner: Option<&Path>) -> [Option
 
 /// Prefix DLLs to shadow, existing only.
 pub fn prefix_dll_binds(prefix: &Path, shims: &[Option<PathBuf>; 2]) -> Vec<(PathBuf, PathBuf)> {
+    prefix_dll_plan(prefix, shims).0
+}
+
+/// Same bytes as the shim.
+fn same_content(a: &Path, b: &Path) -> bool {
+    let size = |p: &Path| std::fs::metadata(p).map(|m| m.len()).ok();
+    size(a).is_some() && size(a) == size(b) && std::fs::read(a).ok() == std::fs::read(b).ok()
+}
+
+/// Binds for one prefix, with reasons.
+pub fn prefix_dll_plan(
+    prefix: &Path,
+    shims: &[Option<PathBuf>; 2],
+) -> (Vec<(PathBuf, PathBuf)>, Vec<String>) {
     let steam = prefix.join(PREFIX_STEAM_DIR);
     let targets: [(&str, &Option<PathBuf>); 3] = [
         ("steamclient64.dll", &shims[0]),
         ("steamclient64_aurelia.dll", &shims[0]),
         ("steamclient.dll", &shims[1]),
     ];
-    targets
-        .into_iter()
-        .filter_map(|(name, shim)| {
-            let target = steam.join(name);
+    let mut binds = Vec::new();
+    let mut notes = Vec::new();
+    for (name, shim) in targets {
+        let target = steam.join(name);
+        let Some(shim) = shim else {
+            notes.push(format!("stand-in: no shim for {}", target.display()));
+            continue;
+        };
+        if !target.is_file() {
             // Never create files on disk.
-            let shim = shim.as_ref()?;
-            (target.is_file() && target.canonicalize().ok() != shim.canonicalize().ok())
-                .then(|| (shim.clone(), target))
-        })
-        .collect()
+            if name != "steamclient64_aurelia.dll" {
+                notes.push(format!(
+                    "stand-in: {} missing, not shadowed",
+                    target.display()
+                ));
+            }
+            continue;
+        }
+        if target.canonicalize().ok() == shim.canonicalize().ok() || same_content(&target, shim) {
+            notes.push(format!(
+                "stand-in: {} already is the shim",
+                target.display()
+            ));
+            continue;
+        }
+        notes.push(format!(
+            "stand-in: {} shadowed by {} for this launch",
+            target.display(),
+            shim.display()
+        ));
+        binds.push((shim.clone(), target));
+    }
+    (binds, notes)
 }
 
 /// Default stand-in install directory.
@@ -453,19 +540,16 @@ pub fn plan_for(
             .with_source(e.into())
         })?;
     }
-    let dll_binds = game_prefix(&spec.env)
-        .map(|prefix| {
-            let host = crate::core::config::detect_steam_path();
-            let shims = shim_sources(host.as_deref(), runner_root(spec).as_deref());
-            prefix_dll_binds(&prefix, &shims)
-        })
-        .unwrap_or_default();
-    for (src, target) in &dll_binds {
-        tracing::info!(
-            "stand-in: {} shadowed by {} for this launch",
-            target.display(),
-            src.display()
-        );
+    let only_builtin = std::env::var(SHIM_ENV).is_ok_and(|v| v.trim() == "lsteamclient");
+    let host = crate::core::config::detect_steam_path();
+    let (dll_binds, notes) = plan_dll_binds(
+        &spec.env,
+        host.as_deref(),
+        runner_root(spec).as_deref(),
+        only_builtin,
+    );
+    for note in notes {
+        tracing::warn!("{note}");
     }
     Ok(OverlayPlan {
         bwrap,
