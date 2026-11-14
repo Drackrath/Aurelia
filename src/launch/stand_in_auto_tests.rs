@@ -2,8 +2,8 @@ use super::*;
 
 fn config(on: bool, auto: bool) -> LauncherConfig {
     LauncherConfig {
-        steamworks_client: on,
-        steamworks_client_auto: auto,
+        aureliaworks: on,
+        aureliaworks_auto: auto,
         ..LauncherConfig::default()
     }
 }
@@ -54,19 +54,19 @@ fn apply_sets_the_launch_flag_only() {
         apply(&mut cfg, || false, |_| Library::Ready),
         Choice::StandIn
     );
-    assert!(cfg.steamworks_client && cfg.steamworks_client_auto);
+    assert!(cfg.aureliaworks && cfg.aureliaworks_auto);
     let mut cfg = config(false, true);
     let got = apply(&mut cfg, || true, |_| Library::Ready);
     assert_eq!(got, Choice::SteamRunning);
-    assert!(!cfg.steamworks_client);
+    assert!(!cfg.aureliaworks);
     let mut cfg = config(true, false);
     assert_eq!(apply(&mut cfg, || true, |_| Library::Missing), Choice::On);
-    assert!(cfg.steamworks_client);
+    assert!(cfg.aureliaworks);
     // Bad hash: normal launch.
     let mut cfg = config(false, true);
     let got = apply(&mut cfg, || false, |_| Library::Unverified);
     assert_eq!(got, Choice::Unverified);
-    assert!(!cfg.steamworks_client);
+    assert!(!cfg.aureliaworks);
 }
 
 #[test]
@@ -93,18 +93,18 @@ fn old_configs_without_auto_still_load() {
     let old: LauncherConfig = serde_json::from_str(r#"{"steamworks_client": true}"#)
         .or_else(|_| toml_like_default())
         .unwrap();
-    assert!(old.steamworks_client);
-    assert!(!old.steamworks_client_auto);
+    assert!(old.aureliaworks);
+    assert!(!old.aureliaworks_auto);
 }
 
 /// Fallback when JSON lacks required keys.
 fn toml_like_default() -> Result<LauncherConfig, serde_json::Error> {
     let mut value = serde_json::to_value(LauncherConfig::default())?;
-    value["steamworks_client"] = serde_json::Value::Bool(true);
-    value
-        .as_object_mut()
-        .unwrap()
-        .remove("steamworks_client_auto");
+    let obj = value.as_object_mut().unwrap();
+    // Old key only, as before.
+    obj.remove("aureliaworks");
+    obj.remove("aureliaworks_auto");
+    obj.insert("steamworks_client".into(), serde_json::Value::Bool(true));
     serde_json::from_value(value)
 }
 
@@ -115,7 +115,7 @@ fn installed_checks_the_recorded_hash() {
     let dir = tempfile::tempdir().unwrap();
     let lib = dir.path().join("sdk64/steamclient.so");
     let cfg = LauncherConfig {
-        steamworks_client_path: Some(dir.path().to_string_lossy().into_owned()),
+        aureliaworks_path: Some(dir.path().to_string_lossy().into_owned()),
         ..LauncherConfig::default()
     };
     assert_eq!(installed(&cfg), Library::Missing);

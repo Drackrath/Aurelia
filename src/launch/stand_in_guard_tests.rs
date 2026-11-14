@@ -4,7 +4,7 @@ use crate::launch::stand_in_guard::*;
 
 fn stand_in_on() -> LauncherConfig {
     LauncherConfig {
-        steamworks_client: true,
+        aureliaworks: true,
         ..Default::default()
     }
 }
@@ -35,7 +35,7 @@ fn protected_game_is_refused_unless_allowed() {
         evaluate(10, vec![Protection::Vac], &config),
         Verdict::Refused(vec![Protection::Vac])
     );
-    config.steamworks_allowed_protected = vec![10];
+    config.aureliaworks_allowed_protected = vec![10];
     assert_eq!(
         evaluate(10, vec![Protection::Vac], &config),
         Verdict::Allowed(vec![Protection::Vac])
@@ -81,7 +81,7 @@ fn refusal_names_ban_risk_and_way_out() {
     assert!(msg.contains("ban your real Steam account"));
     assert!(msg.contains("unmodified"));
     assert!(msg.contains("--allow 730"));
-    assert!(msg.contains("steamworks-client off"));
+    assert!(msg.contains("aureliaworks off"));
 }
 
 #[test]
@@ -143,19 +143,19 @@ fn guard_drops_the_stand_in_for_refused_games() {
     // Protected, not allowed: off.
     let mut cfg = stand_in_on();
     assert!(apply_to_config(&mut cfg, 730, vec![Protection::Vac]));
-    assert!(!cfg.steamworks_client);
+    assert!(!cfg.aureliaworks);
     // Allowed or clean: stays on.
     let mut cfg = stand_in_on();
-    cfg.steamworks_allowed_protected.push(730);
+    cfg.aureliaworks_allowed_protected.push(730);
     assert!(!apply_to_config(&mut cfg, 730, vec![Protection::Vac]));
-    assert!(cfg.steamworks_client);
+    assert!(cfg.aureliaworks);
     let mut cfg = stand_in_on();
     assert!(!apply_to_config(&mut cfg, 480, Vec::new()));
-    assert!(cfg.steamworks_client);
+    assert!(cfg.aureliaworks);
     // Unknown categories fail closed.
     let mut cfg = stand_in_on();
     assert!(apply_to_config(&mut cfg, 480, protections(None, &[])));
-    assert!(!cfg.steamworks_client);
+    assert!(!cfg.aureliaworks);
 }
 
 /// T-183/T-185: Cloud follows the launch.
@@ -166,7 +166,7 @@ fn refused_auto_game_uses_the_compat_prefix() {
     std::fs::create_dir_all(master.join("drive_c/Program Files (x86)/Steam")).unwrap();
     let compat = dir.path().join("lib/steamapps/compatdata/730/pfx");
     let mut cfg = LauncherConfig {
-        steamworks_client_auto: true,
+        aureliaworks_auto: true,
         ..LauncherConfig::default()
     };
     crate::launch::stand_in_auto::apply(
@@ -174,7 +174,7 @@ fn refused_auto_game_uses_the_compat_prefix() {
         || false,
         |_| crate::launch::stand_in_auto::Library::Ready,
     );
-    assert!(cfg.steamworks_client);
+    assert!(cfg.aureliaworks);
     let before = crate::core::utils::stand_in_save_prefix(&cfg, None, &compat, None, &master);
     assert_eq!(before, Some(master.clone()));
     apply_to_config(&mut cfg, 730, vec![Protection::EasyAntiCheat]);

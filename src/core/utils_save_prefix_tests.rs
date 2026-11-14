@@ -76,8 +76,8 @@ mod stand_in {
 
     fn on(install: StandInSteamInstall) -> crate::core::config::LauncherConfig {
         crate::core::config::LauncherConfig {
-            steamworks_client: true,
-            steamworks_steam_install: install,
+            aureliaworks: true,
+            aureliaworks_steam_install: install,
             ..Default::default()
         }
     }

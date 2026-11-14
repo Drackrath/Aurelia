@@ -213,7 +213,7 @@ fn wrap_command_execs_original_after_wrapper() {
     let sep = wrapped.args.iter().position(|a| a == "--").unwrap();
     let tail = &wrapped.args[sep + 1..];
     assert_eq!(&tail[..2], ["/bin/sh", "-c"]);
-    assert_eq!(tail[3], "aurelia-steamworks");
+    assert_eq!(tail[3], "aureliaworks");
     assert_eq!(tail[4], "/home/u/.steam");
     assert!(tail[5].ends_with("\"pid\"\t\t\""));
     assert!(tail[6].contains("\"ActiveUser\"\t\t\"7\""));
@@ -283,11 +283,11 @@ fn only_native_and_proton_runners_supported() {
 #[test]
 fn stand_in_is_off_by_default() {
     let mut config = LauncherConfig::default();
-    assert!(!config.steamworks_client);
+    assert!(!config.aureliaworks);
     assert!(!crate::infra::runners::wine_tkg::stand_in_client_active(
         &config
     ));
-    config.steamworks_client = true;
+    config.aureliaworks = true;
     assert!(crate::infra::runners::wine_tkg::stand_in_client_active(
         &config
     ));
@@ -307,8 +307,8 @@ fn plan_refuses_a_changed_library() {
     record_hash(&so);
     write(&so, "swapped");
     let config = LauncherConfig {
-        steamworks_client: true,
-        steamworks_client_path: Some(dir.path().join("lib").to_string_lossy().into()),
+        aureliaworks: true,
+        aureliaworks_path: Some(dir.path().join("lib").to_string_lossy().into()),
         ..Default::default()
     };
     let mut s = spec("/g", &[]);
@@ -352,8 +352,8 @@ fn libraries_are_bound_read_only() {
 fn plan_fails_closed_without_library() {
     let dir = tempfile::tempdir().unwrap();
     let config = LauncherConfig {
-        steamworks_client: true,
-        steamworks_client_path: Some(dir.path().join("missing").to_string_lossy().into()),
+        aureliaworks: true,
+        aureliaworks_path: Some(dir.path().join("missing").to_string_lossy().into()),
         ..Default::default()
     };
     let mut s = spec("/g", &[]);
@@ -378,8 +378,8 @@ fn plan_uses_spec_home_and_mirrors_it() {
     write(&home.join(".steam/registry.vdf"), "real");
     std::os::unix::fs::symlink("/data/Steam", home.join(".steam/root")).unwrap();
     let config = LauncherConfig {
-        steamworks_client: true,
-        steamworks_client_path: Some(dir.path().join("lib").to_string_lossy().into()),
+        aureliaworks: true,
+        aureliaworks_path: Some(dir.path().join("lib").to_string_lossy().into()),
         ..Default::default()
     };
     let mut s = spec("/g", &[]);
@@ -410,8 +410,8 @@ fn plan_creates_only_empty_mount_point() {
     write(&so, "stand-in");
     record_hash(&so);
     let config = LauncherConfig {
-        steamworks_client: true,
-        steamworks_client_path: Some(so.to_string_lossy().into()),
+        aureliaworks: true,
+        aureliaworks_path: Some(so.to_string_lossy().into()),
         ..Default::default()
     };
     let home = dir.path().join("home");
@@ -476,7 +476,7 @@ fn overlay_runs_under_bwrap_without_touching_real_dir() {
                   grep -q \"\\\"pid\\\".*\\\"$$\\\"\" \"$s/registry.vdf\" && echo reg-ok; \
                   cat \"$s/root/marker\" \"$s/keep/file\"; echo; echo \"$SteamAppId\"; \
                   [ -S \"$AURELIA_DAEMON_SOCKET\" ] && echo sock-ok; \
-                  echo '[aurelia-steamworks] missing interface: X1' >> \"$AURELIA_STEAMWORKS_LOG\"";
+                  echo '[aureliaworks] missing interface: X1' >> \"$AURELIAWORKS_LOG\"";
     let mut original = spec("/bin/sh", &["-c", script]);
     original.cwd = Some(dir.path().to_path_buf());
     original
@@ -548,14 +548,14 @@ fn no_socket_leaves_env_alone() {
 }
 
 const SAMPLE_LOG: &str = "\
-[aurelia-steamworks] missing interface: SteamFoo001
-[aurelia-steamworks] unimplemented: SteamUser021::GetSteamID (slot 2) returns 0
-[aurelia-steamworks] game reports missing interface: SteamBar002 (pipe 1)
-[aurelia-steamworks] game reports missing interface: SteamFoo001 (pipe 1)
-[aurelia-steamworks] game created SteamNetworkingSockets012: no Steam Datagram Relay, P2P only over direct or ICE paths, so its multiplayer may not connect
-[aurelia-steamworks] game created SteamNetworkingSockets012: no Steam Datagram Relay, P2P only over direct or ICE paths, so its multiplayer may not connect
-[aurelia-steamworks] game created SteamNetworking006: Steam networking (SDR and P2P) is not supported yet, so its multiplayer may not connect
-[aurelia-steamworks] game created a lobby: not an interface line
+[aureliaworks] missing interface: SteamFoo001
+[aureliaworks] unimplemented: SteamUser021::GetSteamID (slot 2) returns 0
+[aureliaworks] game reports missing interface: SteamBar002 (pipe 1)
+[aureliaworks] game reports missing interface: SteamFoo001 (pipe 1)
+[aureliaworks] game created SteamNetworkingSockets012: no Steam Datagram Relay, P2P only over direct or ICE paths, so its multiplayer may not connect
+[aureliaworks] game created SteamNetworkingSockets012: no Steam Datagram Relay, P2P only over direct or ICE paths, so its multiplayer may not connect
+[aureliaworks] game created SteamNetworking006: Steam networking (SDR and P2P) is not supported yet, so its multiplayer may not connect
+[aureliaworks] game created a lobby: not an interface line
 missing interface: NotOurs001
 ";
 
@@ -571,7 +571,7 @@ fn summary_dedupes_missing_and_networking() {
 
 #[test]
 fn networking_lines_match_current_and_old_wording() {
-    // Current aurelia-steamworks iface.rs text.
+    // Current aureliaworks iface.rs text.
     let now = "game created SteamNetworkingMessages002: no Steam Datagram Relay, P2P only over direct or ICE paths, so its multiplayer may not connect";
     assert_eq!(networking_version(now), Some("SteamNetworkingMessages002"));
     let old =
@@ -593,7 +593,7 @@ fn summary_lines_name_log_path() {
 
 #[test]
 fn quiet_log_has_no_summary() {
-    let summary = summarize_log("[aurelia-steamworks] unimplemented: A::b (slot 1) x\n");
+    let summary = summarize_log("[aureliaworks] unimplemented: A::b (slot 1) x\n");
     assert!(summary.is_empty());
     assert!(summary.lines(Path::new("/l")).is_empty());
     assert!(summarize_log_file(Path::new("/nonexistent/aurelia/steamworks.log"), true).is_empty());
@@ -636,7 +636,7 @@ mod stand_in_mode {
 
     fn stand_in(on: bool) -> LauncherConfig {
         LauncherConfig {
-            steamworks_client: on,
+            aureliaworks: on,
             // Global runtime must not win.
             steam_runtime_policy: SteamRuntimePolicy::Enabled,
             ..LauncherConfig::default()
@@ -1049,9 +1049,21 @@ mod prefix_shim {
 }
 
 /// Requires the cross-repo marker check.
-const STRICT_ENV: &str = "AURELIA_STEAMWORKS_STRICT";
-/// Explicit aurelia-steamworks checkout.
-const DIR_ENV: &str = "AURELIA_STEAMWORKS_DIR";
+const STRICT_ENV: &str = "AURELIAWORKS_STRICT";
+/// Explicit aureliaworks checkout.
+const DIR_ENV: &str = "AURELIAWORKS_DIR";
+/// Pre-rename names, still read.
+const OLD_STRICT_ENV: &str = "AURELIA_STEAMWORKS_STRICT";
+const OLD_DIR_ENV: &str = "AURELIA_STEAMWORKS_DIR";
+
+/// New name, else deprecated one.
+fn env_either(new: &str, old: &str) -> Option<std::ffi::OsString> {
+    std::env::var_os(new).or_else(|| {
+        let value = std::env::var_os(old)?;
+        eprintln!("{old} is deprecated; set {new}");
+        Some(value)
+    })
+}
 
 /// Checkout to compare, or why not.
 ///
@@ -1073,7 +1085,7 @@ fn pick_checkout(
     match siblings.iter().find(|d| valid(d)) {
         Some(dir) => Ok(Some(dir.clone())),
         None if strict => Err(format!(
-            "{STRICT_ENV} is set but no aurelia-steamworks checkout was found; set {DIR_ENV}"
+            "{STRICT_ENV} is set but no aureliaworks checkout was found; set {DIR_ENV}"
         )),
         None => Ok(None),
     }
@@ -1081,12 +1093,15 @@ fn pick_checkout(
 
 /// Stand-in checkout next to Aurelia.
 fn steamworks_checkout(strict: bool) -> Result<Option<PathBuf>, String> {
-    let explicit = std::env::var_os(DIR_ENV)
+    let explicit = env_either(DIR_ENV, OLD_DIR_ENV)
         .filter(|v| !v.is_empty())
         .map(PathBuf::from);
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     // Main checkout or `.worktrees/<name>`.
     let siblings = [
+        manifest.join("../aureliaworks"),
+        manifest.join("../../aureliaworks"),
+        // Until the folder moves.
         manifest.join("../aurelia-steamworks"),
         manifest.join("../../aurelia-steamworks"),
     ];
@@ -1094,7 +1109,7 @@ fn steamworks_checkout(strict: bool) -> Result<Option<PathBuf>, String> {
 }
 
 fn strict_markers() -> bool {
-    std::env::var(STRICT_ENV).is_ok_and(|v| v == "1")
+    env_either(STRICT_ENV, OLD_STRICT_ENV).is_some_and(|v| v == "1")
 }
 
 /// Values of `pub const` strings.
@@ -1119,7 +1134,7 @@ fn markers_match_the_stand_in() {
     let dir = match steamworks_checkout(strict) {
         Ok(Some(dir)) => dir,
         Ok(None) => {
-            eprintln!("aurelia-steamworks checkout not found; set {DIR_ENV} (and {STRICT_ENV}=1)");
+            eprintln!("aureliaworks checkout not found; set {DIR_ENV} (and {STRICT_ENV}=1)");
             return;
         }
         Err(why) => panic!("{why}"),
@@ -1183,9 +1198,9 @@ fn refused_tickets_and_borrowed_line() {
     let log = dir.path().join("steamworks.log");
     std::fs::write(
         &log,
-        "[aurelia-steamworks] ticket ownership: ok\n\
-         [aurelia-steamworks] ticket ownership: refused (empty or invalid ticket)\n\
-         [aurelia-steamworks] ticket encrypted app: refused (EResult 15)\n",
+        "[aureliaworks] ticket ownership: ok\n\
+         [aureliaworks] ticket ownership: refused (empty or invalid ticket)\n\
+         [aureliaworks] ticket encrypted app: refused (EResult 15)\n",
     )
     .unwrap();
     let lines = summarize_log_file(&log, true);
@@ -1196,6 +1211,56 @@ fn refused_tickets_and_borrowed_line() {
     let own = summarize_log_file(&log, false);
     assert!(!own.contains(&BORROWED_REFUSED.to_string()));
     // All fine: nothing to say.
-    std::fs::write(&log, "[aurelia-steamworks] ticket web api: ok\n").unwrap();
+    std::fs::write(&log, "[aureliaworks] ticket web api: ok\n").unwrap();
     assert!(summarize_log_file(&log, true).is_empty());
+}
+
+#[test]
+fn old_stand_in_folder_moves_once() {
+    let base = tempfile::tempdir().unwrap();
+    let old = base.path().join(OLD_CLIENT_DIR);
+    std::fs::create_dir_all(old.join("sdk64")).unwrap();
+    std::fs::write(old.join("sdk64/steamclient.so"), b"lib").unwrap();
+    std::fs::write(old.join("sdk64/steamclient.so.sha256"), b"abc\n").unwrap();
+    let new = migrate_client_dir(base.path());
+    assert_eq!(new, base.path().join(CLIENT_DIR));
+    assert!(!old.exists());
+    assert_eq!(
+        std::fs::read(new.join("sdk64/steamclient.so")).unwrap(),
+        b"lib"
+    );
+    assert_eq!(
+        std::fs::read_to_string(new.join("sdk64/steamclient.so.sha256")).unwrap(),
+        "abc\n",
+        "hash kept"
+    );
+    // Both present: leave the old one.
+    std::fs::create_dir_all(&old).unwrap();
+    assert_eq!(migrate_client_dir(base.path()), new);
+    assert!(old.exists());
+}
+
+#[test]
+fn old_default_path_setting_is_remapped() {
+    let base = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(base.path().join(OLD_CLIENT_DIR)).unwrap();
+    let custom = base
+        .path()
+        .join(OLD_CLIENT_DIR)
+        .join("sdk64/steamclient.so");
+    assert_eq!(
+        remap_old_dir(&custom, base.path()),
+        base.path().join(CLIENT_DIR).join("sdk64/steamclient.so")
+    );
+    assert!(base.path().join(CLIENT_DIR).is_dir(), "moved on use");
+    let elsewhere = Path::new("/opt/lib.so");
+    assert_eq!(remap_old_dir(elsewhere, base.path()), elsewhere);
+}
+
+#[test]
+fn log_env_sets_new_and_old_names() {
+    let mut env = HashMap::new();
+    add_log_path(&mut env, Path::new("/logs/s/steamworks.log"));
+    assert_eq!(env[LOG_ENV], "/logs/s/steamworks.log");
+    assert_eq!(env[OLD_LOG_ENV], "/logs/s/steamworks.log");
 }

@@ -2241,7 +2241,7 @@ pub fn stand_in_save_prefix(
 ) -> Option<PathBuf> {
     use crate::core::models::SteamRuntimePolicy;
     use crate::launch::stand_in_install as si;
-    if !cfg!(target_os = "linux") || !config.steamworks_client {
+    if !cfg!(target_os = "linux") || !config.aureliaworks {
         return None;
     }
     // Explicit Steam modes skip the stand-in.
@@ -2252,7 +2252,7 @@ pub fn stand_in_save_prefix(
     }
     let compat = proton_prefix.parent()?;
     let install = si::choose(
-        config.steamworks_steam_install,
+        config.aureliaworks_steam_install,
         user_config.and_then(|c| c.stand_in_steam_install),
         host_root,
         master_prefix,

@@ -1,4 +1,4 @@
-//! `steamworks-client auto` per-launch choice.
+//! `aureliaworks auto` per-launch choice.
 
 use crate::core::config::LauncherConfig;
 
@@ -43,12 +43,12 @@ impl Choice {
             }
             Self::NotInstalled => Some(
                 "Valve Steam: no stand-in library installed (aurelia config \
-                 steamworks-client --path ...)",
+                 aureliaworks --path ...)",
             ),
             Self::Unverified => Some(
                 "Valve Steam: the stand-in library has no recorded hash or changed since \
                  it was installed, so this launch uses the normal way; reinstall it with \
-                 `aurelia config steamworks-client --path ...`",
+                 `aurelia config aureliaworks --path ...`",
             ),
             Self::Off | Self::On => None,
         }
@@ -61,10 +61,10 @@ pub fn decide(
     steam_running: impl FnOnce() -> bool,
     installed: impl FnOnce() -> Library,
 ) -> Choice {
-    if config.steamworks_client {
+    if config.aureliaworks {
         return Choice::On;
     }
-    if !config.steamworks_client_auto {
+    if !config.aureliaworks_auto {
         return Choice::Off;
     }
     if steam_running() {
@@ -86,20 +86,15 @@ pub fn apply(
     let snapshot = config.clone();
     let choice = decide(&snapshot, steam_running, || installed(&snapshot));
     // In memory only, never saved.
-    config.steamworks_client = choice.uses_stand_in();
+    config.aureliaworks = choice.uses_stand_in();
     choice
 }
 
 /// Stand-in libraries present and verified.
 #[cfg(target_os = "linux")]
 pub fn installed(config: &LauncherConfig) -> Library {
-    use crate::launch::steamworks_overlay::{default_client_dir, resolve_client_libs};
-    let libs = config
-        .steamworks_client_path
-        .as_deref()
-        .map(std::path::PathBuf::from)
-        .or_else(default_client_dir)
-        .and_then(|dir| resolve_client_libs(&dir).ok());
+    use crate::launch::steamworks_overlay::{configured_client_dir, resolve_client_libs};
+    let libs = configured_client_dir(config).and_then(|dir| resolve_client_libs(&dir).ok());
     let Some(libs) = libs else {
         return Library::Missing;
     };

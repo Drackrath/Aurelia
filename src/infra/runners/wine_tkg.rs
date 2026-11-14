@@ -117,7 +117,7 @@ fn stand_in_install(
     }
     let master = crate::core::utils::get_master_steam_config().wine_prefix;
     let install = si::choose(
-        ctx.launcher_config.steamworks_steam_install,
+        ctx.launcher_config.aureliaworks_steam_install,
         ctx.user_config
             .as_ref()
             .and_then(|c| c.stand_in_steam_install),
@@ -1301,7 +1301,7 @@ fn resolve_steam_mode(ctx: &LaunchContext) -> (SteamMode, &'static str) {
 
 /// Stand-in steamclient.so replaces lsteamclient's target.
 pub fn stand_in_client_active(config: &crate::core::config::LauncherConfig) -> bool {
-    cfg!(target_os = "linux") && config.steamworks_client
+    cfg!(target_os = "linux") && config.aureliaworks
 }
 
 /// [`resolve_steam_mode`] without a launch context.

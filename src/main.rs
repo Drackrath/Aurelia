@@ -68,6 +68,12 @@ fn main() {
 ///
 /// `kill` and `daemon stop|list` manage local OS processes directly and must likewise
 /// never forward to (or auto-spawn) the daemon they may be about to terminate.
+/// Old `config steamworks-client` spelling used.
+pub(crate) fn deprecated_command_used(argv: &[String]) -> bool {
+    argv.windows(2)
+        .any(|w| w[0] == "config" && w[1] == "steamworks-client")
+}
+
 fn must_run_locally(cli: &Cli) -> bool {
     let interactive_login = !cli.json
         && matches!(
@@ -155,6 +161,11 @@ async fn async_main() {
         aurelia::infra::logging::init_daemon_logging(cli.verbose);
     } else {
         aurelia::infra::logging::init_cli_logging(cli.verbose);
+    }
+
+    let argv: Vec<String> = std::env::args().collect();
+    if deprecated_command_used(&argv) {
+        tracing::warn!("`aurelia config steamworks-client` is now `aurelia config aureliaworks`");
     }
 
     // Bare `aurelia daemon`: become the shared-session server. Never forwards.
@@ -316,7 +327,7 @@ pub(crate) fn absolutize_path_args(command: &mut Command) {
         } => proton(runner),
         // "" clears; `~` expands later.
         Command::Config {
-            command: ConfigCommand::SteamworksClient { path: Some(p), .. },
+            command: ConfigCommand::Aureliaworks { path: Some(p), .. },
         } if !p.trim().is_empty() && !p.trim_start().starts_with('~') => {
             *p = user_path_str(std::mem::take(p).trim().to_string());
         }
@@ -625,7 +636,7 @@ async fn run(mut cli: Cli) -> Result<()> {
             ConfigCommand::HideUninstalledLaunchOptions { mode } => {
                 cmd_config_hide_uninstalled_launch_options(mode, json).await
             }
-            ConfigCommand::SteamworksClient {
+            ConfigCommand::Aureliaworks {
                 mode,
                 path,
                 stats_writes,
@@ -637,8 +648,8 @@ async fn run(mut cli: Cli) -> Result<()> {
                 ticket_check,
                 yes,
             } => {
-                cmd_config_steamworks_client(
-                    SteamworksClientArgs {
+                cmd_config_aureliaworks(
+                    AureliaworksArgs {
                         mode,
                         path,
                         steam_install,

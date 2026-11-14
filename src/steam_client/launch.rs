@@ -347,7 +347,10 @@ impl SteamClient {
 
         // No ticket: refuse, don't hang.
         let skip_check = user_config.is_some_and(|c| c.skip_ticket_check);
-        if stand_in && launcher_config.steamworks_ticket_check && !skip_check && !self.is_offline()
+        if stand_in
+            && launcher_config.aureliaworks_ticket_check
+            && !skip_check
+            && !self.is_offline()
         {
             super::ticket_check::check_ticket(self, app.app_id, &app.name).await?;
         } else if stand_in && !self.is_offline() {
@@ -355,7 +358,7 @@ impl SteamClient {
             let why = if skip_check {
                 "--no-ticket-check"
             } else {
-                "aurelia config steamworks-client --ticket-check off"
+                "aurelia config aureliaworks --ticket-check off"
             };
             tracing::warn!(appid = app.app_id, "stand-in: ticket check skipped ({why})");
         }
@@ -859,8 +862,8 @@ fn guard_stand_in(
             Ok(())
         }
         // Auto: normal launch instead.
-        Verdict::Refused(found) if config.steamworks_client_auto => {
-            config.steamworks_client = false;
+        Verdict::Refused(found) if config.aureliaworks_auto => {
+            config.aureliaworks = false;
             let labels = guard::labels(&found);
             let note =
                 crate::launch::stand_in_auto::refused_fallback_note(app.app_id, &app.name, &labels);

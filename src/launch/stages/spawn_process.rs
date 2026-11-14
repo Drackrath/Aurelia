@@ -130,16 +130,16 @@ async fn apply_steamworks_overlay(ctx: &mut PipelineContext) -> Result<(), Launc
     let Some(config) = ctx.launcher_config.as_ref() else {
         return Ok(());
     };
-    if !config.steamworks_client {
+    if !config.aureliaworks {
         return Ok(());
     }
     let runner = ctx.runner.as_ref().map(|r| r.name().to_string());
     let (Some(runner), Some(spec)) = (runner, ctx.command_spec.as_ref()) else {
-        tracing::warn!("steamworks_client is on, but this launch path has no overlay");
+        tracing::warn!("aureliaworks is on, but this launch path has no overlay");
         return Ok(());
     };
     if !overlay::runner_supported(&runner) {
-        tracing::warn!("steamworks_client is on, but runner {runner} has no overlay");
+        tracing::warn!("aureliaworks is on, but runner {runner} has no overlay");
         return Ok(());
     }
     let account_id = crate::core::config::load_session()

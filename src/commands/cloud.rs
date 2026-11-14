@@ -39,7 +39,7 @@ pub(crate) async fn cmd_cloud_sync(
         aurelia::launch::stand_in_auto::installed,
     );
     // Guard too, like play_game.
-    if launcher_config.steamworks_client {
+    if launcher_config.aureliaworks {
         use aurelia::launch::stand_in_guard as guard;
         let categories = client
             .get_product_info_and_categories(app_id)

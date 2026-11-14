@@ -59,7 +59,7 @@ pub fn protections(category_ids: Option<&[u32]>, anticheats: &[AntiCheat]) -> Ve
 pub fn evaluate(app_id: u32, found: Vec<Protection>, config: &LauncherConfig) -> Verdict {
     if found.is_empty() {
         Verdict::Clear
-    } else if config.steamworks_allowed_protected.contains(&app_id) {
+    } else if config.aureliaworks_allowed_protected.contains(&app_id) {
         Verdict::Allowed(found)
     } else {
         Verdict::Refused(found)
@@ -83,14 +83,14 @@ pub fn apply_to_config(config: &mut LauncherConfig, app_id: u32, found: Vec<Prot
     }
     let refused = matches!(evaluate(app_id, found, config), Verdict::Refused(_));
     if refused {
-        config.steamworks_client = false;
+        config.aureliaworks = false;
     }
     refused
 }
 
 /// Whether this launch uses the stand-in.
 pub fn stand_in_applies(config: &LauncherConfig, app_id: u32, force_native_engine: bool) -> bool {
-    if !cfg!(target_os = "linux") || !config.steamworks_client || force_native_engine {
+    if !cfg!(target_os = "linux") || !config.aureliaworks || force_native_engine {
         return false;
     }
     let luxtorpeda = config.luxtorpeda_enabled
@@ -122,8 +122,8 @@ pub fn refusal_message(app_id: u32, name: &str, found: &[Protection]) -> String 
     format!(
         "Refusing to launch {name} ({app_id}) with the stand-in steamclient.so: it uses \
          {}. {RISK_TEXT} Play it with Valve's Steam client, turn the stand-in off \
-         (`aurelia config steamworks-client off`), or allow it for this game at your own \
-         risk (`aurelia config steamworks-client --allow {app_id}`).",
+         (`aurelia config aureliaworks off`), or allow it for this game at your own \
+         risk (`aurelia config aureliaworks --allow {app_id}`).",
         labels(found)
     )
 }

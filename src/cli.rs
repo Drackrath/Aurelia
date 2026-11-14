@@ -670,7 +670,9 @@ pub(crate) enum ConfigCommand {
         private mount namespace (bubblewrap) where `~/.steam/sdk64/steamclient.so` \
         is Aurelia's stand-in, which answers Steamworks calls through the daemon. \
         The real `~/.steam` is never written. Experimental.")]
-    SteamworksClient {
+    // Old name kept hidden.
+    #[command(alias = "steamworks-client")]
+    Aureliaworks {
         /// on, off or auto; omit prints.
         mode: Option<StandInModeArg>,
         /// Install a built stand-in library.
@@ -680,7 +682,7 @@ pub(crate) enum ConfigCommand {
             long_help = "Install a built stand-in into Aurelia's own directory. \
                 PATH is a libsteamclient.so of any name (its ELF header picks \
                 sdk64 or sdk32), a directory with sdk64/steamclient.so and \
-                sdk32/steamclient.so, or an aurelia-steamworks checkout or its \
+                sdk32/steamclient.so, or an aureliaworks checkout or its \
                 target directory (both architectures are taken when built). \
                 The file must export CreateInterface. It is copied, so later \
                 rebuilds need --path again. Does not turn the stand-in on. \
@@ -1366,7 +1368,7 @@ impl From<StandInInstallArg> for aurelia::core::models::StandInSteamInstall {
     }
 }
 
-/// `steamworks-client` modes.
+/// `aureliaworks` modes.
 #[derive(Clone, Copy, ValueEnum)]
 pub(crate) enum StandInModeArg {
     /// Always use the stand-in.

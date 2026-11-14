@@ -1741,7 +1741,7 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
         }
         cmd::UGC_CREATE | cmd::UGC_UPDATE if !conn.backend.workshop_publishing().await => (
             status::FAILED,
-            b"Workshop publishing is off (aurelia config steamworks-client --workshop-publish on)"
+            b"Workshop publishing is off (aurelia config aureliaworks --workshop-publish on)"
                 .to_vec(),
         ),
         cmd::UGC_CREATE => {
@@ -2508,7 +2508,7 @@ impl Backend for DaemonBackend {
     async fn workshop_publishing(&self) -> bool {
         aurelia::core::config::load_launcher_config()
             .await
-            .is_ok_and(|c| c.steamworks_workshop_publish)
+            .is_ok_and(|c| c.aureliaworks_workshop_publish)
     }
 
     async fn ugc_create(&self, app_id: u32, file_type: u32) -> Result<u64> {
@@ -2568,7 +2568,7 @@ impl Backend for DaemonBackend {
     async fn stats_writes(&self) -> bool {
         aurelia::core::config::load_launcher_config()
             .await
-            .is_ok_and(|c| c.steamworks_stats_writes)
+            .is_ok_and(|c| c.aureliaworks_stats_writes)
     }
 
     async fn store_stats(
