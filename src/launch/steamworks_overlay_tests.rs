@@ -762,6 +762,72 @@ mod prefix_shim {
         );
     }
 
+    /// T-182 modes: env from layouts.
+    #[test]
+    fn host_mode_leaves_proton_prefix_alone_in_wine_shadows() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = dir.path().join("Steam");
+        write(&host.join("steamclient64.dll"), "valve 64");
+        std::fs::create_dir_all(host.join("legacycompat")).unwrap();
+        std::os::unix::fs::symlink(
+            "../steamclient64.dll",
+            host.join("legacycompat/steamclient64.dll"),
+        )
+        .unwrap();
+        // Host mode: Proton refreshes copies.
+        let compat = dir.path().join("compatdata/438100");
+        write(
+            &compat.join("pfx").join(STEAM).join("steamclient64.dll"),
+            "old valve",
+        );
+        let mut env = HashMap::new();
+        env.insert(
+            "STEAM_COMPAT_DATA_PATH".into(),
+            compat.to_string_lossy().into_owned(),
+        );
+        env.insert(
+            "WINEPREFIX".into(),
+            compat.join("pfx").to_string_lossy().into_owned(),
+        );
+        env.insert(
+            "STEAM_COMPAT_CLIENT_INSTALL_PATH".into(),
+            host.to_string_lossy().into_owned(),
+        );
+        let (binds, notes) = plan_dll_binds(&env, Some(&host), None, false);
+        assert!(binds.is_empty(), "{binds:?}");
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.contains("gets Steam files from Proton")),
+            "{notes:?}"
+        );
+
+        // In-wine mode: master, fake trap.
+        let master = dir.path().join("master_steam_prefix");
+        write(
+            &master.join("pfx").join(STEAM).join("steamclient64.dll"),
+            "in-wine steam",
+        );
+        let trap = dir.path().join("fake_env");
+        std::fs::create_dir_all(&trap).unwrap();
+        let mut env = HashMap::new();
+        env.insert(
+            "STEAM_COMPAT_DATA_PATH".into(),
+            master.to_string_lossy().into_owned(),
+        );
+        env.insert(
+            "WINEPREFIX".into(),
+            master.join("pfx").to_string_lossy().into_owned(),
+        );
+        env.insert(
+            "STEAM_COMPAT_CLIENT_INSTALL_PATH".into(),
+            trap.to_string_lossy().into_owned(),
+        );
+        let (binds, _) = plan_dll_binds(&env, Some(&host), None, false);
+        assert_eq!(binds.len(), 1, "{binds:?}");
+        assert!(binds[0].1.ends_with("steamclient64.dll"));
+    }
+
     #[test]
     fn skipped_shadowing_says_why() {
         let dir = tempfile::tempdir().unwrap();
