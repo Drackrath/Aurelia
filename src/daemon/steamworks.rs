@@ -13,6 +13,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 
 use aurelia::steam_client::auth_ticket::{AuthSessionTicket, TicketAuthEvent, TicketKind};
+use aurelia::steam_client::microtxn::{self, MicroTxnRequest};
 use aurelia::steam_client::playing::{self, GAMES, Launch};
 use aurelia::steam_client::steamworks_info::{AppInstallInfo, DlcInfo};
 use aurelia::steam_client::{EncryptedTicketOutcome, Friend, SteamClient};
@@ -73,6 +74,8 @@ pub mod dlc_flag {
 /// Pushed message kinds.
 pub mod push {
     pub const TICKET_AUTH: u8 = 1;
+    pub const MICROTXN_PENDING: u8 = 80;
+    pub const MICROTXN_RESULT: u8 = 81;
 }
 
 /// Auth ticket kinds on the wire.
@@ -400,13 +403,60 @@ pub trait Backend: Send + Sync + 'static {
     fn open_url(&self, url: String) -> impl Future<Output = Result<bool>> + Send;
 }
 
+/// Pending purchase push payload.
+pub fn microtxn_pending_payload(request: &MicroTxnRequest) -> Vec<u8> {
+    let mut out = vec![push::MICROTXN_PENDING];
+    out.extend_from_slice(&request.app_id.to_le_bytes());
+    out.extend_from_slice(&request.order_id.to_le_bytes());
+    put_blob(&mut out, request.approval_url().as_bytes());
+    out
+}
+
+/// Purchase decision push payload.
+pub fn microtxn_result_payload(request: &MicroTxnRequest, authorized: bool) -> Vec<u8> {
+    let mut out = vec![push::MICROTXN_RESULT];
+    out.extend_from_slice(&request.app_id.to_le_bytes());
+    out.extend_from_slice(&request.order_id.to_le_bytes());
+    out.push(u8::from(authorized));
+    out
+}
+
+/// One connected online game.
+struct GameLink {
+    conn: u64,
+    app_id: u32,
+    tx: mpsc::UnboundedSender<Vec<u8>>,
+}
+
 /// Routes pushes to owning connections.
 #[derive(Default)]
 pub struct Router {
     owners: Mutex<HashMap<u32, mpsc::UnboundedSender<Vec<u8>>>>,
+    games: Mutex<Vec<GameLink>>,
 }
 
 impl Router {
+    fn register_game(&self, conn: u64, app_id: u32, tx: mpsc::UnboundedSender<Vec<u8>>) {
+        self.games
+            .lock()
+            .unwrap()
+            .push(GameLink { conn, app_id, tx });
+    }
+
+    fn unregister_game(&self, conn: u64) {
+        self.games.lock().unwrap().retain(|g| g.conn != conn);
+    }
+
+    /// Sends to every game of `app_id`.
+    pub fn push_to_app(&self, app_id: u32, payload: &[u8]) -> usize {
+        let games = self.games.lock().unwrap();
+        games
+            .iter()
+            .filter(|g| g.app_id == app_id)
+            .filter(|g| g.tx.send(payload.to_vec()).is_ok())
+            .count()
+    }
+
     fn register(&self, handle: u32, tx: mpsc::UnboundedSender<Vec<u8>>) {
         self.owners.lock().unwrap().insert(handle, tx);
     }
@@ -429,6 +479,38 @@ impl Router {
             }
         }
     }
+}
+
+/// Tell the game; open the checkout.
+pub fn microtxn_arrived(router: &Router, request: &MicroTxnRequest) {
+    let url = request.approval_url();
+    let games = router.push_to_app(request.app_id, &microtxn_pending_payload(request));
+    tracing::warn!(
+        app_id = request.app_id,
+        order = request.order_id,
+        games,
+        "steamworks: purchase needs approval at {url}; afterwards run \
+         `aurelia microtxn approve {}` (or `deny`)",
+        request.order_id
+    );
+    spawn_browser(&url);
+}
+
+/// Report the decision to the game.
+pub fn microtxn_decide(
+    router: &Router,
+    order_id: u64,
+    authorized: bool,
+) -> Result<MicroTxnRequest> {
+    let request = microtxn::take(order_id)
+        .ok_or_else(|| anyhow!("no pending purchase with order {order_id}"))?;
+    let payload = microtxn_result_payload(&request, authorized);
+    if router.push_to_app(request.app_id, &payload) == 0 {
+        // Keep it for a later retry.
+        microtxn::record(request.clone());
+        return Err(anyhow!("app {} is not connected", request.app_id));
+    }
+    Ok(request)
 }
 
 /// Polls verdicts while tickets exist.
@@ -531,6 +613,12 @@ where
     send(&writer, proto::C_SW_WELCOME, &payload).await;
 
     let (push_tx, mut push_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    static NEXT_CONN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let conn_id = NEXT_CONN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // Offline games never get purchases.
+    if offline.is_none() {
+        router.register_game(conn_id, hello.app_id, push_tx.clone());
+    }
     let conn = Arc::new(Conn {
         backend,
         router,
@@ -578,6 +666,7 @@ where
     tasks.shutdown().await;
     frames.abort();
     pusher.abort();
+    conn.router.unregister_game(conn_id);
     let owned: Vec<u32> = conn.owned.lock().unwrap().drain().collect();
     for handle in owned {
         conn.router.unregister(handle);

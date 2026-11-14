@@ -372,6 +372,15 @@ async fn run(mut cli: Cli) -> Result<()> {
         },
         Command::Inventory { app_id, context } => cmd_inventory(app_id, context, json).await,
         Command::Wallet => cmd_wallet(json).await,
+        Command::Microtxn { command } => match command {
+            MicrotxnCommand::List => commands::microtxn::cmd_list(json).await,
+            MicrotxnCommand::Approve { order } => {
+                commands::microtxn::cmd_decide(order, true, json).await
+            }
+            MicrotxnCommand::Deny { order } => {
+                commands::microtxn::cmd_decide(order, false, json).await
+            }
+        },
         Command::Market { command } => match command {
             MarketCommand::Price {
                 app_id,

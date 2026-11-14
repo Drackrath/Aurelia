@@ -268,6 +268,11 @@ fn steamworks_backend() -> &'static Steamworks {
     })
 }
 
+/// Router of connected games.
+pub(crate) fn steamworks_router() -> std::sync::Arc<steamworks::Router> {
+    steamworks_backend().1.clone()
+}
+
 /// Print a config-dir refusal; exit 2.
 fn report_refusal(argv: &[String], message: &str) -> i32 {
     use clap::Parser;

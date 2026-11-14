@@ -841,3 +841,75 @@ async fn offline_friends_fail_closed() {
     assert!(fake.presence.lock().unwrap().is_empty());
     game.hang_up().await;
 }
+
+fn purchase(order_id: u64) -> MicroTxnRequest {
+    MicroTxnRequest {
+        app_id: 480,
+        order_id,
+        trans_id: order_id + 7,
+    }
+}
+
+#[test]
+fn microtxn_payloads_on_the_wire() {
+    let request = purchase(0x0102_0304_0506_0708);
+    let mut f_bytes = microtxn_pending_payload(&request);
+    assert_eq!(f_bytes.remove(0), push::MICROTXN_PENDING);
+    let mut f = Fields::new(&f_bytes);
+    assert_eq!(f.u32(), Some(480));
+    assert_eq!(f.u64(), Some(0x0102_0304_0506_0708));
+    assert_eq!(f.blob(), Some(request.approval_url().as_bytes()));
+    assert_eq!(
+        microtxn_result_payload(&request, true),
+        [81, 0xE0, 1, 0, 0, 8, 7, 6, 5, 4, 3, 2, 1, 1]
+    );
+}
+
+#[tokio::test]
+async fn purchase_decisions_reach_the_game() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake, router.clone(), hello(480), None).await;
+    // Wait for registration.
+    let ready = tokio::time::Instant::now() + Duration::from_secs(5);
+    while router.push_to_app(480, &[0xFF]) == 0 {
+        assert!(tokio::time::Instant::now() < ready, "game not registered");
+        tokio::task::yield_now().await;
+    }
+    let (kind, probe) = game.next().await;
+    assert_eq!((kind, probe), (proto::C_SW_PUSH, vec![0xFF]));
+
+    microtxn::record(purchase(70_000_001));
+    let decided = microtxn_decide(&router, 70_000_001, true).unwrap();
+    assert_eq!(decided.order_id, 70_000_001);
+    let (kind, payload) = game.next().await;
+    assert_eq!(kind, proto::C_SW_PUSH);
+    assert_eq!(
+        payload,
+        microtxn_result_payload(&purchase(70_000_001), true)
+    );
+    assert!(
+        microtxn_decide(&router, 70_000_001, true).is_err(),
+        "taken once"
+    );
+
+    game.hang_up().await;
+    assert_eq!(router.push_to_app(480, &[0xFF]), 0);
+    microtxn::record(purchase(70_000_002));
+    assert!(microtxn_decide(&router, 70_000_002, false).is_err());
+    assert!(
+        microtxn::pending().iter().any(|p| p.order_id == 70_000_002),
+        "kept for a retry"
+    );
+    let _ = microtxn::take(70_000_002);
+}
+
+#[tokio::test]
+async fn offline_games_get_no_purchases() {
+    let fake = offline(&[(480, vec![0xCC])]);
+    let router = Arc::new(Router::default());
+    let (game, _) = Game::connect(fake, router.clone(), hello(480), None).await;
+    tokio::task::yield_now().await;
+    assert_eq!(router.push_to_app(480, &[0xFF]), 0);
+    game.hang_up().await;
+}

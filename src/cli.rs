@@ -481,6 +481,20 @@ pub(crate) enum Command {
     },
     /// Show your Steam Wallet balance.
     Wallet,
+    /// Approve in-game purchases without the overlay.
+    #[command(
+        long_about = "Approve in-game purchases without the Steam overlay.\n\n\
+        When a game started with the stand-in steamclient.so asks to buy something, \
+        Steam sends a purchase prompt that normally shows in the overlay. The daemon \
+        opens Steam's web checkout for it instead (or logs the link). Approve the \
+        purchase there, then tell the game with `aurelia microtxn approve <order>`; \
+        `deny` cancels it in the game. Steam completes the purchase only if it was \
+        approved on the checkout page. Needs the session daemon."
+    )]
+    Microtxn {
+        #[command(subcommand)]
+        command: MicrotxnCommand,
+    },
     /// Steam Community Market: prices, search, and your listings.
     Market {
         #[command(subcommand)]
@@ -872,6 +886,22 @@ pub(crate) enum FriendsCommand {
     Add { query: String },
     /// Remove a friend, or cancel/decline a pending request (by SteamID64).
     Remove { steamid: u64 },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum MicrotxnCommand {
+    /// List purchases awaiting approval.
+    List,
+    /// Tell the game you approved.
+    Approve {
+        /// Order ID from `list`.
+        order: u64,
+    },
+    /// Tell the game to cancel.
+    Deny {
+        /// Order ID from `list`.
+        order: u64,
+    },
 }
 
 #[derive(Subcommand)]
