@@ -66,6 +66,8 @@ pub struct Friend {
     pub game_app_id: Option<u32>,
     /// Name of the game the friend is currently playing, if known.
     pub game_name: Option<String>,
+    /// Avatar hash as hex.
+    pub avatar_hash: Option<String>,
 }
 
 impl Friend {
@@ -79,6 +81,7 @@ impl Friend {
             persona_state: None,
             game_app_id: None,
             game_name: None,
+            avatar_hash: None,
         }
     }
 }
@@ -196,6 +199,9 @@ pub fn apply_persona_state(roster: &mut Roster, msg: &CMsgClientPersonaState) {
         }
         if fr.has_game_name() && entry.game_app_id.is_some() {
             entry.game_name = nonempty(fr.game_name());
+        }
+        if let Some(hex) = super::avatars::avatar_hex(fr.avatar_hash()) {
+            entry.avatar_hash = Some(hex);
         }
     }
 }
