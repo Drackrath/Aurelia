@@ -328,6 +328,14 @@ impl Backend for Fake {
         Some(rx)
     }
 
+    async fn languages(&self, app_id: u32, online: bool) -> Result<(String, String)> {
+        if app_id == 70 {
+            bail!("no languages");
+        }
+        let list = if online { "english,german" } else { "german" };
+        Ok(("english".into(), list.into()))
+    }
+
     async fn network_config(&self, app_id: u32) -> Result<NetworkConfig> {
         if app_id != 480 {
             bail!("GetSDRConfig unreachable");
@@ -2624,4 +2632,38 @@ fn signaling_golden_bytes() {
         ]
     );
     assert_eq!((cmd::P2P_SIGNAL, cmd::NETWORK_CONFIG), (115, 116));
+}
+
+#[tokio::test]
+async fn languages_online_and_offline() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake, router, hello(480), None).await;
+    assert_eq!(
+        game.ask(1, cmd::LANGUAGES, &[]).await,
+        (status::OK, languages_body("english", "english,german"))
+    );
+    assert_eq!(
+        game.ask_for(2, 70, cmd::LANGUAGES, &[]).await.0,
+        status::FAILED
+    );
+    game.hang_up().await;
+
+    let fake = offline(&[(480, vec![0xCC])]);
+    let (mut game, _) = Game::connect(fake, Arc::default(), hello(480), None).await;
+    assert_eq!(
+        game.ask(1, cmd::LANGUAGES, &[]).await,
+        (status::OK, languages_body("english", "german"))
+    );
+    game.hang_up().await;
+}
+
+/// Same bytes the .so parses.
+#[test]
+fn languages_golden_bytes() {
+    assert_eq!(
+        languages_body("en", "a,b"),
+        vec![2, 0, 0, 0, b'e', b'n', 3, 0, 0, 0, b'a', b',', b'b']
+    );
+    assert_eq!(cmd::LANGUAGES, 120);
 }

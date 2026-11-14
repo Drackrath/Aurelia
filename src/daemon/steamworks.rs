@@ -93,6 +93,8 @@ pub mod cmd {
     /// SDR signaling range is 115-119.
     pub const P2P_SIGNAL: u8 = 115;
     pub const NETWORK_CONFIG: u8 = 116;
+    /// Proton setup range is 120-124.
+    pub const LANGUAGES: u8 = 120;
 }
 
 /// Cloud info flag bits.
@@ -797,6 +799,14 @@ pub fn network_config_body(config: &NetworkConfig) -> Vec<u8> {
     out
 }
 
+/// Languages body: UI, then list.
+pub fn languages_body(ui: &str, list: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    put_blob(&mut out, ui.as_bytes());
+    put_blob(&mut out, list.as_bytes());
+    out
+}
+
 /// Signal push payload.
 pub fn signal_payload(event: &SignalEvent) -> Vec<u8> {
     match event {
@@ -1018,6 +1028,12 @@ pub trait Backend: Send + Sync + 'static {
     ) -> impl Future<Output = Option<mpsc::UnboundedReceiver<SignalEvent>>> + Send;
     /// ICE policy and STUN servers.
     fn network_config(&self, app_id: u32) -> impl Future<Output = Result<NetworkConfig>> + Send;
+    /// UI language, app's language list.
+    fn languages(
+        &self,
+        app_id: u32,
+        online: bool,
+    ) -> impl Future<Output = Result<(String, String)>> + Send;
     /// Aggregated stats with history.
     fn global_stats(
         &self,
@@ -1515,6 +1531,7 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
             | cmd::NETWORKING_CERT
             | cmd::P2P_SIGNAL
             | cmd::NETWORK_CONFIG
+            | cmd::LANGUAGES
     ) {
         return (status::UNSUPPORTED, b"unknown command".to_vec());
     }
@@ -1534,6 +1551,10 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
             }
             cmd::APP_INFO => match conn.backend.offline_app_info(app_id).await {
                 Ok(info) => (status::OK, app_info_body(&info)),
+                Err(e) => failed(&e),
+            },
+            cmd::LANGUAGES => match conn.backend.languages(app_id, false).await {
+                Ok((ui, list)) => (status::OK, languages_body(&ui, &list)),
                 Err(e) => failed(&e),
             },
             cmd::DLC_LIST => match conn.backend.offline_dlcs(app_id).await {
@@ -1756,6 +1777,10 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
                 Err(e) => failed(&e),
             }
         }
+        cmd::LANGUAGES => match conn.backend.languages(app_id, true).await {
+            Ok((ui, list)) => (status::OK, languages_body(&ui, &list)),
+            Err(e) => failed(&e),
+        },
         cmd::NETWORK_CONFIG => match conn.backend.network_config(conn.app_id).await {
             Ok(config) => (status::OK, network_config_body(&config)),
             Err(e) => failed(&e),
@@ -2157,6 +2182,25 @@ impl Backend for DaemonBackend {
 
     async fn p2p_signal_events(&self, app_id: u32) -> Option<mpsc::UnboundedReceiver<SignalEvent>> {
         authed_client().await?.p2p_signal_events(app_id).ok()
+    }
+
+    async fn languages(&self, app_id: u32, online: bool) -> Result<(String, String)> {
+        use aurelia::steam_client::steamworks_info::languages_list;
+        let ui = crate::commands::common::resolve_steam_language(None).await;
+        let local = SteamClient::new()?;
+        let current = local_app_info(&local, app_id)
+            .await
+            .ok()
+            .and_then(|i| i.language)
+            .unwrap_or_else(|| ui.clone());
+        let mut supported = Vec::new();
+        if online && let Some(client) = authed_client().await {
+            match client.supported_game_languages(app_id).await {
+                Ok(list) => supported = list,
+                Err(e) => tracing::debug!(app_id, "steamworks: languages unknown: {e:#}"),
+            }
+        }
+        Ok((ui, languages_list(&supported, &current)))
     }
 
     async fn network_config(&self, app_id: u32) -> Result<NetworkConfig> {

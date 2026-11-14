@@ -107,3 +107,33 @@ fn owner_is_lender_or_self() {
     );
     assert_eq!(owner_from_shared(480, me, &[shared(Some(0))]), None);
 }
+
+#[test]
+fn supported_languages_come_from_appinfo() {
+    let modern = r#""appinfo"
+{
+    "common"
+    {
+        "supported_languages"
+        {
+            "english" { "supported" "true" "full_audio" "true" }
+            "german" { "supported" "true" }
+            "french" { "full_audio" "true" }
+        }
+    }
+}"#;
+    let vdf = steam_vdf_parser::parse_text(modern).unwrap();
+    let langs = supported_languages(pics_app_section(vdf.value()));
+    assert_eq!(langs, vec!["english".to_string(), "german".to_string()]);
+    assert_eq!(languages_list(&langs, "english"), "english,german");
+
+    let old = r#""appinfo" { "common" { "languages" { "english" "1" "polish" "0" } } }"#;
+    let vdf = steam_vdf_parser::parse_text(old).unwrap();
+    assert_eq!(
+        supported_languages(pics_app_section(vdf.value())),
+        vec!["english".to_string()]
+    );
+    let none = steam_vdf_parser::parse_text(PICS).unwrap();
+    assert!(supported_languages(pics_app_section(none.value())).is_empty());
+    assert_eq!(languages_list(&[], "german"), "german");
+}

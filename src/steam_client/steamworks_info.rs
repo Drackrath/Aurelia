@@ -88,6 +88,36 @@ pub(crate) fn build_dlc_list(
         .collect()
 }
 
+/// Languages an app supports, PICS order.
+pub(crate) fn supported_languages(section: &steam_vdf_parser::Value) -> Vec<String> {
+    let yes = |v: &str| matches!(v.trim(), "1" | "true");
+    if let Some(list) = section.get_obj(&["common", "supported_languages"]) {
+        return list
+            .iter()
+            .filter(|(_, v)| v.get("supported").and_then(|s| s.as_str()).is_some_and(yes))
+            .map(|(k, _)| k.to_string())
+            .collect();
+    }
+    // Older appinfo: flat flags.
+    section
+        .get_obj(&["common", "languages"])
+        .map(|list| {
+            list.iter()
+                .filter(|(_, v)| v.as_str().is_some_and(yes))
+                .map(|(k, _)| k.to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Comma list; `current` when unknown.
+pub fn languages_list(supported: &[String], current: &str) -> String {
+    if supported.is_empty() {
+        return current.to_string();
+    }
+    supported.join(",")
+}
+
 /// Lender of shared app, else us.
 ///
 /// `None` when the lender is unknown.
@@ -104,6 +134,15 @@ impl SteamClient {
         let me = self.steam_id().context("not logged in")?;
         let shared = self.fetch_family_shared_apps().await?;
         Ok(owner_from_shared(appid, me, &shared))
+    }
+
+    /// Languages from PICS appinfo.
+    pub async fn supported_game_languages(&self, appid: u32) -> Result<Vec<String>> {
+        let buffer = self
+            .pics_buffer(appid, "failed requesting appinfo for languages")
+            .await?;
+        let vdf = find_vdf_in_pics(&buffer).context("failed to parse product info VDF")?;
+        Ok(supported_languages(pics_app_section(vdf.value())))
     }
 
     /// DLC of `appid` in PICS order.
