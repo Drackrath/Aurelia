@@ -777,13 +777,23 @@ pub struct NetworkConfig {
     pub ice_enable: i32,
     /// Comma-separated STUN servers.
     pub stun: String,
+    /// Base64 CA certs from Steam.
+    pub certs: Vec<String>,
 }
 
-/// Config body: revision, ICE, STUN.
+/// Most CA certs we pass on.
+pub const MAX_CA_CERTS: usize = 64;
+
+/// Config body: revision, ICE, STUN, certs.
 pub fn network_config_body(config: &NetworkConfig) -> Vec<u8> {
     let mut out = config.revision.to_le_bytes().to_vec();
     out.extend_from_slice(&config.ice_enable.to_le_bytes());
     put_blob(&mut out, config.stun.as_bytes());
+    let certs = &config.certs[..config.certs.len().min(MAX_CA_CERTS)];
+    out.extend_from_slice(&(certs.len() as u32).to_le_bytes());
+    for cert in certs {
+        put_blob(&mut out, cert.as_bytes());
+    }
     out
 }
 
@@ -2158,6 +2168,7 @@ impl Backend for DaemonBackend {
             revision: config.revision,
             ice_enable: config.ice_enable(&country),
             stun: sdr_config::stun_servers(),
+            certs: config.certs,
         })
     }
 

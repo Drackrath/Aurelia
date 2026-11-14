@@ -18,6 +18,7 @@ fn parses_revision_and_policy() {
     assert_eq!(config.share_ip("RU"), Some(20));
     assert_eq!(config.share_ip("de"), Some(40));
     assert_eq!(config.share_ip("cn"), Some(0));
+    assert_eq!(config.certs, vec!["AAAA".to_string()]);
 }
 
 #[test]
