@@ -77,6 +77,9 @@ pub mod cmd {
     pub const UGC_DOWNLOAD: u8 = 75;
     /// Avatars; 90-94 reserved.
     pub const AVATAR: u8 = 90;
+    /// Invites range is 95-99.
+    pub const GAME_INVITE: u8 = 95;
+    pub const LOBBY_INVITE: u8 = 96;
 }
 
 /// Cloud info flag bits.
@@ -132,6 +135,10 @@ pub mod push {
     pub const MICROTXN_RESULT: u8 = 81;
     /// Workshop download finished.
     pub const UGC_DOWNLOADED: u8 = 70;
+    /// Join a friend by connect string.
+    pub const JOIN_CONNECT: u8 = 95;
+    /// Join a friend's lobby.
+    pub const JOIN_LOBBY: u8 = 96;
     /// Persona pushes; 100-104 reserved.
     pub const PERSONA_CHANGE: u8 = 100;
     pub const RICH_PRESENCE: u8 = 101;
@@ -802,6 +809,49 @@ pub trait Backend: Send + Sync + 'static {
         steam_id: u64,
         size: AvatarSize,
     ) -> impl Future<Output = Result<Arc<Avatar>>> + Send;
+    /// Steam game invite to a friend.
+    fn game_invite(
+        &self,
+        app_id: u32,
+        friend: u64,
+        connect: String,
+    ) -> impl Future<Output = Result<()>> + Send;
+    fn lobby_invite(
+        &self,
+        app_id: u32,
+        lobby: u64,
+        friend: u64,
+    ) -> impl Future<Output = Result<()>> + Send;
+}
+
+/// Where a join goes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JoinTarget {
+    Lobby(u64),
+    Connect(String),
+}
+
+/// Join request push payload.
+pub fn join_payload(friend: u64, target: &JoinTarget) -> Vec<u8> {
+    match target {
+        JoinTarget::Lobby(lobby) => {
+            let mut out = vec![push::JOIN_LOBBY];
+            out.extend_from_slice(&lobby.to_le_bytes());
+            out.extend_from_slice(&friend.to_le_bytes());
+            out
+        }
+        JoinTarget::Connect(connect) => {
+            let mut out = vec![push::JOIN_CONNECT];
+            out.extend_from_slice(&friend.to_le_bytes());
+            put_blob(&mut out, connect.as_bytes());
+            out
+        }
+    }
+}
+
+/// Games of `app_id` told.
+pub fn join_running(router: &Router, app_id: u32, friend: u64, target: &JoinTarget) -> usize {
+    router.push_to_app(app_id, &join_payload(friend, target))
 }
 
 /// Pending purchase push payload.
@@ -1188,6 +1238,8 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
             | cmd::SET_RICH_PRESENCE
             | cmd::FRIEND_RICH_PRESENCE
             | cmd::OPEN_URL
+            | cmd::GAME_INVITE
+            | cmd::LOBBY_INVITE
             | cmd::UGC_QUERY
             | cmd::UGC_SUBSCRIBE
             | cmd::UGC_UNSUBSCRIBE
@@ -1354,6 +1406,25 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
             };
             match conn.backend.avatar(id, size).await {
                 Ok(avatar) => (status::OK, avatar_body(&avatar)),
+                Err(e) => failed(&e),
+            }
+        }
+        cmd::GAME_INVITE => {
+            let (Some(friend), Some(connect)) = (f.u64(), f.blob()) else {
+                return (status::MALFORMED, b"bad invite".to_vec());
+            };
+            let connect = String::from_utf8_lossy(connect).into_owned();
+            match conn.backend.game_invite(app_id, friend, connect).await {
+                Ok(()) => (status::OK, Vec::new()),
+                Err(e) => failed(&e),
+            }
+        }
+        cmd::LOBBY_INVITE => {
+            let (Some(lobby), Some(friend)) = (f.u64(), f.u64()) else {
+                return (status::MALFORMED, b"bad invite".to_vec());
+            };
+            match conn.backend.lobby_invite(app_id, lobby, friend).await {
+                Ok(()) => (status::OK, Vec::new()),
                 Err(e) => failed(&e),
             }
         }
@@ -1689,6 +1760,17 @@ impl Backend for DaemonBackend {
     async fn friend_rich_presence(&self, steam_id: u64) -> Result<Vec<(String, String)>> {
         let client = authed_client().await.ok_or_else(not_logged_in)?;
         client.friend_rich_presence(steam_id).await
+    }
+
+    async fn game_invite(&self, app_id: u32, friend: u64, connect: String) -> Result<()> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        let connect = (!connect.is_empty()).then_some(connect);
+        client.invite_to_game(friend, app_id, connect).await
+    }
+
+    async fn lobby_invite(&self, app_id: u32, lobby: u64, friend: u64) -> Result<()> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        client.invite_to_lobby(app_id, lobby, friend).await
     }
 
     async fn open_url(&self, url: String) -> Result<bool> {

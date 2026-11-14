@@ -3,10 +3,11 @@ use super::*;
 use steam_vent_proto::steammessages_clientserver_mms::cmsg_client_mmsget_lobby_list::Filter;
 use steam_vent_proto::steammessages_clientserver_mms::{
     CMsgClientMMSCreateLobby, CMsgClientMMSCreateLobbyResponse, CMsgClientMMSGetLobbyData,
-    CMsgClientMMSGetLobbyList, CMsgClientMMSGetLobbyListResponse, CMsgClientMMSJoinLobby,
-    CMsgClientMMSJoinLobbyResponse, CMsgClientMMSLeaveLobby, CMsgClientMMSLeaveLobbyResponse,
-    CMsgClientMMSLobbyChatMsg, CMsgClientMMSLobbyData, CMsgClientMMSSendLobbyChatMsg,
-    CMsgClientMMSSetLobbyData, CMsgClientMMSUserJoinedLobby, CMsgClientMMSUserLeftLobby,
+    CMsgClientMMSGetLobbyList, CMsgClientMMSGetLobbyListResponse, CMsgClientMMSInviteToLobby,
+    CMsgClientMMSJoinLobby, CMsgClientMMSJoinLobbyResponse, CMsgClientMMSLeaveLobby,
+    CMsgClientMMSLeaveLobbyResponse, CMsgClientMMSLobbyChatMsg, CMsgClientMMSLobbyData,
+    CMsgClientMMSSendLobbyChatMsg, CMsgClientMMSSetLobbyData, CMsgClientMMSUserJoinedLobby,
+    CMsgClientMMSUserLeftLobby,
 };
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
@@ -294,6 +295,18 @@ impl SteamClient {
             .send(req)
             .await
             .map_err(mms_error("chat"))
+    }
+
+    /// Invite a friend into a lobby.
+    pub async fn invite_to_lobby(&self, app_id: u32, lobby: u64, friend: u64) -> Result<()> {
+        let mut req = CMsgClientMMSInviteToLobby::new();
+        req.set_app_id(app_id);
+        req.set_steam_id_lobby(lobby);
+        req.set_steam_id_user_invited(friend);
+        self.require_connection()?
+            .send(req)
+            .await
+            .map_err(mms_error("invite"))
     }
 
     /// Ask Steam to push lobby data.

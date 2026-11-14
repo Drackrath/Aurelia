@@ -18,6 +18,8 @@ pub(crate) struct PlayTarget {
     pub(crate) platform: Option<PlatformArg>,
     pub(crate) steam_mode: Option<SteamModeArg>,
     pub(crate) launch_option: Option<String>,
+    /// Appended to the game's arguments.
+    pub(crate) extra_args: Vec<String>,
 }
 
 /// `play` options for start-up waits.
@@ -130,6 +132,13 @@ pub(crate) async fn cmd_shaders(app_id: u32, force: bool, json: bool) -> Result<
 }
 
 /// Force a Steam mode via policy.
+/// Launch options plus extra args.
+pub(crate) fn append_args(options: &str, extra: &[String]) -> String {
+    let mut parts: Vec<&str> = options.split_whitespace().collect();
+    parts.extend(extra.iter().map(String::as_str));
+    parts.join(" ")
+}
+
 fn apply_steam_mode(cfg: &mut aurelia::core::models::UserAppConfig, mode: SteamModeArg) {
     use aurelia::core::models::SteamRuntimePolicy;
     cfg.use_steam_runtime = false;
@@ -476,6 +485,10 @@ pub(crate) async fn cmd_play(
     let mut user_config = user_configs.get(&app_id).cloned();
     if let Some(mode) = target.steam_mode {
         apply_steam_mode(user_config.get_or_insert_with(Default::default), mode);
+    }
+    if !target.extra_args.is_empty() {
+        let cfg = user_config.get_or_insert_with(Default::default);
+        cfg.launch_options = append_args(&cfg.launch_options, &target.extra_args);
     }
     let user_config = user_config.as_ref();
 

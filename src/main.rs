@@ -372,6 +372,22 @@ async fn run(mut cli: Cli) -> Result<()> {
         },
         Command::Inventory { app_id, context } => cmd_inventory(app_id, context, json).await,
         Command::Wallet => cmd_wallet(json).await,
+        Command::Join {
+            friend,
+            connect,
+            lobby,
+            app,
+            no_launch,
+        } => {
+            let args = commands::join::JoinArgs {
+                friend,
+                connect,
+                lobby,
+                app,
+                no_launch,
+            };
+            commands::join::cmd_join(args, json).await
+        }
         Command::Microtxn { command } => match command {
             MicrotxnCommand::List => commands::microtxn::cmd_list(json).await,
             MicrotxnCommand::Approve { order } => {
@@ -473,6 +489,7 @@ async fn run(mut cli: Cli) -> Result<()> {
                 platform,
                 steam_mode,
                 launch_option,
+                extra_args: Vec::new(),
             };
             let wait = PlayWait {
                 skip_shaders,

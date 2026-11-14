@@ -68,6 +68,9 @@ pub struct Friend {
     pub game_name: Option<String>,
     /// Avatar hash as hex.
     pub avatar_hash: Option<String>,
+    /// Lobby the friend is in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub game_lobby_id: Option<u64>,
 }
 
 impl Friend {
@@ -82,6 +85,7 @@ impl Friend {
             game_app_id: None,
             game_name: None,
             avatar_hash: None,
+            game_lobby_id: None,
         }
     }
 }
@@ -195,6 +199,7 @@ pub fn apply_persona_state(roster: &mut Roster, msg: &CMsgClientPersonaState) {
             };
             if entry.game_app_id.is_none() {
                 entry.game_name = None;
+                entry.game_lobby_id = None;
             }
         }
         if fr.has_game_name() && entry.game_app_id.is_some() {
@@ -202,6 +207,9 @@ pub fn apply_persona_state(roster: &mut Roster, msg: &CMsgClientPersonaState) {
         }
         if let Some(hex) = super::avatars::avatar_hex(fr.avatar_hash()) {
             entry.avatar_hash = Some(hex);
+        }
+        if fr.has_game_lobby_id() {
+            entry.game_lobby_id = Some(fr.game_lobby_id()).filter(|l| *l != 0);
         }
     }
 }

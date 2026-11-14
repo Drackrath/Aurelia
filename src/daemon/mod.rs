@@ -16,6 +16,7 @@ pub mod client;
 mod proto;
 mod server;
 mod steamworks;
+pub use steamworks::JoinTarget;
 mod steamworks_lobbies;
 mod transport;
 
@@ -243,6 +244,11 @@ pub fn decide_microtxn(
     authorized: bool,
 ) -> anyhow::Result<aurelia::steam_client::microtxn::MicroTxnRequest> {
     steamworks::microtxn_decide(&server::steamworks_router(), order_id, authorized)
+}
+
+/// Tell running games to join.
+pub fn join_running_game(app_id: u32, friend: u64, target: &JoinTarget) -> usize {
+    steamworks::join_running(&server::steamworks_router(), app_id, friend, target)
 }
 
 /// Whether this process is the daemon (vs. a thin client / standalone run).
