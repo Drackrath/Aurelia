@@ -164,6 +164,7 @@ impl Backend for Fake {
                 persona_state: Some(3),
                 game_app_id: Some(480),
                 game_name: None,
+                avatar_hash: Some("ab01".into()),
             }],
         })
     }
@@ -179,6 +180,18 @@ impl Backend for Fake {
         } else {
             bail!("Steam sent no rich presence for {steam_id}")
         }
+    }
+
+    async fn avatar(&self, steam_id: u64, size: AvatarSize) -> Result<Arc<Avatar>> {
+        if steam_id != SID + 1 {
+            bail!("Steam sent no avatar for {steam_id}");
+        }
+        let side = if size == AvatarSize::Small { 2 } else { 3 };
+        Ok(Arc::new(Avatar {
+            width: side,
+            height: side,
+            rgba: vec![7; (side * side * 4) as usize],
+        }))
     }
 
     async fn open_url(&self, url: String) -> Result<bool> {
@@ -1684,4 +1697,46 @@ fn ugc_golden_bytes() {
         ugc_downloaded_payload(480, 42, 1),
         [70, 0xE0, 1, 0, 0, 42, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0]
     );
+}
+
+#[tokio::test]
+async fn avatar_round_trip_and_failures() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake, router, hello(480), None).await;
+    let ask = |id: u64, size: u8| {
+        let mut body = id.to_le_bytes().to_vec();
+        body.push(size);
+        body
+    };
+    let (code, body) = game.ask(1, cmd::AVATAR, &ask(SID + 1, 0)).await;
+    assert_eq!(code, status::OK);
+    let mut expected = 2u32.to_le_bytes().to_vec();
+    expected.extend_from_slice(&2u32.to_le_bytes());
+    expected.extend_from_slice(&[7; 16]);
+    assert_eq!(body, expected);
+    assert_eq!(
+        game.ask(2, cmd::AVATAR, &ask(SID + 1, 2)).await.1.len(),
+        8 + 36
+    );
+    assert_eq!(
+        game.ask(3, cmd::AVATAR, &ask(SID + 9, 1)).await.0,
+        status::FAILED
+    );
+    assert_eq!(
+        game.ask(4, cmd::AVATAR, &ask(SID + 1, 7)).await.0,
+        status::MALFORMED
+    );
+    game.hang_up().await;
+}
+
+#[tokio::test]
+async fn offline_avatars_fail_closed() {
+    let fake = offline(&[(480, vec![0xCC])]);
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake, router, hello(480), None).await;
+    let mut body = (SID + 1).to_le_bytes().to_vec();
+    body.push(0);
+    assert_eq!(game.ask(1, cmd::AVATAR, &body).await.0, status::NO_SESSION);
+    game.hang_up().await;
 }

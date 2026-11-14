@@ -14,6 +14,7 @@ use tokio::task::JoinSet;
 
 use aurelia::core::models::DownloadState;
 use aurelia::steam_client::auth_ticket::{AuthSessionTicket, TicketAuthEvent, TicketKind};
+use aurelia::steam_client::avatars::{Avatar, AvatarSize, fetch_avatar};
 use aurelia::steam_client::microtxn::{self, MicroTxnRequest};
 use aurelia::steam_client::playing::{self, GAMES, Launch};
 use aurelia::steam_client::remote_storage::{RemoteStorageInfo, remote_storage_info};
@@ -73,6 +74,8 @@ pub mod cmd {
     pub const UGC_SUBSCRIBED: u8 = 73;
     pub const UGC_ITEM_STATE: u8 = 74;
     pub const UGC_DOWNLOAD: u8 = 75;
+    /// Avatars; 90-94 reserved.
+    pub const AVATAR: u8 = 90;
 }
 
 /// Cloud info flag bits.
@@ -615,6 +618,17 @@ fn ugc_progress(app_id: u32, id: u64) -> Option<(u64, u64)> {
 /// `EResult` for a failed download.
 const ERESULT_FAIL: i32 = 2;
 
+/// Avatar body: width, height, RGBA.
+pub fn avatar_body(avatar: &Avatar) -> Vec<u8> {
+    let mut out = avatar.width.to_le_bytes().to_vec();
+    out.extend_from_slice(&avatar.height.to_le_bytes());
+    out.extend_from_slice(&avatar.rgba);
+    out
+}
+
+/// Wait for a persona with avatar.
+const AVATAR_WAIT: Duration = Duration::from_secs(3);
+
 /// What the daemon offers games.
 pub trait Backend: Send + Sync + 'static {
     /// SteamID when logged on.
@@ -755,6 +769,12 @@ pub trait Backend: Send + Sync + 'static {
     ) -> impl Future<Output = Result<Vec<(String, String)>>> + Send;
     /// Opens a web page, if possible.
     fn open_url(&self, url: String) -> impl Future<Output = Result<bool>> + Send;
+    /// A user's avatar, decoded.
+    fn avatar(
+        &self,
+        steam_id: u64,
+        size: AvatarSize,
+    ) -> impl Future<Output = Result<Arc<Avatar>>> + Send;
 }
 
 /// Pending purchase push payload.
@@ -1129,6 +1149,7 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
             | cmd::UGC_SUBSCRIBED
             | cmd::UGC_ITEM_STATE
             | cmd::UGC_DOWNLOAD
+            | cmd::AVATAR
     ) {
         return (status::UNSUPPORTED, b"unknown command".to_vec());
     }
@@ -1279,6 +1300,15 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
             };
             match conn.backend.friend_rich_presence(id).await {
                 Ok(pairs) => (status::OK, pairs_body(&pairs)),
+                Err(e) => failed(&e),
+            }
+        }
+        cmd::AVATAR => {
+            let (Some(id), Some(size)) = (f.u64(), f.u8().and_then(AvatarSize::from_wire)) else {
+                return (status::MALFORMED, b"bad avatar request".to_vec());
+            };
+            match conn.backend.avatar(id, size).await {
+                Ok(avatar) => (status::OK, avatar_body(&avatar)),
                 Err(e) => failed(&e),
             }
         }
@@ -1614,6 +1644,29 @@ impl Backend for DaemonBackend {
 
     async fn open_url(&self, url: String) -> Result<bool> {
         Ok(tokio::task::spawn_blocking(move || spawn_browser(&url)).await?)
+    }
+
+    async fn avatar(&self, steam_id: u64, size: AvatarSize) -> Result<Arc<Avatar>> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        let hash = || async {
+            super::shared_full_roster()
+                .await
+                .into_iter()
+                .find(|f| f.steam_id == steam_id)
+                .and_then(|f| f.avatar_hash)
+        };
+        let mut hex = hash().await;
+        if hex.is_none() {
+            // Ask Steam, wait briefly.
+            client.request_friend_data(&[steam_id]).await?;
+            let deadline = tokio::time::Instant::now() + AVATAR_WAIT;
+            while hex.is_none() && tokio::time::Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                hex = hash().await;
+            }
+        }
+        let hex = hex.ok_or_else(|| anyhow!("Steam sent no avatar for {steam_id}"))?;
+        fetch_avatar(&hex, size).await
     }
 
     async fn session_info(&self) -> Result<(u32, String)> {

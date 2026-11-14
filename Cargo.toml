@@ -44,6 +44,7 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 walkdir = "2"
 filetime = "0.2" # Stamp downloaded Cloud saves with their cloud mtime so re-sync doesn't churn
 zip = "2.2.2"
+zune-jpeg = "0.5" # Decode friend avatars for stand-in games
 tar = "0.4" # Extract downloaded Proton/Wine-GE runtime tarballs (.tar.gz/.tar.xz)
 hex = "0.4"
 crc32fast = "1" # Auth ticket CRCs for ClientAuthList
