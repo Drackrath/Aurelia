@@ -137,3 +137,43 @@ fn stand_in_drops_every_valve_steam_start() {
     }
     assert!(REPLACES_STEAM_NOTE.contains("stand-in"));
 }
+
+#[test]
+fn guard_drops_the_stand_in_for_refused_games() {
+    // Protected, not allowed: off.
+    let mut cfg = stand_in_on();
+    assert!(apply_to_config(&mut cfg, 730, vec![Protection::Vac]));
+    assert!(!cfg.steamworks_client);
+    // Allowed or clean: stays on.
+    let mut cfg = stand_in_on();
+    cfg.steamworks_allowed_protected.push(730);
+    assert!(!apply_to_config(&mut cfg, 730, vec![Protection::Vac]));
+    assert!(cfg.steamworks_client);
+    let mut cfg = stand_in_on();
+    assert!(!apply_to_config(&mut cfg, 480, Vec::new()));
+    assert!(cfg.steamworks_client);
+    // Unknown categories fail closed.
+    let mut cfg = stand_in_on();
+    assert!(apply_to_config(&mut cfg, 480, protections(None, &[])));
+    assert!(!cfg.steamworks_client);
+}
+
+/// T-183/T-185: Cloud follows the launch.
+#[test]
+fn refused_auto_game_uses_the_compat_prefix() {
+    let dir = tempfile::tempdir().unwrap();
+    let master = dir.path().join("master_steam_prefix/pfx");
+    std::fs::create_dir_all(master.join("drive_c/Program Files (x86)/Steam")).unwrap();
+    let compat = dir.path().join("lib/steamapps/compatdata/730/pfx");
+    let mut cfg = LauncherConfig {
+        steamworks_client_auto: true,
+        ..LauncherConfig::default()
+    };
+    crate::launch::stand_in_auto::apply(&mut cfg, || false, |_| true);
+    assert!(cfg.steamworks_client);
+    let before = crate::core::utils::stand_in_save_prefix(&cfg, None, &compat, None, &master);
+    assert_eq!(before, Some(master.clone()));
+    apply_to_config(&mut cfg, 730, vec![Protection::EasyAntiCheat]);
+    let after = crate::core::utils::stand_in_save_prefix(&cfg, None, &compat, None, &master);
+    assert_eq!(after, None, "falls back to the normal prefix rules");
+}

@@ -76,6 +76,18 @@ pub fn wants_valve_steam(steam_flag: bool, owned: bool, stand_in: bool) -> bool 
     !stand_in && (steam_flag || !owned)
 }
 
+/// Refused games drop the stand-in.
+pub fn apply_to_config(config: &mut LauncherConfig, app_id: u32, found: Vec<Protection>) -> bool {
+    if !stand_in_applies(config, app_id, false) {
+        return false;
+    }
+    let refused = matches!(evaluate(app_id, found, config), Verdict::Refused(_));
+    if refused {
+        config.steamworks_client = false;
+    }
+    refused
+}
+
 /// Whether this launch uses the stand-in.
 pub fn stand_in_applies(config: &LauncherConfig, app_id: u32, force_native_engine: bool) -> bool {
     if !cfg!(target_os = "linux") || !config.steamworks_client || force_native_engine {

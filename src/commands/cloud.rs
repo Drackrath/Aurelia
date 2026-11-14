@@ -38,6 +38,26 @@ pub(crate) async fn cmd_cloud_sync(
         aurelia::core::utils::is_steam_running,
         aurelia::launch::stand_in_auto::installed,
     );
+    // Guard too, like play_game.
+    if launcher_config.steamworks_client {
+        use aurelia::launch::stand_in_guard as guard;
+        let categories = client
+            .get_product_info_and_categories(app_id)
+            .await
+            .ok()
+            .and_then(|(_, ids)| ids);
+        let anticheats = install_path
+            .as_deref()
+            .map(|p| aurelia::compat::anticheat::detect(std::path::Path::new(p)))
+            .unwrap_or_default();
+        let found = guard::protections(categories.as_deref(), &anticheats);
+        if guard::apply_to_config(&mut launcher_config, app_id, found) {
+            tracing::info!(
+                app_id,
+                "anti-cheat game: Cloud uses the non-stand-in prefix"
+            );
+        }
+    }
     let user_configs = aurelia::core::config::load_user_configs().await?;
     // Must be the prefix the game *runs* in, not the WINEPREFIX the launcher sets:
     // under Proton those differ, and syncing to the wrong one silently leaves the
