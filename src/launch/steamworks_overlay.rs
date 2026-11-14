@@ -21,7 +21,12 @@ pub mod marker {
     pub const MISSING: &str = "missing interface: ";
     pub const REPORTED_MISSING: &str = "game reports missing interface: ";
     pub const NETWORKING: &str = "game created ";
+    pub const TICKET: &str = "ticket ";
+    pub const TICKET_OK: &str = "ok";
 }
+
+/// Summary line for borrowed refusals.
+pub const BORROWED_REFUSED: &str = "borrowed via Family Sharing: Steam refused the ticket";
 
 /// Paths pressure-vessel shares read-write.
 const PV_FILESYSTEMS_RW: &str = "PRESSURE_VESSEL_FILESYSTEMS_RW";
@@ -459,11 +464,13 @@ fn share_rw(env: &mut std::collections::HashMap<String, String>, path: &Path) {
 pub struct LogSummary {
     pub missing: Vec<String>,
     pub networking: Vec<String>,
+    /// `<kind>: <outcome>` for refused tickets.
+    pub refused: Vec<String>,
 }
 
 impl LogSummary {
     pub fn is_empty(&self) -> bool {
-        self.missing.is_empty() && self.networking.is_empty()
+        self.missing.is_empty() && self.networking.is_empty() && self.refused.is_empty()
     }
 
     /// User-facing lines, log path last.
@@ -481,6 +488,12 @@ impl LogSummary {
                  Steam Datagram Relay, only direct or ICE P2P, so multiplayer may not \
                  have connected",
                 self.networking.join(", ")
+            ));
+        }
+        if !self.refused.is_empty() {
+            out.push(format!(
+                "stand-in steamclient.so: Steam refused tickets: {}",
+                self.refused.join(", ")
             ));
         }
         if !out.is_empty() {
@@ -517,15 +530,29 @@ pub fn summarize_log(text: &str) -> LogSummary {
             push(&mut summary.missing, version);
         } else if let Some(version) = networking_version(msg) {
             push(&mut summary.networking, version);
+        } else if let Some(rest) = msg.strip_prefix(marker::TICKET)
+            && let Some((_, outcome)) = rest.split_once(": ")
+            && !outcome.starts_with(marker::TICKET_OK)
+        {
+            push(&mut summary.refused, rest);
         }
     }
     summary
 }
 
 /// Summary of a finished launch's log.
-pub fn summarize_log_file(log: &Path) -> Vec<String> {
+///
+/// `borrowed`: app is Family Shared.
+pub fn summarize_log_file(log: &Path, borrowed: bool) -> Vec<String> {
     std::fs::read_to_string(log)
-        .map(|text| summarize_log(&text).lines(log))
+        .map(|text| {
+            let summary = summarize_log(&text);
+            let mut lines = summary.lines(log);
+            if borrowed && !summary.refused.is_empty() {
+                lines.insert(0, BORROWED_REFUSED.to_string());
+            }
+            lines
+        })
         .unwrap_or_default()
 }
 

@@ -585,7 +585,10 @@ impl SteamClient {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
         crate::compat::running::clear(app.app_id);
-        report_stand_in_log(stand_in_log.as_deref());
+        report_stand_in_log(
+            stand_in_log.as_deref(),
+            app.is_family_shared || !app.is_owned,
+        );
         wait_result?;
 
         if cloud_enabled {
@@ -858,13 +861,13 @@ fn guard_stand_in(
 }
 
 /// Surface the stand-in log summary.
-fn report_stand_in_log(log: Option<&Path>) {
+fn report_stand_in_log(log: Option<&Path>, borrowed: bool) {
     #[cfg(target_os = "linux")]
     if let Some(log) = log {
-        for line in crate::launch::steamworks_overlay::summarize_log_file(log) {
+        for line in crate::launch::steamworks_overlay::summarize_log_file(log, borrowed) {
             tracing::warn!("{line}");
         }
     }
     #[cfg(not(target_os = "linux"))]
-    let _ = log;
+    let _ = (log, borrowed);
 }
