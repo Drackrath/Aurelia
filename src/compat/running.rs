@@ -53,6 +53,9 @@ pub struct RunningGame {
     /// Launched with the stand-in steamclient.so.
     #[serde(default)]
     pub stand_in: bool,
+    /// Sandbox mount namespace inode.
+    #[serde(default)]
+    pub mnt_ns: Option<u64>,
 }
 
 impl RunningGame {
@@ -65,6 +68,7 @@ impl RunningGame {
             pid_start_time: process_start_time(pid),
             wineprefix,
             stand_in: false,
+            mnt_ns: None,
         }
     }
 
@@ -114,13 +118,108 @@ pub fn descends_from(pid: u32, ancestor: u32, parent: impl Fn(u32) -> Option<u32
     false
 }
 
+/// Mount namespace inode of `pid`.
+pub fn mnt_ns(pid: u32) -> Option<u64> {
+    let link = std::fs::read_link(format!("/proc/{pid}/ns/mnt")).ok()?;
+    parse_ns_link(link.to_str()?)
+}
+
+/// Inode from `mnt:[4026532792]`.
+pub fn parse_ns_link(link: &str) -> Option<u64> {
+    link.strip_prefix("mnt:[")?.strip_suffix(']')?.parse().ok()
+}
+
+/// This process's (host) namespace.
+pub fn host_mnt_ns() -> Option<u64> {
+    mnt_ns(std::process::id())
+}
+
+/// Direct children of `pid` from `/proc`.
+pub fn children_of(pid: u32) -> Vec<u32> {
+    let Ok(dir) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    dir.flatten()
+        .filter_map(|e| e.file_name().to_str()?.parse::<u32>().ok())
+        .filter(|&child| parent_pid(child) == Some(pid))
+        .collect()
+}
+
+/// Namespaces a launch's processes use.
+///
+/// Recorded one, recorded pid, children.
+pub fn launch_namespaces(
+    game: &RunningGame,
+    ns_of: &impl Fn(u32) -> Option<u64>,
+    children: &impl Fn(u32) -> Vec<u32>,
+) -> Vec<u64> {
+    let mut out: Vec<u64> = game.mnt_ns.into_iter().collect();
+    for pid in std::iter::once(game.pid).chain(children(game.pid)) {
+        if let Some(ns) = ns_of(pid)
+            && !out.contains(&ns)
+        {
+            out.push(ns);
+        }
+    }
+    out
+}
+
+/// Launch owning `peer`: ancestry, else namespace.
+///
+/// The host namespace never matches.
+pub fn match_launch(
+    peer: u32,
+    launches: &[RunningGame],
+    parent: impl Fn(u32) -> Option<u32>,
+    ns_of: impl Fn(u32) -> Option<u64>,
+    children: impl Fn(u32) -> Vec<u32>,
+    host_ns: Option<u64>,
+) -> Option<u32> {
+    let stand_in = || launches.iter().filter(|g| g.stand_in);
+    if let Some(g) = stand_in().find(|g| descends_from(peer, g.pid, &parent)) {
+        return Some(g.app_id);
+    }
+    // Wine double-forks out of the tree.
+    let peer_ns = ns_of(peer).filter(|ns| Some(*ns) != host_ns)?;
+    stand_in()
+        .find(|g| launch_namespaces(g, &ns_of, &children).contains(&peer_ns))
+        .map(|g| g.app_id)
+}
+
 /// Stand-in launch app owning `pid`.
 pub fn stand_in_launch_of(pid: u32) -> Option<u32> {
-    list_active()
-        .into_iter()
-        .filter(|g| g.stand_in)
-        .find(|g| descends_from(pid, g.pid, parent_pid))
-        .map(|g| g.app_id)
+    match_launch(
+        pid,
+        &list_active(),
+        parent_pid,
+        mnt_ns,
+        children_of,
+        host_mnt_ns(),
+    )
+}
+
+/// Records the sandbox namespace once visible.
+///
+/// Polls briefly off-thread after spawn.
+pub fn capture_launch_namespace(app_id: u32, pid: u32) {
+    let Some(host) = host_mnt_ns() else { return };
+    std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
+            let sandbox = std::iter::once(pid)
+                .chain(children_of(pid))
+                .filter_map(mnt_ns)
+                .find(|ns| *ns != host);
+            if let Some(ns) = sandbox {
+                if let Some(mut game) = load(app_id).filter(|g| g.pid == pid) {
+                    game.mnt_ns = Some(ns);
+                    let _ = record_launch(&game);
+                }
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    });
 }
 
 /// Start time of `pid` (seconds since the Unix epoch), or `None` if no such
@@ -146,6 +245,17 @@ fn record_path(app_id: u32) -> Result<PathBuf> {
 }
 
 /// Persist that `game` is now running so `stop` can find it later.
+/// Re-points the record, keeping its namespace.
+pub fn update_launch(game: &RunningGame) -> Result<()> {
+    let mut game = game.clone();
+    if game.mnt_ns.is_none() && game.stand_in {
+        game.mnt_ns = load(game.app_id)
+            .filter(|old| old.stand_in)
+            .and_then(|old| old.mnt_ns);
+    }
+    record_launch(&game)
+}
+
 pub fn record_launch(game: &RunningGame) -> Result<()> {
     let dir = running_dir()?;
     std::fs::create_dir_all(&dir).with_context(|| format!("failed creating {}", dir.display()))?;

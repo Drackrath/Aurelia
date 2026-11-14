@@ -563,6 +563,9 @@ impl SteamClient {
         if let Err(e) = crate::compat::running::record_launch(&record) {
             tracing::warn!(appid = app.app_id, "could not record running game: {e:#}");
         }
+        if stand_in {
+            crate::compat::running::capture_launch_namespace(app.app_id, child.id());
+        }
 
         // On the blocking pool: `Child::wait` blocks its thread for the game's whole
         // run, and on a runtime worker that starves the tasks tied to it. In the
@@ -578,7 +581,7 @@ impl SteamClient {
             let Some(&pid) = survivors.first() else { break };
             let mut record = record.clone();
             record.set_pid(pid);
-            let _ = crate::compat::running::record_launch(&record);
+            let _ = crate::compat::running::update_launch(&record);
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
         crate::compat::running::clear(app.app_id);
