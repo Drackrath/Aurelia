@@ -62,6 +62,9 @@ impl PipelineStage for SpawnProcessStage {
                 })?;
                 // Before the game can connect.
                 let _ = crate::compat::running::record_launch(&spawn_record(ctx, child.id()));
+                if ctx.stand_in {
+                    crate::compat::running::capture_launch_namespace(ctx.app_id, child.id());
+                }
                 ctx.child = Some(child);
             }
         } else {
