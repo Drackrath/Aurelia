@@ -62,22 +62,12 @@ pub fn init_daemon_logging(verbosity: u8) {
 
     // Persist the daemon's own events.
     let file = super::daemon_file::daemon_log_path().map(|path| {
-        let directives = if verbosity >= 1 {
-            "debug,steam_vent=warn,steam_vent_proto=warn"
-        } else {
-            super::daemon_file::DIRECTIVES
-        };
         let writer = super::daemon_file::RotatingFile::new(
             path,
             super::daemon_file::MAX_BYTES,
             super::daemon_file::KEEP,
         );
-        tracing_subscriber::fmt::layer()
-            .with_writer(writer)
-            .with_ansi(false)
-            .with_target(true)
-            .log_internal_errors(false)
-            .with_filter(EnvFilter::new(directives))
+        super::daemon_file::file_layer(writer, verbosity)
     });
 
     tracing_subscriber::registry()
