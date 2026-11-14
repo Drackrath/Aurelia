@@ -84,3 +84,26 @@ fn dlc_catalog_round_trips() {
     std::fs::write(dlc_catalog_path(dir.path(), 70), b"not json").unwrap();
     assert_eq!(load_dlc_catalog(dir.path(), 70), None);
 }
+
+#[test]
+fn owner_is_lender_or_self() {
+    let shared = |owner| SharedApp {
+        app_id: 480,
+        name: "Spacewar".into(),
+        owner_steamid: owner,
+    };
+    let me = 76_561_198_000_000_001;
+    let lender = 76_561_198_000_000_002;
+    assert_eq!(
+        owner_from_shared(480, me, &[shared(Some(lender))]),
+        Some(lender)
+    );
+    assert_eq!(owner_from_shared(70, me, &[shared(Some(lender))]), Some(me));
+    assert_eq!(owner_from_shared(480, me, &[]), Some(me));
+    assert_eq!(
+        owner_from_shared(480, me, &[shared(None)]),
+        None,
+        "lender unknown"
+    );
+    assert_eq!(owner_from_shared(480, me, &[shared(Some(0))]), None);
+}

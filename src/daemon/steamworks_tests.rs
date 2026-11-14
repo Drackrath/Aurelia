@@ -30,6 +30,8 @@ struct Fake {
 }
 
 const SID: u64 = 76_561_197_960_287_930;
+/// Family member lending the game.
+const LENDER: u64 = 76_561_197_960_287_999;
 
 impl Fake {
     fn logged_in() -> Arc<Self> {
@@ -62,6 +64,14 @@ impl Backend for Fake {
             Ok(vec![0xAA, 0xBB])
         } else {
             bail!("app {app_id} not owned")
+        }
+    }
+
+    async fn app_owner(&self, app_id: u32) -> Result<Option<u64>> {
+        match app_id {
+            480 => Ok(Some(LENDER)),
+            481 => Ok(None),
+            _ => bail!("family groups unavailable"),
         }
     }
 
@@ -1882,4 +1892,53 @@ fn join_golden_bytes() {
         join_payload(9, &JoinTarget::Lobby(5)),
         [96, 5, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0]
     );
+}
+
+#[tokio::test]
+async fn ownership_appends_owner_on_request() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake, router, hello(480), None).await;
+    // Old clients send no flags.
+    assert_eq!(
+        game.ask(1, cmd::OWNERSHIP_TICKET, &[]).await,
+        (status::OK, vec![0xAA, 0xBB])
+    );
+    let flag = [ownership_flag::WITH_OWNER];
+    let mut expected = vec![0xAA, 0xBB];
+    expected.extend_from_slice(&LENDER.to_le_bytes());
+    assert_eq!(
+        game.ask(2, cmd::OWNERSHIP_TICKET, &flag).await,
+        (status::OK, expected)
+    );
+    let (code, _) = game.ask_for(3, 70, cmd::OWNERSHIP_TICKET, &flag).await;
+    assert_eq!(code, status::FAILED, "not owned stays a failure");
+    game.hang_up().await;
+}
+
+#[test]
+fn owner_trailer_bytes() {
+    assert_eq!(
+        ticket_with_owner(vec![1], Some(2)),
+        [1, 2, 0, 0, 0, 0, 0, 0, 0]
+    );
+    assert_eq!(
+        ticket_with_owner(vec![1], None),
+        [1, 0, 0, 0, 0, 0, 0, 0, 0]
+    );
+}
+
+#[tokio::test]
+async fn offline_owner_is_unknown() {
+    let fake = offline(&[(480, vec![0xCC])]);
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake, router, hello(480), None).await;
+    let (code, body) = game
+        .ask(1, cmd::OWNERSHIP_TICKET, &[ownership_flag::WITH_OWNER])
+        .await;
+    assert_eq!(
+        (code, body),
+        (status::OK, vec![0xCC, 0, 0, 0, 0, 0, 0, 0, 0])
+    );
+    game.hang_up().await;
 }

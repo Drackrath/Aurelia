@@ -119,6 +119,18 @@ pub mod rich_presence {
     pub const MAX_VALUE_LEN: usize = 256;
 }
 
+/// `OWNERSHIP_TICKET` request flags.
+pub mod ownership_flag {
+    /// Append the owner SteamID.
+    pub const WITH_OWNER: u8 = 1;
+}
+
+/// Ticket then owner; 0 is unknown.
+pub fn ticket_with_owner(mut ticket: Vec<u8>, owner: Option<u64>) -> Vec<u8> {
+    ticket.extend_from_slice(&owner.unwrap_or(0).to_le_bytes());
+    ticket
+}
+
 /// Per-DLC flag bits.
 pub mod dlc_flag {
     /// Has a store page.
@@ -668,6 +680,8 @@ pub trait Backend: Send + Sync + 'static {
     /// Clear one launch.
     fn stop(&self, launch: u64) -> impl Future<Output = ()> + Send;
     fn ownership_ticket(&self, app_id: u32) -> impl Future<Output = Result<Vec<u8>>> + Send;
+    /// Lender under Family Sharing, else us.
+    fn app_owner(&self, app_id: u32) -> impl Future<Output = Result<Option<u64>>> + Send;
     /// Stored account while Steam is unreachable.
     fn offline_steam_id(&self) -> impl Future<Output = Option<u64>> + Send;
     /// Valid cached ticket only, never Steam.
@@ -1258,6 +1272,8 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
                     .cached_ownership_ticket(offline_id, app_id)
                     .await
                 {
+                    // Offline: owner unknown.
+                    Ok(ticket) if wants_owner(req) => (status::OK, ticket_with_owner(ticket, None)),
                     Ok(ticket) => (status::OK, ticket),
                     Err(e) => failed(&e),
                 }
@@ -1280,6 +1296,16 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
     let mut f = Fields::new(&req.body);
     match req.command {
         cmd::OWNERSHIP_TICKET => match conn.backend.ownership_ticket(app_id).await {
+            Ok(ticket) if wants_owner(req) => {
+                let owner = match conn.backend.app_owner(app_id).await {
+                    Ok(owner) => owner,
+                    Err(e) => {
+                        tracing::debug!(app_id, "steamworks: owner unknown: {e:#}");
+                        None
+                    }
+                };
+                (status::OK, ticket_with_owner(ticket, owner))
+            }
             Ok(ticket) => (status::OK, ticket),
             Err(e) => failed(&e),
         },
@@ -1578,6 +1604,13 @@ fn start_ugc_download<B: Backend>(conn: &Conn<B>, app_id: u32, id: u64) {
     });
 }
 
+/// Old clients send no flags.
+fn wants_owner(req: &Request) -> bool {
+    req.body
+        .first()
+        .is_some_and(|f| f & ownership_flag::WITH_OWNER != 0)
+}
+
 /// The daemon's real backend.
 pub struct DaemonBackend;
 
@@ -1604,6 +1637,11 @@ impl Backend for DaemonBackend {
         if let Err(e) = playing::stop_launch(&GAMES, launch, &authed_client).await {
             tracing::warn!("steamworks: could not clear games played: {e:#}");
         }
+    }
+
+    async fn app_owner(&self, app_id: u32) -> Result<Option<u64>> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        client.app_owner(app_id).await
     }
 
     async fn ownership_ticket(&self, app_id: u32) -> Result<Vec<u8>> {
