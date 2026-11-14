@@ -226,3 +226,44 @@ fn pre_rename_stand_in_keys_still_load() {
     assert!(saved.get("steamworks_client").is_none());
     assert_eq!(saved["aureliaworks"], serde_json::json!(true));
 }
+
+#[test]
+fn old_and_new_key_together_new_wins() {
+    let mut value = serde_json::to_value(LauncherConfig::default()).unwrap();
+    let obj = value.as_object_mut().unwrap();
+    obj.insert("aureliaworks".into(), serde_json::json!(true));
+    obj.insert("steamworks_client".into(), serde_json::json!(false));
+    obj.insert("steamworks_cloud_write".into(), serde_json::json!(true));
+    obj.remove("aureliaworks_cloud_write");
+    let c = parse_launcher_config(&value.to_string()).unwrap();
+    assert!(c.aureliaworks, "new key wins");
+    assert!(c.aureliaworks_cloud_write, "old alone still read");
+    assert!(
+        serde_json::from_value::<LauncherConfig>(value).is_err(),
+        "plain serde clashes"
+    );
+}
+
+#[test]
+fn stand_in_path_follows_the_moved_folder() {
+    let base = tempfile::tempdir().unwrap();
+    let old = base.path().join("steamworks/sdk64/steamclient.so");
+    let mut c = LauncherConfig {
+        aureliaworks_path: Some(old.to_string_lossy().into_owned()),
+        ..LauncherConfig::default()
+    };
+    // Old folder still there: unchanged.
+    std::fs::create_dir_all(base.path().join("steamworks")).unwrap();
+    remap_stand_in_path(&mut c, base.path());
+    assert_eq!(c.aureliaworks_path.as_deref(), Some(old.to_str().unwrap()));
+    std::fs::remove_dir_all(base.path().join("steamworks")).unwrap();
+    remap_stand_in_path(&mut c, base.path());
+    let new = base.path().join("aureliaworks/sdk64/steamclient.so");
+    assert_eq!(c.aureliaworks_path.as_deref(), Some(new.to_str().unwrap()));
+    let mut other = LauncherConfig {
+        aureliaworks_path: Some("/opt/lib.so".into()),
+        ..LauncherConfig::default()
+    };
+    remap_stand_in_path(&mut other, base.path());
+    assert_eq!(other.aureliaworks_path.as_deref(), Some("/opt/lib.so"));
+}
