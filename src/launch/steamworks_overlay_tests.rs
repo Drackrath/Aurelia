@@ -552,9 +552,10 @@ const SAMPLE_LOG: &str = "\
 [aurelia-steamworks] unimplemented: SteamUser021::GetSteamID (slot 2) returns 0
 [aurelia-steamworks] game reports missing interface: SteamBar002 (pipe 1)
 [aurelia-steamworks] game reports missing interface: SteamFoo001 (pipe 1)
-[aurelia-steamworks] game created SteamNetworkingSockets012: Steam networking (SDR and P2P) is not supported yet, so its multiplayer may not connect
-[aurelia-steamworks] game created SteamNetworkingSockets012: Steam networking (SDR and P2P) is not supported yet, so its multiplayer may not connect
+[aurelia-steamworks] game created SteamNetworkingSockets012: no Steam Datagram Relay, P2P only over direct or ICE paths, so its multiplayer may not connect
+[aurelia-steamworks] game created SteamNetworkingSockets012: no Steam Datagram Relay, P2P only over direct or ICE paths, so its multiplayer may not connect
 [aurelia-steamworks] game created SteamNetworking006: Steam networking (SDR and P2P) is not supported yet, so its multiplayer may not connect
+[aurelia-steamworks] game created a lobby: not an interface line
 missing interface: NotOurs001
 ";
 
@@ -566,6 +567,18 @@ fn summary_dedupes_missing_and_networking() {
         summary.networking,
         vec!["SteamNetworkingSockets012", "SteamNetworking006"]
     );
+}
+
+#[test]
+fn networking_lines_match_current_and_old_wording() {
+    // Current aurelia-steamworks iface.rs text.
+    let now = "game created SteamNetworkingMessages002: no Steam Datagram Relay, P2P only over direct or ICE paths, so its multiplayer may not connect";
+    assert_eq!(networking_version(now), Some("SteamNetworkingMessages002"));
+    let old =
+        "game created SteamNetworking006: Steam networking (SDR and P2P) is not supported yet";
+    assert_eq!(networking_version(old), Some("SteamNetworking006"));
+    assert_eq!(networking_version("game created a lobby: x"), None);
+    assert_eq!(networking_version("game created SteamFoo001"), None);
 }
 
 #[test]
