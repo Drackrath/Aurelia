@@ -2600,6 +2600,20 @@ fn networking_cert_golden_bytes() {
     assert_eq!(cmd::NETWORKING_CERT, 110);
 }
 
+/// Key bytes never get reallocated.
+#[test]
+fn key_buffers_are_sized_once() {
+    let grant = CertGrant {
+        expiry: 1,
+        signed: zeroize::Zeroizing::new(vec![7; 300]),
+    };
+    let body = networking_cert_body(&grant);
+    assert_eq!(body.capacity(), body.len());
+    let reply = response_payload(9, status::OK, &body);
+    assert_eq!(reply.capacity(), reply.len());
+    assert_eq!(&reply[5..], &body[..]);
+}
+
 /// Same bytes the .so parses.
 #[test]
 fn signaling_golden_bytes() {
