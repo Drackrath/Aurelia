@@ -6,6 +6,7 @@ pub mod pipeline;
 pub mod shaders;
 pub mod stages;
 pub mod stand_in_guard;
+pub mod stand_in_lib;
 #[cfg(target_os = "linux")]
 pub mod steamworks_overlay;
 pub mod validators;

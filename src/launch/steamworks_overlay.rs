@@ -94,8 +94,8 @@ pub fn resolve_client_libs(path: &Path) -> Result<ClientLibs, LaunchError> {
             LaunchErrorKind::Dependency,
             format!(
                 "steamworks_client is on but {} is missing; build aurelia-steamworks \
-                 and install its libsteamclient.so there, or set the path with \
-                 `aurelia config steamworks-client on --path <file|dir>`",
+                 and install it with `aurelia config steamworks-client --path \
+                 <libsteamclient.so or checkout>`",
                 sdk64.display()
             ),
         ));

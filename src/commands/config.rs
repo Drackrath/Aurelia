@@ -432,9 +432,19 @@ pub(crate) async fn cmd_config_steamworks_client(
         || disallow.is_some()
         || cloud_write.is_some()
         || workshop_publish.is_some();
+    // Install first; never save broken paths.
+    let installed = match path.as_deref().map(str::trim) {
+        Some(p) if !p.is_empty() => Some(install_stand_in(p)?),
+        _ => None,
+    };
+    let reset_path = path.as_deref().is_some_and(|p| p.trim().is_empty());
+    if matches!(mode, Some(OnOffArg::On)) {
+        ensure_stand_in_installed(installed.is_some() || reset_path).await?;
+    }
+    let path_change = installed.is_some() || reset_path;
     let change = any.then_some((
         mode,
-        path,
+        path_change,
         stats_writes,
         allow,
         disallow,
@@ -450,9 +460,9 @@ pub(crate) async fn cmd_config_steamworks_client(
             if let Some(writes) = writes {
                 c.steamworks_stats_writes = matches!(writes, OnOffArg::On);
             }
-            if let Some(path) = path {
-                let path = path.trim();
-                c.steamworks_client_path = (!path.is_empty()).then(|| path.to_string());
+            // Aurelia's own directory again.
+            if path {
+                c.steamworks_client_path = None;
             }
             let allowed = &mut c.steamworks_allowed_protected;
             if let Some(id) = allow.filter(|id| !allowed.contains(id)) {
@@ -481,6 +491,10 @@ pub(crate) async fn cmd_config_steamworks_client(
             "steamworks_client": config.steamworks_client,
             "steamworks_client_path": config.steamworks_client_path,
             "effective_path": effective_path,
+            "installed": installed.as_ref().map(|i| serde_json::json!({
+                "sdk64": i.sdk64,
+                "sdk32": i.sdk32,
+            })),
             "steamworks_allowed_protected": config.steamworks_allowed_protected,
             "steamworks_cloud_write": config.steamworks_cloud_write,
             "steamworks_stats_writes": config.steamworks_stats_writes,
@@ -494,6 +508,21 @@ pub(crate) async fn cmd_config_steamworks_client(
         "off"
     };
     cli_println!("Stand-in steamclient.so: {label}");
+    if let Some(i) = &installed {
+        let show = |p: &Option<std::path::PathBuf>| {
+            p.as_ref()
+                .map_or("none".to_string(), |p| p.display().to_string())
+        };
+        cli_println!("Installed 64-bit: {}", show(&i.sdk64));
+        cli_println!("Installed 32-bit: {}", show(&i.sdk32));
+        cli_println!(
+            "Checked: ELF architecture and {} export OK",
+            aurelia::launch::stand_in_lib::ENTRY_SYMBOL
+        );
+        if !config.steamworks_client {
+            cli_println!("Turn it on with `aurelia config steamworks-client on`.");
+        }
+    }
     if let Some(path) = effective_path {
         cli_println!("Path: {path}");
     }
@@ -519,6 +548,35 @@ pub(crate) async fn cmd_config_steamworks_client(
     }
     if changed {
         cli_println!("Saved. Applies to the next launch.");
+    }
+    Ok(())
+}
+
+/// Resolves, checks, copies `input`.
+fn install_stand_in(input: &str) -> Result<aurelia::launch::stand_in_lib::Resolved> {
+    use aurelia::launch::stand_in_lib;
+    let dir = steamworks_default_dir()
+        .ok_or_else(|| anyhow::anyhow!("the stand-in steamclient.so is Linux only"))?;
+    let cwd = std::env::current_dir().context("cannot read the current directory")?;
+    let home = aurelia::core::config::home_dir()?;
+    let found = stand_in_lib::resolve(input, &cwd, &home)?;
+    stand_in_lib::install(&found, std::path::Path::new(&dir))
+}
+
+/// `on` needs an installed 64-bit library.
+async fn ensure_stand_in_installed(default_dir: bool) -> Result<()> {
+    let config = load_launcher_config().await?;
+    let dir = match (&config.steamworks_client_path, default_dir) {
+        (Some(custom), false) => Some(custom.clone()),
+        _ => steamworks_default_dir(),
+    }
+    .ok_or_else(|| anyhow::anyhow!("the stand-in steamclient.so is Linux only"))?;
+    if aurelia::launch::steamworks_overlay::resolve_client_libs(std::path::Path::new(&dir)).is_err()
+    {
+        anyhow::bail!(
+            "no stand-in steamclient.so is installed in {dir}; build aurelia-steamworks and \
+             run `aurelia config steamworks-client --path <libsteamclient.so or checkout>` first"
+        );
     }
     Ok(())
 }
