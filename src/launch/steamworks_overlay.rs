@@ -71,6 +71,77 @@ pub struct OverlayPlan {
     pub account_id: Option<u32>,
     pub daemon_socket: Option<PathBuf>,
     pub log_path: Option<PathBuf>,
+    /// Read-only file binds: source, target.
+    pub dll_binds: Vec<(PathBuf, PathBuf)>,
+}
+
+/// Steam folder inside a Wine prefix.
+const PREFIX_STEAM_DIR: &str = "drive_c/Program Files (x86)/Steam";
+
+/// Prefix Proton runs the game in.
+pub fn game_prefix(env: &std::collections::HashMap<String, String>) -> Option<PathBuf> {
+    let compat = env
+        .get("STEAM_COMPAT_DATA_PATH")
+        .map(|p| Path::new(p).join("pfx"))
+        .filter(|p| p.is_dir());
+    compat.or_else(|| {
+        env.get("WINEPREFIX")
+            .map(PathBuf::from)
+            .filter(|p| p.is_dir())
+    })
+}
+
+/// Proton root from env or argv.
+pub fn runner_root(spec: &CommandSpec) -> Option<PathBuf> {
+    if let Some(path) = spec.env.get("PROTONPATH").filter(|p| !p.is_empty()) {
+        return Some(PathBuf::from(path));
+    }
+    std::iter::once(spec.program.to_string_lossy().into_owned())
+        .chain(spec.args.iter().cloned())
+        .map(PathBuf::from)
+        .find(|p| p.file_name().is_some_and(|n| n == "proton"))
+        .and_then(|p| p.parent().map(Path::to_path_buf))
+}
+
+/// Proton's shim: legacycompat, else lsteamclient.
+pub fn shim_sources(host_steam: Option<&Path>, runner: Option<&Path>) -> [Option<PathBuf>; 2] {
+    let pick = |legacy: &str, pe_dir: &str| {
+        let valve = host_steam.map(|s| s.join("legacycompat").join(legacy));
+        let builtin = runner.map(|r| {
+            r.join("files/lib/wine")
+                .join(pe_dir)
+                .join("lsteamclient.dll")
+        });
+        [valve, builtin]
+            .into_iter()
+            .flatten()
+            .find(|p| p.is_file())
+            .map(|p| p.canonicalize().unwrap_or(p))
+    };
+    [
+        pick("steamclient64.dll", "x86_64-windows"),
+        pick("steamclient.dll", "i386-windows"),
+    ]
+}
+
+/// Prefix DLLs to shadow, existing only.
+pub fn prefix_dll_binds(prefix: &Path, shims: &[Option<PathBuf>; 2]) -> Vec<(PathBuf, PathBuf)> {
+    let steam = prefix.join(PREFIX_STEAM_DIR);
+    let targets: [(&str, &Option<PathBuf>); 3] = [
+        ("steamclient64.dll", &shims[0]),
+        ("steamclient64_aurelia.dll", &shims[0]),
+        ("steamclient.dll", &shims[1]),
+    ];
+    targets
+        .into_iter()
+        .filter_map(|(name, shim)| {
+            let target = steam.join(name);
+            // Never create files on disk.
+            let shim = shim.as_ref()?;
+            (target.is_file() && target.canonicalize().ok() != shim.canonicalize().ok())
+                .then(|| (shim.clone(), target))
+        })
+        .collect()
 }
 
 /// Default stand-in install directory.
@@ -191,6 +262,9 @@ pub fn bwrap_args(plan: &OverlayPlan, cwd: Option<&Path>) -> Vec<String> {
     lib("sdk64", &plan.libs.sdk64);
     if let Some(so32) = &plan.libs.sdk32 {
         lib("sdk32", so32);
+    }
+    for (src, target) in &plan.dll_binds {
+        args.extend(["--ro-bind".into(), s(src), s(target)]);
     }
     if let Some(cwd) = cwd {
         args.extend(["--chdir".into(), s(cwd)]);
@@ -379,6 +453,20 @@ pub fn plan_for(
             .with_source(e.into())
         })?;
     }
+    let dll_binds = game_prefix(&spec.env)
+        .map(|prefix| {
+            let host = crate::core::config::detect_steam_path();
+            let shims = shim_sources(host.as_deref(), runner_root(spec).as_deref());
+            prefix_dll_binds(&prefix, &shims)
+        })
+        .unwrap_or_default();
+    for (src, target) in &dll_binds {
+        tracing::info!(
+            "stand-in: {} shadowed by {} for this launch",
+            target.display(),
+            src.display()
+        );
+    }
     Ok(OverlayPlan {
         bwrap,
         home,
@@ -388,6 +476,7 @@ pub fn plan_for(
         account_id,
         daemon_socket: daemon_socket(),
         log_path: None,
+        dll_binds,
     })
 }
 
