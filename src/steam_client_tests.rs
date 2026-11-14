@@ -1128,3 +1128,32 @@ async fn stdin_eof_ends_reader() {
     let code: CodeReader = Box::pin(async { Ok(None) });
     assert_eq!(client::feed_code_while(work, code, writer).await, 0);
 }
+
+#[test]
+fn parses_cloud_quota() {
+    let raw = r#""427520"
+{
+  "ufs"
+  {
+    "quota" "1000000000"
+    "maxnumfiles" "1000"
+  }
+}"#;
+    let vdf = find_vdf_in_pics(raw.as_bytes()).expect("parse pics vdf");
+    let quota = cloud_quota_from_section(pics_app_section(vdf.value()));
+    assert_eq!(
+        quota,
+        Some(CloudQuota {
+            bytes: 1_000_000_000,
+            max_files: 1000
+        })
+    );
+    let none = find_vdf_in_pics(br#""1" { "ufs" { "maxnumfiles" "3" } }"#).unwrap();
+    assert_eq!(
+        cloud_quota_from_section(pics_app_section(none.value())),
+        None
+    );
+    use steam_vdf_parser::Value;
+    assert_eq!(vdf_u64(&Value::I32(7)), Some(7));
+    assert_eq!(vdf_u64(&Value::I32(-1)), None);
+}
