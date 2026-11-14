@@ -493,7 +493,7 @@ fn overlay_runs_under_bwrap_without_touching_real_dir() {
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert_eq!(stdout, "stand-in\npid-ok\nreg-ok\ndatakept\n480\nsock-ok\n");
     let log = dir.path().join("logs/steamworks.log");
-    assert_eq!(summarize_log_file(&log).len(), 2);
+    assert_eq!(summarize_log_file(&log, false).len(), 2);
 
     // Real directory is untouched.
     assert_eq!(
@@ -596,7 +596,7 @@ fn quiet_log_has_no_summary() {
     let summary = summarize_log("[aurelia-steamworks] unimplemented: A::b (slot 1) x\n");
     assert!(summary.is_empty());
     assert!(summary.lines(Path::new("/l")).is_empty());
-    assert!(summarize_log_file(Path::new("/nonexistent/aurelia/steamworks.log")).is_empty());
+    assert!(summarize_log_file(Path::new("/nonexistent/aurelia/steamworks.log"), true).is_empty());
 }
 
 #[test]
@@ -1137,6 +1137,13 @@ fn markers_match_the_stand_in() {
     let summary = summarize_log(&std::fs::read_to_string(fixture).unwrap());
     assert_eq!(summary.missing, ["SteamFoo001", "SteamBar002"]);
     assert_eq!(summary.networking, ["SteamNetworkingSockets012"]);
+    assert_eq!(
+        summary.refused,
+        [
+            "encrypted app: refused (EResult 15)",
+            "networking cert: refused: InsufficientPrivilege"
+        ]
+    );
 }
 
 #[test]
@@ -1166,6 +1173,29 @@ fn checkout_choice_is_strict_when_asked() {
 #[test]
 fn const_reader_reads_markers() {
     let ours = rust_consts(include_str!("steamworks_overlay.rs"), "marker").unwrap();
-    assert_eq!(ours.len(), 4);
+    assert_eq!(ours.len(), 6);
     assert_eq!(ours[0], ("PREFIX".to_string(), marker::PREFIX.to_string()));
+}
+
+#[test]
+fn refused_tickets_and_borrowed_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("steamworks.log");
+    std::fs::write(
+        &log,
+        "[aurelia-steamworks] ticket ownership: ok\n\
+         [aurelia-steamworks] ticket ownership: refused (empty or invalid ticket)\n\
+         [aurelia-steamworks] ticket encrypted app: refused (EResult 15)\n",
+    )
+    .unwrap();
+    let lines = summarize_log_file(&log, true);
+    assert_eq!(lines[0], BORROWED_REFUSED);
+    assert!(lines[1].contains("ownership: refused (empty or invalid ticket)"));
+    assert!(lines[1].contains("encrypted app: refused (EResult 15)"));
+    assert!(!lines[1].contains(": ok"));
+    let own = summarize_log_file(&log, false);
+    assert!(!own.contains(&BORROWED_REFUSED.to_string()));
+    // All fine: nothing to say.
+    std::fs::write(&log, "[aurelia-steamworks] ticket web api: ok\n").unwrap();
+    assert!(summarize_log_file(&log, true).is_empty());
 }
