@@ -563,6 +563,7 @@ pub use launch::{
 mod cloudconfig;
 mod collections;
 mod manifests;
+pub mod persona_events;
 pub mod playing;
 mod process;
 pub mod remote_storage;

@@ -15,6 +15,7 @@ use tokio::task::JoinSet;
 use aurelia::core::models::DownloadState;
 use aurelia::steam_client::auth_ticket::{AuthSessionTicket, TicketAuthEvent, TicketKind};
 use aurelia::steam_client::microtxn::{self, MicroTxnRequest};
+use aurelia::steam_client::persona_events::{PersonaEvent, change};
 use aurelia::steam_client::playing::{self, GAMES, Launch};
 use aurelia::steam_client::remote_storage::{RemoteStorageInfo, remote_storage_info};
 use aurelia::steam_client::steamworks_info::{AppInstallInfo, DlcInfo};
@@ -128,6 +129,28 @@ pub mod push {
     pub const MICROTXN_RESULT: u8 = 81;
     /// Workshop download finished.
     pub const UGC_DOWNLOADED: u8 = 70;
+    /// Persona pushes; 100-104 reserved.
+    pub const PERSONA_CHANGE: u8 = 100;
+    pub const RICH_PRESENCE: u8 = 101;
+}
+
+/// Push payloads for one persona event.
+pub fn persona_payloads(event: &PersonaEvent) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+    let other = event.flags & !change::RICH_PRESENCE;
+    if other != 0 {
+        let mut p = vec![push::PERSONA_CHANGE];
+        p.extend_from_slice(&event.steam_id.to_le_bytes());
+        p.extend_from_slice(&other.to_le_bytes());
+        out.push(p);
+    }
+    if event.flags & change::RICH_PRESENCE != 0 {
+        let mut p = vec![push::RICH_PRESENCE];
+        p.extend_from_slice(&event.steam_id.to_le_bytes());
+        p.extend_from_slice(&event.app_id.to_le_bytes());
+        out.push(p);
+    }
+    out
 }
 
 /// Auth ticket kinds on the wire.
@@ -693,6 +716,10 @@ pub trait Backend: Send + Sync + 'static {
         app_id: u32,
         lobby: u64,
     ) -> impl Future<Output = Result<()>> + Send;
+    /// Friends' persona changes.
+    fn persona_events(
+        &self,
+    ) -> impl Future<Output = Option<mpsc::UnboundedReceiver<PersonaEvent>>> + Send;
     /// Lobby pushes for this app.
     fn lobby_events(
         &self,
@@ -997,6 +1024,21 @@ where
             })
         }),
     };
+    let persona_pump = match offline {
+        Some(_) => None,
+        None => conn.backend.persona_events().await.map(|mut rx| {
+            let tx = conn.push_tx.clone();
+            tokio::spawn(async move {
+                while let Some(event) = rx.recv().await {
+                    for payload in persona_payloads(&event) {
+                        if tx.send(payload).is_err() {
+                            return;
+                        }
+                    }
+                }
+            })
+        }),
+    };
     let push_writer = writer.clone();
     let pusher = tokio::spawn(async move {
         while let Some(payload) = push_rx.recv().await {
@@ -1037,6 +1079,9 @@ where
     frames.abort();
     pusher.abort();
     if let Some(pump) = lobby_pump {
+        pump.abort();
+    }
+    if let Some(pump) = persona_pump {
         pump.abort();
     }
     let joined: Vec<u64> = conn.lobbies.lock().unwrap().drain().collect();
@@ -1581,6 +1626,10 @@ impl Backend for DaemonBackend {
 
     async fn lobby_events(&self, app_id: u32) -> Option<mpsc::UnboundedReceiver<LobbyEvent>> {
         authed_client().await?.lobby_events(app_id).ok()
+    }
+
+    async fn persona_events(&self) -> Option<mpsc::UnboundedReceiver<PersonaEvent>> {
+        authed_client().await?.persona_events().ok()
     }
 
     async fn friends(&self) -> Result<FriendsSnapshot> {
