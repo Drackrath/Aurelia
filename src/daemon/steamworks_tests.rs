@@ -26,6 +26,7 @@ struct Fake {
     opened: Mutex<Vec<String>>,
     queries: Mutex<Vec<UgcQuery>>,
     subscribed: Mutex<Vec<u64>>,
+    invites: Mutex<Vec<String>>,
 }
 
 const SID: u64 = 76_561_197_960_287_930;
@@ -166,6 +167,7 @@ impl Backend for Fake {
                 game_app_id: Some(480),
                 game_name: None,
                 avatar_hash: Some("ab01".into()),
+                game_lobby_id: None,
             }],
         })
     }
@@ -198,6 +200,21 @@ impl Backend for Fake {
     async fn open_url(&self, url: String) -> Result<bool> {
         self.opened.lock().unwrap().push(url);
         Ok(true)
+    }
+
+    async fn game_invite(&self, app_id: u32, friend: u64, connect: String) -> Result<()> {
+        if friend == 13 {
+            bail!("not a friend");
+        }
+        let line = format!("game {app_id} {friend} {connect}");
+        self.invites.lock().unwrap().push(line);
+        Ok(())
+    }
+
+    async fn lobby_invite(&self, app_id: u32, lobby: u64, friend: u64) -> Result<()> {
+        let line = format!("lobby {app_id} {lobby} {friend}");
+        self.invites.lock().unwrap().push(line);
+        Ok(())
     }
 
     async fn cloud_info(&self, steam_id: u64, app_id: u32) -> Result<RemoteStorageInfo> {
@@ -1795,4 +1812,74 @@ async fn offline_games_get_no_persona_pushes() {
     let (game, _) = Game::connect(fake.clone(), router, hello(480), None).await;
     assert!(fake.persona_tx.lock().unwrap().is_none());
     game.hang_up().await;
+}
+
+#[tokio::test]
+async fn invites_reach_steam() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router, hello(480), None).await;
+    let mut body = 9u64.to_le_bytes().to_vec();
+    put_blob(&mut body, b"+connect a");
+    assert_eq!(game.ask(1, cmd::GAME_INVITE, &body).await.0, status::OK);
+    let mut bad = 13u64.to_le_bytes().to_vec();
+    put_blob(&mut bad, b"");
+    let (code, why) = game.ask(2, cmd::GAME_INVITE, &bad).await;
+    assert_eq!((code, why), (status::FAILED, b"not a friend".to_vec()));
+    let mut lobby = 5u64.to_le_bytes().to_vec();
+    lobby.extend_from_slice(&9u64.to_le_bytes());
+    assert_eq!(game.ask(3, cmd::LOBBY_INVITE, &lobby).await.0, status::OK);
+    assert_eq!(
+        game.ask(4, cmd::LOBBY_INVITE, &[1]).await.0,
+        status::MALFORMED
+    );
+    assert_eq!(
+        game.ask(5, cmd::GAME_INVITE, &[1]).await.0,
+        status::MALFORMED
+    );
+    assert_eq!(
+        *fake.invites.lock().unwrap(),
+        ["game 480 9 +connect a", "lobby 480 5 9"]
+    );
+    *fake.steam_id.lock().unwrap() = None;
+    assert_eq!(
+        game.ask(6, cmd::GAME_INVITE, &body).await.0,
+        status::NO_SESSION
+    );
+    game.hang_up().await;
+}
+
+#[tokio::test]
+async fn join_reaches_running_game_only() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake, router.clone(), hello(480), None).await;
+    let target = JoinTarget::Connect("+connect 10.0.0.1".into());
+    assert_eq!(join_running(&router, 480, 9, &target), 1);
+    assert_eq!(
+        game.next().await,
+        (proto::C_SW_PUSH, join_payload(9, &target))
+    );
+    let lobby = JoinTarget::Lobby(5);
+    assert_eq!(join_running(&router, 480, 9, &lobby), 1);
+    assert_eq!(
+        game.next().await,
+        (proto::C_SW_PUSH, join_payload(9, &lobby))
+    );
+    assert_eq!(join_running(&router, 70, 9, &lobby), 0, "not running");
+    game.hang_up().await;
+    assert_eq!(join_running(&router, 480, 9, &lobby), 0, "game gone");
+}
+
+/// Same bytes the .so tests use.
+#[test]
+fn join_golden_bytes() {
+    assert_eq!(
+        join_payload(9, &JoinTarget::Connect("+c".into())),
+        [95, 9, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, b'+', b'c']
+    );
+    assert_eq!(
+        join_payload(9, &JoinTarget::Lobby(5)),
+        [96, 5, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0]
+    );
 }

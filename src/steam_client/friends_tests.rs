@@ -213,3 +213,19 @@ fn unnamed_friend_ids_skips_named_and_non_friends() {
     apply_persona_state(&mut roster, &persona_state(&[(10, "Alice", 1, 0)]));
     assert_eq!(unnamed_friend_ids(&roster), vec![20]);
 }
+
+#[test]
+fn persona_state_tracks_lobby() {
+    let mut roster = Roster::new();
+    let mut msg = persona_state(&[(10, "Alice", 1, 480)]);
+    msg.friends[0].set_game_lobby_id(109_775_241_000_000_001);
+    apply_persona_state(&mut roster, &msg);
+    assert_eq!(roster[&10].game_lobby_id, Some(109_775_241_000_000_001));
+    let mut zero = persona_state(&[(10, "Alice", 1, 480)]);
+    zero.friends[0].set_game_lobby_id(0);
+    apply_persona_state(&mut roster, &zero);
+    assert_eq!(roster[&10].game_lobby_id, None, "left the lobby");
+    apply_persona_state(&mut roster, &msg);
+    apply_persona_state(&mut roster, &persona_state(&[(10, "Alice", 1, 0)]));
+    assert_eq!(roster[&10].game_lobby_id, None, "left the game");
+}

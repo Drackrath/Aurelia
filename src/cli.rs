@@ -481,6 +481,28 @@ pub(crate) enum Command {
     },
     /// Show your Steam Wallet balance.
     Wallet,
+    /// Join a friend's game or lobby.
+    #[command(long_about = "Join a friend's game, like Steam's \"Join Game\".\n\n\
+        Uses the friend's lobby, or the `connect` string from their rich presence; \
+        `--lobby` and `--connect` (from an invite) override that. If the game runs \
+        with Aurelia's stand-in steamclient.so, it gets the join request directly; \
+        otherwise Aurelia starts it with `+connect_lobby <id>` or the connect string.")]
+    Join {
+        /// Friend name or SteamID.
+        friend: String,
+        /// Connect string from an invite.
+        #[arg(long, conflicts_with = "lobby")]
+        connect: Option<String>,
+        /// Lobby SteamID to join.
+        #[arg(long)]
+        lobby: Option<u64>,
+        /// Game to join; default friend's.
+        #[arg(long, value_name = "APPID")]
+        app: Option<u32>,
+        /// Only signal a running game.
+        #[arg(long)]
+        no_launch: bool,
+    },
     /// Approve in-game purchases without the overlay.
     #[command(
         long_about = "Approve in-game purchases without the Steam overlay.\n\n\

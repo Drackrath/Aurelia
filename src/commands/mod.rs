@@ -8,6 +8,7 @@ pub(crate) mod common;
 pub(crate) mod config;
 pub(crate) mod info;
 pub(crate) mod install;
+pub(crate) mod join;
 pub(crate) mod launch;
 pub(crate) mod library;
 pub(crate) mod market;
