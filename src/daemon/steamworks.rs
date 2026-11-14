@@ -16,6 +16,7 @@ use aurelia::core::models::DownloadState;
 use aurelia::steam_client::auth_ticket::{AuthSessionTicket, TicketAuthEvent, TicketKind};
 use aurelia::steam_client::avatars::{Avatar, AvatarSize, download_jpeg, fetch_avatar};
 use aurelia::steam_client::microtxn::{self, MicroTxnRequest};
+use aurelia::steam_client::networking_cert::{CertCache, CertGrant, KeyFormat};
 use aurelia::steam_client::persona_events::{PersonaEvent, change};
 use aurelia::steam_client::playing::{self, GAMES, Launch};
 use aurelia::steam_client::remote_storage::{RemoteStorageInfo, remote_storage_info};
@@ -86,6 +87,8 @@ pub mod cmd {
     /// Invites range is 95-99.
     pub const GAME_INVITE: u8 = 95;
     pub const LOBBY_INVITE: u8 = 96;
+    /// SDR range is 110-114.
+    pub const NETWORKING_CERT: u8 = 110;
 }
 
 /// Cloud info flag bits.
@@ -749,6 +752,13 @@ fn ugc_progress(app_id: u32, id: u64) -> Option<(u64, u64)> {
 /// `EResult` for a failed download.
 const ERESULT_FAIL: i32 = 2;
 
+/// Cert body: expiry, signed blob.
+pub fn networking_cert_body(grant: &CertGrant) -> Vec<u8> {
+    let mut out = grant.expiry.to_le_bytes().to_vec();
+    put_blob(&mut out, &grant.signed);
+    out
+}
+
 /// Avatar body: width, height, RGBA.
 pub fn avatar_body(avatar: &Avatar) -> Vec<u8> {
     let mut out = avatar.width.to_le_bytes().to_vec();
@@ -970,6 +980,8 @@ pub trait Backend: Send + Sync + 'static {
         score: i32,
         details: Vec<u8>,
     ) -> impl Future<Output = Result<ScoreUpload>> + Send;
+    /// Steam-signed SDR certificate.
+    fn networking_cert(&self, app_id: u32) -> impl Future<Output = Result<CertGrant>> + Send;
 }
 
 /// Where a join goes.
@@ -1403,6 +1415,7 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
             | cmd::UGC_CREATE
             | cmd::UGC_UPDATE
             | cmd::AVATAR
+            | cmd::NETWORKING_CERT
     ) {
         return (status::UNSUPPORTED, b"unknown command".to_vec());
     }
@@ -1617,6 +1630,13 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
             };
             match conn.backend.lobby_invite(app_id, lobby, friend).await {
                 Ok(()) => (status::OK, Vec::new()),
+                Err(e) => failed(&e),
+            }
+        }
+        cmd::NETWORKING_CERT => {
+            // Always the connected game's.
+            match conn.backend.networking_cert(conn.app_id).await {
+                Ok(grant) => (status::OK, networking_cert_body(&grant)),
                 Err(e) => failed(&e),
             }
         }
@@ -1852,6 +1872,10 @@ fn wants_owner(req: &Request) -> bool {
 
 /// The daemon's real backend.
 pub struct DaemonBackend;
+
+/// SDR keys and certs, memory only.
+static NETWORKING_CERTS: std::sync::LazyLock<tokio::sync::Mutex<CertCache>> =
+    std::sync::LazyLock::new(Default::default);
 
 /// Logged-on shared client, if any.
 async fn authed_client() -> Option<SteamClient> {
@@ -2223,6 +2247,19 @@ impl Backend for DaemonBackend {
         let client = authed_client().await.ok_or_else(not_logged_in)?;
         let language = game_language(&client, app_id).await;
         client.user_stats(app_id, steam_id, &language).await
+    }
+
+    async fn networking_cert(&self, app_id: u32) -> Result<CertGrant> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        let steam_id = client.steam_id().ok_or_else(not_logged_in)?;
+        let (now, _) = self.session_info().await?;
+        let client = &client;
+        let mut certs = NETWORKING_CERTS.lock().await;
+        certs
+            .get(steam_id, app_id, now, KeyFormat::from_env(), |key| {
+                client.networking_cert(app_id, key)
+            })
+            .await
     }
 
     async fn stats_writes(&self) -> bool {
