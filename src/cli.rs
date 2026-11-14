@@ -249,6 +249,9 @@ pub(crate) enum Command {
         /// Overrides the configured Steam-runtime policy.
         #[arg(short = 'm', long)]
         steam_mode: Option<SteamModeArg>,
+        /// Stand-in Steam install, this launch.
+        #[arg(long, value_name = "host|in-wine|auto")]
+        steam_install: Option<StandInInstallArg>,
         /// Start this entry from `aurelia launch-options`, by its id, instead of
         /// the default one.
         #[arg(long, value_name = "ID")]
@@ -681,6 +684,17 @@ pub(crate) enum ConfigCommand {
                 Pass \"\" to drop a custom directory from older versions."
         )]
         path: Option<String>,
+        /// Steam install stand-in launches use.
+        #[arg(
+            long,
+            value_name = "host|in-wine|auto",
+            long_help = "Which Steam install stand-in launches pair with. `in-wine`: \
+                Aurelia's in-Wine Steam prefix (its steamclient DLLs are shadowed with \
+                Proton-ready ones for the launch). `host`: the host Steam's compatdata \
+                prefix, with Proton installing Valve's steamclient files from the host \
+                Steam. `auto` (default): in-wine if installed, else host."
+        )]
+        steam_install: Option<StandInInstallArg>,
         /// Let games write stats and achievements.
         #[arg(
             long,
@@ -1318,6 +1332,27 @@ pub(crate) enum OnOffArg {
     Off,
 }
 
+/// Steam install for stand-in launches.
+#[derive(Clone, Copy, ValueEnum)]
+pub(crate) enum StandInInstallArg {
+    /// Host Steam compatdata and root.
+    Host,
+    /// Aurelia's in-Wine Steam prefix.
+    InWine,
+    /// In-Wine if installed, else host.
+    Auto,
+}
+
+impl From<StandInInstallArg> for aurelia::core::models::StandInSteamInstall {
+    fn from(value: StandInInstallArg) -> Self {
+        match value {
+            StandInInstallArg::Host => Self::Host,
+            StandInInstallArg::InWine => Self::InWine,
+            StandInInstallArg::Auto => Self::Auto,
+        }
+    }
+}
+
 /// `steamworks-client` modes.
 #[derive(Clone, Copy, ValueEnum)]
 pub(crate) enum StandInModeArg {
@@ -1573,4 +1608,7 @@ pub(crate) struct GameConfigArgs {
     /// prefix directly; `per-game` copies Steam into the game's own prefix.
     #[arg(short = 'm', long, value_name = "shared|per-game")]
     pub(crate) steam_prefix_mode: Option<SteamPrefixModeArg>,
+    /// Stand-in Steam install for this game.
+    #[arg(long, value_name = "host|in-wine|auto")]
+    pub(crate) steam_install: Option<StandInInstallArg>,
 }

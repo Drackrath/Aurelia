@@ -19,6 +19,19 @@ pub enum SteamRuntimePolicy {
     Disabled,
 }
 
+/// Steam install the stand-in pairs with.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum StandInSteamInstall {
+    /// In-Wine if installed, else host.
+    #[default]
+    Auto,
+    /// Host Steam root and compatdata.
+    Host,
+    /// Aurelia's in-Wine Steam prefix.
+    InWine,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SteamLaunchConfig {
     #[serde(default = "default_true")]
@@ -118,6 +131,9 @@ pub struct UserAppConfig {
     pub steam_runtime_policy: SteamRuntimePolicy,
     #[serde(default)]
     pub steam_prefix_mode: SteamPrefixMode,
+    /// Per-game stand-in install override.
+    #[serde(default)]
+    pub stand_in_steam_install: Option<StandInSteamInstall>,
     #[serde(default)]
     pub steam_launch_config: SteamLaunchConfig,
     #[serde(default)]

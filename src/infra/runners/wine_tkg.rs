@@ -44,11 +44,16 @@ struct SteamLayout {
     steam_prefix_mode: crate::core::models::SteamPrefixMode,
     compat_data_path: PathBuf,
     game_prefix: PathBuf,
+    /// Stand-in install, when one applies.
+    stand_in: Option<(
+        crate::launch::stand_in_install::Install,
+        crate::launch::stand_in_install::Layout,
+    )>,
 }
 
 impl SteamLayout {
     /// Derive the layout from `ctx`.
-    fn derive(ctx: &LaunchContext) -> Self {
+    fn derive(ctx: &LaunchContext) -> std::result::Result<Self, LaunchError> {
         let library_root = PathBuf::from(&ctx.launcher_config.steam_library_path);
         let (steam_mode, steam_mode_source) = resolve_steam_mode(ctx);
         let steam_prefix_mode = ctx
@@ -68,23 +73,60 @@ impl SteamLayout {
             ctx.app.app_id,
             ctx.app.install_path.as_deref().map(std::path::Path::new),
         );
-        let compat_data_path = game_compat_data_path(
+        let mut compat_data_path = game_compat_data_path(
             &game_library,
             ctx.app.app_id,
             steam_mode,
             steam_prefix_mode.clone(),
             &master_wine_prefix,
         );
-        let game_prefix = effective_game_prefix(ctx);
-        Self {
+        let mut game_prefix = effective_game_prefix(ctx);
+        let stand_in = stand_in_install(ctx, steam_mode, &compat_data_path)?;
+        if let Some((_, layout)) = &stand_in {
+            // One prefix for Proton and Wine.
+            compat_data_path = layout.compat_data.clone();
+            game_prefix = layout.prefix.clone();
+        }
+        Ok(Self {
             library_root,
             steam_mode,
             steam_mode_source,
             steam_prefix_mode,
             compat_data_path,
             game_prefix,
-        }
+            stand_in,
+        })
     }
+}
+
+/// Stand-in Standalone launches only.
+fn stand_in_install(
+    ctx: &LaunchContext,
+    steam_mode: SteamMode,
+    host_compat_data: &Path,
+) -> std::result::Result<
+    Option<(
+        crate::launch::stand_in_install::Install,
+        crate::launch::stand_in_install::Layout,
+    )>,
+    LaunchError,
+> {
+    use crate::launch::stand_in_install as si;
+    if steam_mode != SteamMode::Standalone || !stand_in_client_active(&ctx.launcher_config) {
+        return Ok(None);
+    }
+    let master = crate::core::utils::get_master_steam_config().wine_prefix;
+    let install = si::choose(
+        ctx.launcher_config.steamworks_steam_install,
+        ctx.user_config
+            .as_ref()
+            .and_then(|c| c.stand_in_steam_install),
+        crate::core::utils::host_steam_client_path(),
+        &master,
+    )
+    .map_err(|msg| LaunchError::new(LaunchErrorKind::Dependency, msg))?;
+    let layout = si::layout(&install, host_compat_data);
+    Ok(Some((install, layout)))
 }
 
 #[async_trait::async_trait]
@@ -100,7 +142,8 @@ impl Runner for WineTkgRunner {
             steam_prefix_mode,
             compat_data_path,
             game_prefix: effective_game_prefix,
-        } = SteamLayout::derive(ctx);
+            ..
+        } = SteamLayout::derive(ctx)?;
         let use_steam_runtime = steam_mode == SteamMode::InWineRuntime;
         std::fs::create_dir_all(&effective_game_prefix).map_err(|e| {
             LaunchError::new(
@@ -499,7 +542,7 @@ impl Runner for WineTkgRunner {
         let mut env = HashMap::new();
         let app_id_str = ctx.app.app_id.to_string();
 
-        let layout = SteamLayout::derive(ctx);
+        let layout = SteamLayout::derive(ctx)?;
         let SteamLayout {
             ref library_root,
             steam_mode,
@@ -824,6 +867,14 @@ impl Runner for WineTkgRunner {
 
                 match steam_client_path {
                     Some(path) => expose(&mut env, path, "real"),
+                    None => fake_trap(&mut env)?,
+                }
+            }
+            SteamMode::Standalone if layout.stand_in.is_some() => {
+                let (install, si) = layout.stand_in.as_ref().unwrap();
+                tracing::warn!("{}", crate::launch::stand_in_install::describe(install, si));
+                match &si.client_install {
+                    Some(root) => expose(&mut env, root.clone(), "stand_in_host"),
                     None => fake_trap(&mut env)?,
                 }
             }

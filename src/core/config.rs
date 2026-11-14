@@ -194,6 +194,9 @@ pub struct LauncherConfig {
     /// Stand-in only while Steam is down.
     #[serde(default)]
     pub steamworks_client_auto: bool,
+    /// Steam install stand-in launches use.
+    #[serde(default)]
+    pub steamworks_steam_install: crate::core::models::StandInSteamInstall,
     /// Stand-in library file or directory.
     #[serde(default)]
     pub steamworks_client_path: Option<String>,
@@ -279,6 +282,7 @@ impl Default for LauncherConfig {
             download_limit_kbit: 0,
             steamworks_client: false,
             steamworks_client_auto: false,
+            steamworks_steam_install: Default::default(),
             steamworks_client_path: None,
             steamworks_allowed_protected: Vec::new(),
             steamworks_cloud_write: false,

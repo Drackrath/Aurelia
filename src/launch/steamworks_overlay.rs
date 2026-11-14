@@ -100,6 +100,16 @@ pub fn game_prefixes(env: &std::collections::HashMap<String, String>) -> Vec<Pat
     out
 }
 
+/// Prefix Proton fills from legacycompat.
+pub fn proton_managed_prefix(env: &std::collections::HashMap<String, String>) -> Option<PathBuf> {
+    let install = env.get("STEAM_COMPAT_CLIENT_INSTALL_PATH")?;
+    if !Path::new(install).join("legacycompat").is_dir() {
+        return None;
+    }
+    let pfx = Path::new(env.get("STEAM_COMPAT_DATA_PATH")?).join("pfx");
+    Some(pfx.canonicalize().unwrap_or(pfx))
+}
+
 /// Env override: `valve` or `lsteamclient`.
 pub const SHIM_ENV: &str = "AURELIA_STAND_IN_SHIM";
 
@@ -115,7 +125,16 @@ pub fn plan_dll_binds(
     let prefixes = game_prefixes(env);
     let mut binds = Vec::new();
     let mut notes = Vec::new();
+    let managed = proton_managed_prefix(env);
     for prefix in &prefixes {
+        if managed.as_ref() == Some(prefix) {
+            // Proton copies; mounts break that.
+            notes.push(format!(
+                "stand-in: {} gets Steam files from Proton (real install path), not shadowed",
+                prefix.display()
+            ));
+            continue;
+        }
         let (b, n) = prefix_dll_plan(prefix, &shims);
         binds.extend(b);
         notes.extend(n);

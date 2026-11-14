@@ -120,6 +120,7 @@ pub(crate) async fn cmd_join(args: JoinArgs, json: bool) -> Result<()> {
     let play = PlayTarget {
         platform: None,
         steam_mode: None,
+        steam_install: None,
         launch_option: None,
         extra_args: launch_args(&target),
     };

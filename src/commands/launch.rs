@@ -4,7 +4,7 @@ use crate::proc_admin;
 
 use crate::commands::common::*;
 
-use crate::cli::{PlatformArg, SteamModeArg};
+use crate::cli::{PlatformArg, StandInInstallArg, SteamModeArg};
 use anyhow::{Context, Result, bail};
 use aurelia::core::config::load_launcher_config;
 use aurelia::core::config::load_user_configs;
@@ -17,6 +17,8 @@ use std::sync::{Arc, RwLock};
 pub(crate) struct PlayTarget {
     pub(crate) platform: Option<PlatformArg>,
     pub(crate) steam_mode: Option<SteamModeArg>,
+    /// Stand-in Steam install override.
+    pub(crate) steam_install: Option<StandInInstallArg>,
     pub(crate) launch_option: Option<String>,
     /// Appended to the game's arguments.
     pub(crate) extra_args: Vec<String>,
@@ -485,6 +487,11 @@ pub(crate) async fn cmd_play(
     let mut user_config = user_configs.get(&app_id).cloned();
     if let Some(mode) = target.steam_mode {
         apply_steam_mode(user_config.get_or_insert_with(Default::default), mode);
+    }
+    if let Some(install) = target.steam_install {
+        user_config
+            .get_or_insert_with(Default::default)
+            .stand_in_steam_install = Some(install.into());
     }
     if !target.extra_args.is_empty() {
         let cfg = user_config.get_or_insert_with(Default::default);

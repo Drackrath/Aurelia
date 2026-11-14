@@ -480,6 +480,7 @@ async fn run(mut cli: Cli) -> Result<()> {
             steam,
             platform,
             steam_mode,
+            steam_install,
             launch_option,
             no_update,
             skip_shaders,
@@ -488,6 +489,7 @@ async fn run(mut cli: Cli) -> Result<()> {
             let target = PlayTarget {
                 platform,
                 steam_mode,
+                steam_install,
                 launch_option,
                 extra_args: Vec::new(),
             };
@@ -623,12 +625,14 @@ async fn run(mut cli: Cli) -> Result<()> {
                 disallow,
                 cloud_write,
                 workshop_publish,
+                steam_install,
                 yes,
             } => {
                 cmd_config_steamworks_client(
                     SteamworksClientArgs {
                         mode,
                         path,
+                        steam_install,
                         stats_writes,
                         allow,
                         disallow,

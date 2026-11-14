@@ -391,6 +391,7 @@ pub(crate) struct SteamworksClientArgs {
     pub disallow: Option<u32>,
     pub cloud_write: Option<OnOffArg>,
     pub workshop_publish: Option<OnOffArg>,
+    pub steam_install: Option<StandInInstallArg>,
     pub yes: bool,
 }
 
@@ -423,9 +424,11 @@ pub(crate) async fn cmd_config_steamworks_client(
         disallow,
         cloud_write,
         workshop_publish,
+        steam_install,
         ..
     } = args;
-    let any = mode.is_some()
+    let any = steam_install.is_some()
+        || mode.is_some()
         || path.is_some()
         || stats_writes.is_some()
         || allow.is_some()
@@ -449,11 +452,14 @@ pub(crate) async fn cmd_config_steamworks_client(
         allow,
         disallow,
         cloud_write,
-        workshop_publish,
+        (workshop_publish, steam_install),
     ));
     let (config, changed) = view_or_set(
         change,
-        |c, (mode, path, writes, allow, disallow, cloud_write, publish)| {
+        |c, (mode, path, writes, allow, disallow, cloud_write, (publish, install))| {
+            if let Some(install) = install {
+                c.steamworks_steam_install = install.into();
+            }
             if let Some(mode) = mode {
                 c.steamworks_client = matches!(mode, StandInModeArg::On);
                 c.steamworks_client_auto = matches!(mode, StandInModeArg::Auto);
@@ -501,6 +507,7 @@ pub(crate) async fn cmd_config_steamworks_client(
             "steamworks_cloud_write": config.steamworks_cloud_write,
             "steamworks_stats_writes": config.steamworks_stats_writes,
             "steamworks_workshop_publish": config.steamworks_workshop_publish,
+            "steamworks_steam_install": config.steamworks_steam_install,
         }));
         return Ok(());
     }
@@ -510,6 +517,10 @@ pub(crate) async fn cmd_config_steamworks_client(
         _ => "off",
     };
     cli_println!("Stand-in steamclient.so: {label}");
+    cli_println!(
+        "Steam install: {}",
+        steam_install_label(config.steamworks_steam_install)
+    );
     if let Some(i) = &installed {
         let show = |p: &Option<std::path::PathBuf>| {
             p.as_ref()
@@ -552,6 +563,16 @@ pub(crate) async fn cmd_config_steamworks_client(
         cli_println!("Saved. Applies to the next launch.");
     }
     Ok(())
+}
+
+/// `host`, `in-wine` or `auto`.
+pub(crate) fn steam_install_label(v: aurelia::core::models::StandInSteamInstall) -> &'static str {
+    use aurelia::core::models::StandInSteamInstall as S;
+    match v {
+        S::Auto => "auto (in-Wine Steam if installed, else host Steam)",
+        S::Host => "host (host Steam compatdata; Proton installs its steamclient files)",
+        S::InWine => "in-wine (Aurelia's in-Wine Steam prefix, DLLs shadowed per launch)",
+    }
 }
 
 /// `on`, `off` or `auto`.
@@ -810,6 +831,7 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
         no_launch_script,
         steam_runtime,
         steam_prefix_mode,
+        steam_install,
     } = args;
     use aurelia::core::config::GameRunner;
     use aurelia::core::models::{SteamPrefixMode, SteamRuntimePolicy};
@@ -856,6 +878,10 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
         }
         if let Some(pm) = steam_prefix_mode {
             ua.steam_prefix_mode = pm.into();
+            user_changed = true;
+        }
+        if let Some(si) = steam_install {
+            ua.stand_in_steam_install = Some(si.into());
             user_changed = true;
         }
     }
@@ -968,6 +994,7 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
             "launch_script": entry.launch_script,
             "steam_runtime_policy": ua.steam_runtime_policy,
             "steam_prefix_mode": ua.steam_prefix_mode,
+            "stand_in_steam_install": ua.stand_in_steam_install,
         }));
     } else {
         cli_println!("App {app_id}:");
@@ -997,6 +1024,10 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
         );
         cli_println!("  Steam runtime: {steam_runtime_label}");
         cli_println!("  Prefix mode  : {prefix_mode_label}");
+        let install = ua
+            .stand_in_steam_install
+            .map_or("(global)", steam_install_label);
+        cli_println!("  Steam install: {install}");
     }
     Ok(())
 }
