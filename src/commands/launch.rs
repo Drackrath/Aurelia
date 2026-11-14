@@ -642,22 +642,26 @@ pub(crate) fn cmd_daemon_list(json: bool) -> Result<()> {
         .filter(|p| p.is_daemon)
         .collect();
 
+    let log = aurelia::infra::logging::daemon_file::daemon_log_path();
     if json {
         let arr: Vec<_> = daemons
             .iter()
             .map(|d| serde_json::json!({ "pid": d.pid, "command": d.command }))
             .collect();
-        print_json(&serde_json::json!({ "daemons": arr }));
+        print_json(&serde_json::json!({ "daemons": arr, "log": log }));
         return Ok(());
     }
 
     if daemons.is_empty() {
         cli_println!("No aurelia daemon is running.");
-        return Ok(());
+    } else {
+        cli_println!("{:>8}  COMMAND", "PID");
+        for d in &daemons {
+            cli_println!("{:>8}  {}", d.pid, d.command);
+        }
     }
-    cli_println!("{:>8}  COMMAND", "PID");
-    for d in &daemons {
-        cli_println!("{:>8}  {}", d.pid, d.command);
+    if let Some(log) = log {
+        cli_println!("Daemon log: {}", log.display());
     }
     Ok(())
 }

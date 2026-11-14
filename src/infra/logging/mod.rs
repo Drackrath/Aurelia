@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod daemon_file;
 pub mod event_log;
 pub mod relay;
 pub mod session;

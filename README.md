@@ -520,6 +520,8 @@ a command seems stuck. Commands run through the session daemon show the same log
 own output is saved per launch under `~/.config/Aurelia/logs/` (Proton's stderr in
 `wine_<appid>.log`).
 
+The session daemon also writes its own log, at info level (debug with `aurelia daemon -v`), to `~/.config/Aurelia/logs/daemon.log`. The file rotates at 5 MiB and two older files are kept (`daemon.log.1`, `daemon.log.2`). The Steam networking stack is limited to warnings there, so tokens never reach the file. `aurelia daemon list` prints the path.
+
 The session daemon keeps running until `aurelia daemon stop`. Set
 **`AURELIA_DAEMON_IDLE_TIMEOUT`** to a number of minutes to let it exit once nothing has
 used it for that long and no install or game is running. The next command starts a new
