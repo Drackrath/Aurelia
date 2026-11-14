@@ -1455,11 +1455,7 @@ where
                 Some((proto::C_SW_REQUEST, payload)) => {
                     let conn = Arc::clone(&conn);
                     let writer = writer.clone();
-                    tasks.spawn(async move {
-                        let mut reply = respond(&conn, &payload).await;
-                        send(&writer, proto::C_SW_RESPONSE, &reply).await;
-                        zeroize::Zeroize::zeroize(&mut reply);
-                    });
+                    tasks.spawn(async move { reply_to(&conn, &writer, &payload).await });
                 }
                 Some(_) => {}
                 None => break,
@@ -1518,16 +1514,28 @@ async fn offline_admission<B: Backend>(backend: &B, app_id: u32) -> Option<u64> 
 }
 
 /// Answer one request payload.
-async fn respond<B: Backend>(conn: &Conn<B>, payload: &[u8]) -> Vec<u8> {
+/// Answers one request; abort-safe wipe.
+async fn reply_to<B: Backend, W: AsyncWrite + Unpin>(
+    conn: &Conn<B>,
+    writer: &SharedWriter<W>,
+    payload: &[u8],
+) {
+    // Wiped on drop, even mid-send.
+    let reply = respond(conn, payload).await;
+    send(writer, proto::C_SW_RESPONSE, &reply).await;
+}
+
+/// Wiped on drop, even when aborted.
+async fn respond<B: Backend>(conn: &Conn<B>, payload: &[u8]) -> zeroize::Zeroizing<Vec<u8>> {
     let Some(req) = Request::parse(payload) else {
         let id = Fields::new(payload).u32().unwrap_or(0);
-        return response_payload(id, status::MALFORMED, b"malformed request");
+        let out = response_payload(id, status::MALFORMED, b"malformed request");
+        return zeroize::Zeroizing::new(out);
     };
-    let (code, mut body) = answer(conn, &req).await;
-    let out = response_payload(req.id, code, &body);
+    let (code, body) = answer(conn, &req).await;
     // Bodies may hold key material.
-    zeroize::Zeroize::zeroize(&mut body);
-    out
+    let body = zeroize::Zeroizing::new(body);
+    zeroize::Zeroizing::new(response_payload(req.id, code, &body))
 }
 
 fn failed(e: &anyhow::Error) -> (u8, Vec<u8>) {

@@ -2741,3 +2741,53 @@ fn peer_check_table() {
     assert_eq!(peer_check(Some(570), 480), PeerCheck::WrongApp(570));
     assert_eq!(peer_check(Some(480), 480), PeerCheck::Ok);
 }
+
+/// Bare connection for direct calls.
+fn bare_conn(backend: Arc<Fake>) -> Conn<Fake> {
+    let (push_tx, _) = mpsc::unbounded_channel();
+    Conn {
+        backend,
+        router: Arc::default(),
+        app_id: 480,
+        offline: None,
+        owned: Mutex::default(),
+        lobbies: Mutex::default(),
+        push_tx,
+    }
+}
+
+#[tokio::test]
+async fn replies_are_self_wiping_buffers() {
+    let conn = bare_conn(Fake::logged_in());
+    let req = request(1, cmd::NETWORKING_CERT, &[]);
+    // Type pins the wipe-on-drop guarantee.
+    let reply: zeroize::Zeroizing<Vec<u8>> = respond(&conn, &req).await;
+    let mut f = Fields::new(&reply);
+    assert_eq!((f.u32(), f.u8()), (Some(1), Some(status::OK)));
+    let bad: zeroize::Zeroizing<Vec<u8>> = respond(&conn, &[1]).await;
+    assert_eq!(bad[4], status::MALFORMED);
+}
+
+#[tokio::test]
+async fn aborted_send_drops_the_reply() {
+    let conn = Arc::new(bare_conn(Fake::logged_in()));
+    let (stream, _peer) = tokio::io::duplex(64);
+    let (_, writer) = proto::split_shared(stream);
+    // Busy writer parks the task.
+    let held = writer.clone();
+    let guard = held.lock().await;
+    let task = {
+        let (conn, writer) = (Arc::clone(&conn), writer.clone());
+        let req = request(2, cmd::NETWORKING_CERT, &[]);
+        tokio::spawn(async move { reply_to(&conn, &writer, &req).await })
+    };
+    while conn.backend.certs.lock().unwrap().is_empty() {
+        tokio::task::yield_now().await;
+    }
+    tokio::task::yield_now().await;
+    assert!(!task.is_finished(), "parked on the writer");
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    drop(guard);
+    assert_eq!(*conn.backend.certs.lock().unwrap(), vec![480]);
+}
