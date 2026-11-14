@@ -2216,10 +2216,73 @@ pub fn game_save_prefix(
     install_path: Option<&Path>,
 ) -> std::path::PathBuf {
     let proton_prefix = proton_compat_prefix(config, app_id, install_path);
+    if let Some(prefix) = stand_in_save_prefix(
+        config,
+        user_configs.get(&app_id),
+        &proton_prefix,
+        crate::core::utils::host_steam_client_path(),
+        &get_master_steam_config().wine_prefix,
+    ) {
+        return prefix;
+    }
     if proton_prefix.join("drive_c").is_dir() {
         return proton_prefix;
     }
     steam_wineprefix_for_game(config, app_id, user_configs, install_path)
+}
+
+/// Stand-in launch prefix, if applicable.
+pub fn stand_in_save_prefix(
+    config: &crate::core::config::LauncherConfig,
+    user_config: Option<&crate::core::models::UserAppConfig>,
+    proton_prefix: &Path,
+    host_root: Option<PathBuf>,
+    master_prefix: &Path,
+) -> Option<PathBuf> {
+    use crate::core::models::SteamRuntimePolicy;
+    use crate::launch::stand_in_install as si;
+    if !cfg!(target_os = "linux") || !config.steamworks_client {
+        return None;
+    }
+    // Explicit Steam modes skip the stand-in.
+    let explicit = user_config
+        .is_some_and(|c| c.steam_runtime_policy != SteamRuntimePolicy::Auto || c.use_steam_runtime);
+    if explicit {
+        return None;
+    }
+    let compat = proton_prefix.parent()?;
+    let install = si::choose(
+        config.steamworks_steam_install,
+        user_config.and_then(|c| c.stand_in_steam_install),
+        host_root,
+        master_prefix,
+    )
+    .ok()?;
+    let layout = si::layout(&install, compat);
+    if matches!(install, si::Install::InWine(_)) {
+        warn_old_prefix(proton_prefix, &layout.prefix);
+    }
+    Some(layout.prefix)
+}
+
+/// Once per prefix: saves may differ.
+fn warn_old_prefix(old: &Path, used: &Path) {
+    static WARNED: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+    if old == used || !old.join("drive_c/users").is_dir() {
+        return;
+    }
+    let mut warned = WARNED.lock().unwrap_or_else(|e| e.into_inner());
+    if warned.iter().any(|w| w == old) {
+        return;
+    }
+    warned.push(old.to_path_buf());
+    tracing::warn!(
+        "stand-in launches of this game run in {} (in-Wine Steam install); saves from \
+         earlier launches may still be in {}. Copy them over, or use \
+         `aurelia config game <id> --steam-install host` to keep that prefix",
+        used.display(),
+        old.display()
+    );
 }
 
 /// Resolve `rel` under `base`, ignoring case.

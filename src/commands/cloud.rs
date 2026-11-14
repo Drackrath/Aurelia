@@ -31,7 +31,13 @@ pub(crate) async fn cmd_cloud_sync(
     let (_, install_path) = client.is_game_available(app_id).await;
     // A Windows game under Proton writes its saves inside the wine prefix, so the
     // `%Win*%` roots in its cloud filenames only resolve with the prefix in hand.
-    let launcher_config = aurelia::core::config::LauncherConfig::load().await?;
+    let mut launcher_config = aurelia::core::config::LauncherConfig::load().await?;
+    // Auto: same choice a launch makes.
+    aurelia::launch::stand_in_auto::apply(
+        &mut launcher_config,
+        aurelia::core::utils::is_steam_running,
+        aurelia::launch::stand_in_auto::installed,
+    );
     let user_configs = aurelia::core::config::load_user_configs().await?;
     // Must be the prefix the game *runs* in, not the WINEPREFIX the launcher sets:
     // under Proton those differ, and syncing to the wrong one silently leaves the
