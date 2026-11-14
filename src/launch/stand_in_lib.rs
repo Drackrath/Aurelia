@@ -280,9 +280,72 @@ pub fn install(resolved: &Resolved, dir: &Path) -> Result<Resolved> {
                 return Err(e);
             }
         }
+        write_hash(&dest)?;
         *slot = Some(dest);
     }
     Ok(out)
+}
+
+/// Sidecar holding the expected hash.
+pub fn hash_file(lib: &Path) -> PathBuf {
+    let mut name = lib.as_os_str().to_owned();
+    name.push(".sha256");
+    PathBuf::from(name)
+}
+
+/// Lowercase hex SHA-256 of a file.
+pub fn sha256_hex(path: &Path) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    let mut file =
+        std::fs::File::open(path).with_context(|| format!("cannot read {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher)
+        .with_context(|| format!("cannot read {}", path.display()))?;
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Records the hash next to `lib`.
+fn write_hash(lib: &Path) -> Result<()> {
+    let hash = sha256_hex(lib)?;
+    let sidecar = hash_file(lib);
+    let tmp = sidecar.with_extension(format!("sha256.{}.tmp", std::process::id()));
+    std::fs::write(&tmp, format!("{hash}\n"))
+        .and_then(|()| std::fs::rename(&tmp, &sidecar))
+        .with_context(|| format!("cannot write {}", sidecar.display()))
+        .inspect_err(|_| {
+            let _ = std::fs::remove_file(&tmp);
+        })
+}
+
+/// Recorded hash matches the file.
+pub fn verify(lib: &Path) -> Result<()> {
+    if !lib.is_file() {
+        bail!(
+            "stand-in library {} is missing; reinstall it with \
+             `aurelia config steamworks-client --path <libsteamclient.so>`",
+            lib.display()
+        );
+    }
+    let sidecar = hash_file(lib);
+    let expected = std::fs::read_to_string(&sidecar).map_err(|_| {
+        anyhow!(
+            "no recorded hash for the stand-in library {} ({} missing); reinstall it with \
+             `aurelia config steamworks-client --path <libsteamclient.so>`",
+            lib.display(),
+            sidecar.display()
+        )
+    })?;
+    let expected = expected.trim().to_ascii_lowercase();
+    let actual = sha256_hex(lib)?;
+    if expected != actual {
+        bail!(
+            "refusing to launch: the stand-in library {} changed since it was installed \
+             (expected SHA-256 {expected}, found {actual}); if you rebuilt it, reinstall with \
+             `aurelia config steamworks-client --path <libsteamclient.so>`",
+            lib.display()
+        );
+    }
+    Ok(())
 }
 
 #[cfg(unix)]

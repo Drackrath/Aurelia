@@ -536,6 +536,11 @@ pub fn plan_for(
             )
         })?;
     let libs = resolve_client_libs(&dir)?;
+    // Refuse swapped or edited libraries.
+    for lib in std::iter::once(&libs.sdk64).chain(libs.sdk32.as_ref()) {
+        crate::launch::stand_in_lib::verify(lib)
+            .map_err(|e| LaunchError::new(LaunchErrorKind::Dependency, format!("{e:#}")))?;
+    }
     let bwrap = find_bwrap().ok_or_else(|| {
         LaunchError::new(
             LaunchErrorKind::Dependency,

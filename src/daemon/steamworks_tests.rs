@@ -40,6 +40,8 @@ struct Fake {
     finds: Mutex<Vec<Find>>,
     uploads: Mutex<Vec<Upload>>,
     certs: Mutex<Vec<u32>>,
+    /// Peer is not a stand-in launch.
+    foreign_peer: bool,
 }
 
 const SID: u64 = 76_561_197_960_287_930;
@@ -56,6 +58,10 @@ impl Fake {
 }
 
 impl Backend for Fake {
+    async fn stand_in_peer(&self, _pid: Option<u32>) -> bool {
+        !self.foreign_peer
+    }
+
     async fn steam_id(&self) -> Option<u64> {
         *self.steam_id.lock().unwrap()
     }
@@ -2666,4 +2672,25 @@ fn languages_golden_bytes() {
         vec![2, 0, 0, 0, b'e', b'n', 3, 0, 0, 0, b'a', b',', b'b']
     );
     assert_eq!(cmd::LANGUAGES, 120);
+}
+
+#[tokio::test]
+async fn peers_outside_stand_in_launches_are_refused() {
+    let fake = Arc::new(Fake {
+        steam_id: Mutex::new(Some(SID)),
+        foreign_peer: true,
+        ..Fake::default()
+    });
+    let router = Arc::new(Router::default());
+    let (_game, welcome) = Game::connect(fake.clone(), router, hello(480), Some(4242)).await;
+    assert_eq!(
+        welcome,
+        welcome_payload(
+            welcome::REFUSED,
+            0,
+            "not a stand-in launch started by Aurelia"
+        )
+    );
+    // Nothing reported to Steam.
+    assert!(fake.started.lock().unwrap().is_empty());
 }

@@ -40,3 +40,40 @@ fn set_pid_refreshes_start_time() {
 fn start_time_of_missing_process_is_none() {
     assert_eq!(process_start_time(u32::MAX), None);
 }
+
+#[test]
+fn descent_follows_parents() {
+    // 10 -> 5 -> 1.
+    let parent = |pid: u32| match pid {
+        10 => Some(5),
+        5 => Some(1),
+        _ => None,
+    };
+    assert!(descends_from(10, 10, parent));
+    assert!(descends_from(10, 5, parent));
+    assert!(descends_from(10, 1, parent));
+    assert!(!descends_from(5, 10, parent));
+    assert!(!descends_from(77, 5, parent));
+    // Self-parent loops stop.
+    assert!(!descends_from(3, 9, Some));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn this_process_descends_from_its_parent() {
+    let me = std::process::id();
+    let parent = std::os::unix::process::parent_id();
+    assert_eq!(parent_pid(me), Some(parent));
+    assert!(descends_from(me, parent, parent_pid));
+    assert!(!descends_from(parent, me, parent_pid));
+}
+
+#[test]
+fn stand_in_flag_round_trips_and_defaults_off() {
+    let game = RunningGame::new(480, "x".into(), 1, None).with_stand_in(true);
+    let json = serde_json::to_string(&game).unwrap();
+    let back: RunningGame = serde_json::from_str(&json).unwrap();
+    assert!(back.stand_in);
+    let old: RunningGame = serde_json::from_str(r#"{"app_id":1,"name":"a","pid":2}"#).unwrap();
+    assert!(!old.stand_in);
+}

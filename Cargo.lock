@@ -324,6 +324,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1",
+ "sha2",
  "steam-vdf-parser",
  "steam-vent-proto",
  "steam-vent-proto-common",

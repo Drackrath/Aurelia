@@ -845,6 +845,8 @@ const AVATAR_WAIT: Duration = Duration::from_secs(3);
 
 /// What the daemon offers games.
 pub trait Backend: Send + Sync + 'static {
+    /// Peer runs under a stand-in launch.
+    fn stand_in_peer(&self, pid: Option<u32>) -> impl Future<Output = bool> + Send;
     /// SteamID when logged on.
     fn steam_id(&self) -> impl Future<Output = Option<u64>> + Send;
     /// Report playing; returns launch id.
@@ -1279,6 +1281,17 @@ where
             return Ok(());
         }
     };
+    // Only processes Aurelia launched.
+    if !backend.stand_in_peer(peer_pid).await {
+        tracing::warn!(
+            app_id = hello.app_id,
+            ?peer_pid,
+            "steamworks: refused a connection that is not part of a stand-in launch"
+        );
+        let msg = "not a stand-in launch started by Aurelia".to_string();
+        send(&writer, proto::C_SW_WELCOME, &refuse(msg)).await;
+        return Ok(());
+    }
     let (steam_id, offline) = match backend.steam_id().await {
         Some(id) => (id, None),
         None => match offline_admission(&*backend, hello.app_id).await {
@@ -2033,6 +2046,11 @@ fn not_logged_in() -> anyhow::Error {
 }
 
 impl Backend for DaemonBackend {
+    async fn stand_in_peer(&self, pid: Option<u32>) -> bool {
+        pid.and_then(aurelia::compat::running::stand_in_launch_of)
+            .is_some()
+    }
+
     async fn steam_id(&self) -> Option<u64> {
         authed_client().await?.steam_id()
     }

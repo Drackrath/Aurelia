@@ -50,6 +50,9 @@ pub struct RunningGame {
     /// sweep leftover wine processes inside the prefix (Linux).
     #[serde(default)]
     pub wineprefix: Option<PathBuf>,
+    /// Launched with the stand-in steamclient.so.
+    #[serde(default)]
+    pub stand_in: bool,
 }
 
 impl RunningGame {
@@ -61,7 +64,14 @@ impl RunningGame {
             pid,
             pid_start_time: process_start_time(pid),
             wineprefix,
+            stand_in: false,
         }
+    }
+
+    /// Marks a stand-in launch.
+    pub fn with_stand_in(mut self, stand_in: bool) -> Self {
+        self.stand_in = stand_in;
+        self
     }
 
     /// Re-point the record at `pid` (a surviving game process), refreshing the
@@ -78,6 +88,39 @@ impl RunningGame {
         self.pid_start_time
             .is_some_and(|t| process_start_time(self.pid) == Some(t))
     }
+}
+
+/// Parent of `pid` from `/proc`.
+pub fn parent_pid(pid: u32) -> Option<u32> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // Fields after the `(comm)` name.
+    let rest = &stat[stat.rfind(')')? + 1..];
+    rest.split_whitespace().nth(1)?.parse().ok()
+}
+
+/// `pid` is `ancestor` or below it.
+pub fn descends_from(pid: u32, ancestor: u32, parent: impl Fn(u32) -> Option<u32>) -> bool {
+    let mut current = pid;
+    // Bounded walk; init ends it.
+    for _ in 0..256 {
+        if current == ancestor {
+            return true;
+        }
+        match parent(current) {
+            Some(p) if p != current && p != 0 => current = p,
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// Stand-in launch app owning `pid`.
+pub fn stand_in_launch_of(pid: u32) -> Option<u32> {
+    list_active()
+        .into_iter()
+        .filter(|g| g.stand_in)
+        .find(|g| descends_from(pid, g.pid, parent_pid))
+        .map(|g| g.app_id)
 }
 
 /// Start time of `pid` (seconds since the Unix epoch), or `None` if no such
