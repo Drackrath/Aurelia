@@ -470,8 +470,9 @@ impl LogSummary {
         }
         if !self.networking.is_empty() {
             out.push(format!(
-                "stand-in steamclient.so: game used Steam networking ({}); \
-                 multiplayer may not have connected",
+                "stand-in steamclient.so: game used Steam networking ({}); there is no \
+                 Steam Datagram Relay, only direct or ICE P2P, so multiplayer may not \
+                 have connected",
                 self.networking.join(", ")
             ));
         }
@@ -480,6 +481,13 @@ impl LogSummary {
         }
         out
     }
+}
+
+/// Version from any "game created" line.
+pub fn networking_version(msg: &str) -> Option<&str> {
+    let (version, _) = msg.strip_prefix("game created ")?.split_once(':')?;
+    let version = version.trim();
+    (!version.is_empty() && !version.contains(char::is_whitespace)).then_some(version)
 }
 
 /// Collect missing and networking interfaces.
@@ -500,10 +508,7 @@ pub fn summarize_log(text: &str) -> LogSummary {
         } else if let Some(rest) = msg.strip_prefix("game reports missing interface: ") {
             let version = rest.split(" (pipe ").next().unwrap_or(rest);
             push(&mut summary.missing, version);
-        } else if let Some((version, _)) = msg
-            .strip_prefix("game created ")
-            .and_then(|rest| rest.split_once(": Steam networking"))
-        {
+        } else if let Some(version) = networking_version(msg) {
             push(&mut summary.networking, version);
         }
     }
