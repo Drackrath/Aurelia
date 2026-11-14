@@ -4,6 +4,7 @@
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -12,10 +13,37 @@ pub const MAX_BYTES: u64 = 5 * 1024 * 1024;
 /// Older files kept beside it.
 pub const KEEP: usize = 2;
 
-/// Default file directives.
-///
-/// steam-vent stays quiet: may hold tokens.
-pub const DIRECTIVES: &str = "info,steam_vent=warn,steam_vent_proto=warn";
+/// Steam crates capped: may hold tokens.
+const QUIET: &str =
+    "steam_vent=warn,steam_vent_proto=warn,steam_vent_core=warn,aurelia_steam_vent_chat=warn";
+
+/// Owner-only: SteamIDs and game activity.
+const MODE: u32 = 0o600;
+
+/// File filter for the daemon's verbosity.
+pub fn directives(verbosity: u8) -> String {
+    let base = if verbosity >= 1 { "debug" } else { "info" };
+    format!("{base},{QUIET}")
+}
+
+/// The daemon's file layer.
+pub fn file_layer<S>(writer: RotatingFile, verbosity: u8) -> impl tracing_subscriber::Layer<S>
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+{
+    use tracing_subscriber::Layer;
+    tracing_subscriber::fmt::layer()
+        .with_writer(writer)
+        .with_ansi(false)
+        .with_target(true)
+        .log_internal_errors(false)
+        .with_filter(tracing_subscriber::EnvFilter::new(directives(verbosity)))
+}
+
+/// Tightens older files to owner-only.
+fn restrict(path: &Path) {
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(MODE));
+}
 
 /// Where the daemon log lives.
 pub fn daemon_log_path() -> Option<PathBuf> {
@@ -42,6 +70,12 @@ pub fn rotate(path: &Path, keep: usize) {
         let _ = std::fs::rename(rotated(path, n), rotated(path, n + 1));
     }
     let _ = std::fs::rename(path, rotated(path, 1));
+    for n in 1..=keep {
+        let old = rotated(path, n);
+        if old.exists() {
+            restrict(&old);
+        }
+    }
 }
 
 struct Inner {
@@ -56,13 +90,19 @@ impl Inner {
     fn open(&mut self) -> Option<&mut File> {
         if self.file.is_none() {
             if let Some(dir) = self.path.parent() {
-                let _ = std::fs::create_dir_all(dir);
+                let _ = std::fs::DirBuilder::new()
+                    .recursive(true)
+                    .mode(0o700)
+                    .create(dir);
             }
             let file = OpenOptions::new()
                 .create(true)
                 .append(true)
+                .mode(MODE)
                 .open(&self.path)
                 .ok()?;
+            // Files from older versions too.
+            let _ = file.set_permissions(std::fs::Permissions::from_mode(MODE));
             self.size = file.metadata().map_or(0, |m| m.len());
             self.file = Some(file);
         }
@@ -170,8 +210,61 @@ mod tests {
     }
 
     #[test]
-    fn secrets_stay_out_by_default() {
-        assert!(DIRECTIVES.contains("steam_vent=warn"));
-        assert!(DIRECTIVES.starts_with("info"));
+    fn steam_crates_capped_at_every_verbosity() {
+        for v in [0, 1, 3] {
+            let d = directives(v);
+            for target in ["steam_vent", "steam_vent_core", "aurelia_steam_vent_chat"] {
+                assert!(d.contains(&format!("{target}=warn")), "{d}");
+            }
+        }
+        assert!(directives(0).starts_with("info"));
+    }
+
+    fn mode(p: &Path) -> u32 {
+        std::fs::metadata(p).unwrap().permissions().mode() & 0o777
+    }
+
+    #[test]
+    fn log_and_rotated_files_are_owner_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("logs/daemon.log");
+        // Old 0644 file is tightened.
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(rotated(&path, 2), "older\n").unwrap();
+        std::fs::set_permissions(rotated(&path, 2), std::fs::Permissions::from_mode(0o644))
+            .unwrap();
+        std::fs::write(&path, "old\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let file = RotatingFile::new(path.clone(), 10, 3);
+        // Appends; open tightens it.
+        write(&file, "aaaaaaaa\n");
+        assert_eq!(mode(&path), 0o600);
+        // Rotates: log to .1, older to .3.
+        write(&file, "bbbbbbbb\n");
+        for p in [path.clone(), rotated(&path, 1), rotated(&path, 3)] {
+            assert_eq!(mode(&p), 0o600, "{}", p.display());
+        }
+    }
+
+    #[test]
+    fn steam_vent_info_never_reaches_the_file() {
+        use tracing_subscriber::layer::SubscriberExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("daemon.log");
+        let file = RotatingFile::new(path.clone(), MAX_BYTES, KEEP);
+        for v in [0, 1] {
+            let sub = tracing_subscriber::registry().with(file_layer(file.clone(), v));
+            tracing::subscriber::with_default(sub, || {
+                tracing::info!(target: "steam_vent::connection", "vent-secret");
+                tracing::info!(target: "steam_vent_core::message", "core-secret");
+                tracing::info!(target: "aurelia_steam_vent_chat", "chat-secret");
+                tracing::warn!(target: "steam_vent::connection", "vent-warning");
+                tracing::info!(target: "aurelia::daemon", "daemon-info");
+            });
+        }
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("secret"), "{text}");
+        assert_eq!(text.matches("vent-warning").count(), 2, "{text}");
+        assert_eq!(text.matches("daemon-info").count(), 2, "{text}");
     }
 }
