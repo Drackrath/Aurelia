@@ -542,6 +542,7 @@ pub use client::CodeReader;
 mod friends;
 mod install;
 mod market;
+pub mod rich_presence;
 pub mod ticket_cache;
 pub use install::InstallOptions;
 mod content;
