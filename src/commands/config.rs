@@ -591,7 +591,8 @@ fn install_stand_in(input: &str) -> Result<aurelia::launch::stand_in_lib::Resolv
     use aurelia::launch::stand_in_lib;
     let dir = steamworks_default_dir()
         .ok_or_else(|| anyhow::anyhow!("the stand-in steamclient.so is Linux only"))?;
-    let cwd = std::env::current_dir().context("cannot read the current directory")?;
+    // Client cwd, not the daemon's.
+    let cwd = crate::output::user_path(std::path::Path::new("."));
     let home = aurelia::core::config::home_dir()?;
     let found = stand_in_lib::resolve(input, &cwd, &home)?;
     stand_in_lib::install(&found, std::path::Path::new(&dir))
