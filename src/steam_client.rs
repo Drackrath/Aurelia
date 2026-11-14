@@ -546,6 +546,7 @@ pub mod global_stats;
 mod install;
 mod market;
 pub mod microtxn;
+pub mod networking_cert;
 pub mod rich_presence;
 pub mod ticket_cache;
 pub use install::InstallOptions;

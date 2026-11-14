@@ -37,6 +37,7 @@ struct Fake {
     invites: Mutex<Vec<String>>,
     finds: Mutex<Vec<Find>>,
     uploads: Mutex<Vec<Upload>>,
+    certs: Mutex<Vec<u32>>,
 }
 
 const SID: u64 = 76_561_197_960_287_930;
@@ -529,6 +530,17 @@ impl Backend for Fake {
             build_id: app_id + 1,
             install_dir: Some("/games/offline".into()),
             language: Some("french".into()),
+        })
+    }
+
+    async fn networking_cert(&self, app_id: u32) -> Result<CertGrant> {
+        self.certs.lock().unwrap().push(app_id);
+        if app_id == 70 {
+            bail!("CM refused the key");
+        }
+        Ok(CertGrant {
+            expiry: 1_800_086_400,
+            signed: zeroize::Zeroizing::new(format!("signed-{app_id}").into_bytes()),
         })
     }
 
@@ -2380,4 +2392,54 @@ async fn leaderboards_gate_writes() {
         vec![(480, 77, 1, 500, vec![1, 0, 0, 0])]
     );
     game.hang_up().await;
+}
+
+#[tokio::test]
+async fn networking_cert_is_for_the_connected_game() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router.clone(), hello(480), None).await;
+    // Another app id is ignored.
+    let (code, body) = game.ask_for(1, 70, cmd::NETWORKING_CERT, &[]).await;
+    assert_eq!(code, status::OK);
+    let mut f = Fields::new(&body);
+    assert_eq!(f.u32(), Some(1_800_086_400));
+    assert_eq!(f.blob(), Some(&b"signed-480"[..]));
+    assert!(f.rest().is_empty());
+    game.hang_up().await;
+
+    let (mut game, _) = Game::connect(fake.clone(), router, hello(70), None).await;
+    let (code, body) = game.ask(2, cmd::NETWORKING_CERT, &[]).await;
+    assert_eq!(code, status::FAILED);
+    assert!(String::from_utf8_lossy(&body).contains("refused"));
+    *fake.steam_id.lock().unwrap() = None;
+    let (code, _) = game.ask(3, cmd::NETWORKING_CERT, &[]).await;
+    assert_eq!(code, status::NO_SESSION);
+    game.hang_up().await;
+    assert_eq!(*fake.certs.lock().unwrap(), vec![480, 70]);
+}
+
+#[tokio::test]
+async fn networking_cert_needs_steam_not_cache() {
+    let fake = offline(&[(480, b"ticket".to_vec())]);
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router, hello(480), None).await;
+    let (code, _) = game.ask(1, cmd::NETWORKING_CERT, &[]).await;
+    assert_eq!(code, status::NO_SESSION);
+    assert!(fake.certs.lock().unwrap().is_empty());
+    game.hang_up().await;
+}
+
+/// Same bytes the .so parses.
+#[test]
+fn networking_cert_golden_bytes() {
+    let grant = CertGrant {
+        expiry: 0x0102_0304,
+        signed: zeroize::Zeroizing::new(vec![0xAA, 0xBB]),
+    };
+    assert_eq!(
+        networking_cert_body(&grant),
+        vec![4, 3, 2, 1, 2, 0, 0, 0, 0xAA, 0xBB]
+    );
+    assert_eq!(cmd::NETWORKING_CERT, 110);
 }
