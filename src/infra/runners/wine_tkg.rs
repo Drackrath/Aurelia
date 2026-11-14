@@ -598,9 +598,7 @@ impl Runner for WineTkgRunner {
         // `lsteamclient` bridges to the host client). The in-Wine runtime and
         // standalone modes both want the native/neutralised set (`steamclient=n`, …)
         // so the game loads the in-Wine `steamclient.dll` (or none at all).
-        let host_bridge = steam_mode == SteamMode::HostBridge
-            || (steam_mode == SteamMode::Standalone
-                && stand_in_client_active(&ctx.launcher_config));
+        let host_bridge = keeps_lsteamclient(steam_mode, &ctx.launcher_config);
 
         let use_symlinks = glc.use_symlinks_in_prefix;
         let mut dll_overrides = crate::core::utils::build_dll_overrides(
@@ -1268,6 +1266,11 @@ pub fn resolve_steam_mode_for(
         .map(|c| c.steam_runtime_policy)
         .unwrap_or_default();
     let legacy_forced = user_config.map(|c| c.use_steam_runtime).unwrap_or(false);
+    // Stand-in needs Proton's lsteamclient.
+    let explicit = per_game != SteamRuntimePolicy::Auto || legacy_forced;
+    if stand_in_client_active(launcher_config) && !explicit {
+        return (SteamMode::Standalone, STAND_IN_SOURCE);
+    }
     let effective = match per_game {
         SteamRuntimePolicy::Auto if legacy_forced => SteamRuntimePolicy::Enabled,
         SteamRuntimePolicy::Auto => launcher_config.steam_runtime_policy,
@@ -1281,7 +1284,7 @@ pub fn resolve_steam_mode_for(
     };
     let host_installed = || crate::core::utils::host_steam_client_path().is_some();
 
-    match effective {
+    let (mode, source) = match effective {
         // Explicitly configured to use the in-Wine runtime.
         SteamRuntimePolicy::Enabled => {
             if master_installed() {
@@ -1322,7 +1325,26 @@ pub fn resolve_steam_mode_for(
                 (SteamMode::Standalone, "steam_flag_no_steam")
             }
         }
+    };
+    if stand_in_client_active(launcher_config) && mode != SteamMode::Standalone {
+        tracing::warn!(
+            "explicit Steam mode {mode:?} bypasses the stand-in steamclient.so; \
+             use --steam-mode none to reach it"
+        );
     }
+    (mode, source)
+}
+
+/// Mode source when the stand-in decides.
+pub const STAND_IN_SOURCE: &str = "stand_in";
+
+/// Proton's lsteamclient stays loadable.
+pub fn keeps_lsteamclient(
+    mode: SteamMode,
+    launcher_config: &crate::core::config::LauncherConfig,
+) -> bool {
+    mode == SteamMode::HostBridge
+        || (mode == SteamMode::Standalone && stand_in_client_active(launcher_config))
 }
 
 /// Per-game forced Proton/runner override, if one is configured.

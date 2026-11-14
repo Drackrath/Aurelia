@@ -553,3 +553,85 @@ fn wrap_command_sets_log_env() {
     let without = wrap_command(&spec("/g", &[]), &plan(Path::new("/h"), None, Vec::new()));
     assert!(!without.env.contains_key(LOG_ENV));
 }
+
+mod stand_in_mode {
+    use crate::core::config::LauncherConfig;
+    use crate::core::models::{SteamRuntimePolicy, UserAppConfig};
+    use crate::core::utils::build_dll_overrides;
+    use crate::infra::runners::wine_tkg::{
+        STAND_IN_SOURCE, SteamMode, keeps_lsteamclient, resolve_steam_mode_for,
+    };
+
+    fn stand_in(on: bool) -> LauncherConfig {
+        LauncherConfig {
+            steamworks_client: on,
+            // Global runtime must not win.
+            steam_runtime_policy: SteamRuntimePolicy::Enabled,
+            ..LauncherConfig::default()
+        }
+    }
+
+    fn per_game(policy: SteamRuntimePolicy, legacy: bool) -> UserAppConfig {
+        UserAppConfig {
+            steam_runtime_policy: policy,
+            use_steam_runtime: legacy,
+            ..UserAppConfig::default()
+        }
+    }
+
+    #[test]
+    fn stand_in_forces_standalone_by_default() {
+        let config = stand_in(true);
+        let auto = per_game(SteamRuntimePolicy::Auto, false);
+        for steam in [false, true] {
+            for user in [None, Some(&auto)] {
+                assert_eq!(
+                    resolve_steam_mode_for(user, &config, steam),
+                    (SteamMode::Standalone, STAND_IN_SOURCE)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn explicit_modes_are_kept() {
+        let config = stand_in(true);
+        let none = per_game(SteamRuntimePolicy::Disabled, false);
+        assert_eq!(
+            resolve_steam_mode_for(Some(&none), &config, false),
+            (SteamMode::Standalone, "policy_disabled")
+        );
+        let runtime = per_game(SteamRuntimePolicy::Enabled, false);
+        let (_, source) = resolve_steam_mode_for(Some(&runtime), &config, true);
+        assert!(source.starts_with("policy_enabled"), "{source}");
+        let legacy = per_game(SteamRuntimePolicy::Auto, true);
+        let (_, source) = resolve_steam_mode_for(Some(&legacy), &config, true);
+        assert_ne!(source, STAND_IN_SOURCE);
+    }
+
+    #[test]
+    fn without_stand_in_nothing_changes() {
+        let config = stand_in(false);
+        let (_, source) = resolve_steam_mode_for(None, &config, false);
+        assert_ne!(source, STAND_IN_SOURCE);
+    }
+
+    #[test]
+    fn stand_in_keeps_lsteamclient_loadable() {
+        let on = stand_in(true);
+        let off = stand_in(false);
+        assert!(keeps_lsteamclient(SteamMode::Standalone, &on));
+        assert!(keeps_lsteamclient(SteamMode::HostBridge, &off));
+        assert!(!keeps_lsteamclient(SteamMode::Standalone, &off));
+        assert!(!keeps_lsteamclient(SteamMode::InWineRuntime, &on));
+
+        let overrides =
+            |keep| build_dll_overrides(false, false, false, false, false, None, false, keep);
+        let bridged = overrides(keeps_lsteamclient(SteamMode::Standalone, &on));
+        assert!(!bridged.contains("lsteamclient="), "{bridged}");
+        assert!(!bridged.contains("steamclient64=n"), "{bridged}");
+        let neutral = overrides(false);
+        assert!(neutral.contains("lsteamclient="), "{neutral}");
+        assert!(neutral.contains("steamclient64=n"), "{neutral}");
+    }
+}
