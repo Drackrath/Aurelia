@@ -178,6 +178,7 @@ impl Backend for Fake {
                 build_id: 77,
                 install_dir: Some("/games/Spacewar".into()),
                 language: Some("german".into()),
+                beta: Some("experimental".into()),
             },
             _ => AppInstallInfo {
                 language: Some("english".into()),
@@ -573,11 +574,19 @@ impl Backend for Fake {
         })
     }
 
+    async fn cloud_quota(&self, app_id: u32) -> Result<Option<CloudQuota>> {
+        Ok((app_id == 480).then_some(CloudQuota {
+            bytes: 1_000_000_000,
+            max_files: 1000,
+        }))
+    }
+
     async fn offline_app_info(&self, app_id: u32) -> Result<AppInstallInfo> {
         Ok(AppInstallInfo {
             build_id: app_id + 1,
             install_dir: Some("/games/offline".into()),
             language: Some("french".into()),
+            beta: None,
         })
     }
 
@@ -1107,11 +1116,19 @@ fn wire_golden_bytes() {
         build_id: 5,
         install_dir: Some("/g".into()),
         language: Some("de".into()),
+        beta: None,
     };
     assert_eq!(
         app_info_body(&info),
-        [5, 0, 0, 0, 2, 0, 0, 0, b'/', b'g', 2, 0, 0, 0, b'd', b'e']
+        [
+            5, 0, 0, 0, 2, 0, 0, 0, b'/', b'g', 2, 0, 0, 0, b'd', b'e', 0, 0, 0, 0
+        ]
     );
+    let beta = AppInstallInfo {
+        beta: Some("b".into()),
+        ..info
+    };
+    assert_eq!(app_info_body(&beta)[16..], [1, 0, 0, 0, b'b']);
     assert_eq!(
         session_info_body(0x0102_0304, "US"),
         [4, 3, 2, 1, 2, 0, 0, 0, b'U', b'S']
@@ -1800,6 +1817,7 @@ async fn offline_serves_local_app_info_and_saved_dlc() {
         build_id: 481,
         install_dir: Some("/games/offline".into()),
         language: Some("french".into()),
+        beta: None,
     };
     assert_eq!(
         game.ask(1, cmd::APP_INFO, &[]).await,
@@ -2790,4 +2808,25 @@ async fn aborted_send_drops_the_reply() {
     assert!(task.await.unwrap_err().is_cancelled());
     drop(guard);
     assert_eq!(*conn.backend.certs.lock().unwrap(), vec![480]);
+}
+
+#[tokio::test]
+async fn cloud_quota_from_pics() {
+    let fake = Fake::logged_in();
+    let (mut game, _) = Game::connect(fake, Arc::default(), hello(480), None).await;
+    let (code, body) = game.ask(1, cmd::CLOUD_QUOTA, &[]).await;
+    assert_eq!(code, status::OK);
+    let mut f = Fields::new(&body);
+    assert_eq!((f.u64(), f.u32()), (Some(1_000_000_000), Some(1000)));
+    let (code, _) = game.ask_for(2, 70, cmd::CLOUD_QUOTA, &[]).await;
+    assert_eq!(code, status::FAILED, "no quota set");
+    game.hang_up().await;
+    // Offline: never asks Steam.
+    let fake = offline(&[(480, vec![0xCC])]);
+    let (mut game, _) = Game::connect(fake, Arc::default(), hello(480), None).await;
+    assert_eq!(
+        game.ask(1, cmd::CLOUD_QUOTA, &[]).await.0,
+        status::NO_SESSION
+    );
+    game.hang_up().await;
 }

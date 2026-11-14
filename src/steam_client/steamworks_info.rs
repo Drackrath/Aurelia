@@ -26,6 +26,8 @@ pub struct AppInstallInfo {
     pub install_dir: Option<PathBuf>,
     /// `UserConfig/language` from the appmanifest.
     pub language: Option<String>,
+    /// Beta branch; None for public.
+    pub beta: Option<String>,
 }
 
 /// DLC facts kept for offline use.
@@ -234,6 +236,8 @@ impl SteamClient {
             build_id: u32::try_from(manifest.build_id).unwrap_or(0),
             install_dir: (manifest.fully_installed() && dir.is_dir()).then_some(dir),
             language: manifest.language,
+            beta: (!manifest.active_branch.eq_ignore_ascii_case("public"))
+                .then_some(manifest.active_branch),
         })
     }
 

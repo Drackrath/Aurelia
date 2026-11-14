@@ -249,6 +249,15 @@ impl SteamClient {
         Ok(out)
     }
 
+    /// The app's Cloud quota, if set.
+    pub async fn fetch_cloud_quota(&self, appid: u32) -> Result<Option<CloudQuota>> {
+        let buffer = self
+            .pics_buffer(appid, "failed requesting appinfo for the Cloud quota")
+            .await?;
+        let vdf = find_vdf_in_pics(&buffer).context("failed to parse product info VDF")?;
+        Ok(cloud_quota_from_section(pics_app_section(vdf.value())))
+    }
+
     /// Fetch the app's PICS UFS config.
     pub async fn fetch_ufs_config(&self, appid: u32) -> Result<UfsConfig> {
         let buffer = self

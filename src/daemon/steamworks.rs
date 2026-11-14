@@ -24,7 +24,7 @@ use aurelia::steam_client::remote_storage::{RemoteStorageInfo, remote_storage_in
 use aurelia::steam_client::steamworks_info::{AppInstallInfo, DlcInfo};
 use aurelia::steam_client::user_stats::{StoreOutcome, UserStats};
 use aurelia::steam_client::workshop_ugc::{UgcDetails, UgcInstall, UgcPage, UgcUpdate};
-use aurelia::steam_client::{EncryptedTicketOutcome, Friend, SteamClient};
+use aurelia::steam_client::{CloudQuota, EncryptedTicketOutcome, Friend, SteamClient};
 
 use super::proto::{self, SharedWriter};
 use super::steamworks_lobbies as lobby;
@@ -67,6 +67,7 @@ pub mod cmd {
     pub const SESSION_INFO: u8 = 8;
     /// Cloud folder and flags; 40-49 reserved.
     pub const CLOUD_INFO: u8 = 40;
+    pub const CLOUD_QUOTA: u8 = 41;
     /// Stats range is 30-39.
     pub const USER_STATS: u8 = 30;
     pub const STORE_STATS: u8 = 31;
@@ -400,6 +401,18 @@ pub fn app_info_body(info: &AppInstallInfo) -> Vec<u8> {
         &mut out,
         info.language.as_deref().unwrap_or_default().as_bytes(),
     );
+    // Empty for the public branch.
+    put_blob(
+        &mut out,
+        info.beta.as_deref().unwrap_or_default().as_bytes(),
+    );
+    out
+}
+
+/// Quota body: bytes, max files.
+pub fn cloud_quota_body(quota: &CloudQuota) -> Vec<u8> {
+    let mut out = quota.bytes.to_le_bytes().to_vec();
+    out.extend_from_slice(&quota.max_files.to_le_bytes());
     out
 }
 
@@ -893,6 +906,8 @@ pub trait Backend: Send + Sync + 'static {
         steam_id: u64,
         app_id: u32,
     ) -> impl Future<Output = Result<RemoteStorageInfo>> + Send;
+    /// PICS Cloud quota, if any.
+    fn cloud_quota(&self, app_id: u32) -> impl Future<Output = Result<Option<CloudQuota>>> + Send;
     /// Lobby calls; see `steam_client::lobbies`.
     fn create_lobby(
         &self,
@@ -1576,6 +1591,7 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
             | cmd::APP_INFO
             | cmd::SESSION_INFO
             | cmd::CLOUD_INFO
+            | cmd::CLOUD_QUOTA
             | cmd::USER_STATS
             | cmd::STORE_STATS
             | cmd::FRIENDS
@@ -1670,6 +1686,11 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
         },
         cmd::CLOUD_INFO => match conn.backend.cloud_info(steam_id, app_id).await {
             Ok(info) => (status::OK, cloud_info_body(&info)),
+            Err(e) => failed(&e),
+        },
+        cmd::CLOUD_QUOTA => match conn.backend.cloud_quota(app_id).await {
+            Ok(Some(quota)) => (status::OK, cloud_quota_body(&quota)),
+            Ok(None) => (status::FAILED, b"app has no Steam Cloud quota".to_vec()),
             Err(e) => failed(&e),
         },
         cmd::UGC_QUERY => {
@@ -2397,6 +2418,11 @@ impl Backend for DaemonBackend {
     async fn cloud_info(&self, steam_id: u64, app_id: u32) -> Result<RemoteStorageInfo> {
         let config = aurelia::core::config::LauncherConfig::load().await?;
         remote_storage_info(&config, steam_id, app_id)
+    }
+
+    async fn cloud_quota(&self, app_id: u32) -> Result<Option<CloudQuota>> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        client.fetch_cloud_quota(app_id).await
     }
 
     async fn ugc_query(&self, app_id: u32, query: UgcQuery) -> Result<UgcPage> {

@@ -1961,6 +1961,36 @@ pub(crate) fn ufs_root_overrides_from_section(
     out
 }
 
+/// Cloud limits from PICS `ufs`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CloudQuota {
+    pub bytes: u64,
+    /// 0 when unset.
+    pub max_files: u32,
+}
+
+/// Number, string or int.
+fn vdf_u64(value: &steam_vdf_parser::Value) -> Option<u64> {
+    match value.as_str() {
+        Some(s) => s.trim().parse().ok(),
+        None => value
+            .as_u64()
+            .or_else(|| value.as_i32().and_then(|n| u64::try_from(n).ok())),
+    }
+}
+
+/// `ufs/quota` and `ufs/maxnumfiles`.
+pub(crate) fn cloud_quota_from_section(section: &steam_vdf_parser::Value) -> Option<CloudQuota> {
+    let ufs = section.get_obj(&["ufs"])?;
+    let bytes = ufs.get("quota").and_then(vdf_u64).filter(|b| *b > 0)?;
+    let max_files = ufs
+        .get("maxnumfiles")
+        .and_then(vdf_u64)
+        .and_then(|n| u32::try_from(n).ok())
+        .unwrap_or(0);
+    Some(CloudQuota { bytes, max_files })
+}
+
 /// Full UFS config from PICS.
 pub(crate) fn ufs_config_from_section(section: &steam_vdf_parser::Value) -> UfsConfig {
     UfsConfig {
