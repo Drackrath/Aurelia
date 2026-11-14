@@ -27,6 +27,9 @@ pub struct SdrConfig {
     /// Country (or `default`) to policy.
     #[serde(default)]
     pub p2p_share_ip: HashMap<String, i64>,
+    /// Base64 signed certs (likely CAs).
+    #[serde(default)]
+    pub certs: Vec<String>,
 }
 
 impl SdrConfig {

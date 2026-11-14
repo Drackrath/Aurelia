@@ -336,6 +336,7 @@ impl Backend for Fake {
             revision: 9,
             ice_enable: 6,
             stun: "stun.example:3478".into(),
+            certs: vec!["Q0E=".into()],
         })
     }
 
@@ -2539,6 +2540,8 @@ async fn network_config_and_offline() {
     let mut f = Fields::new(&body);
     assert_eq!((f.u64(), f.i32()), (Some(9), Some(6)));
     assert_eq!(f.blob(), Some(&b"stun.example:3478"[..]));
+    assert_eq!((f.u32(), f.blob()), (Some(1), Some(&b"Q0E="[..])));
+    assert!(f.rest().is_empty());
     game.hang_up().await;
     let (mut game, _) = Game::connect(fake, router, hello(70), None).await;
     assert_eq!(
@@ -2600,14 +2603,25 @@ fn signaling_golden_bytes() {
             116, 1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 1, 0, 0, 0, b'x'
         ]
     );
+    let many = NetworkConfig {
+        certs: vec!["x".into(); MAX_CA_CERTS + 5],
+        ..NetworkConfig::default()
+    };
+    let body = network_config_body(&many);
+    let mut f = Fields::new(&body);
+    let _ = (f.u64(), f.i32(), f.blob());
+    assert_eq!(f.u32(), Some(MAX_CA_CERTS as u32));
     let config = NetworkConfig {
         revision: 1,
         ice_enable: 6,
         stun: "s".into(),
+        certs: vec!["c".into()],
     };
     assert_eq!(
         network_config_body(&config),
-        vec![1, 0, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 1, 0, 0, 0, b's']
+        vec![
+            1, 0, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 1, 0, 0, 0, b's', 1, 0, 0, 0, 1, 0, 0, 0, b'c'
+        ]
     );
     assert_eq!((cmd::P2P_SIGNAL, cmd::NETWORK_CONFIG), (115, 116));
 }
