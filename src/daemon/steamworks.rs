@@ -17,6 +17,7 @@ use aurelia::steam_client::auth_ticket::{AuthSessionTicket, TicketAuthEvent, Tic
 use aurelia::steam_client::avatars::{Avatar, AvatarSize, download_jpeg, fetch_avatar};
 use aurelia::steam_client::microtxn::{self, MicroTxnRequest};
 use aurelia::steam_client::networking_cert::{CertCache, CertGrant, KeyFormat};
+use aurelia::steam_client::p2p_signaling::SignalEvent;
 use aurelia::steam_client::persona_events::{PersonaEvent, change};
 use aurelia::steam_client::playing::{self, GAMES, Launch};
 use aurelia::steam_client::remote_storage::{RemoteStorageInfo, remote_storage_info};
@@ -89,6 +90,9 @@ pub mod cmd {
     pub const LOBBY_INVITE: u8 = 96;
     /// SDR range is 110-114.
     pub const NETWORKING_CERT: u8 = 110;
+    /// SDR signaling range is 115-119.
+    pub const P2P_SIGNAL: u8 = 115;
+    pub const NETWORK_CONFIG: u8 = 116;
 }
 
 /// Cloud info flag bits.
@@ -175,6 +179,9 @@ pub mod push {
     /// Persona pushes; 100-104 reserved.
     pub const PERSONA_CHANGE: u8 = 100;
     pub const RICH_PRESENCE: u8 = 101;
+    /// Signal from a peer.
+    pub const P2P_SIGNAL: u8 = 115;
+    pub const P2P_SIGNAL_FAILED: u8 = 116;
 }
 
 /// Push payloads for one persona event.
@@ -759,6 +766,52 @@ pub fn networking_cert_body(grant: &CertGrant) -> Vec<u8> {
     out
 }
 
+/// Largest signal we relay.
+pub const MAX_SIGNAL: usize = 16 * 1024;
+
+/// What GNS gets configured with.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NetworkConfig {
+    pub revision: u64,
+    /// ICE enable bits.
+    pub ice_enable: i32,
+    /// Comma-separated STUN servers.
+    pub stun: String,
+}
+
+/// Config body: revision, ICE, STUN.
+pub fn network_config_body(config: &NetworkConfig) -> Vec<u8> {
+    let mut out = config.revision.to_le_bytes().to_vec();
+    out.extend_from_slice(&config.ice_enable.to_le_bytes());
+    put_blob(&mut out, config.stun.as_bytes());
+    out
+}
+
+/// Signal push payload.
+pub fn signal_payload(event: &SignalEvent) -> Vec<u8> {
+    match event {
+        SignalEvent::Signal { from, rendezvous } => {
+            let mut out = vec![push::P2P_SIGNAL];
+            out.extend_from_slice(&from.to_le_bytes());
+            put_blob(&mut out, rendezvous);
+            out
+        }
+        SignalEvent::Failed {
+            from,
+            error,
+            close_reason,
+            message,
+        } => {
+            let mut out = vec![push::P2P_SIGNAL_FAILED];
+            out.extend_from_slice(&from.to_le_bytes());
+            out.extend_from_slice(&error.to_le_bytes());
+            out.extend_from_slice(&close_reason.to_le_bytes());
+            put_blob(&mut out, message.as_bytes());
+            out
+        }
+    }
+}
+
 /// Avatar body: width, height, RGBA.
 pub fn avatar_body(avatar: &Avatar) -> Vec<u8> {
     let mut out = avatar.width.to_le_bytes().to_vec();
@@ -941,6 +994,20 @@ pub trait Backend: Send + Sync + 'static {
         lobby: u64,
         friend: u64,
     ) -> impl Future<Output = Result<()>> + Send;
+    /// Relay a GNS signal to `to`.
+    fn send_p2p_signal(
+        &self,
+        app_id: u32,
+        to: u64,
+        rendezvous: Vec<u8>,
+    ) -> impl Future<Output = Result<()>> + Send;
+    /// Signals arriving for this app.
+    fn p2p_signal_events(
+        &self,
+        app_id: u32,
+    ) -> impl Future<Output = Option<mpsc::UnboundedReceiver<SignalEvent>>> + Send;
+    /// ICE policy and STUN servers.
+    fn network_config(&self, app_id: u32) -> impl Future<Output = Result<NetworkConfig>> + Send;
     /// Aggregated stats with history.
     fn global_stats(
         &self,
@@ -1254,6 +1321,23 @@ where
             })
         }),
     };
+    let signal_pump = match offline {
+        Some(_) => None,
+        None => conn
+            .backend
+            .p2p_signal_events(hello.app_id)
+            .await
+            .map(|mut rx| {
+                let tx = conn.push_tx.clone();
+                tokio::spawn(async move {
+                    while let Some(event) = rx.recv().await {
+                        if tx.send(signal_payload(&event)).is_err() {
+                            break;
+                        }
+                    }
+                })
+            }),
+    };
     let persona_pump = match offline {
         Some(_) => None,
         None => conn.backend.persona_events().await.map(|mut rx| {
@@ -1312,6 +1396,9 @@ where
         pump.abort();
     }
     if let Some(pump) = persona_pump {
+        pump.abort();
+    }
+    if let Some(pump) = signal_pump {
         pump.abort();
     }
     let joined: Vec<u64> = conn.lobbies.lock().unwrap().drain().collect();
@@ -1416,6 +1503,8 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
             | cmd::UGC_UPDATE
             | cmd::AVATAR
             | cmd::NETWORKING_CERT
+            | cmd::P2P_SIGNAL
+            | cmd::NETWORK_CONFIG
     ) {
         return (status::UNSUPPORTED, b"unknown command".to_vec());
     }
@@ -1640,6 +1729,27 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
                 Err(e) => failed(&e),
             }
         }
+        cmd::P2P_SIGNAL => {
+            let (Some(to), Some(signal)) = (f.u64(), f.blob()) else {
+                return (status::MALFORMED, b"bad signal".to_vec());
+            };
+            if to == 0 || signal.is_empty() || signal.len() > MAX_SIGNAL {
+                return (status::MALFORMED, b"bad signal".to_vec());
+            }
+            // Always the connected game's.
+            match conn
+                .backend
+                .send_p2p_signal(conn.app_id, to, signal.to_vec())
+                .await
+            {
+                Ok(()) => (status::OK, Vec::new()),
+                Err(e) => failed(&e),
+            }
+        }
+        cmd::NETWORK_CONFIG => match conn.backend.network_config(conn.app_id).await {
+            Ok(config) => (status::OK, network_config_body(&config)),
+            Err(e) => failed(&e),
+        },
         cmd::OPEN_URL => {
             let url = f.blob().map(String::from_utf8_lossy);
             let Some(url) = url.filter(|u| openable_url(u)) else {
@@ -2028,6 +2138,27 @@ impl Backend for DaemonBackend {
 
     async fn lobby_events(&self, app_id: u32) -> Option<mpsc::UnboundedReceiver<LobbyEvent>> {
         authed_client().await?.lobby_events(app_id).ok()
+    }
+
+    async fn send_p2p_signal(&self, app_id: u32, to: u64, rendezvous: Vec<u8>) -> Result<()> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        client.send_p2p_signal(app_id, to, rendezvous).await
+    }
+
+    async fn p2p_signal_events(&self, app_id: u32) -> Option<mpsc::UnboundedReceiver<SignalEvent>> {
+        authed_client().await?.p2p_signal_events(app_id).ok()
+    }
+
+    async fn network_config(&self, app_id: u32) -> Result<NetworkConfig> {
+        use aurelia::steam_client::sdr_config;
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        let config = sdr_config::sdr_config(app_id).await?;
+        let country = client.ip_country().unwrap_or_default();
+        Ok(NetworkConfig {
+            revision: config.revision,
+            ice_enable: config.ice_enable(&country),
+            stun: sdr_config::stun_servers(),
+        })
     }
 
     async fn persona_events(&self) -> Option<mpsc::UnboundedReceiver<PersonaEvent>> {

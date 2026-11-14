@@ -35,6 +35,8 @@ struct Fake {
     queries: Mutex<Vec<UgcQuery>>,
     subscribed: Mutex<Vec<u64>>,
     invites: Mutex<Vec<String>>,
+    signals: Mutex<Vec<(u32, u64, Vec<u8>)>>,
+    signal_tx: Mutex<Option<mpsc::UnboundedSender<SignalEvent>>>,
     finds: Mutex<Vec<Find>>,
     uploads: Mutex<Vec<Upload>>,
     certs: Mutex<Vec<u32>>,
@@ -310,6 +312,31 @@ impl Backend for Fake {
         let (tx, rx) = mpsc::unbounded_channel();
         *self.persona_tx.lock().unwrap() = Some(tx);
         Some(rx)
+    }
+
+    async fn send_p2p_signal(&self, app_id: u32, to: u64, rendezvous: Vec<u8>) -> Result<()> {
+        if to == LENDER {
+            bail!("CM dropped the signal");
+        }
+        self.signals.lock().unwrap().push((app_id, to, rendezvous));
+        Ok(())
+    }
+
+    async fn p2p_signal_events(&self, _app: u32) -> Option<mpsc::UnboundedReceiver<SignalEvent>> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        *self.signal_tx.lock().unwrap() = Some(tx);
+        Some(rx)
+    }
+
+    async fn network_config(&self, app_id: u32) -> Result<NetworkConfig> {
+        if app_id != 480 {
+            bail!("GetSDRConfig unreachable");
+        }
+        Ok(NetworkConfig {
+            revision: 9,
+            ice_enable: 6,
+            stun: "stun.example:3478".into(),
+        })
     }
 
     async fn lobby_events(&self, _app: u32) -> Option<mpsc::UnboundedReceiver<LobbyEvent>> {
@@ -2430,6 +2457,112 @@ async fn networking_cert_needs_steam_not_cache() {
     game.hang_up().await;
 }
 
+#[tokio::test]
+async fn signals_go_to_steam_for_the_connected_game() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router, hello(480), None).await;
+    let mut body = (SID + 1).to_le_bytes().to_vec();
+    put_blob(&mut body, &[1, 2, 3]);
+    // Another app id is ignored.
+    assert_eq!(
+        game.ask_for(1, 70, cmd::P2P_SIGNAL, &body).await.0,
+        status::OK
+    );
+    let mut bad = LENDER.to_le_bytes().to_vec();
+    put_blob(&mut bad, &[1]);
+    assert_eq!(game.ask(2, cmd::P2P_SIGNAL, &bad).await.0, status::FAILED);
+    for malformed in [
+        Vec::new(),
+        {
+            let mut b = 0u64.to_le_bytes().to_vec();
+            put_blob(&mut b, &[1]);
+            b
+        },
+        {
+            let mut b = (SID + 1).to_le_bytes().to_vec();
+            put_blob(&mut b, &[]);
+            b
+        },
+        {
+            let mut b = (SID + 1).to_le_bytes().to_vec();
+            put_blob(&mut b, &vec![0; MAX_SIGNAL + 1]);
+            b
+        },
+    ] {
+        assert_eq!(
+            game.ask(3, cmd::P2P_SIGNAL, &malformed).await.0,
+            status::MALFORMED
+        );
+    }
+    assert_eq!(
+        *fake.signals.lock().unwrap(),
+        vec![(480, SID + 1, vec![1, 2, 3])]
+    );
+    game.hang_up().await;
+}
+
+#[tokio::test]
+async fn incoming_signals_are_pushed() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router, hello(480), None).await;
+    let tx = fake.signal_tx.lock().unwrap().clone().unwrap();
+    let events = [
+        SignalEvent::Signal {
+            from: SID + 1,
+            rendezvous: vec![7, 8],
+        },
+        SignalEvent::Failed {
+            from: SID + 1,
+            error: 3,
+            close_reason: 5003,
+            message: "gone".into(),
+        },
+    ];
+    for event in &events {
+        tx.send(event.clone()).unwrap();
+        let (kind, payload) = game.next().await;
+        assert_eq!(kind, proto::C_SW_PUSH);
+        assert_eq!(payload, signal_payload(event));
+    }
+    game.hang_up().await;
+}
+
+#[tokio::test]
+async fn network_config_and_offline() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router.clone(), hello(480), None).await;
+    let (code, body) = game.ask(1, cmd::NETWORK_CONFIG, &[]).await;
+    assert_eq!(code, status::OK);
+    let mut f = Fields::new(&body);
+    assert_eq!((f.u64(), f.i32()), (Some(9), Some(6)));
+    assert_eq!(f.blob(), Some(&b"stun.example:3478"[..]));
+    game.hang_up().await;
+    let (mut game, _) = Game::connect(fake, router, hello(70), None).await;
+    assert_eq!(
+        game.ask(2, cmd::NETWORK_CONFIG, &[]).await.0,
+        status::FAILED
+    );
+    game.hang_up().await;
+
+    let fake = offline(&[(480, vec![0xCC])]);
+    let (mut game, _) = Game::connect(fake.clone(), Arc::default(), hello(480), None).await;
+    assert!(fake.signal_tx.lock().unwrap().is_none());
+    assert_eq!(
+        game.ask(1, cmd::NETWORK_CONFIG, &[]).await.0,
+        status::NO_SESSION
+    );
+    let mut body = (SID + 1).to_le_bytes().to_vec();
+    put_blob(&mut body, &[1]);
+    assert_eq!(
+        game.ask(2, cmd::P2P_SIGNAL, &body).await.0,
+        status::NO_SESSION
+    );
+    game.hang_up().await;
+}
+
 /// Same bytes the .so parses.
 #[test]
 fn networking_cert_golden_bytes() {
@@ -2442,4 +2575,39 @@ fn networking_cert_golden_bytes() {
         vec![4, 3, 2, 1, 2, 0, 0, 0, 0xAA, 0xBB]
     );
     assert_eq!(cmd::NETWORKING_CERT, 110);
+}
+
+/// Same bytes the .so parses.
+#[test]
+fn signaling_golden_bytes() {
+    let signal = SignalEvent::Signal {
+        from: 0x0102,
+        rendezvous: vec![0xAA],
+    };
+    assert_eq!(
+        signal_payload(&signal),
+        vec![115, 2, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0xAA]
+    );
+    let failed = SignalEvent::Failed {
+        from: 1,
+        error: 2,
+        close_reason: 3,
+        message: "x".into(),
+    };
+    assert_eq!(
+        signal_payload(&failed),
+        vec![
+            116, 1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 1, 0, 0, 0, b'x'
+        ]
+    );
+    let config = NetworkConfig {
+        revision: 1,
+        ice_enable: 6,
+        stun: "s".into(),
+    };
+    assert_eq!(
+        network_config_body(&config),
+        vec![1, 0, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 1, 0, 0, 0, b's']
+    );
+    assert_eq!((cmd::P2P_SIGNAL, cmd::NETWORK_CONFIG), (115, 116));
 }
