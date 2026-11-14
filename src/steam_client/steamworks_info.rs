@@ -28,6 +28,37 @@ pub struct AppInstallInfo {
     pub language: Option<String>,
 }
 
+/// DLC facts kept for offline use.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DlcCatalog {
+    pub ids: Vec<u32>,
+    pub with_depots: Vec<u32>,
+    pub names: HashMap<u32, String>,
+}
+
+/// Cached catalog file of `appid`.
+pub fn dlc_catalog_path(dir: &Path, appid: u32) -> PathBuf {
+    dir.join(format!("{appid}.json"))
+}
+
+/// Default catalog directory.
+pub fn dlc_catalog_dir() -> Result<PathBuf> {
+    Ok(crate::core::config::data_dir()?.join("steamworks-dlc"))
+}
+
+/// Save a catalog; best effort.
+pub fn store_dlc_catalog(dir: &Path, appid: u32, catalog: &DlcCatalog) -> Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let json = serde_json::to_vec(catalog)?;
+    crate::core::atomic::write_private(&dlc_catalog_path(dir, appid), &json)
+}
+
+/// Saved catalog, if readable.
+pub fn load_dlc_catalog(dir: &Path, appid: u32) -> Option<DlcCatalog> {
+    let raw = std::fs::read(dlc_catalog_path(dir, appid)).ok()?;
+    serde_json::from_slice(&raw).ok()
+}
+
 /// DLC ids owning a depot.
 pub(crate) fn dlcs_with_depots(section: &steam_vdf_parser::Value) -> HashSet<u32> {
     let Some(depots) = section.get_obj(&["depots"]) else {
@@ -68,17 +99,7 @@ impl SteamClient {
             let section = pics_app_section(vdf.value());
             (dlc_ids_from_section(section), dlcs_with_depots(section))
         };
-        let (installed, disabled) = match self.appmanifest_path(appid).await {
-            Ok(path) if path.exists() => {
-                let raw = std::fs::read_to_string(&path)
-                    .with_context(|| format!("failed reading {}", path.display()))?;
-                (
-                    parse_installed_dlc_appids(&raw),
-                    parse_disabled_dlc_appids(&raw),
-                )
-            }
-            _ => (HashSet::new(), HashSet::new()),
-        };
+        let (installed, disabled) = self.manifest_dlc_state(appid).await?;
         let country = self.require_connection()?.ip_country_code().to_string();
         let names: HashMap<u32, String> = if ids.is_empty() {
             HashMap::new()
@@ -90,6 +111,15 @@ impl SteamClient {
                 .map(|app| (app.app_id, app.name))
                 .collect()
         };
+        let catalog = DlcCatalog {
+            ids: ids.clone(),
+            with_depots: with_depots.iter().copied().collect(),
+            names: names.clone(),
+        };
+        let saved = dlc_catalog_dir().and_then(|dir| store_dlc_catalog(&dir, appid, &catalog));
+        if let Err(e) = saved {
+            tracing::debug!(appid, "not caching DLC catalog: {e:#}");
+        }
         Ok(build_dlc_list(
             &ids,
             &with_depots,
@@ -97,6 +127,41 @@ impl SteamClient {
             &disabled,
             &names,
         ))
+    }
+
+    /// Saved-catalog DLC; `None` without one.
+    pub async fn offline_steamworks_dlcs(
+        &self,
+        appid: u32,
+        dir: &Path,
+    ) -> Result<Option<Vec<DlcInfo>>> {
+        let Some(catalog) = load_dlc_catalog(dir, appid) else {
+            return Ok(None);
+        };
+        let (installed, disabled) = self.manifest_dlc_state(appid).await?;
+        let with_depots: HashSet<u32> = catalog.with_depots.iter().copied().collect();
+        Ok(Some(build_dlc_list(
+            &catalog.ids,
+            &with_depots,
+            &installed,
+            &disabled,
+            &catalog.names,
+        )))
+    }
+
+    /// Installed and disabled DLC ids.
+    async fn manifest_dlc_state(&self, appid: u32) -> Result<(HashSet<u32>, HashSet<u32>)> {
+        match self.appmanifest_path(appid).await {
+            Ok(path) if path.exists() => {
+                let raw = std::fs::read_to_string(&path)
+                    .with_context(|| format!("failed reading {}", path.display()))?;
+                Ok((
+                    parse_installed_dlc_appids(&raw),
+                    parse_disabled_dlc_appids(&raw),
+                ))
+            }
+            _ => Ok((HashSet::new(), HashSet::new())),
+        }
     }
 
     /// Build, folder and language.

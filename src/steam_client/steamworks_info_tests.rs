@@ -68,3 +68,19 @@ fn manifest_language_is_read() {
     let none = crate::core::acf::parse_app_manifest("\"AppState\"\n{\n}\n");
     assert_eq!(none.language, None);
 }
+
+#[test]
+fn dlc_catalog_round_trips() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(load_dlc_catalog(dir.path(), 480), None);
+    let catalog = DlcCatalog {
+        ids: vec![1001, 1002],
+        with_depots: vec![1002],
+        names: HashMap::from([(1001, "OST".to_string())]),
+    };
+    store_dlc_catalog(dir.path(), 480, &catalog).unwrap();
+    assert_eq!(load_dlc_catalog(dir.path(), 480), Some(catalog));
+    assert_eq!(load_dlc_catalog(dir.path(), 70), None);
+    std::fs::write(dlc_catalog_path(dir.path(), 70), b"not json").unwrap();
+    assert_eq!(load_dlc_catalog(dir.path(), 70), None);
+}

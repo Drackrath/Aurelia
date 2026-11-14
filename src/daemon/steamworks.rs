@@ -543,6 +543,13 @@ pub trait Backend: Send + Sync + 'static {
         reset: bool,
         changes: Vec<(u32, u32)>,
     ) -> impl Future<Output = Result<StoreOutcome>> + Send;
+    /// Install facts from local data.
+    fn offline_app_info(&self, app_id: u32) -> impl Future<Output = Result<AppInstallInfo>> + Send;
+    /// Saved DLC catalog, if any.
+    fn offline_dlcs(
+        &self,
+        app_id: u32,
+    ) -> impl Future<Output = Result<Option<Vec<DlcInfo>>>> + Send;
     /// Own persona and friends roster.
     fn friends(&self) -> impl Future<Output = Result<FriendsSnapshot>> + Send;
     /// Replace the app's rich presence.
@@ -941,6 +948,15 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
                     Err(e) => failed(&e),
                 }
             }
+            cmd::APP_INFO => match conn.backend.offline_app_info(app_id).await {
+                Ok(info) => (status::OK, app_info_body(&info)),
+                Err(e) => failed(&e),
+            },
+            cmd::DLC_LIST => match conn.backend.offline_dlcs(app_id).await {
+                Ok(Some(dlcs)) => (status::OK, dlc_list_body(&dlcs)),
+                Ok(None) => (status::NO_SESSION, b"offline, no saved DLC list".to_vec()),
+                Err(e) => failed(&e),
+            },
             _ => (status::NO_SESSION, b"offline".to_vec()),
         };
     }
@@ -1240,11 +1256,18 @@ impl Backend for DaemonBackend {
 
     async fn app_info(&self, app_id: u32) -> Result<AppInstallInfo> {
         let client = authed_client().await.ok_or_else(not_logged_in)?;
-        let mut info = client.app_install_info(app_id).await?;
-        if info.language.is_none() {
-            info.language = Some(crate::commands::common::resolve_steam_language(None).await);
-        }
-        Ok(info)
+        local_app_info(&client, app_id).await
+    }
+
+    async fn offline_app_info(&self, app_id: u32) -> Result<AppInstallInfo> {
+        local_app_info(&SteamClient::new()?, app_id).await
+    }
+
+    async fn offline_dlcs(&self, app_id: u32) -> Result<Option<Vec<DlcInfo>>> {
+        let dir = aurelia::steam_client::steamworks_info::dlc_catalog_dir()?;
+        SteamClient::new()?
+            .offline_steamworks_dlcs(app_id, &dir)
+            .await
     }
 
     async fn create_lobby(&self, app_id: u32, lobby_type: i32, max: i32) -> Result<(i32, u64)> {
@@ -1400,6 +1423,15 @@ fn spawn_browser(url: &str) -> bool {
     }
     tracing::warn!("steamworks: a game wants {url} shown; open it in a browser");
     false
+}
+
+/// Appmanifest facts, configured language fallback.
+async fn local_app_info(client: &SteamClient, app_id: u32) -> Result<AppInstallInfo> {
+    let mut info = client.app_install_info(app_id).await?;
+    if info.language.is_none() {
+        info.language = Some(crate::commands::common::resolve_steam_language(None).await);
+    }
+    Ok(info)
 }
 
 /// Manifest language, else configured.

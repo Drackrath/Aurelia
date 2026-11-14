@@ -290,6 +290,25 @@ impl Backend for Fake {
             reverted,
         })
     }
+
+    async fn offline_app_info(&self, app_id: u32) -> Result<AppInstallInfo> {
+        Ok(AppInstallInfo {
+            build_id: app_id + 1,
+            install_dir: Some("/games/offline".into()),
+            language: Some("french".into()),
+        })
+    }
+
+    async fn offline_dlcs(&self, app_id: u32) -> Result<Option<Vec<DlcInfo>>> {
+        Ok((app_id == 480).then(|| {
+            vec![DlcInfo {
+                app_id: 1001,
+                name: Some("Saved".into()),
+                content_ready: true,
+                disabled: false,
+            }]
+        }))
+    }
 }
 
 /// Stats keyed to the asked account.
@@ -1376,5 +1395,42 @@ async fn offline_games_get_no_purchases() {
     let (game, _) = Game::connect(fake, router.clone(), hello(480), None).await;
     tokio::task::yield_now().await;
     assert_eq!(router.push_to_app(480, &[0xFF]), 0);
+    game.hang_up().await;
+}
+
+#[tokio::test]
+async fn offline_serves_local_app_info_and_saved_dlc() {
+    let fake = offline(&[(480, vec![0xCC]), (70, vec![0xDD])]);
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router.clone(), hello(480), None).await;
+    let info = AppInstallInfo {
+        build_id: 481,
+        install_dir: Some("/games/offline".into()),
+        language: Some("french".into()),
+    };
+    assert_eq!(
+        game.ask(1, cmd::APP_INFO, &[]).await,
+        (status::OK, app_info_body(&info))
+    );
+    let dlcs = vec![DlcInfo {
+        app_id: 1001,
+        name: Some("Saved".into()),
+        content_ready: true,
+        disabled: false,
+    }];
+    assert_eq!(
+        game.ask(2, cmd::DLC_LIST, &[]).await,
+        (status::OK, dlc_list_body(&dlcs))
+    );
+    assert_eq!(
+        game.ask(3, cmd::SESSION_INFO, &[]).await.0,
+        status::NO_SESSION
+    );
+    game.hang_up().await;
+
+    // No saved DLC list.
+    let (mut game, _) = Game::connect(fake, router, hello(70), None).await;
+    assert_eq!(game.ask(1, cmd::DLC_LIST, &[]).await.0, status::NO_SESSION);
+    assert_eq!(game.ask(2, cmd::APP_INFO, &[]).await.0, status::OK);
     game.hang_up().await;
 }
