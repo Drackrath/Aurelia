@@ -88,7 +88,24 @@ pub(crate) fn build_dlc_list(
         .collect()
 }
 
+/// Lender of shared app, else us.
+///
+/// `None` when the lender is unknown.
+pub fn owner_from_shared(app_id: u32, me: u64, shared: &[SharedApp]) -> Option<u64> {
+    match shared.iter().find(|s| s.app_id == app_id) {
+        Some(app) => app.owner_steamid.filter(|o| *o != 0),
+        None => Some(me),
+    }
+}
+
 impl SteamClient {
+    /// Account whose license runs `appid`.
+    pub async fn app_owner(&self, appid: u32) -> Result<Option<u64>> {
+        let me = self.steam_id().context("not logged in")?;
+        let shared = self.fetch_family_shared_apps().await?;
+        Ok(owner_from_shared(appid, me, &shared))
+    }
+
     /// DLC of `appid` in PICS order.
     pub async fn steamworks_dlcs(&self, appid: u32, language: &str) -> Result<Vec<DlcInfo>> {
         let buffer = self
