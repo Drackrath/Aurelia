@@ -6,6 +6,11 @@ use tokio::io::DuplexStream;
 /// Rich presence pairs.
 type Pairs = Vec<(String, String)>;
 
+/// Leaderboard name and create args.
+type Find = (String, Option<(i32, i32)>);
+/// App, board, method, score, details.
+type Upload = (u32, i32, i32, i32, Vec<u8>);
+
 /// Scriptable daemon state.
 #[derive(Default)]
 struct Fake {
@@ -30,6 +35,8 @@ struct Fake {
     queries: Mutex<Vec<UgcQuery>>,
     subscribed: Mutex<Vec<u64>>,
     invites: Mutex<Vec<String>>,
+    finds: Mutex<Vec<Find>>,
+    uploads: Mutex<Vec<Upload>>,
 }
 
 const SID: u64 = 76_561_197_960_287_930;
@@ -404,6 +411,116 @@ impl Backend for Fake {
             eresult: 1,
             crc: crc + 1,
             reverted,
+        })
+    }
+
+    async fn global_stats(&self, app_id: u32, days: u32) -> Result<GlobalStats> {
+        use aurelia::steam_client::global_stats::GlobalDay;
+        if app_id != 480 {
+            bail!("no global stats for {app_id}");
+        }
+        Ok(GlobalStats {
+            eresult: 1,
+            day_current: 100,
+            days: (0..days.min(2))
+                .map(|d| GlobalDay {
+                    day_id: 100 - d,
+                    stats: vec![(1, -5 - i64::from(d))],
+                })
+                .collect(),
+        })
+    }
+
+    async fn achievement_info(&self, app_id: u32) -> Result<Vec<AchievementInfo>> {
+        if app_id != 480 {
+            bail!("no achievements for {app_id}");
+        }
+        Ok(vec![AchievementInfo {
+            name: "ACH_A".into(),
+            percent: 12.5,
+            icon: "https://cdn/a.jpg".into(),
+            icon_gray: String::new(),
+        }])
+    }
+
+    async fn achievement_icon(
+        &self,
+        _app_id: u32,
+        name: String,
+        achieved: bool,
+    ) -> Result<Arc<Avatar>> {
+        if name != "ACH_A" || !achieved {
+            bail!("no icon");
+        }
+        Ok(Arc::new(Avatar {
+            width: 1,
+            height: 1,
+            rgba: vec![1, 2, 3, 4],
+        }))
+    }
+
+    async fn find_leaderboard(
+        &self,
+        _app_id: u32,
+        name: String,
+        create: Option<(i32, i32)>,
+    ) -> Result<Leaderboard> {
+        self.finds.lock().unwrap().push((name.clone(), create));
+        Ok(Leaderboard {
+            eresult: 1,
+            id: 77,
+            entries: 3,
+            sort: 2,
+            display: 1,
+            name,
+        })
+    }
+
+    async fn leaderboard_entries(
+        &self,
+        _app_id: u32,
+        request: EntriesRequest,
+    ) -> Result<LeaderboardEntries> {
+        use aurelia::steam_client::global_stats::LeaderboardEntry;
+        if request.leaderboard != 77 {
+            bail!("no board");
+        }
+        let entries = request
+            .users
+            .iter()
+            .map(|&steam_id| LeaderboardEntry {
+                steam_id,
+                rank: request.start,
+                score: request.end,
+                ugc: 0,
+                details: vec![9, 0, 0, 0],
+            })
+            .collect();
+        Ok(LeaderboardEntries {
+            eresult: 1,
+            total: 3,
+            entries,
+        })
+    }
+
+    async fn upload_leaderboard_score(
+        &self,
+        app_id: u32,
+        board: i32,
+        method: i32,
+        score: i32,
+        details: Vec<u8>,
+    ) -> Result<ScoreUpload> {
+        self.uploads
+            .lock()
+            .unwrap()
+            .push((app_id, board, method, score, details));
+        Ok(ScoreUpload {
+            eresult: 1,
+            entries: 4,
+            changed: true,
+            rank_new: 1,
+            rank_previous: 2,
         })
     }
 
@@ -2114,6 +2231,153 @@ async fn workshop_create_and_update() {
     assert_eq!(
         game.ask(4, cmd::UGC_UPDATE, &zero).await.0,
         status::MALFORMED
+    );
+    game.hang_up().await;
+}
+
+fn find_body(create: bool, name: &str) -> Vec<u8> {
+    let mut out = vec![u8::from(create)];
+    out.extend_from_slice(&2i32.to_le_bytes());
+    out.extend_from_slice(&1i32.to_le_bytes());
+    put_blob(&mut out, name.as_bytes());
+    out
+}
+
+#[tokio::test]
+async fn global_stats_and_percents() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake, router, hello(480), None).await;
+    let (code, body) = game
+        .ask(1, global::cmd::GLOBAL_STATS, &5u32.to_le_bytes())
+        .await;
+    assert_eq!(code, status::OK);
+    let mut f = Fields::new(&body);
+    assert_eq!((f.i32(), f.u32(), f.u32()), (Some(1), Some(100), Some(2)));
+    assert_eq!((f.u32(), f.u32(), f.u32()), (Some(100), Some(1), Some(1)));
+    assert_eq!(f.u64(), Some(-5i64 as u64));
+    assert_eq!(
+        game.ask(2, global::cmd::GLOBAL_STATS, &[1]).await.0,
+        status::MALFORMED
+    );
+    let (code, body) = game.ask(3, global::cmd::ACHIEVEMENT_PERCENTS, &[]).await;
+    assert_eq!(code, status::OK);
+    let mut f = Fields::new(&body);
+    assert_eq!(f.u32(), Some(1));
+    assert_eq!(f.blob(), Some(&b"ACH_A"[..]));
+    assert_eq!(f.u32(), Some(12.5f32.to_bits()));
+    let (code, _) = game
+        .ask_for(4, 70, global::cmd::ACHIEVEMENT_PERCENTS, &[])
+        .await;
+    assert_eq!(code, status::FAILED);
+    let mut icon = vec![1];
+    put_blob(&mut icon, b"ACH_A");
+    let (code, body) = game.ask(5, global::cmd::ACHIEVEMENT_ICON, &icon).await;
+    assert_eq!((code, body.len()), (status::OK, 12));
+    icon[0] = 0;
+    assert_eq!(
+        game.ask(6, global::cmd::ACHIEVEMENT_ICON, &icon).await.0,
+        status::FAILED
+    );
+    assert_eq!(
+        game.ask(7, global::cmd::ACHIEVEMENT_ICON, &[1, 0, 0, 0, 0])
+            .await
+            .0,
+        status::MALFORMED
+    );
+    game.hang_up().await;
+
+    // Offline: never asks Steam.
+    let fake = offline(&[(480, vec![0xCC])]);
+    let (mut game, _) = Game::connect(fake, Arc::default(), hello(480), None).await;
+    assert_eq!(
+        game.ask(1, global::cmd::GLOBAL_STATS, &0u32.to_le_bytes())
+            .await
+            .0,
+        status::NO_SESSION
+    );
+    game.hang_up().await;
+}
+
+#[tokio::test]
+async fn leaderboards_gate_writes() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router.clone(), hello(480), None).await;
+    let (code, body) = game
+        .ask(1, global::cmd::LEADERBOARD_FIND, &find_body(true, "Best"))
+        .await;
+    assert_eq!(code, status::OK);
+    let mut f = Fields::new(&body);
+    let ints: Vec<_> = (0..5).map(|_| f.i32().unwrap()).collect();
+    assert_eq!(ints, vec![1, 77, 3, 2, 1]);
+    assert_eq!(f.blob(), Some(&b"Best"[..]));
+    assert_eq!(
+        *fake.finds.lock().unwrap(),
+        vec![("Best".to_string(), None)],
+        "no create without writes"
+    );
+    assert_eq!(
+        game.ask(2, global::cmd::LEADERBOARD_FIND, &find_body(false, ""))
+            .await
+            .0,
+        status::MALFORMED
+    );
+
+    let mut req = Vec::new();
+    for v in [77i32, 3, 4, 9] {
+        req.extend_from_slice(&v.to_le_bytes());
+    }
+    req.extend_from_slice(&1u32.to_le_bytes());
+    req.extend_from_slice(&SID.to_le_bytes());
+    let (code, body) = game.ask(3, global::cmd::LEADERBOARD_ENTRIES, &req).await;
+    assert_eq!(code, status::OK);
+    let mut f = Fields::new(&body);
+    assert_eq!((f.i32(), f.i32(), f.u32()), (Some(1), Some(3), Some(1)));
+    assert_eq!((f.u64(), f.i32(), f.i32()), (Some(SID), Some(4), Some(9)));
+    assert_eq!((f.u64(), f.blob()), (Some(0), Some(&[9, 0, 0, 0][..])));
+    let mut many = req[..16].to_vec();
+    many.extend_from_slice(&101u32.to_le_bytes());
+    assert_eq!(
+        game.ask(4, global::cmd::LEADERBOARD_ENTRIES, &many).await.0,
+        status::MALFORMED
+    );
+
+    let mut upload = Vec::new();
+    for v in [77i32, 1, 500] {
+        upload.extend_from_slice(&v.to_le_bytes());
+    }
+    put_blob(&mut upload, &[1, 0, 0, 0]);
+    assert_eq!(
+        game.ask(5, global::cmd::LEADERBOARD_UPLOAD, &upload).await,
+        (status::FAILED, b"stats writes are off".to_vec())
+    );
+    assert!(fake.uploads.lock().unwrap().is_empty());
+    game.hang_up().await;
+
+    let fake = with_writes();
+    let (mut game, _) = Game::connect(fake.clone(), router, hello(480), None).await;
+    game.ask(1, global::cmd::LEADERBOARD_FIND, &find_body(true, "Best"))
+        .await;
+    assert_eq!(
+        *fake.finds.lock().unwrap(),
+        vec![("Best".to_string(), Some((2, 1)))]
+    );
+    let (code, body) = game.ask(2, global::cmd::LEADERBOARD_UPLOAD, &upload).await;
+    assert_eq!(code, status::OK);
+    assert_eq!(
+        body,
+        global::upload_body(&ScoreUpload {
+            eresult: 1,
+            entries: 4,
+            changed: true,
+            rank_new: 1,
+            rank_previous: 2,
+        })
+    );
+    assert_eq!(
+        *fake.uploads.lock().unwrap(),
+        vec![(480, 77, 1, 500, vec![1, 0, 0, 0])]
     );
     game.hang_up().await;
 }

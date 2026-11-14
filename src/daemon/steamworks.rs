@@ -14,7 +14,7 @@ use tokio::task::JoinSet;
 
 use aurelia::core::models::DownloadState;
 use aurelia::steam_client::auth_ticket::{AuthSessionTicket, TicketAuthEvent, TicketKind};
-use aurelia::steam_client::avatars::{Avatar, AvatarSize, fetch_avatar};
+use aurelia::steam_client::avatars::{Avatar, AvatarSize, download_jpeg, fetch_avatar};
 use aurelia::steam_client::microtxn::{self, MicroTxnRequest};
 use aurelia::steam_client::persona_events::{PersonaEvent, change};
 use aurelia::steam_client::playing::{self, GAMES, Launch};
@@ -26,6 +26,10 @@ use aurelia::steam_client::{EncryptedTicketOutcome, Friend, SteamClient};
 
 use super::proto::{self, SharedWriter};
 use super::steamworks_lobbies as lobby;
+use super::steamworks_stats as global;
+use aurelia::steam_client::global_stats::{
+    AchievementInfo, EntriesRequest, GlobalStats, Leaderboard, LeaderboardEntries, ScoreUpload,
+};
 use aurelia::steam_client::lobbies::{
     JoinedLobby, LobbyEvent, LobbyFilter, LobbyState, LobbyUpdate,
 };
@@ -927,6 +931,45 @@ pub trait Backend: Send + Sync + 'static {
         lobby: u64,
         friend: u64,
     ) -> impl Future<Output = Result<()>> + Send;
+    /// Aggregated stats with history.
+    fn global_stats(
+        &self,
+        app_id: u32,
+        days: u32,
+    ) -> impl Future<Output = Result<GlobalStats>> + Send;
+    /// Achievement rarity and icons.
+    fn achievement_info(
+        &self,
+        app_id: u32,
+    ) -> impl Future<Output = Result<Vec<AchievementInfo>>> + Send;
+    /// One achievement icon, decoded.
+    fn achievement_icon(
+        &self,
+        app_id: u32,
+        name: String,
+        achieved: bool,
+    ) -> impl Future<Output = Result<Arc<Avatar>>> + Send;
+    /// Create only when `create` given.
+    fn find_leaderboard(
+        &self,
+        app_id: u32,
+        name: String,
+        create: Option<(i32, i32)>,
+    ) -> impl Future<Output = Result<Leaderboard>> + Send;
+    fn leaderboard_entries(
+        &self,
+        app_id: u32,
+        request: EntriesRequest,
+    ) -> impl Future<Output = Result<LeaderboardEntries>> + Send;
+    /// Writes; caller checks the switch.
+    fn upload_leaderboard_score(
+        &self,
+        app_id: u32,
+        board: i32,
+        method: i32,
+        score: i32,
+        details: Vec<u8>,
+    ) -> impl Future<Output = Result<ScoreUpload>> + Send;
 }
 
 /// Where a join goes.
@@ -1327,6 +1370,12 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
         }
         return answer_lobby(conn, app_id, req.command, &req.body).await;
     }
+    if global::cmd::is_global(req.command) {
+        if conn.offline.is_some() || steam_id.is_none() {
+            return (status::NO_SESSION, b"not logged in".to_vec());
+        }
+        return answer_global(conn, app_id, req.command, &req.body).await;
+    }
     if !matches!(
         req.command,
         cmd::OWNERSHIP_TICKET
@@ -1614,6 +1663,79 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
                 Err(e) => failed(&e),
             }
         }
+    }
+}
+
+/// Global stats and leaderboard answers.
+async fn answer_global<B: Backend>(
+    conn: &Conn<B>,
+    app_id: u32,
+    command: u8,
+    body: &[u8],
+) -> (u8, Vec<u8>) {
+    let malformed = || (status::MALFORMED, b"malformed stats request".to_vec());
+    let b = &conn.backend;
+    let result = match command {
+        global::cmd::GLOBAL_STATS => {
+            let Some(days) = Fields::new(body).u32() else {
+                return malformed();
+            };
+            b.global_stats(app_id, days)
+                .await
+                .map(|s| global::global_stats_body(&s))
+        }
+        global::cmd::ACHIEVEMENT_PERCENTS => b
+            .achievement_info(app_id)
+            .await
+            .map(|infos| global::percents_body(&infos)),
+        global::cmd::ACHIEVEMENT_ICON => {
+            let Some((achieved, name)) = global::parse_icon(body) else {
+                return malformed();
+            };
+            b.achievement_icon(app_id, name, achieved)
+                .await
+                .map(|icon| avatar_body(&icon))
+        }
+        global::cmd::LEADERBOARD_FIND => {
+            let Some((create, sort, display, name)) = global::parse_find(body) else {
+                return malformed();
+            };
+            // Creating needs the writes switch.
+            let create = (create && b.stats_writes().await).then_some((sort, display));
+            b.find_leaderboard(app_id, name, create)
+                .await
+                .map(|board| global::leaderboard_body(&board))
+        }
+        global::cmd::LEADERBOARD_ENTRIES => {
+            let Some(request) = global::parse_entries(body) else {
+                return malformed();
+            };
+            b.leaderboard_entries(app_id, request)
+                .await
+                .map(|e| global::entries_body(&e))
+        }
+        global::cmd::LEADERBOARD_UPLOAD => {
+            let Some((board, method, score, details)) = global::parse_upload(body) else {
+                return malformed();
+            };
+            if !b.stats_writes().await {
+                return (status::FAILED, b"stats writes are off".to_vec());
+            }
+            tracing::info!(
+                app_id,
+                board,
+                score,
+                "steamworks: uploading leaderboard score"
+            );
+            b.upload_leaderboard_score(app_id, board, method, score, details)
+                .await
+                .map(|u| global::upload_body(&u))
+        }
+        _ => return (status::UNSUPPORTED, b"unknown command".to_vec()),
+    };
+    match result {
+        Ok(body) => (status::OK, body),
+        Err(e) => failed(&e),
     }
 }
 
@@ -2125,7 +2247,100 @@ impl Backend for DaemonBackend {
         );
         client.store_user_stats(app_id, crc, reset, &changes).await
     }
+
+    async fn global_stats(&self, app_id: u32, days: u32) -> Result<GlobalStats> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        client.global_stats(app_id, days).await
+    }
+
+    async fn achievement_info(&self, app_id: u32) -> Result<Vec<AchievementInfo>> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        let language = game_language(&client, app_id).await;
+        let infos = client.achievement_info(app_id, &language).await?;
+        ICON_INFO
+            .lock()
+            .unwrap()
+            .insert(app_id, Arc::new(infos.clone()));
+        Ok(infos)
+    }
+
+    async fn achievement_icon(
+        &self,
+        app_id: u32,
+        name: String,
+        achieved: bool,
+    ) -> Result<Arc<Avatar>> {
+        let cached = ICON_INFO.lock().unwrap().get(&app_id).cloned();
+        let infos = match cached {
+            Some(infos) => infos,
+            None => Arc::new(self.achievement_info(app_id).await?),
+        };
+        let info = infos
+            .iter()
+            .find(|i| i.name == name)
+            .ok_or_else(|| anyhow!("no achievement {name} in app {app_id}"))?;
+        let url = if achieved {
+            &info.icon
+        } else {
+            &info.icon_gray
+        };
+        if url.is_empty() {
+            return Err(anyhow!("achievement {name} has no icon"));
+        }
+        if let Some(hit) = ICONS.lock().unwrap().get(url) {
+            return Ok(Arc::clone(hit));
+        }
+        let icon = Arc::new(download_jpeg(url).await?);
+        let mut icons = ICONS.lock().unwrap();
+        // Bound memory; icons refetch cheaply.
+        if icons.len() >= 256 {
+            icons.clear();
+        }
+        icons.insert(url.clone(), Arc::clone(&icon));
+        Ok(icon)
+    }
+
+    async fn find_leaderboard(
+        &self,
+        app_id: u32,
+        name: String,
+        create: Option<(i32, i32)>,
+    ) -> Result<Leaderboard> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        client.find_leaderboard(app_id, &name, create).await
+    }
+
+    async fn leaderboard_entries(
+        &self,
+        app_id: u32,
+        request: EntriesRequest,
+    ) -> Result<LeaderboardEntries> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        client.leaderboard_entries(app_id, &request).await
+    }
+
+    async fn upload_leaderboard_score(
+        &self,
+        app_id: u32,
+        board: i32,
+        method: i32,
+        score: i32,
+        details: Vec<u8>,
+    ) -> Result<ScoreUpload> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        client
+            .upload_leaderboard_score(app_id, board, method, score, &details)
+            .await
+    }
 }
+
+/// Achievement icon URLs per app.
+static ICON_INFO: std::sync::LazyLock<Mutex<HashMap<u32, Arc<Vec<AchievementInfo>>>>> =
+    std::sync::LazyLock::new(Mutex::default);
+
+/// Decoded achievement icons by URL.
+static ICONS: std::sync::LazyLock<Mutex<HashMap<String, Arc<Avatar>>>> =
+    std::sync::LazyLock::new(Mutex::default);
 
 /// Launch a browser, else log.
 fn spawn_browser(url: &str) -> bool {
