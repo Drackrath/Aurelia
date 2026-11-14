@@ -5,6 +5,7 @@ pub mod launch_script;
 pub mod pipeline;
 pub mod shaders;
 pub mod stages;
+pub mod stand_in_auto;
 pub mod stand_in_guard;
 pub mod stand_in_lib;
 #[cfg(target_os = "linux")]

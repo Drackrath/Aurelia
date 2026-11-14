@@ -384,7 +384,7 @@ pub(crate) async fn cmd_config_anticheat_auto_install(
 
 /// `config steamworks-client` arguments.
 pub(crate) struct SteamworksClientArgs {
-    pub mode: Option<OnOffArg>,
+    pub mode: Option<StandInModeArg>,
     pub path: Option<String>,
     pub stats_writes: Option<OnOffArg>,
     pub allow: Option<u32>,
@@ -438,7 +438,7 @@ pub(crate) async fn cmd_config_steamworks_client(
         _ => None,
     };
     let reset_path = path.as_deref().is_some_and(|p| p.trim().is_empty());
-    if matches!(mode, Some(OnOffArg::On)) {
+    if matches!(mode, Some(StandInModeArg::On | StandInModeArg::Auto)) {
         ensure_stand_in_installed(installed.is_some() || reset_path).await?;
     }
     let path_change = installed.is_some() || reset_path;
@@ -455,7 +455,8 @@ pub(crate) async fn cmd_config_steamworks_client(
         change,
         |c, (mode, path, writes, allow, disallow, cloud_write, publish)| {
             if let Some(mode) = mode {
-                c.steamworks_client = matches!(mode, OnOffArg::On);
+                c.steamworks_client = matches!(mode, StandInModeArg::On);
+                c.steamworks_client_auto = matches!(mode, StandInModeArg::Auto);
             }
             if let Some(writes) = writes {
                 c.steamworks_stats_writes = matches!(writes, OnOffArg::On);
@@ -489,6 +490,7 @@ pub(crate) async fn cmd_config_steamworks_client(
     if json {
         print_json(&serde_json::json!({
             "steamworks_client": config.steamworks_client,
+            "steamworks_client_mode": stand_in_mode_name(&config),
             "steamworks_client_path": config.steamworks_client_path,
             "effective_path": effective_path,
             "installed": installed.as_ref().map(|i| serde_json::json!({
@@ -502,10 +504,10 @@ pub(crate) async fn cmd_config_steamworks_client(
         }));
         return Ok(());
     }
-    let label = if config.steamworks_client {
-        "on (`play` loads the stand-in steamclient.so in a private namespace)"
-    } else {
-        "off"
+    let label = match stand_in_mode_name(&config) {
+        "on" => "on (`play` loads the stand-in steamclient.so in a private namespace)",
+        "auto" => "auto (stand-in only while Valve's Steam client is not running)",
+        _ => "off",
     };
     cli_println!("Stand-in steamclient.so: {label}");
     if let Some(i) = &installed {
@@ -519,8 +521,8 @@ pub(crate) async fn cmd_config_steamworks_client(
             "Checked: ELF architecture and {} export OK",
             aurelia::launch::stand_in_lib::ENTRY_SYMBOL
         );
-        if !config.steamworks_client {
-            cli_println!("Turn it on with `aurelia config steamworks-client on`.");
+        if stand_in_mode_name(&config) == "off" {
+            cli_println!("Turn it on with `aurelia config steamworks-client on` (or `auto`).");
         }
     }
     if let Some(path) = effective_path {
@@ -550,6 +552,17 @@ pub(crate) async fn cmd_config_steamworks_client(
         cli_println!("Saved. Applies to the next launch.");
     }
     Ok(())
+}
+
+/// `on`, `off` or `auto`.
+pub(crate) fn stand_in_mode_name(config: &aurelia::core::config::LauncherConfig) -> &'static str {
+    if config.steamworks_client {
+        "on"
+    } else if config.steamworks_client_auto {
+        "auto"
+    } else {
+        "off"
+    }
 }
 
 /// Resolves, checks, copies `input`.

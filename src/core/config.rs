@@ -191,6 +191,9 @@ pub struct LauncherConfig {
     /// Launch games with stand-in steamclient.so.
     #[serde(default)]
     pub steamworks_client: bool,
+    /// Stand-in only while Steam is down.
+    #[serde(default)]
+    pub steamworks_client_auto: bool,
     /// Stand-in library file or directory.
     #[serde(default)]
     pub steamworks_client_path: Option<String>,
@@ -275,6 +278,7 @@ impl Default for LauncherConfig {
             persona_wait_secs: DEFAULT_PERSONA_WAIT_SECS,
             download_limit_kbit: 0,
             steamworks_client: false,
+            steamworks_client_auto: false,
             steamworks_client_path: None,
             steamworks_allowed_protected: Vec::new(),
             steamworks_cloud_write: false,

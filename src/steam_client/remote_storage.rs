@@ -39,7 +39,9 @@ pub fn remote_storage_info(
 
 /// Stand-in games may add Cloud files.
 pub fn stand_in_cloud_writes(config: &LauncherConfig) -> bool {
-    config.steamworks_client && config.enable_cloud_sync && config.steamworks_cloud_write
+    (config.steamworks_client || config.steamworks_client_auto)
+        && config.enable_cloud_sync
+        && config.steamworks_cloud_write
 }
 
 #[cfg(test)]

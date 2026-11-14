@@ -665,8 +665,8 @@ pub(crate) enum ConfigCommand {
         is Aurelia's stand-in, which answers Steamworks calls through the daemon. \
         The real `~/.steam` is never written. Experimental.")]
     SteamworksClient {
-        /// `on` or `off`; omit to print.
-        mode: Option<OnOffArg>,
+        /// on, off or auto; omit prints.
+        mode: Option<StandInModeArg>,
         /// Install a built stand-in library.
         #[arg(
             long,
@@ -1316,6 +1316,17 @@ pub(crate) enum OnOffArg {
     On,
     /// Disable the setting.
     Off,
+}
+
+/// `steamworks-client` modes.
+#[derive(Clone, Copy, ValueEnum)]
+pub(crate) enum StandInModeArg {
+    /// Always use the stand-in.
+    On,
+    /// Never use the stand-in.
+    Off,
+    /// Stand-in only while Steam is down.
+    Auto,
 }
 
 /// `config shader-precache` choices.
