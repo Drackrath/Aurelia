@@ -12,6 +12,8 @@
 
 <br clear="left" />
 
+[![Discord](https://img.shields.io/badge/Discord-Join%20us-5865F2?logo=discord&logoColor=white)](https://discord.gg/rcvxd3gpcA)
+
 > [!WARNING]
 > **Disclaimer: read before use.**
 > Aurelia is an **independent, unofficial project** and is **not affiliated with, authorized, sponsored, or endorsed by Valve or Steam** in any way. "Steam" and "Valve" are trademarks of Valve Corporation.
