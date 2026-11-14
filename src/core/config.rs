@@ -526,7 +526,8 @@ pub async fn delete_session() -> Result<()> {
 /// the user has, and any caller that then saves would write those defaults straight
 /// over the file it failed to read.
 pub async fn load_launcher_config() -> Result<LauncherConfig> {
-    let path = config_dir()?.join("config.json");
+    let dir = config_dir()?;
+    let path = dir.join("config.json");
     if !path.exists() {
         let mut config = LauncherConfig::default();
         if let Some(detected) = detect_steam_path() {
@@ -534,12 +535,69 @@ pub async fn load_launcher_config() -> Result<LauncherConfig> {
         }
         return Ok(config);
     }
-    read_json(&path).await.with_context(|| {
+    let context = || {
         format!(
             "invalid launcher config — fix the JSON in {}, or delete it to regenerate defaults",
             path.display()
         )
-    })
+    };
+    let raw = fs::read_to_string(&path)
+        .await
+        .with_context(|| format!("failed reading {}", path.display()))
+        .with_context(context)?;
+    let mut config = parse_launcher_config(&raw)
+        .with_context(|| format!("failed parsing {}", path.display()))
+        .with_context(context)?;
+    remap_stand_in_path(&mut config, &dir);
+    Ok(config)
+}
+
+/// Renamed keys: (new, old).
+const RENAMED_KEYS: &[(&str, &str)] = &[
+    ("aureliaworks", "steamworks_client"),
+    ("aureliaworks_auto", "steamworks_client_auto"),
+    ("aureliaworks_steam_install", "steamworks_steam_install"),
+    ("aureliaworks_ticket_check", "steamworks_ticket_check"),
+    ("aureliaworks_path", "steamworks_client_path"),
+    (
+        "aureliaworks_allowed_protected",
+        "steamworks_allowed_protected",
+    ),
+    ("aureliaworks_cloud_write", "steamworks_cloud_write"),
+    ("aureliaworks_stats_writes", "steamworks_stats_writes"),
+    (
+        "aureliaworks_workshop_publish",
+        "steamworks_workshop_publish",
+    ),
+];
+
+/// Parses config JSON; new keys win.
+pub fn parse_launcher_config(raw: &str) -> serde_json::Result<LauncherConfig> {
+    let mut value: serde_json::Value = serde_json::from_str(raw)?;
+    if let Some(obj) = value.as_object_mut() {
+        for (new, old) in RENAMED_KEYS {
+            // Both present: alias would clash.
+            if obj.contains_key(*new) {
+                obj.remove(*old);
+            }
+        }
+    }
+    serde_json::from_value(value)
+}
+
+/// Old install path, after the move.
+pub fn remap_stand_in_path(config: &mut LauncherConfig, base: &Path) {
+    let Some(path) = config.aureliaworks_path.as_deref().map(PathBuf::from) else {
+        return;
+    };
+    let old = base.join("steamworks");
+    let new = base.join("aureliaworks");
+    if let Ok(rest) = path.strip_prefix(&old)
+        && (!old.exists() || new.exists())
+    {
+        let moved = new.join(rest);
+        config.aureliaworks_path = Some(moved.to_string_lossy().into_owned());
+    }
 }
 
 pub async fn save_launcher_config(config: &LauncherConfig) -> Result<()> {
@@ -559,7 +617,7 @@ pub fn load_proxy_config_blocking() -> ProxyConfig {
     let Ok(raw) = std::fs::read_to_string(&path) else {
         return ProxyConfig::default();
     };
-    serde_json::from_str::<LauncherConfig>(&raw)
+    parse_launcher_config(&raw)
         .map(|config| config.proxy)
         .unwrap_or_default()
 }

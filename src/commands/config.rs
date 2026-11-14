@@ -406,6 +406,8 @@ pub(crate) fn cloud_write_enable_prompt() -> String {
 
 /// `config aureliaworks [on|off] [--path]`.
 pub(crate) async fn cmd_config_aureliaworks(args: AureliaworksArgs, json: bool) -> Result<()> {
+    // Move an old install folder first.
+    let _ = steamworks_default_dir();
     if let Some(app_id) = args.allow {
         let prompt = aurelia::launch::stand_in_guard::allow_prompt(app_id);
         confirm_write("allow an anti-cheat game", &prompt, args.yes, json)?;
@@ -499,7 +501,7 @@ pub(crate) async fn cmd_config_aureliaworks(args: AureliaworksArgs, json: bool) 
     if json {
         print_json(&serde_json::json!({
             "aureliaworks": config.aureliaworks,
-            "steamworks_client_mode": stand_in_mode_name(&config),
+            "aureliaworks_mode": stand_in_mode_name(&config),
             "aureliaworks_path": config.aureliaworks_path,
             "effective_path": effective_path,
             "installed": installed.as_ref().map(|i| serde_json::json!({
