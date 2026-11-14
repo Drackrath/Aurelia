@@ -13,8 +13,15 @@ pub const DAEMON_SOCKET_ENV: &str = "AURELIA_DAEMON_SOCKET";
 /// Env var naming the stand-in log.
 pub const LOG_ENV: &str = "AURELIA_STEAMWORKS_LOG";
 
-/// Prefix of stand-in log lines.
-const LOG_PREFIX: &str = "[aurelia-steamworks] ";
+/// Stand-in log markers; mirror `log::marker`.
+///
+/// Checked against the stand-in's fixture.
+pub mod marker {
+    pub const PREFIX: &str = "[aurelia-steamworks] ";
+    pub const MISSING: &str = "missing interface: ";
+    pub const REPORTED_MISSING: &str = "game reports missing interface: ";
+    pub const NETWORKING: &str = "game created ";
+}
 
 /// Paths pressure-vessel shares read-write.
 const PV_FILESYSTEMS_RW: &str = "PRESSURE_VESSEL_FILESYSTEMS_RW";
@@ -485,7 +492,7 @@ impl LogSummary {
 
 /// Version from any "game created" line.
 pub fn networking_version(msg: &str) -> Option<&str> {
-    let (version, _) = msg.strip_prefix("game created ")?.split_once(':')?;
+    let (version, _) = msg.strip_prefix(marker::NETWORKING)?.split_once(':')?;
     let version = version.trim();
     (!version.is_empty() && !version.contains(char::is_whitespace)).then_some(version)
 }
@@ -500,12 +507,12 @@ pub fn summarize_log(text: &str) -> LogSummary {
         }
     };
     for line in text.lines() {
-        let Some(msg) = line.strip_prefix(LOG_PREFIX) else {
+        let Some(msg) = line.strip_prefix(marker::PREFIX) else {
             continue;
         };
-        if let Some(rest) = msg.strip_prefix("missing interface: ") {
+        if let Some(rest) = msg.strip_prefix(marker::MISSING) {
             push(&mut summary.missing, rest);
-        } else if let Some(rest) = msg.strip_prefix("game reports missing interface: ") {
+        } else if let Some(rest) = msg.strip_prefix(marker::REPORTED_MISSING) {
             let version = rest.split(" (pipe ").next().unwrap_or(rest);
             push(&mut summary.missing, version);
         } else if let Some(version) = networking_version(msg) {

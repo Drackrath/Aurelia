@@ -2256,6 +2256,8 @@ pub fn stand_in_save_prefix(
         user_config.and_then(|c| c.stand_in_steam_install),
         host_root,
         master_prefix,
+        // Save location ignores running Steam.
+        || false,
     )
     .ok()?;
     let layout = si::layout(&install, compat);

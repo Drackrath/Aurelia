@@ -23,16 +23,23 @@ pub fn in_wine_ready(master_prefix: &Path) -> bool {
         && master_prefix.join(PREFIX_STEAM_DIR).is_dir()
 }
 
+/// Refusal while Valve's Steam runs.
+const HOST_STEAM_RUNNING: &str = "--steam-install host: Valve's Steam client is running; \
+     the stand-in would share its install and `~/.steam` with it. Quit Steam first, or use \
+     --steam-install in-wine";
+
 /// Per-game setting wins; auto prefers in-Wine.
+///
+/// `steam_running` runs only for host.
 pub fn choose(
     global: StandInSteamInstall,
     per_game: Option<StandInSteamInstall>,
     host_root: Option<PathBuf>,
     master_prefix: &Path,
+    steam_running: impl FnOnce() -> bool,
 ) -> Result<Install, String> {
     let in_wine =
         in_wine_ready(master_prefix).then(|| Install::InWine(master_prefix.to_path_buf()));
-    let host = host_root.map(Install::Host);
     match per_game.unwrap_or(global) {
         StandInSteamInstall::InWine => in_wine.ok_or_else(|| {
             format!(
@@ -41,16 +48,41 @@ pub fn choose(
                 master_prefix.display()
             )
         }),
-        StandInSteamInstall::Host => host.ok_or_else(|| {
-            "--steam-install host: no host Steam install found; install Valve's Steam client \
-             or use --steam-install in-wine"
-                .to_string()
-        }),
-        StandInSteamInstall::Auto => in_wine.or(host).ok_or_else(|| {
-            "the stand-in needs a Steam install for Proton's steamclient files: run \
-             `aurelia steam-runtime install` (in-Wine Steam) or install Valve's Steam client"
-                .to_string()
-        }),
+        StandInSteamInstall::Host => {
+            let Some(root) = host_root else {
+                return Err(
+                    "--steam-install host: no host Steam install found; install Valve's Steam \
+                     client or use --steam-install in-wine"
+                        .to_string(),
+                );
+            };
+            if steam_running() {
+                return Err(HOST_STEAM_RUNNING.to_string());
+            }
+            Ok(Install::Host(root))
+        }
+        StandInSteamInstall::Auto => {
+            if let Some(in_wine) = in_wine {
+                return Ok(in_wine);
+            }
+            let Some(root) = host_root else {
+                return Err(
+                    "the stand-in needs a Steam install for Proton's steamclient files: run \
+                     `aurelia steam-runtime install` (in-Wine Steam) or install Valve's Steam \
+                     client"
+                        .to_string(),
+                );
+            };
+            if steam_running() {
+                return Err(
+                    "the stand-in has no in-Wine Steam and Valve's Steam client is running, \
+                     so the host install cannot be used: quit Steam, or run `aurelia \
+                     steam-runtime install` for an in-Wine Steam"
+                        .to_string(),
+                );
+            }
+            Ok(Install::Host(root))
+        }
     }
 }
 

@@ -17,16 +17,16 @@ fn auto_prefers_in_wine_then_host() {
     let host = Some(root.clone());
     let ready = master(dir.path(), true);
     assert_eq!(
-        choose(Auto, None, host.clone(), &ready),
+        choose(Auto, None, host.clone(), &ready, || true),
         Ok(Install::InWine(ready.clone()))
     );
     let empty = tempfile::tempdir().unwrap();
     let bare = master(empty.path(), false);
     assert_eq!(
-        choose(Auto, None, host.clone(), &bare),
+        choose(Auto, None, host.clone(), &bare, || false),
         Ok(Install::Host(root))
     );
-    let err = choose(Auto, None, None, &bare).unwrap_err();
+    let err = choose(Auto, None, None, &bare, || false).unwrap_err();
     assert!(err.contains("steam-runtime install"), "{err}");
 }
 
@@ -37,22 +37,22 @@ fn explicit_choices_and_per_game_override() {
     let host = PathBuf::from("/h/Steam");
     // Per-game beats global.
     assert_eq!(
-        choose(InWine, Some(Host), Some(host.clone()), &ready),
+        choose(InWine, Some(Host), Some(host.clone()), &ready, || false),
         Ok(Install::Host(host.clone()))
     );
     assert_eq!(
-        choose(Host, Some(InWine), Some(host.clone()), &ready),
+        choose(Host, Some(InWine), Some(host.clone()), &ready, || true),
         Ok(Install::InWine(ready.clone()))
     );
     assert!(
-        choose(Host, None, None, &ready)
+        choose(Host, None, None, &ready, || false)
             .unwrap_err()
             .contains("--steam-install host")
     );
     let empty = tempfile::tempdir().unwrap();
     let bare = master(empty.path(), false);
     assert!(
-        choose(InWine, None, Some(host), &bare)
+        choose(InWine, None, Some(host), &bare, || true)
             .unwrap_err()
             .contains("in-wine")
     );
@@ -93,7 +93,7 @@ fn root_layout_master_is_not_proton_ready() {
     assert!(!in_wine_ready(&root));
     let host = PathBuf::from("/h/Steam");
     assert_eq!(
-        choose(Auto, None, Some(host.clone()), &root),
+        choose(Auto, None, Some(host.clone()), &root, || false),
         Ok(Install::Host(host))
     );
 }
@@ -106,4 +106,24 @@ fn settings_serialize_kebab_case() {
         Host
     );
     assert_eq!(StandInSteamInstall::default(), Auto);
+}
+
+#[test]
+fn host_refuses_while_valve_steam_runs() {
+    let empty = tempfile::tempdir().unwrap();
+    let bare = master(empty.path(), false);
+    let host = Some(PathBuf::from("/h/Steam"));
+    let err = choose(Host, None, host.clone(), &bare, || true).unwrap_err();
+    assert!(err.contains("running") && err.contains("in-wine"), "{err}");
+    let err = choose(Auto, None, host.clone(), &bare, || true).unwrap_err();
+    assert!(
+        err.contains("running") && err.contains("steam-runtime install"),
+        "{err}"
+    );
+    // In-Wine needs no check.
+    let dir = tempfile::tempdir().unwrap();
+    let ready = master(dir.path(), true);
+    let never = || -> bool { panic!("checked Steam") };
+    assert!(choose(Auto, None, host.clone(), &ready, never).is_ok());
+    assert!(choose(InWine, None, host, &ready, never).is_ok());
 }
