@@ -1048,18 +1048,53 @@ mod prefix_shim {
     }
 }
 
+/// Requires the cross-repo marker check.
+const STRICT_ENV: &str = "AURELIA_STEAMWORKS_STRICT";
+/// Explicit aurelia-steamworks checkout.
+const DIR_ENV: &str = "AURELIA_STEAMWORKS_DIR";
+
+/// Checkout to compare, or why not.
+///
+/// `Ok(None)` skips; `Err` fails.
+fn pick_checkout(
+    explicit: Option<PathBuf>,
+    siblings: &[PathBuf],
+    strict: bool,
+) -> Result<Option<PathBuf>, String> {
+    let valid = |dir: &Path| dir.join("src/log.rs").is_file();
+    if let Some(dir) = explicit {
+        // A set path must be right.
+        return if valid(&dir) {
+            Ok(Some(dir))
+        } else {
+            Err(format!("{DIR_ENV}={} has no src/log.rs", dir.display()))
+        };
+    }
+    match siblings.iter().find(|d| valid(d)) {
+        Some(dir) => Ok(Some(dir.clone())),
+        None if strict => Err(format!(
+            "{STRICT_ENV} is set but no aurelia-steamworks checkout was found; set {DIR_ENV}"
+        )),
+        None => Ok(None),
+    }
+}
+
 /// Stand-in checkout next to Aurelia.
-fn steamworks_checkout() -> Option<PathBuf> {
-    let env = std::env::var_os("AURELIA_STEAMWORKS_DIR").map(PathBuf::from);
+fn steamworks_checkout(strict: bool) -> Result<Option<PathBuf>, String> {
+    let explicit = std::env::var_os(DIR_ENV)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from);
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     // Main checkout or `.worktrees/<name>`.
     let siblings = [
         manifest.join("../aurelia-steamworks"),
         manifest.join("../../aurelia-steamworks"),
     ];
-    env.into_iter()
-        .chain(siblings)
-        .find(|dir| dir.join("src/log.rs").is_file())
+    pick_checkout(explicit, &siblings, strict)
+}
+
+fn strict_markers() -> bool {
+    std::env::var(STRICT_ENV).is_ok_and(|v| v == "1")
 }
 
 /// Values of `pub const` strings.
@@ -1080,12 +1115,18 @@ fn rust_consts(source: &str, module: &str) -> Option<Vec<(String, String)>> {
 
 #[test]
 fn markers_match_the_stand_in() {
-    let Some(dir) = steamworks_checkout() else {
-        eprintln!("aurelia-steamworks checkout not found; set AURELIA_STEAMWORKS_DIR");
-        return;
+    let strict = strict_markers();
+    let dir = match steamworks_checkout(strict) {
+        Ok(Some(dir)) => dir,
+        Ok(None) => {
+            eprintln!("aurelia-steamworks checkout not found; set {DIR_ENV} (and {STRICT_ENV}=1)");
+            return;
+        }
+        Err(why) => panic!("{why}"),
     };
     let source = std::fs::read_to_string(dir.join("src/log.rs")).unwrap();
     let Some(theirs) = rust_consts(&source, "marker") else {
+        assert!(!strict, "{} predates shared markers", dir.display());
         eprintln!("{} predates shared markers; skipped", dir.display());
         return;
     };
@@ -1096,6 +1137,30 @@ fn markers_match_the_stand_in() {
     let summary = summarize_log(&std::fs::read_to_string(fixture).unwrap());
     assert_eq!(summary.missing, ["SteamFoo001", "SteamBar002"]);
     assert_eq!(summary.networking, ["SteamNetworkingSockets012"]);
+}
+
+#[test]
+fn checkout_choice_is_strict_when_asked() {
+    let dir = tempfile::tempdir().unwrap();
+    let good = dir.path().join("good");
+    write(&good.join("src/log.rs"), "");
+    let bad = dir.path().join("bad");
+    // Explicit dir must be valid.
+    assert_eq!(
+        pick_checkout(Some(good.clone()), &[], false),
+        Ok(Some(good.clone()))
+    );
+    assert!(pick_checkout(Some(bad.clone()), std::slice::from_ref(&good), false).is_err());
+    // Siblings: found, skipped, or failed.
+    assert_eq!(
+        pick_checkout(None, &[bad.clone(), good.clone()], true),
+        Ok(Some(good))
+    );
+    assert_eq!(
+        pick_checkout(None, std::slice::from_ref(&bad), false),
+        Ok(None)
+    );
+    assert!(pick_checkout(None, &[bad], true).is_err());
 }
 
 #[test]
