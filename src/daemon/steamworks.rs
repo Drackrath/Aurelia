@@ -21,7 +21,7 @@ use aurelia::steam_client::playing::{self, GAMES, Launch};
 use aurelia::steam_client::remote_storage::{RemoteStorageInfo, remote_storage_info};
 use aurelia::steam_client::steamworks_info::{AppInstallInfo, DlcInfo};
 use aurelia::steam_client::user_stats::{StoreOutcome, UserStats};
-use aurelia::steam_client::workshop_ugc::{UgcDetails, UgcInstall, UgcPage};
+use aurelia::steam_client::workshop_ugc::{UgcDetails, UgcInstall, UgcPage, UgcUpdate};
 use aurelia::steam_client::{EncryptedTicketOutcome, Friend, SteamClient};
 
 use super::proto::{self, SharedWriter};
@@ -75,6 +75,8 @@ pub mod cmd {
     pub const UGC_SUBSCRIBED: u8 = 73;
     pub const UGC_ITEM_STATE: u8 = 74;
     pub const UGC_DOWNLOAD: u8 = 75;
+    pub const UGC_CREATE: u8 = 76;
+    pub const UGC_UPDATE: u8 = 77;
     /// Avatars; 90-94 reserved.
     pub const AVATAR: u8 = 90;
     /// Invites range is 95-99.
@@ -94,7 +96,19 @@ pub mod ugc_kind {
     pub const ALL_CURSOR: u8 = 1;
     pub const DETAILS: u8 = 2;
     pub const SUBSCRIBED: u8 = 3;
+    pub const USER: u8 = 4;
 }
+
+/// `UGC_UPDATE` field bits.
+pub mod ugc_update {
+    pub const TITLE: u8 = 1;
+    pub const DESCRIPTION: u8 = 2;
+    pub const VISIBILITY: u8 = 4;
+    pub const TAGS: u8 = 8;
+}
+
+/// `EUserUGCList_Published`.
+pub const UGC_LIST_PUBLISHED: u32 = 0;
 
 /// `UGC_ITEM_STATE` flag bits.
 pub mod ugc_flag {
@@ -500,10 +514,19 @@ pub enum UgcQuery {
         cursor: Option<String>,
         search: String,
         tags: Vec<String>,
+        excluded: Vec<String>,
     },
     Details(Vec<u64>),
     Subscribed {
         page: u32,
+    },
+    /// An account's own list.
+    User {
+        account: u32,
+        list: u32,
+        page: u32,
+        tags: Vec<String>,
+        excluded: Vec<String>,
     },
 }
 
@@ -532,6 +555,20 @@ impl UgcQuery {
         for _ in 0..id_count {
             ids.push(f.u64()?);
         }
+        // Newer clients append these.
+        let mut excluded = Vec::new();
+        let (mut account, mut list) = (0, 0);
+        if let Some(count) = f.u32() {
+            let count = usize::try_from(count).ok()?;
+            if count > body.len() {
+                return None;
+            }
+            for _ in 0..count {
+                excluded.push(text(f.blob()?));
+            }
+            account = f.u32()?;
+            list = f.u32()?;
+        }
         Some(match kind {
             ugc_kind::ALL_PAGE | ugc_kind::ALL_CURSOR => Self::All {
                 query_type,
@@ -539,9 +576,17 @@ impl UgcQuery {
                 cursor: (kind == ugc_kind::ALL_CURSOR).then_some(cursor),
                 search,
                 tags,
+                excluded,
             },
             ugc_kind::DETAILS => Self::Details(ids),
             ugc_kind::SUBSCRIBED => Self::Subscribed { page },
+            ugc_kind::USER => Self::User {
+                account,
+                list,
+                page,
+                tags,
+                excluded,
+            },
             _ => return None,
         })
     }
@@ -572,6 +617,46 @@ pub fn put_ugc_item(out: &mut Vec<u8>, d: &UgcDetails) {
     for v in [d.votes_up, d.votes_down, d.score.to_bits(), d.children] {
         out.extend_from_slice(&v.to_le_bytes());
     }
+    put_blob(out, d.metadata.as_bytes());
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    out.extend_from_slice(&count(d.kv_tags.len()).to_le_bytes());
+    for (key, value) in d.kv_tags.iter().take(count(d.kv_tags.len()) as usize) {
+        put_blob(out, key.as_bytes());
+        put_blob(out, value.as_bytes());
+    }
+    out.extend_from_slice(&count(d.previews.len()).to_le_bytes());
+    for p in d.previews.iter().take(count(d.previews.len()) as usize) {
+        put_blob(out, p.url.as_bytes());
+        put_blob(out, p.file_name.as_bytes());
+        out.extend_from_slice(&p.kind.to_le_bytes());
+    }
+}
+
+/// Parses a `UGC_UPDATE` body.
+pub fn parse_ugc_update(body: &[u8]) -> Option<UgcUpdate> {
+    let mut f = Fields::new(body);
+    let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+    let id = f.u64()?;
+    let fields = f.u8()?;
+    let title = text(f.blob()?);
+    let description = text(f.blob()?);
+    let visibility = f.u32()?;
+    let count = usize::try_from(f.u32()?).ok()?;
+    if count > body.len() || id == 0 {
+        return None;
+    }
+    let mut tags = Vec::with_capacity(count);
+    for _ in 0..count {
+        tags.push(text(f.blob()?));
+    }
+    let has = |bit: u8| fields & bit != 0;
+    Some(UgcUpdate {
+        id,
+        title: has(ugc_update::TITLE).then_some(title),
+        description: has(ugc_update::DESCRIPTION).then_some(description),
+        visibility: has(ugc_update::VISIBILITY).then_some(visibility),
+        tags: has(ugc_update::TAGS).then_some(tags),
+    })
 }
 
 /// Query page body.
@@ -772,6 +857,12 @@ pub trait Backend: Send + Sync + 'static {
         subscribe: bool,
     ) -> impl Future<Output = Result<()>> + Send;
     fn ugc_subscribed(&self, app_id: u32) -> impl Future<Output = Result<Vec<u64>>> + Send;
+    /// Config switch for Workshop publishing.
+    fn workshop_publishing(&self) -> impl Future<Output = bool> + Send;
+    /// New empty item; its ID.
+    fn ugc_create(&self, app_id: u32, file_type: u32) -> impl Future<Output = Result<u64>> + Send;
+    fn ugc_update(&self, app_id: u32, update: UgcUpdate)
+    -> impl Future<Output = Result<()>> + Send;
     fn ugc_state(&self, app_id: u32, id: u64) -> impl Future<Output = Result<UgcInstall>> + Send;
     /// Downloads and waits.
     fn ugc_download(
@@ -1260,6 +1351,8 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
             | cmd::UGC_SUBSCRIBED
             | cmd::UGC_ITEM_STATE
             | cmd::UGC_DOWNLOAD
+            | cmd::UGC_CREATE
+            | cmd::UGC_UPDATE
             | cmd::AVATAR
     ) {
         return (status::UNSUPPORTED, b"unknown command".to_vec());
@@ -1377,6 +1470,30 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
             };
             start_ugc_download(conn, app_id, id);
             (status::OK, Vec::new())
+        }
+        cmd::UGC_CREATE | cmd::UGC_UPDATE if !conn.backend.workshop_publishing().await => (
+            status::FAILED,
+            b"Workshop publishing is off (aurelia config steamworks-client --workshop-publish on)"
+                .to_vec(),
+        ),
+        cmd::UGC_CREATE => {
+            let Some(file_type) = f.u32() else {
+                return (status::MALFORMED, b"no file type".to_vec());
+            };
+            // Always the connected game's.
+            match conn.backend.ugc_create(conn.app_id, file_type).await {
+                Ok(id) => (status::OK, id.to_le_bytes().to_vec()),
+                Err(e) => failed(&e),
+            }
+        }
+        cmd::UGC_UPDATE => {
+            let Some(update) = parse_ugc_update(&req.body) else {
+                return (status::MALFORMED, b"bad item update".to_vec());
+            };
+            match conn.backend.ugc_update(conn.app_id, update).await {
+                Ok(()) => (status::OK, Vec::new()),
+                Err(e) => failed(&e),
+            }
         }
         cmd::USER_STATS => {
             let Some(target) = f.u64() else {
@@ -1868,6 +1985,7 @@ impl Backend for DaemonBackend {
                 cursor,
                 search,
                 tags,
+                excluded,
             } => {
                 let per_page = UGC_PAGE_SIZE as u32;
                 client
@@ -1878,8 +1996,24 @@ impl Backend for DaemonBackend {
                         cursor.as_deref(),
                         Some(&search),
                         &tags,
+                        &excluded,
                         per_page,
                     )
+                    .await
+            }
+            UgcQuery::User {
+                account,
+                list,
+                page,
+                tags,
+                excluded,
+            } => {
+                if list != UGC_LIST_PUBLISHED {
+                    return Err(anyhow!("user list {list} is not supported"));
+                }
+                let per_page = UGC_PAGE_SIZE as u32;
+                client
+                    .ugc_published_by(app_id, account, page, &tags, &excluded, per_page)
                     .await
             }
             UgcQuery::Details(ids) => {
@@ -1920,6 +2054,32 @@ impl Backend for DaemonBackend {
     async fn ugc_subscribed(&self, app_id: u32) -> Result<Vec<u64>> {
         let client = authed_client().await.ok_or_else(not_logged_in)?;
         client.fetch_subscribed_items(app_id).await
+    }
+
+    async fn workshop_publishing(&self) -> bool {
+        aurelia::core::config::load_launcher_config()
+            .await
+            .is_ok_and(|c| c.steamworks_workshop_publish)
+    }
+
+    async fn ugc_create(&self, app_id: u32, file_type: u32) -> Result<u64> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        tracing::info!(
+            app_id,
+            file_type,
+            "steamworks: game creates a Workshop item"
+        );
+        client.ugc_create_item(app_id, file_type).await
+    }
+
+    async fn ugc_update(&self, app_id: u32, update: UgcUpdate) -> Result<()> {
+        let client = authed_client().await.ok_or_else(not_logged_in)?;
+        tracing::info!(
+            app_id,
+            id = update.id,
+            "steamworks: game updates a Workshop item"
+        );
+        client.ugc_update_item(app_id, &update).await
     }
 
     async fn ugc_state(&self, app_id: u32, id: u64) -> Result<UgcInstall> {

@@ -622,6 +622,7 @@ async fn run(mut cli: Cli) -> Result<()> {
                 allow,
                 disallow,
                 cloud_write,
+                workshop_publish,
                 yes,
             } => {
                 cmd_config_steamworks_client(
@@ -632,6 +633,7 @@ async fn run(mut cli: Cli) -> Result<()> {
                         allow,
                         disallow,
                         cloud_write,
+                        workshop_publish,
                         yes,
                     },
                     json,

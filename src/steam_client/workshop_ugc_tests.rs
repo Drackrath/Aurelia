@@ -67,3 +67,43 @@ fn install_state_compares_manifests() {
     assert!(!install_state(Some(&record), &gone, None).installed);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn details_map_metadata_kv_tags_previews() {
+    use steam_vent_proto::steammessages_publishedfile_steamclient::published_file_details::{
+        KVTag, Preview,
+    };
+    let mut d = PublishedFileDetails::new();
+    d.set_metadata("{}".into());
+    let mut tag = KVTag::new();
+    tag.set_key("mode".into());
+    tag.set_value("ctf".into());
+    d.kvtags.push(tag);
+    let mut image = Preview::new();
+    image.set_url("https://img/1.png".into());
+    image.set_filename("1.png".into());
+    d.previews.push(image);
+    let mut video = Preview::new();
+    video.set_url("ignored".into());
+    video.set_youtubevideoid("abc".into());
+    video.set_preview_type(1);
+    d.previews.push(video);
+    let ugc = details_from_proto(&d);
+    assert_eq!(ugc.metadata, "{}");
+    assert_eq!(ugc.kv_tags, vec![("mode".into(), "ctf".into())]);
+    assert_eq!(
+        ugc.previews,
+        vec![
+            UgcPreview {
+                url: "https://img/1.png".into(),
+                file_name: "1.png".into(),
+                kind: 0,
+            },
+            UgcPreview {
+                url: "abc".into(),
+                file_name: String::new(),
+                kind: 1,
+            },
+        ]
+    );
+}

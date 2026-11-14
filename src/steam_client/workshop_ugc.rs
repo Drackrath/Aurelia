@@ -8,8 +8,34 @@ use super::*;
 use crate::core::models::{DownloadProgressState, DownloadState};
 use steam_vent_proto::steammessages_publishedfile_steamclient::{
     CPublishedFile_GetDetails_Request, CPublishedFile_GetDetails_Response,
-    CPublishedFile_QueryFiles_Request, CPublishedFile_QueryFiles_Response, PublishedFileDetails,
+    CPublishedFile_GetUserFiles_Request, CPublishedFile_GetUserFiles_Response,
+    CPublishedFile_Publish_Request, CPublishedFile_Publish_Response,
+    CPublishedFile_QueryFiles_Request, CPublishedFile_QueryFiles_Response,
+    CPublishedFile_Update_Request, CPublishedFile_Update_Response, PublishedFileDetails,
 };
+
+/// SteamID64 of individual account 0.
+const INDIVIDUAL_BASE: u64 = 76_561_197_960_265_728;
+
+/// One extra preview of an item.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UgcPreview {
+    /// Image URL or YouTube video ID.
+    pub url: String,
+    pub file_name: String,
+    /// `EItemPreviewType`.
+    pub kind: u32,
+}
+
+/// Fields a game changes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UgcUpdate {
+    pub id: u64,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub visibility: Option<u32>,
+    pub tags: Option<Vec<String>>,
+}
 
 /// `SteamUGCDetails_t` fields we fill.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -42,6 +68,9 @@ pub struct UgcDetails {
     pub votes_down: u32,
     pub score: f32,
     pub children: u32,
+    pub metadata: String,
+    pub kv_tags: Vec<(String, String)>,
+    pub previews: Vec<UgcPreview>,
 }
 
 /// One page of query results.
@@ -101,6 +130,38 @@ pub fn details_from_proto(d: &PublishedFileDetails) -> UgcDetails {
         votes_down: d.vote_data.votes_down(),
         score: d.vote_data.score(),
         children: d.num_children(),
+        metadata: d.metadata().to_string(),
+        kv_tags: d
+            .kvtags
+            .iter()
+            .map(|t| (t.key().to_string(), t.value().to_string()))
+            .collect(),
+        previews: d
+            .previews
+            .iter()
+            .map(|p| UgcPreview {
+                url: if p.youtubevideoid().is_empty() {
+                    p.url().to_string()
+                } else {
+                    p.youtubevideoid().to_string()
+                },
+                file_name: p.filename().to_string(),
+                kind: p.preview_type(),
+            })
+            .collect(),
+    }
+}
+
+/// Page from a details list.
+fn page_from(total: u32, cursor: &str, details: &[PublishedFileDetails]) -> UgcPage {
+    UgcPage {
+        total,
+        next_cursor: cursor.to_string(),
+        items: details
+            .iter()
+            .filter(|d| d.publishedfileid() != 0)
+            .map(details_from_proto)
+            .collect(),
     }
 }
 
@@ -134,6 +195,9 @@ impl SteamClient {
         request.set_includetags(true);
         request.set_includevotes(true);
         request.set_includechildren(true);
+        request.set_includekvtags(true);
+        request.set_includeadditionalpreviews(true);
+        request.set_includemetadata(true);
         let response: CPublishedFile_GetDetails_Response = connection
             .service_method(request)
             .await
@@ -155,6 +219,7 @@ impl SteamClient {
         cursor: Option<&str>,
         search: Option<&str>,
         tags: &[String],
+        excluded: &[String],
         per_page: u32,
     ) -> Result<UgcPage> {
         let connection = self.require_connection()?;
@@ -170,6 +235,10 @@ impl SteamClient {
             request.set_search_text(text.to_string());
         }
         request.requiredtags = tags.to_vec();
+        request.excludedtags = excluded.to_vec();
+        request.set_return_metadata(true);
+        request.set_return_kv_tags(true);
+        request.set_return_previews(true);
         request.set_return_details(true);
         request.set_return_tags(true);
         request.set_return_vote_data(true);
@@ -178,16 +247,89 @@ impl SteamClient {
             .service_method(request)
             .await
             .context("failed calling PublishedFile.QueryFiles")?;
-        Ok(UgcPage {
-            total: response.total(),
-            next_cursor: response.next_cursor().to_string(),
-            items: response
-                .publishedfiledetails
-                .iter()
-                .filter(|d| d.publishedfileid() != 0)
-                .map(details_from_proto)
-                .collect(),
-        })
+        Ok(page_from(
+            response.total(),
+            response.next_cursor(),
+            &response.publishedfiledetails,
+        ))
+    }
+
+    /// Items an account published.
+    pub async fn ugc_published_by(
+        &self,
+        app_id: u32,
+        account: u32,
+        page: u32,
+        tags: &[String],
+        excluded: &[String],
+        per_page: u32,
+    ) -> Result<UgcPage> {
+        let connection = self.require_connection()?;
+        let mut request = CPublishedFile_GetUserFiles_Request::new();
+        request.set_steamid(INDIVIDUAL_BASE + u64::from(account));
+        request.set_appid(app_id);
+        request.set_page(page.max(1));
+        request.set_numperpage(per_page.clamp(1, 50));
+        request.set_type("myfiles".to_string());
+        request.requiredtags = tags.to_vec();
+        request.excludedtags = excluded.to_vec();
+        request.set_return_tags(true);
+        request.set_return_vote_data(true);
+        request.set_return_kv_tags(true);
+        request.set_return_previews(true);
+        request.set_return_children(true);
+        request.set_return_metadata(true);
+        let response: CPublishedFile_GetUserFiles_Response = connection
+            .service_method(request)
+            .await
+            .context("failed calling PublishedFile.GetUserFiles")?;
+        Ok(page_from(
+            response.total(),
+            "",
+            &response.publishedfiledetails,
+        ))
+    }
+
+    /// Creates an empty item.
+    pub async fn ugc_create_item(&self, app_id: u32, file_type: u32) -> Result<u64> {
+        let connection = self.require_connection()?;
+        let mut request = CPublishedFile_Publish_Request::new();
+        request.set_appid(app_id);
+        request.set_consumer_appid(app_id);
+        request.set_file_type(file_type);
+        let response: CPublishedFile_Publish_Response = connection
+            .service_method(request)
+            .await
+            .context("failed calling PublishedFile.Publish")?;
+        match response.publishedfileid() {
+            0 => bail!("Steam created no Workshop item"),
+            id => Ok(id),
+        }
+    }
+
+    /// Applies title, text, visibility, tags.
+    pub async fn ugc_update_item(&self, app_id: u32, update: &UgcUpdate) -> Result<()> {
+        let connection = self.require_connection()?;
+        let mut request = CPublishedFile_Update_Request::new();
+        request.set_appid(app_id);
+        request.set_publishedfileid(update.id);
+        if let Some(title) = &update.title {
+            request.set_title(title.clone());
+        }
+        if let Some(text) = &update.description {
+            request.set_file_description(text.clone());
+        }
+        if let Some(visibility) = update.visibility {
+            request.set_visibility(visibility);
+        }
+        if let Some(tags) = &update.tags {
+            request.tags = tags.clone();
+        }
+        let _: CPublishedFile_Update_Response = connection
+            .service_method(request)
+            .await
+            .context("failed calling PublishedFile.Update")?;
+        Ok(())
     }
 
     /// Install state; manifest from Steam.

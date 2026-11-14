@@ -1,5 +1,6 @@
 use super::*;
 use anyhow::bail;
+use aurelia::steam_client::workshop_ugc::UgcPreview;
 use tokio::io::DuplexStream;
 
 /// Rich presence pairs.
@@ -8,6 +9,8 @@ type Pairs = Vec<(String, String)>;
 /// Scriptable daemon state.
 #[derive(Default)]
 struct Fake {
+    publish: bool,
+    ugc_updates: Mutex<Vec<(u32, UgcUpdate)>>,
     steam_id: Mutex<Option<u64>>,
     conflict: bool,
     started: Mutex<Vec<(u32, Option<u32>)>>,
@@ -327,6 +330,22 @@ impl Backend for Fake {
         Ok(self.subscribed.lock().unwrap().clone())
     }
 
+    async fn workshop_publishing(&self) -> bool {
+        self.publish
+    }
+
+    async fn ugc_create(&self, app_id: u32, file_type: u32) -> Result<u64> {
+        if file_type > 20 {
+            bail!("bad file type");
+        }
+        Ok(u64::from(app_id) * 1000 + u64::from(file_type))
+    }
+
+    async fn ugc_update(&self, app_id: u32, update: UgcUpdate) -> Result<()> {
+        self.ugc_updates.lock().unwrap().push((app_id, update));
+        Ok(())
+    }
+
     async fn ugc_state(&self, _app_id: u32, id: u64) -> Result<UgcInstall> {
         Ok(if id == 42 {
             UgcInstall {
@@ -457,6 +476,13 @@ fn sample_item() -> UgcDetails {
         tags: "Maps".into(),
         file: 999,
         score: 0.5,
+        metadata: "{\"v\":2}".into(),
+        kv_tags: vec![("mode".into(), "ctf".into())],
+        previews: vec![UgcPreview {
+            url: "dQw4w9WgXcQ".into(),
+            file_name: String::new(),
+            kind: 1,
+        }],
         ..UgcDetails::default()
     }
 }
@@ -1468,6 +1494,7 @@ async fn ugc_queries_parse_and_answer() {
                 cursor: None,
                 search: "castle".into(),
                 tags: vec!["Maps".into()],
+                excluded: Vec::new(),
             },
             UgcQuery::All {
                 query_type: 3,
@@ -1475,6 +1502,7 @@ async fn ugc_queries_parse_and_answer() {
                 cursor: Some("abc".into()),
                 search: "castle".into(),
                 tags: Vec::new(),
+                excluded: Vec::new(),
             },
             UgcQuery::Details(vec![42, 43]),
             UgcQuery::Subscribed { page: 3 },
@@ -1712,6 +1740,12 @@ fn ugc_golden_bytes() {
     expected.extend_from_slice(&[0; 8 + 4 + 16 + 4 + 8]);
     expected.extend_from_slice(&0.5f32.to_bits().to_le_bytes());
     expected.extend_from_slice(&[0; 4]);
+    expected.extend_from_slice(&[7, 0, 0, 0]);
+    expected.extend_from_slice(b"{\"v\":2}");
+    expected.extend_from_slice(&[1, 0, 0, 0, 4, 0, 0, 0, b'm', b'o', b'd', b'e']);
+    expected.extend_from_slice(&[3, 0, 0, 0, b'c', b't', b'f', 1, 0, 0, 0, 11, 0, 0, 0]);
+    expected.extend_from_slice(b"dQw4w9WgXcQ");
+    expected.extend_from_slice(&[0, 0, 0, 0, 1, 0, 0, 0]);
     assert_eq!(item, expected);
     let state = UgcInstall {
         installed: true,
@@ -1939,6 +1973,147 @@ async fn offline_owner_is_unknown() {
     assert_eq!(
         (code, body),
         (status::OK, vec![0xCC, 0, 0, 0, 0, 0, 0, 0, 0])
+    );
+    game.hang_up().await;
+}
+
+/// Query body with the newer trailer.
+fn ugc_user_query_body(account: u32, list: u32, excluded: &[&str]) -> Vec<u8> {
+    let mut out = ugc_query_body(ugc_kind::USER, 2, "", &["Maps"], &[]);
+    out.extend_from_slice(&(excluded.len() as u32).to_le_bytes());
+    for t in excluded {
+        put_blob(&mut out, t.as_bytes());
+    }
+    out.extend_from_slice(&account.to_le_bytes());
+    out.extend_from_slice(&list.to_le_bytes());
+    out
+}
+
+#[tokio::test]
+async fn ugc_user_lists_and_excluded_tags() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router, hello(480), None).await;
+    let body = ugc_user_query_body(77, UGC_LIST_PUBLISHED, &["NSFW"]);
+    assert_eq!(game.ask(1, cmd::UGC_QUERY, &body).await.0, status::OK);
+    let mut all = ugc_query_body(ugc_kind::ALL_PAGE, 1, "", &[], &[]);
+    all.extend_from_slice(&1u32.to_le_bytes());
+    put_blob(&mut all, b"Old");
+    all.extend_from_slice(&[0; 8]);
+    assert_eq!(game.ask(2, cmd::UGC_QUERY, &all).await.0, status::OK);
+    let queries = fake.queries.lock().unwrap().clone();
+    assert_eq!(
+        queries[0],
+        UgcQuery::User {
+            account: 77,
+            list: UGC_LIST_PUBLISHED,
+            page: 2,
+            tags: vec!["Maps".into()],
+            excluded: vec!["NSFW".into()],
+        }
+    );
+    assert!(matches!(&queries[1], UgcQuery::All { excluded, .. } if excluded == &["Old"]));
+    // Trailer must be complete.
+    let mut cut = ugc_user_query_body(77, 0, &[]);
+    cut.truncate(cut.len() - 2);
+    assert_eq!(game.ask(3, cmd::UGC_QUERY, &cut).await.0, status::MALFORMED);
+    game.hang_up().await;
+}
+
+#[test]
+fn ugc_item_carries_extended_fields() {
+    let mut out = Vec::new();
+    put_ugc_item(&mut out, &sample_item());
+    let tail_len = 4 + 7 + 4 + (4 + 4) + (4 + 3) + 4 + (4 + 11) + 4 + 4;
+    let tail = &out[out.len() - tail_len..];
+    let mut f = Fields::new(tail);
+    assert_eq!(f.blob(), Some(&b"{\"v\":2}"[..]));
+    assert_eq!(f.u32(), Some(1));
+    assert_eq!(
+        (f.blob(), f.blob()),
+        (Some(&b"mode"[..]), Some(&b"ctf"[..]))
+    );
+    assert_eq!(f.u32(), Some(1));
+    assert_eq!(f.blob(), Some(&b"dQw4w9WgXcQ"[..]));
+    assert_eq!(f.blob(), Some(&b""[..]));
+    assert_eq!(f.u32(), Some(1));
+    assert!(f.rest().is_empty());
+}
+
+fn update_body(id: u64, fields: u8, tags: &[&str]) -> Vec<u8> {
+    let mut out = id.to_le_bytes().to_vec();
+    out.push(fields);
+    put_blob(&mut out, b"New title");
+    put_blob(&mut out, b"Text");
+    out.extend_from_slice(&2u32.to_le_bytes());
+    out.extend_from_slice(&(tags.len() as u32).to_le_bytes());
+    for t in tags {
+        put_blob(&mut out, t.as_bytes());
+    }
+    out
+}
+
+#[tokio::test]
+async fn workshop_publishing_is_gated() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router, hello(480), None).await;
+    let create = 0u32.to_le_bytes();
+    assert_eq!(
+        game.ask(1, cmd::UGC_CREATE, &create).await.0,
+        status::FAILED
+    );
+    let body = update_body(5, ugc_update::TITLE, &[]);
+    assert_eq!(game.ask(2, cmd::UGC_UPDATE, &body).await.0, status::FAILED);
+    assert!(fake.ugc_updates.lock().unwrap().is_empty());
+    game.hang_up().await;
+}
+
+#[tokio::test]
+async fn workshop_create_and_update() {
+    let fake = Arc::new(Fake {
+        steam_id: Mutex::new(Some(SID)),
+        publish: true,
+        ..Fake::default()
+    });
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router, hello(480), None).await;
+    let mut req = request(1, cmd::UGC_CREATE, &0u32.to_le_bytes());
+    req[4..8].copy_from_slice(&70u32.to_le_bytes());
+    proto::write_frame(&mut game.stream, proto::C_SW_REQUEST, &req)
+        .await
+        .unwrap();
+    let (_, payload) = game.next().await;
+    assert_eq!(payload[4], status::OK);
+    assert_eq!(
+        &payload[5..],
+        &480_000u64.to_le_bytes(),
+        "connected app only"
+    );
+    assert_eq!(game.ask(2, cmd::UGC_CREATE, &[]).await.0, status::MALFORMED);
+
+    let body = update_body(5, ugc_update::TITLE | ugc_update::TAGS, &["Maps"]);
+    assert_eq!(
+        game.ask(3, cmd::UGC_UPDATE, &body).await,
+        (status::OK, Vec::new())
+    );
+    assert_eq!(
+        *fake.ugc_updates.lock().unwrap(),
+        vec![(
+            480,
+            UgcUpdate {
+                id: 5,
+                title: Some("New title".into()),
+                description: None,
+                visibility: None,
+                tags: Some(vec!["Maps".into()]),
+            }
+        )]
+    );
+    let zero = update_body(0, ugc_update::TITLE, &[]);
+    assert_eq!(
+        game.ask(4, cmd::UGC_UPDATE, &zero).await.0,
+        status::MALFORMED
     );
     game.hang_up().await;
 }

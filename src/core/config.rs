@@ -203,6 +203,9 @@ pub struct LauncherConfig {
     /// Games may store stats, achievements.
     #[serde(default)]
     pub steamworks_stats_writes: bool,
+    /// Games may create, edit Workshop items.
+    #[serde(default)]
+    pub steamworks_workshop_publish: bool,
 }
 
 /// kbit/s to bytes/s.
@@ -276,6 +279,7 @@ impl Default for LauncherConfig {
             steamworks_allowed_protected: Vec::new(),
             steamworks_cloud_write: false,
             steamworks_stats_writes: false,
+            steamworks_workshop_publish: false,
         }
     }
 }
