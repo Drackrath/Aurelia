@@ -386,6 +386,7 @@ pub(crate) async fn cmd_config_anticheat_auto_install(
 pub(crate) struct SteamworksClientArgs {
     pub mode: Option<OnOffArg>,
     pub path: Option<String>,
+    pub stats_writes: Option<OnOffArg>,
     pub allow: Option<u32>,
     pub disallow: Option<u32>,
     pub cloud_write: Option<OnOffArg>,
@@ -416,6 +417,7 @@ pub(crate) async fn cmd_config_steamworks_client(
     let SteamworksClientArgs {
         mode,
         path,
+        stats_writes,
         allow,
         disallow,
         cloud_write,
@@ -423,30 +425,37 @@ pub(crate) async fn cmd_config_steamworks_client(
     } = args;
     let any = mode.is_some()
         || path.is_some()
+        || stats_writes.is_some()
         || allow.is_some()
         || disallow.is_some()
         || cloud_write.is_some();
-    let change = any.then_some((mode, path, allow, disallow, cloud_write));
-    let (config, changed) = view_or_set(change, |c, (mode, path, allow, disallow, cloud_write)| {
-        if let Some(mode) = mode {
-            c.steamworks_client = matches!(mode, OnOffArg::On);
-        }
-        if let Some(path) = path {
-            let path = path.trim();
-            c.steamworks_client_path = (!path.is_empty()).then(|| path.to_string());
-        }
-        let allowed = &mut c.steamworks_allowed_protected;
-        if let Some(id) = allow.filter(|id| !allowed.contains(id)) {
-            allowed.push(id);
-            allowed.sort_unstable();
-        }
-        if let Some(id) = disallow {
-            allowed.retain(|a| *a != id);
-        }
-        if let Some(cloud_write) = cloud_write {
-            c.steamworks_cloud_write = matches!(cloud_write, OnOffArg::On);
-        }
-    })
+    let change = any.then_some((mode, path, stats_writes, allow, disallow, cloud_write));
+    let (config, changed) = view_or_set(
+        change,
+        |c, (mode, path, writes, allow, disallow, cloud_write)| {
+            if let Some(mode) = mode {
+                c.steamworks_client = matches!(mode, OnOffArg::On);
+            }
+            if let Some(writes) = writes {
+                c.steamworks_stats_writes = matches!(writes, OnOffArg::On);
+            }
+            if let Some(path) = path {
+                let path = path.trim();
+                c.steamworks_client_path = (!path.is_empty()).then(|| path.to_string());
+            }
+            let allowed = &mut c.steamworks_allowed_protected;
+            if let Some(id) = allow.filter(|id| !allowed.contains(id)) {
+                allowed.push(id);
+                allowed.sort_unstable();
+            }
+            if let Some(id) = disallow {
+                allowed.retain(|a| *a != id);
+            }
+            if let Some(cloud_write) = cloud_write {
+                c.steamworks_cloud_write = matches!(cloud_write, OnOffArg::On);
+            }
+        },
+    )
     .await?;
     let default_dir = steamworks_default_dir();
     let effective_path = config
@@ -460,6 +469,7 @@ pub(crate) async fn cmd_config_steamworks_client(
             "effective_path": effective_path,
             "steamworks_allowed_protected": config.steamworks_allowed_protected,
             "steamworks_cloud_write": config.steamworks_cloud_write,
+            "steamworks_stats_writes": config.steamworks_stats_writes,
         }));
         return Ok(());
     }
@@ -472,6 +482,12 @@ pub(crate) async fn cmd_config_steamworks_client(
     if let Some(path) = effective_path {
         cli_println!("Path: {path}");
     }
+    let writes = if config.steamworks_stats_writes {
+        "on (games may store stats and unlock achievements)"
+    } else {
+        "off (games read stats only)"
+    };
+    cli_println!("Stats writes: {writes}");
     if !config.steamworks_allowed_protected.is_empty() {
         let ids: Vec<String> = config
             .steamworks_allowed_protected

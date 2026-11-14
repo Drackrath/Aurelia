@@ -200,6 +200,9 @@ pub struct LauncherConfig {
     /// Stand-in games may write Cloud files.
     #[serde(default)]
     pub steamworks_cloud_write: bool,
+    /// Games may store stats, achievements.
+    #[serde(default)]
+    pub steamworks_stats_writes: bool,
 }
 
 /// kbit/s to bytes/s.
@@ -272,6 +275,7 @@ impl Default for LauncherConfig {
             steamworks_client_path: None,
             steamworks_allowed_protected: Vec::new(),
             steamworks_cloud_write: false,
+            steamworks_stats_writes: false,
         }
     }
 }

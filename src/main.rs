@@ -592,6 +592,7 @@ async fn run(mut cli: Cli) -> Result<()> {
             ConfigCommand::SteamworksClient {
                 mode,
                 path,
+                stats_writes,
                 allow,
                 disallow,
                 cloud_write,
@@ -601,6 +602,7 @@ async fn run(mut cli: Cli) -> Result<()> {
                     SteamworksClientArgs {
                         mode,
                         path,
+                        stats_writes,
                         allow,
                         disallow,
                         cloud_write,

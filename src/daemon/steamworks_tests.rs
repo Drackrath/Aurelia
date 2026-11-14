@@ -16,6 +16,8 @@ struct Fake {
     left: Mutex<Vec<u64>>,
     lobby_tx: Mutex<Option<mpsc::UnboundedSender<LobbyEvent>>>,
     lobby_calls: Mutex<Vec<String>>,
+    writes: bool,
+    stored: Mutex<Vec<(u32, u32, bool, StatChanges)>>,
 }
 
 const SID: u64 = 76_561_197_960_287_930;
@@ -217,6 +219,71 @@ impl Backend for Fake {
         *self.lobby_tx.lock().unwrap() = Some(tx);
         Some(rx)
     }
+    async fn user_stats(&self, app_id: u32, steam_id: Option<u64>) -> Result<UserStats> {
+        if app_id != 480 {
+            bail!("no stats for {app_id}");
+        }
+        Ok(sample_stats(steam_id.unwrap_or(SID)))
+    }
+
+    async fn stats_writes(&self) -> bool {
+        self.writes
+    }
+
+    async fn store_stats(
+        &self,
+        app_id: u32,
+        crc: u32,
+        reset: bool,
+        changes: Vec<(u32, u32)>,
+    ) -> Result<StoreOutcome> {
+        let reverted = changes
+            .iter()
+            .filter(|(id, _)| *id == 99)
+            .map(|(id, _)| (*id, 0))
+            .collect();
+        self.stored
+            .lock()
+            .unwrap()
+            .push((app_id, crc, reset, changes));
+        Ok(StoreOutcome {
+            eresult: 1,
+            crc: crc + 1,
+            reverted,
+        })
+    }
+}
+
+/// Stats keyed to the asked account.
+fn sample_stats(steam_id: u64) -> UserStats {
+    use aurelia::steam_client::user_stats::{Achievement, Stat};
+    UserStats {
+        eresult: 1,
+        crc: 0xC0,
+        stats: vec![Stat {
+            id: 1,
+            name: "Kills".into(),
+            kind: 1,
+            value: (steam_id % 100) as u32,
+        }],
+        achievements: vec![Achievement {
+            block: 4,
+            bit: 2,
+            name: "ACH_X".into(),
+            display_name: "X".into(),
+            description: "Do X".into(),
+            hidden: true,
+            unlock_time: 7,
+        }],
+    }
+}
+
+fn with_writes() -> Arc<Fake> {
+    Arc::new(Fake {
+        steam_id: Mutex::new(Some(SID)),
+        writes: true,
+        ..Fake::default()
+    })
 }
 
 /// Offline daemon with cached tickets.
@@ -903,5 +970,153 @@ fn lobby_push_golden_bytes() {
             1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, b'k', 1, 0, 0, 0, b'v', 0, 0, 0, 0
         ]
+    );
+}
+
+#[tokio::test]
+async fn user_stats_flag_writes_only_for_self() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake, router.clone(), hello(480), None).await;
+    let (code, body) = game.ask(1, cmd::USER_STATS, &0u64.to_le_bytes()).await;
+    assert_eq!(
+        (code, body),
+        (status::OK, user_stats_body(&sample_stats(SID), false))
+    );
+    let other = 76_561_197_960_287_999u64;
+    let (code, body) = game.ask(2, cmd::USER_STATS, &other.to_le_bytes()).await;
+    assert_eq!(
+        (code, body),
+        (status::OK, user_stats_body(&sample_stats(other), false))
+    );
+    assert_eq!(
+        game.ask(3, cmd::USER_STATS, &[1]).await.0,
+        status::MALFORMED
+    );
+    let (code, _) = game
+        .ask_for(4, 70, cmd::USER_STATS, &0u64.to_le_bytes())
+        .await;
+    assert_eq!(code, status::FAILED);
+    game.hang_up().await;
+
+    let (mut game, _) = Game::connect(with_writes(), router, hello(480), None).await;
+    let (_, body) = game.ask(1, cmd::USER_STATS, &0u64.to_le_bytes()).await;
+    assert_eq!(body[8], stats_flag::WRITES);
+    let (_, body) = game.ask(2, cmd::USER_STATS, &other.to_le_bytes()).await;
+    assert_eq!(body[8], 0, "never for other users");
+    game.hang_up().await;
+}
+
+fn store_body(crc: u32, reset: bool, changes: &[(u32, u32)]) -> Vec<u8> {
+    let mut out = crc.to_le_bytes().to_vec();
+    out.push(u8::from(reset));
+    out.extend_from_slice(&(changes.len() as u32).to_le_bytes());
+    for (id, value) in changes {
+        out.extend_from_slice(&id.to_le_bytes());
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+    out
+}
+
+#[tokio::test]
+async fn store_stats_needs_the_switch() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router.clone(), hello(480), None).await;
+    let body = store_body(0xC0, false, &[(1, 5)]);
+    let (code, reply) = game.ask(1, cmd::STORE_STATS, &body).await;
+    assert_eq!(
+        (code, reply),
+        (status::FAILED, b"stats writes are off".to_vec())
+    );
+    assert!(fake.stored.lock().unwrap().is_empty());
+    game.hang_up().await;
+
+    let fake = with_writes();
+    let (mut game, _) = Game::connect(fake.clone(), router, hello(480), None).await;
+    let body = store_body(0xC0, true, &[(1, 5), (99, 3)]);
+    let (code, reply) = game.ask(1, cmd::STORE_STATS, &body).await;
+    assert_eq!(code, status::OK);
+    let mut f = Fields::new(&reply);
+    assert_eq!((f.i32(), f.u32(), f.u32()), (Some(1), Some(0xC1), Some(1)));
+    assert_eq!((f.u32(), f.u32()), (Some(99), Some(0)));
+    assert_eq!(
+        *fake.stored.lock().unwrap(),
+        vec![(480, 0xC0, true, vec![(1, 5), (99, 3)])]
+    );
+    let mut bad = store_body(0, false, &[(1, 5)]);
+    bad.push(0);
+    assert_eq!(
+        game.ask(2, cmd::STORE_STATS, &bad).await.0,
+        status::MALFORMED
+    );
+    let huge = [0, 0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF];
+    assert_eq!(
+        game.ask(3, cmd::STORE_STATS, &huge).await.0,
+        status::MALFORMED
+    );
+    game.hang_up().await;
+}
+
+#[tokio::test]
+async fn stats_need_a_session() {
+    let fake = with_writes();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router, hello(480), None).await;
+    *fake.steam_id.lock().unwrap() = None;
+    let (code, _) = game.ask(1, cmd::USER_STATS, &0u64.to_le_bytes()).await;
+    assert_eq!(code, status::NO_SESSION);
+    let (code, _) = game
+        .ask(2, cmd::STORE_STATS, &store_body(0, false, &[]))
+        .await;
+    assert_eq!(code, status::NO_SESSION);
+    assert!(fake.stored.lock().unwrap().is_empty());
+    game.hang_up().await;
+}
+
+/// Same bytes the .so tests use.
+#[test]
+fn stats_golden_bytes() {
+    use aurelia::steam_client::user_stats::{Achievement, Stat};
+    let stats = UserStats {
+        eresult: 1,
+        crc: 2,
+        stats: vec![Stat {
+            id: 3,
+            name: "K".into(),
+            kind: 2,
+            value: 4,
+        }],
+        achievements: vec![Achievement {
+            block: 5,
+            bit: 6,
+            name: "A".into(),
+            display_name: "B".into(),
+            description: "C".into(),
+            hidden: true,
+            unlock_time: 7,
+        }],
+    };
+    assert_eq!(
+        user_stats_body(&stats, true),
+        [
+            1, 0, 0, 0, 2, 0, 0, 0, 1, //
+            1, 0, 0, 0, 3, 0, 0, 0, 2, 4, 0, 0, 0, 1, 0, 0, 0, b'K', //
+            1, 0, 0, 0, 5, 0, 0, 0, 6, 7, 0, 0, 0, 1, //
+            1, 0, 0, 0, b'A', 1, 0, 0, 0, b'B', 1, 0, 0, 0, b'C',
+        ]
+    );
+    assert_eq!(
+        parse_store_request(&[9, 0, 0, 0, 1, 1, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0]),
+        Some((9, true, vec![(3, 4)]))
+    );
+    let outcome = StoreOutcome {
+        eresult: 1,
+        crc: 2,
+        reverted: vec![(3, 4)],
+    };
+    assert_eq!(
+        store_outcome_body(&outcome),
+        [1, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0]
     );
 }
