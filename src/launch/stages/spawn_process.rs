@@ -60,15 +60,8 @@ impl PipelineStage for SpawnProcessStage {
                         None => e,
                     }
                 })?;
-                // Record immediately; play_game refines it later.
-                let _ = crate::compat::running::record_launch(
-                    &crate::compat::running::RunningGame::new(
-                        ctx.app_id,
-                        ctx.app.as_ref().map(|a| a.name.clone()).unwrap_or_default(),
-                        child.id(),
-                        None,
-                    ),
-                );
+                // Before the game can connect.
+                let _ = crate::compat::running::record_launch(&spawn_record(ctx, child.id()));
                 ctx.child = Some(child);
             }
         } else {
@@ -116,6 +109,17 @@ impl PipelineStage for SpawnProcessStage {
     }
 }
 
+/// Spawn-time record, stand-in flag included.
+pub fn spawn_record(ctx: &PipelineContext, pid: u32) -> crate::compat::running::RunningGame {
+    crate::compat::running::RunningGame::new(
+        ctx.app_id,
+        ctx.app.as_ref().map(|a| a.name.clone()).unwrap_or_default(),
+        pid,
+        None,
+    )
+    .with_stand_in(ctx.stand_in)
+}
+
 /// Wrap the command in the overlay.
 #[cfg(target_os = "linux")]
 async fn apply_steamworks_overlay(ctx: &mut PipelineContext) -> Result<(), LaunchError> {
@@ -152,5 +156,21 @@ async fn apply_steamworks_overlay(ctx: &mut PipelineContext) -> Result<(), Launc
         "launching with the stand-in steamclient.so"
     );
     ctx.command_spec = Some(overlay::wrap_command(spec, &plan));
+    ctx.stand_in = true;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spawn_record_carries_the_stand_in_flag() {
+        let mut ctx = PipelineContext::new(480);
+        assert!(!spawn_record(&ctx, 7).stand_in);
+        ctx.stand_in = true;
+        let rec = spawn_record(&ctx, 7);
+        assert!(rec.stand_in);
+        assert_eq!((rec.app_id, rec.pid), (480, 7));
+    }
 }
