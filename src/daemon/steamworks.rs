@@ -2364,7 +2364,7 @@ impl Backend for DaemonBackend {
         let now = match client.server_time().await {
             Ok(now) => now,
             Err(e) => {
-                // Local clock until Steam answers.
+                // Not connected: local clock.
                 tracing::debug!("steamworks: {e:#}; using local time");
                 aurelia::steam_client::server_time::apply(
                     aurelia::steam_client::server_time::local_ms(),
