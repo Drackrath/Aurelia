@@ -11,13 +11,15 @@ const OVERLAID: [&str; 4] = ["sdk32", "sdk64", "steam.pid", "registry.vdf"];
 pub const DAEMON_SOCKET_ENV: &str = "AURELIA_DAEMON_SOCKET";
 
 /// Env var naming the stand-in log.
-pub const LOG_ENV: &str = "AURELIA_STEAMWORKS_LOG";
+pub const LOG_ENV: &str = "AURELIAWORKS_LOG";
+/// Name older stand-ins read.
+pub const OLD_LOG_ENV: &str = "AURELIA_STEAMWORKS_LOG";
 
 /// Stand-in log markers; mirror `log::marker`.
 ///
 /// Checked against the stand-in's fixture.
 pub mod marker {
-    pub const PREFIX: &str = "[aurelia-steamworks] ";
+    pub const PREFIX: &str = "[aureliaworks] ";
     pub const MISSING: &str = "missing interface: ";
     pub const REPORTED_MISSING: &str = "game reports missing interface: ";
     pub const NETWORKING: &str = "game created ";
@@ -262,11 +264,59 @@ pub fn prefix_dll_plan(
     (binds, notes)
 }
 
+/// Install folder name.
+pub const CLIENT_DIR: &str = "aureliaworks";
+/// Pre-rename folder name.
+pub const OLD_CLIENT_DIR: &str = "steamworks";
+
+/// Moves `base/steamworks` to `base/aureliaworks`.
+///
+/// Hash sidecars move along, unchanged.
+pub fn migrate_client_dir(base: &Path) -> PathBuf {
+    let new = base.join(CLIENT_DIR);
+    let old = base.join(OLD_CLIENT_DIR);
+    if !new.exists() && old.is_dir() {
+        match std::fs::rename(&old, &new) {
+            Ok(()) => tracing::info!(
+                "moved the stand-in library from {} to {}",
+                old.display(),
+                new.display()
+            ),
+            Err(e) => {
+                tracing::warn!("could not move {} to {}: {e}", old.display(), new.display());
+                // Keep using the old folder.
+                return old;
+            }
+        }
+    }
+    new
+}
+
 /// Default stand-in install directory.
 pub fn default_client_dir() -> Option<PathBuf> {
     crate::core::config::data_dir()
         .ok()
-        .map(|d| d.join("steamworks"))
+        .map(|d| migrate_client_dir(&d))
+}
+
+/// Configured folder, old default remapped.
+pub fn configured_client_dir(config: &crate::core::config::LauncherConfig) -> Option<PathBuf> {
+    let Some(custom) = config.aureliaworks_path.as_deref().map(PathBuf::from) else {
+        return default_client_dir();
+    };
+    let base = crate::core::config::data_dir().ok();
+    Some(match base {
+        Some(base) => remap_old_dir(&custom, &base),
+        None => custom,
+    })
+}
+
+/// Old default path, remapped.
+pub fn remap_old_dir(path: &Path, base: &Path) -> PathBuf {
+    match path.strip_prefix(base.join(OLD_CLIENT_DIR)) {
+        Ok(rest) => migrate_client_dir(base).join(rest),
+        Err(_) => path.to_path_buf(),
+    }
 }
 
 /// Library file, or `sdk64`/`sdk32` directory.
@@ -282,8 +332,8 @@ pub fn resolve_client_libs(path: &Path) -> Result<ClientLibs, LaunchError> {
         return Err(LaunchError::new(
             LaunchErrorKind::Dependency,
             format!(
-                "steamworks_client is on but {} is missing; build aurelia-steamworks \
-                 and install it with `aurelia config steamworks-client --path \
+                "aureliaworks is on but {} is missing; build aureliaworks \
+                 and install it with `aurelia config aureliaworks --path \
                  <libsteamclient.so or checkout>`",
                 sdk64.display()
             ),
@@ -400,7 +450,7 @@ pub fn wrap_command(spec: &CommandSpec, plan: &OverlayPlan) -> CommandSpec {
         "/bin/sh".into(),
         "-c".into(),
         WRAPPER_SCRIPT.into(),
-        "aurelia-steamworks".into(),
+        "aureliaworks".into(),
         steam.to_string_lossy().into_owned(),
         head,
         tail,
@@ -442,7 +492,10 @@ pub fn add_daemon_socket(env: &mut std::collections::HashMap<String, String>, so
 
 /// Point the stand-in log at `log`.
 pub fn add_log_path(env: &mut std::collections::HashMap<String, String>, log: &Path) {
-    env.insert(LOG_ENV.into(), log.to_string_lossy().into_owned());
+    let path = log.to_string_lossy().into_owned();
+    env.insert(LOG_ENV.into(), path.clone());
+    // Older installed stand-ins.
+    env.insert(OLD_LOG_ENV.into(), path);
     // Share directory; file may be new.
     share_rw(env, log.parent().unwrap_or(log));
 }
@@ -563,17 +616,12 @@ pub fn plan_for(
     app_id: u32,
     account_id: Option<u32>,
 ) -> Result<OverlayPlan, LaunchError> {
-    let dir = config
-        .steamworks_client_path
-        .as_deref()
-        .map(PathBuf::from)
-        .or_else(default_client_dir)
-        .ok_or_else(|| {
-            LaunchError::new(
-                LaunchErrorKind::Environment,
-                "cannot locate the stand-in steamclient.so directory",
-            )
-        })?;
+    let dir = configured_client_dir(config).ok_or_else(|| {
+        LaunchError::new(
+            LaunchErrorKind::Environment,
+            "cannot locate the stand-in steamclient.so directory",
+        )
+    })?;
     let libs = resolve_client_libs(&dir)?;
     // Refuse swapped or edited libraries.
     for lib in std::iter::once(&libs.sdk64).chain(libs.sdk32.as_ref()) {
@@ -583,7 +631,7 @@ pub fn plan_for(
     let bwrap = find_bwrap().ok_or_else(|| {
         LaunchError::new(
             LaunchErrorKind::Dependency,
-            "steamworks_client is on but `bwrap` (bubblewrap) is not installed",
+            "aureliaworks is on but `bwrap` (bubblewrap) is not installed",
         )
     })?;
     let home = match spec.env.get("HOME").filter(|h| !h.is_empty()) {

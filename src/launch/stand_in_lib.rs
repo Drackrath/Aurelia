@@ -322,7 +322,7 @@ pub fn verify(lib: &Path) -> Result<()> {
     if !lib.is_file() {
         bail!(
             "stand-in library {} is missing; reinstall it with \
-             `aurelia config steamworks-client --path <libsteamclient.so>`",
+             `aurelia config aureliaworks --path <libsteamclient.so>`",
             lib.display()
         );
     }
@@ -330,7 +330,7 @@ pub fn verify(lib: &Path) -> Result<()> {
     let expected = std::fs::read_to_string(&sidecar).map_err(|_| {
         anyhow!(
             "no recorded hash for the stand-in library {} ({} missing); reinstall it with \
-             `aurelia config steamworks-client --path <libsteamclient.so>`",
+             `aurelia config aureliaworks --path <libsteamclient.so>`",
             lib.display(),
             sidecar.display()
         )
@@ -341,7 +341,7 @@ pub fn verify(lib: &Path) -> Result<()> {
         bail!(
             "refusing to launch: the stand-in library {} changed since it was installed \
              (expected SHA-256 {expected}, found {actual}); if you rebuilt it, reinstall with \
-             `aurelia config steamworks-client --path <libsteamclient.so>`",
+             `aurelia config aureliaworks --path <libsteamclient.so>`",
             lib.display()
         );
     }

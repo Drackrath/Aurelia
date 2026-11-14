@@ -32,16 +32,16 @@ pub fn remote_storage_info(
     Ok(RemoteStorageInfo {
         enabled,
         // Writes need sync and opt-in.
-        writable: enabled && config.steamworks_cloud_write,
+        writable: enabled && config.aureliaworks_cloud_write,
         remote_dir,
     })
 }
 
 /// Stand-in games may add Cloud files.
 pub fn stand_in_cloud_writes(config: &LauncherConfig) -> bool {
-    (config.steamworks_client || config.steamworks_client_auto)
+    (config.aureliaworks || config.aureliaworks_auto)
         && config.enable_cloud_sync
-        && config.steamworks_cloud_write
+        && config.aureliaworks_cloud_write
 }
 
 #[cfg(test)]
@@ -61,16 +61,16 @@ mod tests {
     fn uploads_need_stand_in_and_switch() {
         let mut config = LauncherConfig::default();
         assert!(!stand_in_cloud_writes(&config));
-        config.steamworks_client = true;
+        config.aureliaworks = true;
         assert!(!stand_in_cloud_writes(&config));
-        config.steamworks_cloud_write = true;
+        config.aureliaworks_cloud_write = true;
         assert!(stand_in_cloud_writes(&config));
     }
 
     #[test]
     fn writes_need_cloud_sync_too() {
         let mut config = LauncherConfig {
-            steamworks_cloud_write: true,
+            aureliaworks_cloud_write: true,
             ..LauncherConfig::default()
         };
         assert!(remote_storage_info(&config, 1, 1).unwrap().writable);

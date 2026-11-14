@@ -189,32 +189,35 @@ pub struct LauncherConfig {
     #[serde(default)]
     pub download_limit_kbit: u64,
     /// Launch games with stand-in steamclient.so.
-    #[serde(default)]
-    pub steamworks_client: bool,
+    #[serde(default, alias = "steamworks_client")]
+    pub aureliaworks: bool,
     /// Stand-in only while Steam is down.
-    #[serde(default)]
-    pub steamworks_client_auto: bool,
+    #[serde(default, alias = "steamworks_client_auto")]
+    pub aureliaworks_auto: bool,
     /// Steam install stand-in launches use.
-    #[serde(default)]
-    pub steamworks_steam_install: crate::core::models::StandInSteamInstall,
+    #[serde(default, alias = "steamworks_steam_install")]
+    pub aureliaworks_steam_install: crate::core::models::StandInSteamInstall,
     /// Refuse stand-in launches without a ticket.
-    #[serde(default = "crate::core::models::default_true")]
-    pub steamworks_ticket_check: bool,
+    #[serde(
+        default = "crate::core::models::default_true",
+        alias = "steamworks_ticket_check"
+    )]
+    pub aureliaworks_ticket_check: bool,
     /// Stand-in library file or directory.
-    #[serde(default)]
-    pub steamworks_client_path: Option<String>,
+    #[serde(default, alias = "steamworks_client_path")]
+    pub aureliaworks_path: Option<String>,
     /// Anti-cheat games allowed with stand-in.
-    #[serde(default)]
-    pub steamworks_allowed_protected: Vec<u32>,
+    #[serde(default, alias = "steamworks_allowed_protected")]
+    pub aureliaworks_allowed_protected: Vec<u32>,
     /// Stand-in games may write Cloud files.
-    #[serde(default)]
-    pub steamworks_cloud_write: bool,
+    #[serde(default, alias = "steamworks_cloud_write")]
+    pub aureliaworks_cloud_write: bool,
     /// Games may store stats, achievements.
-    #[serde(default)]
-    pub steamworks_stats_writes: bool,
+    #[serde(default, alias = "steamworks_stats_writes")]
+    pub aureliaworks_stats_writes: bool,
     /// Games may create, edit Workshop items.
-    #[serde(default)]
-    pub steamworks_workshop_publish: bool,
+    #[serde(default, alias = "steamworks_workshop_publish")]
+    pub aureliaworks_workshop_publish: bool,
 }
 
 /// kbit/s to bytes/s.
@@ -283,15 +286,15 @@ impl Default for LauncherConfig {
             encrypt_session: false,
             persona_wait_secs: DEFAULT_PERSONA_WAIT_SECS,
             download_limit_kbit: 0,
-            steamworks_client: false,
-            steamworks_client_auto: false,
-            steamworks_steam_install: Default::default(),
-            steamworks_ticket_check: true,
-            steamworks_client_path: None,
-            steamworks_allowed_protected: Vec::new(),
-            steamworks_cloud_write: false,
-            steamworks_stats_writes: false,
-            steamworks_workshop_publish: false,
+            aureliaworks: false,
+            aureliaworks_auto: false,
+            aureliaworks_steam_install: Default::default(),
+            aureliaworks_ticket_check: true,
+            aureliaworks_path: None,
+            aureliaworks_allowed_protected: Vec::new(),
+            aureliaworks_cloud_write: false,
+            aureliaworks_stats_writes: false,
+            aureliaworks_workshop_publish: false,
         }
     }
 }

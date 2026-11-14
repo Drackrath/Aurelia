@@ -316,7 +316,7 @@ pub(crate) async fn cmd_config_shader_precache(
         ShaderPrecache::Off => "off (shaders compile while the game runs)",
     };
     cli_println!("Shader pre-caching: {label}");
-    let cloud = if config.steamworks_cloud_write {
+    let cloud = if config.aureliaworks_cloud_write {
         "games may write"
     } else {
         "read-only"
@@ -382,8 +382,8 @@ pub(crate) async fn cmd_config_anticheat_auto_install(
     Ok(())
 }
 
-/// `config steamworks-client` arguments.
-pub(crate) struct SteamworksClientArgs {
+/// `config aureliaworks` arguments.
+pub(crate) struct AureliaworksArgs {
     pub mode: Option<StandInModeArg>,
     pub path: Option<String>,
     pub stats_writes: Option<OnOffArg>,
@@ -404,11 +404,8 @@ pub(crate) fn cloud_write_enable_prompt() -> String {
         .to_string()
 }
 
-/// `config steamworks-client [on|off] [--path]`.
-pub(crate) async fn cmd_config_steamworks_client(
-    args: SteamworksClientArgs,
-    json: bool,
-) -> Result<()> {
+/// `config aureliaworks [on|off] [--path]`.
+pub(crate) async fn cmd_config_aureliaworks(args: AureliaworksArgs, json: bool) -> Result<()> {
     if let Some(app_id) = args.allow {
         let prompt = aurelia::launch::stand_in_guard::allow_prompt(app_id);
         confirm_write("allow an anti-cheat game", &prompt, args.yes, json)?;
@@ -417,7 +414,7 @@ pub(crate) async fn cmd_config_steamworks_client(
         let prompt = cloud_write_enable_prompt();
         confirm_write("enable Cloud writes", &prompt, args.yes, json)?;
     }
-    let SteamworksClientArgs {
+    let AureliaworksArgs {
         mode,
         path,
         stats_writes,
@@ -461,23 +458,23 @@ pub(crate) async fn cmd_config_steamworks_client(
         change,
         |c, (mode, path, writes, allow, disallow, cloud_write, (publish, install, check))| {
             if let Some(check) = check {
-                c.steamworks_ticket_check = matches!(check, OnOffArg::On);
+                c.aureliaworks_ticket_check = matches!(check, OnOffArg::On);
             }
             if let Some(install) = install {
-                c.steamworks_steam_install = install.into();
+                c.aureliaworks_steam_install = install.into();
             }
             if let Some(mode) = mode {
-                c.steamworks_client = matches!(mode, StandInModeArg::On);
-                c.steamworks_client_auto = matches!(mode, StandInModeArg::Auto);
+                c.aureliaworks = matches!(mode, StandInModeArg::On);
+                c.aureliaworks_auto = matches!(mode, StandInModeArg::Auto);
             }
             if let Some(writes) = writes {
-                c.steamworks_stats_writes = matches!(writes, OnOffArg::On);
+                c.aureliaworks_stats_writes = matches!(writes, OnOffArg::On);
             }
             // Aurelia's own directory again.
             if path {
-                c.steamworks_client_path = None;
+                c.aureliaworks_path = None;
             }
-            let allowed = &mut c.steamworks_allowed_protected;
+            let allowed = &mut c.aureliaworks_allowed_protected;
             if let Some(id) = allow.filter(|id| !allowed.contains(id)) {
                 allowed.push(id);
                 allowed.sort_unstable();
@@ -486,35 +483,35 @@ pub(crate) async fn cmd_config_steamworks_client(
                 allowed.retain(|a| *a != id);
             }
             if let Some(cloud_write) = cloud_write {
-                c.steamworks_cloud_write = matches!(cloud_write, OnOffArg::On);
+                c.aureliaworks_cloud_write = matches!(cloud_write, OnOffArg::On);
             }
             if let Some(publish) = publish {
-                c.steamworks_workshop_publish = matches!(publish, OnOffArg::On);
+                c.aureliaworks_workshop_publish = matches!(publish, OnOffArg::On);
             }
         },
     )
     .await?;
     let default_dir = steamworks_default_dir();
     let effective_path = config
-        .steamworks_client_path
+        .aureliaworks_path
         .clone()
         .or_else(|| default_dir.clone());
     if json {
         print_json(&serde_json::json!({
-            "steamworks_client": config.steamworks_client,
+            "aureliaworks": config.aureliaworks,
             "steamworks_client_mode": stand_in_mode_name(&config),
-            "steamworks_client_path": config.steamworks_client_path,
+            "aureliaworks_path": config.aureliaworks_path,
             "effective_path": effective_path,
             "installed": installed.as_ref().map(|i| serde_json::json!({
                 "sdk64": i.sdk64,
                 "sdk32": i.sdk32,
             })),
-            "steamworks_allowed_protected": config.steamworks_allowed_protected,
-            "steamworks_cloud_write": config.steamworks_cloud_write,
-            "steamworks_stats_writes": config.steamworks_stats_writes,
-            "steamworks_workshop_publish": config.steamworks_workshop_publish,
-            "steamworks_steam_install": config.steamworks_steam_install,
-            "steamworks_ticket_check": config.steamworks_ticket_check,
+            "aureliaworks_allowed_protected": config.aureliaworks_allowed_protected,
+            "aureliaworks_cloud_write": config.aureliaworks_cloud_write,
+            "aureliaworks_stats_writes": config.aureliaworks_stats_writes,
+            "aureliaworks_workshop_publish": config.aureliaworks_workshop_publish,
+            "aureliaworks_steam_install": config.aureliaworks_steam_install,
+            "aureliaworks_ticket_check": config.aureliaworks_ticket_check,
         }));
         return Ok(());
     }
@@ -526,9 +523,9 @@ pub(crate) async fn cmd_config_steamworks_client(
     cli_println!("Stand-in steamclient.so: {label}");
     cli_println!(
         "Steam install: {}",
-        steam_install_label(config.steamworks_steam_install)
+        steam_install_label(config.aureliaworks_steam_install)
     );
-    let check = if config.steamworks_ticket_check {
+    let check = if config.aureliaworks_ticket_check {
         "on (stand-in launches need an ownership ticket from Steam)"
     } else {
         "off"
@@ -546,27 +543,27 @@ pub(crate) async fn cmd_config_steamworks_client(
             aurelia::launch::stand_in_lib::ENTRY_SYMBOL
         );
         if stand_in_mode_name(&config) == "off" {
-            cli_println!("Turn it on with `aurelia config steamworks-client on` (or `auto`).");
+            cli_println!("Turn it on with `aurelia config aureliaworks on` (or `auto`).");
         }
     }
     if let Some(path) = effective_path {
         cli_println!("Path: {path}");
     }
-    let writes = if config.steamworks_stats_writes {
+    let writes = if config.aureliaworks_stats_writes {
         "on (games may store stats and unlock achievements)"
     } else {
         "off (games read stats only)"
     };
     cli_println!("Stats writes: {writes}");
-    let publish = if config.steamworks_workshop_publish {
+    let publish = if config.aureliaworks_workshop_publish {
         "on (games may create and edit Workshop items)"
     } else {
         "off"
     };
     cli_println!("Workshop publishing: {publish}");
-    if !config.steamworks_allowed_protected.is_empty() {
+    if !config.aureliaworks_allowed_protected.is_empty() {
         let ids: Vec<String> = config
-            .steamworks_allowed_protected
+            .aureliaworks_allowed_protected
             .iter()
             .map(u32::to_string)
             .collect();
@@ -590,9 +587,9 @@ pub(crate) fn steam_install_label(v: aurelia::core::models::StandInSteamInstall)
 
 /// `on`, `off` or `auto`.
 pub(crate) fn stand_in_mode_name(config: &aurelia::core::config::LauncherConfig) -> &'static str {
-    if config.steamworks_client {
+    if config.aureliaworks {
         "on"
-    } else if config.steamworks_client_auto {
+    } else if config.aureliaworks_auto {
         "auto"
     } else {
         "off"
@@ -614,16 +611,18 @@ fn install_stand_in(input: &str) -> Result<aurelia::launch::stand_in_lib::Resolv
 /// `on` needs an installed 64-bit library.
 async fn ensure_stand_in_installed(default_dir: bool) -> Result<()> {
     let config = load_launcher_config().await?;
-    let dir = match (&config.steamworks_client_path, default_dir) {
-        (Some(custom), false) => Some(custom.clone()),
-        _ => steamworks_default_dir(),
+    let dir = match default_dir {
+        false => aurelia::launch::steamworks_overlay::configured_client_dir(&config)
+            .filter(|_| cfg!(target_os = "linux"))
+            .map(|d| d.to_string_lossy().into_owned()),
+        true => steamworks_default_dir(),
     }
     .ok_or_else(|| anyhow::anyhow!("the stand-in steamclient.so is Linux only"))?;
     if aurelia::launch::steamworks_overlay::resolve_client_libs(std::path::Path::new(&dir)).is_err()
     {
         anyhow::bail!(
-            "no stand-in steamclient.so is installed in {dir}; build aurelia-steamworks and \
-             run `aurelia config steamworks-client --path <libsteamclient.so or checkout>` first"
+            "no stand-in steamclient.so is installed in {dir}; build aureliaworks and \
+             run `aurelia config aureliaworks --path <libsteamclient.so or checkout>` first"
         );
     }
     Ok(())

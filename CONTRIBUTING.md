@@ -52,19 +52,20 @@ cargo clippy --all-targets   # lint — don't add new warnings
 cargo test               # run the test suite
 ```
 
-`markers_match_the_stand_in` compares the stand-in log markers with an aurelia-steamworks
-checkout. It looks next to this repository (`../aurelia-steamworks`, also from
+`markers_match_the_stand_in` compares the stand-in log markers with an aureliaworks
+checkout. It looks next to this repository (`../aureliaworks`, also from
 `.worktrees/<name>`) and skips with a note when none is found. To require the check, as
 CI and testers should:
 
 ```bash
-AURELIA_STEAMWORKS_DIR=/path/to/aurelia-steamworks AURELIA_STEAMWORKS_STRICT=1 cargo test markers_match
+AURELIAWORKS_DIR=/path/to/aureliaworks AURELIAWORKS_STRICT=1 cargo test markers_match
 ```
 
-A set `AURELIA_STEAMWORKS_DIR` must point at a checkout (`src/log.rs`) or the test fails;
-with `AURELIA_STEAMWORKS_STRICT=1` a missing checkout or one without shared markers fails
-too. Point `AURELIA_STEAMWORKS_DIR` at the branch you want to compare against; the sibling
-lookup takes whatever branch that checkout is on.
+A set `AURELIAWORKS_DIR` must point at a checkout (`src/log.rs`) or the test fails;
+with `AURELIAWORKS_STRICT=1` a missing checkout or one without shared markers fails
+too. Point `AURELIAWORKS_DIR` at the branch you want to compare against; the sibling
+lookup takes whatever branch that checkout is on. The old names `AURELIA_STEAMWORKS_DIR` and
+`AURELIA_STEAMWORKS_STRICT` still work but print a deprecation note.
 
 A few expectations:
 

@@ -158,3 +158,71 @@ fn pick_steam_root_ignores_symlinked_duplicates() {
     std::os::unix::fs::symlink(&older, &link).unwrap();
     assert_eq!(pick_steam_root(&[link, other.clone(), older]), Some(other));
 }
+
+#[test]
+fn pre_rename_stand_in_keys_still_load() {
+    let renames = [
+        ("aureliaworks", "steamworks_client", serde_json::json!(true)),
+        (
+            "aureliaworks_auto",
+            "steamworks_client_auto",
+            serde_json::json!(true),
+        ),
+        (
+            "aureliaworks_steam_install",
+            "steamworks_steam_install",
+            serde_json::json!("host"),
+        ),
+        (
+            "aureliaworks_ticket_check",
+            "steamworks_ticket_check",
+            serde_json::json!(false),
+        ),
+        (
+            "aureliaworks_path",
+            "steamworks_client_path",
+            serde_json::json!("/x"),
+        ),
+        (
+            "aureliaworks_allowed_protected",
+            "steamworks_allowed_protected",
+            serde_json::json!([730]),
+        ),
+        (
+            "aureliaworks_cloud_write",
+            "steamworks_cloud_write",
+            serde_json::json!(true),
+        ),
+        (
+            "aureliaworks_stats_writes",
+            "steamworks_stats_writes",
+            serde_json::json!(true),
+        ),
+        (
+            "aureliaworks_workshop_publish",
+            "steamworks_workshop_publish",
+            serde_json::json!(true),
+        ),
+    ];
+    let mut value = serde_json::to_value(LauncherConfig::default()).unwrap();
+    let obj = value.as_object_mut().unwrap();
+    for (new, old, v) in &renames {
+        assert!(obj.remove(*new).is_some(), "{new} serialized");
+        obj.insert((*old).into(), v.clone());
+    }
+    let c: LauncherConfig = serde_json::from_value(value).unwrap();
+    assert!(c.aureliaworks && c.aureliaworks_auto);
+    assert_eq!(
+        c.aureliaworks_steam_install,
+        crate::core::models::StandInSteamInstall::Host
+    );
+    assert!(!c.aureliaworks_ticket_check);
+    assert_eq!(c.aureliaworks_path.as_deref(), Some("/x"));
+    assert_eq!(c.aureliaworks_allowed_protected, vec![730]);
+    assert!(c.aureliaworks_cloud_write && c.aureliaworks_stats_writes);
+    assert!(c.aureliaworks_workshop_publish);
+    // Saved again: new names only.
+    let saved = serde_json::to_value(&c).unwrap();
+    assert!(saved.get("steamworks_client").is_none());
+    assert_eq!(saved["aureliaworks"], serde_json::json!(true));
+}

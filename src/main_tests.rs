@@ -336,21 +336,21 @@ fn relative_path_args_resolve_against_cwd() {
 async fn steamworks_path_resolves_against_the_client_cwd() {
     use crate::output::{OutputCtx, scoped};
     let path_of = |args: &[&str]| {
-        let mut argv = vec!["aurelia", "config", "steamworks-client"];
+        let mut argv = vec!["aurelia", "config", "aureliaworks"];
         argv.extend_from_slice(args);
         let mut cli = Cli::try_parse_from(argv).unwrap();
         absolutize_path_args(&mut cli.command);
         let Command::Config {
-            command: ConfigCommand::SteamworksClient { path, .. },
+            command: ConfigCommand::Aureliaworks { path, .. },
         } = cli.command
         else {
-            panic!("expected steamworks-client");
+            panic!("expected aureliaworks");
         };
         path
     };
     let (out_tx, _out_rx) = tokio::sync::mpsc::unbounded_channel();
     let (_in_tx, in_rx) = tokio::sync::mpsc::unbounded_channel();
-    let client = std::path::PathBuf::from("/home/u/src/aurelia-steamworks");
+    let client = std::path::PathBuf::from("/home/u/src/aureliaworks");
     let ctx = OutputCtx::new(out_tx, in_rx, Some(client.clone()));
     let (rel, abs, clear, home) = scoped(ctx, async {
         (
@@ -366,4 +366,31 @@ async fn steamworks_path_resolves_against_the_client_cwd() {
     assert_eq!(abs.as_deref(), Some("/opt/lib.so"));
     assert_eq!(clear.as_deref(), Some(""));
     assert_eq!(home.as_deref(), Some("~/lib.so"));
+}
+
+#[test]
+fn old_stand_in_command_still_parses_and_warns() {
+    let cli = Cli::try_parse_from(["aurelia", "config", "steamworks-client", "on"]).unwrap();
+    assert!(matches!(
+        cli.command,
+        Command::Config {
+            command: ConfigCommand::Aureliaworks { .. }
+        }
+    ));
+    let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert!(deprecated_command_used(&args(&[
+        "aurelia",
+        "config",
+        "steamworks-client"
+    ])));
+    assert!(!deprecated_command_used(&args(&[
+        "aurelia",
+        "config",
+        "aureliaworks"
+    ])));
+    assert!(!deprecated_command_used(&args(&[
+        "aurelia",
+        "play",
+        "steamworks-client"
+    ])));
 }

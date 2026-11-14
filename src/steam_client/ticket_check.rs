@@ -20,7 +20,7 @@ const ERESULT_OK: i32 = 1;
 
 /// Hint for the escape hatch.
 const ESCAPE: &str = "if the game runs without Steam auth, launch anyway with \
-    `aurelia play <app> --no-ticket-check` (or `aurelia config steamworks-client \
+    `aurelia play <app> --no-ticket-check` (or `aurelia config aureliaworks \
     --ticket-check off`)";
 
 /// Refusal text for one outcome.
