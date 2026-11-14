@@ -593,3 +593,21 @@ fn remote_files_only_when_enabled() {
         ]
     );
 }
+
+#[test]
+fn remote_files_skip_symlinks() {
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("remote");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("real.sav"), b"x").unwrap();
+    let outside = dir.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("secret"), b"s").unwrap();
+    symlink(outside.join("secret"), root.join("link.sav")).unwrap();
+    symlink(&outside, root.join("dir")).unwrap();
+    let found = CloudPathResolver::new(root.clone(), None)
+        .with_remote_uploads(true)
+        .remote_files();
+    assert_eq!(found, vec![("real.sav".to_string(), root.join("real.sav"))]);
+}

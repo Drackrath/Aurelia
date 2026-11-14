@@ -321,6 +321,8 @@ impl CloudPathResolver {
         }
         walkdir::WalkDir::new(&self.remote_root)
             .min_depth(1)
+            // Symlinks never upload.
+            .follow_links(false)
             .into_iter()
             .filter_map(std::result::Result::ok)
             .filter(|e| e.file_type().is_file())
