@@ -53,3 +53,13 @@ fn decode_rejects_garbage() {
     assert_eq!(decode_kv(&full[..full.len() - 2]), None);
     assert_eq!(decode_kv(b"\0RP\0\x09x\0\x08"), None);
 }
+
+#[test]
+fn prefix_reports_document_length() {
+    let doc = encode_kv(&pairs(&[("a", "b")]));
+    let mut two = doc.clone();
+    two.extend_from_slice(&doc);
+    let (first, used) = binary_kv::decode_prefix(&two).unwrap();
+    assert_eq!(used, doc.len());
+    assert_eq!(first, pairs(&[("a", "b")]));
+}

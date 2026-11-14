@@ -11,6 +11,7 @@ pub(crate) mod install;
 pub(crate) mod launch;
 pub(crate) mod library;
 pub(crate) mod market;
+pub(crate) mod microtxn;
 pub(crate) mod plugins;
 pub(crate) mod runtimes;
 pub(crate) mod scripts;

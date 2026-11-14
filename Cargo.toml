@@ -32,6 +32,7 @@ serde_json = "1"
 steam-vdf-parser = "0.1.1" # Needed for raw binary PICS VDF parsing (not supported by keyvalues-serde or steam-vent yet)
 steam-vent = { package = "aurelia-steam-vent", version = "0.7.2" } # Fork with per-session logon IDs
 steam-vent-proto = "=0.5.2" # proto is no longer re-exported as steam_vent::proto since 0.5; depend on it directly
+bytes = "1" # Raw message bodies for steam-vent decoders
 steam-vent-core = { package = "aurelia-steam-vent-core", version = "0.1.0" } # Name EncodableMessage for app-routed sends
 steam-vent-proto-common = "0.5.1" # RpcMethod/RpcMessage traits, to hand-wire the CloudConfigStore RPC (library collections) not shipped in steam-vent-proto
 steam-vent-chat = { package = "aurelia-steam-vent-chat", version = "0.8.0" } # Fork on aurelia-steam-vent 0.7

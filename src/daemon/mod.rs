@@ -237,6 +237,14 @@ impl Slot {
     }
 }
 
+/// Pass a purchase decision on.
+pub fn decide_microtxn(
+    order_id: u64,
+    authorized: bool,
+) -> anyhow::Result<aurelia::steam_client::microtxn::MicroTxnRequest> {
+    steamworks::microtxn_decide(&server::steamworks_router(), order_id, authorized)
+}
+
 /// Whether this process is the daemon (vs. a thin client / standalone run).
 pub fn in_daemon() -> bool {
     DAEMON.get().is_some()
@@ -347,7 +355,21 @@ impl DaemonState {
         let roster = Arc::clone(&self.roster);
         let handle = tokio::spawn(async move {
             let auth = client.run_auth_ticket_watcher();
-            let friends = client.run_friends_watcher(roster);
+            let purchases = client.run_microtxn_watcher(|request| {
+                steamworks::microtxn_arrived(&server::steamworks_router(), &request);
+            });
+            let friends = async {
+                tokio::select! {
+                    res = client.run_friends_watcher(roster) => res,
+                    res = purchases => {
+                        if let Err(e) = res {
+                            tracing::warn!("daemon: purchase watcher exited: {e:#}");
+                        }
+                        // Friends watcher decides the end.
+                        std::future::pending().await
+                    }
+                }
+            };
             tokio::pin!(auth, friends);
             // Auth subscribes before friends drain.
             let outcome = tokio::select! {
