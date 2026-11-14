@@ -547,6 +547,8 @@ mod install;
 mod market;
 pub mod microtxn;
 pub mod networking_cert;
+pub mod p2p_signaling;
+pub mod sdr_config;
 pub mod rich_presence;
 pub mod ticket_cache;
 pub use install::InstallOptions;
