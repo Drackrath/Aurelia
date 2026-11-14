@@ -251,3 +251,78 @@ fn real_bwrap_child_matches_its_launch() {
     let _ = child.kill();
     let _ = child.wait();
 }
+
+/// Launcher in its own namespace.
+fn spawner_parent(pid: u32) -> Option<u32> {
+    match pid {
+        10 => Some(9),
+        11 => Some(10),
+        9 | 50 | 60 => Some(1),
+        _ => None,
+    }
+}
+
+fn spawner_ns(pid: u32) -> Option<u64> {
+    match pid {
+        // Daemon host 500, launcher 100.
+        1 => Some(500),
+        9 | 10 | 60 => Some(100),
+        11 | 50 => Some(200),
+        _ => None,
+    }
+}
+
+#[test]
+fn launcher_namespace_never_counts() {
+    let launches = [launch(945_360, 10, None)];
+    let m = |peer| {
+        match_launch(
+            peer,
+            &launches,
+            spawner_parent,
+            spawner_ns,
+            fake_children,
+            Some(500),
+        )
+    };
+    // Sandbox and reparented game.
+    assert_eq!(m(11), Some(945_360));
+    assert_eq!(m(50), Some(945_360));
+    // Foreign process in the launcher's namespace.
+    assert_eq!(m(60), None);
+    let ns = launch_namespaces(
+        &launches[0],
+        &spawner_parent,
+        &spawner_ns,
+        &fake_children,
+        Some(500),
+    );
+    assert_eq!(ns, vec![200]);
+}
+
+#[test]
+fn recorded_host_namespace_is_dropped() {
+    let game = launch(1, 999, Some(500));
+    let ns = launch_namespaces(
+        &game,
+        &spawner_parent,
+        &spawner_ns,
+        &fake_children,
+        Some(500),
+    );
+    assert!(ns.is_empty());
+}
+
+#[test]
+fn reparented_survivor_keeps_its_namespace() {
+    // Record re-pointed at the game.
+    let game = launch(1, 50, None);
+    let ns = launch_namespaces(
+        &game,
+        &spawner_parent,
+        &spawner_ns,
+        &fake_children,
+        Some(500),
+    );
+    assert_eq!(ns, vec![200], "parent systemd differs");
+}

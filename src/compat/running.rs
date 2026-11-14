@@ -145,22 +145,38 @@ pub fn children_of(pid: u32) -> Vec<u32> {
         .collect()
 }
 
+/// Namespace `pid` created, if any.
+///
+/// Shared with its parent: inherited.
+pub fn own_namespace(
+    pid: u32,
+    parent: &impl Fn(u32) -> Option<u32>,
+    ns_of: &impl Fn(u32) -> Option<u64>,
+) -> Option<u64> {
+    let ns = ns_of(pid)?;
+    let inherited = parent(pid).and_then(ns_of) == Some(ns);
+    (!inherited).then_some(ns)
+}
+
 /// Namespaces a launch's processes use.
 ///
-/// Recorded one, recorded pid, children.
+/// Never the launcher's or host's.
 pub fn launch_namespaces(
     game: &RunningGame,
+    parent: &impl Fn(u32) -> Option<u32>,
     ns_of: &impl Fn(u32) -> Option<u64>,
     children: &impl Fn(u32) -> Vec<u32>,
+    host_ns: Option<u64>,
 ) -> Vec<u64> {
     let mut out: Vec<u64> = game.mnt_ns.into_iter().collect();
     for pid in std::iter::once(game.pid).chain(children(game.pid)) {
-        if let Some(ns) = ns_of(pid)
+        if let Some(ns) = own_namespace(pid, parent, ns_of)
             && !out.contains(&ns)
         {
             out.push(ns);
         }
     }
+    out.retain(|ns| Some(*ns) != host_ns);
     out
 }
 
@@ -182,7 +198,7 @@ pub fn match_launch(
     // Wine double-forks out of the tree.
     let peer_ns = ns_of(peer).filter(|ns| Some(*ns) != host_ns)?;
     stand_in()
-        .find(|g| launch_namespaces(g, &ns_of, &children).contains(&peer_ns))
+        .find(|g| launch_namespaces(g, &parent, &ns_of, &children, host_ns).contains(&peer_ns))
         .map(|g| g.app_id)
 }
 
@@ -202,14 +218,15 @@ pub fn stand_in_launch_of(pid: u32) -> Option<u32> {
 ///
 /// Polls briefly off-thread after spawn.
 pub fn capture_launch_namespace(app_id: u32, pid: u32) {
-    let Some(host) = host_mnt_ns() else { return };
+    let host = host_mnt_ns();
     std::thread::spawn(move || {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while std::time::Instant::now() < deadline {
-            let sandbox = std::iter::once(pid)
-                .chain(children_of(pid))
-                .filter_map(mnt_ns)
-                .find(|ns| *ns != host);
+            // Only a namespace bwrap created.
+            let sandbox = children_of(pid)
+                .into_iter()
+                .filter_map(|c| own_namespace(c, &parent_pid, &mnt_ns))
+                .find(|ns| Some(*ns) != host);
             if let Some(ns) = sandbox {
                 if let Some(mut game) = load(app_id).filter(|g| g.pid == pid) {
                     game.mnt_ns = Some(ns);
