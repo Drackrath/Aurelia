@@ -392,6 +392,7 @@ pub(crate) struct SteamworksClientArgs {
     pub cloud_write: Option<OnOffArg>,
     pub workshop_publish: Option<OnOffArg>,
     pub steam_install: Option<StandInInstallArg>,
+    pub ticket_check: Option<OnOffArg>,
     pub yes: bool,
 }
 
@@ -425,9 +426,11 @@ pub(crate) async fn cmd_config_steamworks_client(
         cloud_write,
         workshop_publish,
         steam_install,
+        ticket_check,
         ..
     } = args;
     let any = steam_install.is_some()
+        || ticket_check.is_some()
         || mode.is_some()
         || path.is_some()
         || stats_writes.is_some()
@@ -452,11 +455,14 @@ pub(crate) async fn cmd_config_steamworks_client(
         allow,
         disallow,
         cloud_write,
-        (workshop_publish, steam_install),
+        (workshop_publish, steam_install, ticket_check),
     ));
     let (config, changed) = view_or_set(
         change,
-        |c, (mode, path, writes, allow, disallow, cloud_write, (publish, install))| {
+        |c, (mode, path, writes, allow, disallow, cloud_write, (publish, install, check))| {
+            if let Some(check) = check {
+                c.steamworks_ticket_check = matches!(check, OnOffArg::On);
+            }
             if let Some(install) = install {
                 c.steamworks_steam_install = install.into();
             }
@@ -508,6 +514,7 @@ pub(crate) async fn cmd_config_steamworks_client(
             "steamworks_stats_writes": config.steamworks_stats_writes,
             "steamworks_workshop_publish": config.steamworks_workshop_publish,
             "steamworks_steam_install": config.steamworks_steam_install,
+            "steamworks_ticket_check": config.steamworks_ticket_check,
         }));
         return Ok(());
     }
@@ -521,6 +528,12 @@ pub(crate) async fn cmd_config_steamworks_client(
         "Steam install: {}",
         steam_install_label(config.steamworks_steam_install)
     );
+    let check = if config.steamworks_ticket_check {
+        "on (stand-in launches need an ownership ticket from Steam)"
+    } else {
+        "off"
+    };
+    cli_println!("Ticket check: {check}");
     if let Some(i) = &installed {
         let show = |p: &Option<std::path::PathBuf>| {
             p.as_ref()

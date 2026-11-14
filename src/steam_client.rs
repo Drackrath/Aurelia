@@ -547,6 +547,7 @@ pub mod global_stats;
 mod install;
 mod market;
 pub mod microtxn;
+pub mod ticket_check;
 pub mod networking_cert;
 pub mod p2p_signaling;
 pub mod sdr_config;

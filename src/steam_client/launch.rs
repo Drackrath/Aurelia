@@ -345,6 +345,18 @@ impl SteamClient {
         steam_enabled =
             crate::launch::stand_in_guard::wants_valve_steam(steam_enabled, true, stand_in);
 
+        // No ticket: refuse, don't hang.
+        let skip_check = user_config.is_some_and(|c| c.skip_ticket_check);
+        if stand_in && launcher_config.steamworks_ticket_check && !skip_check && !self.is_offline()
+        {
+            super::ticket_check::check_ticket(self, app.app_id, &app.name).await?;
+        } else if stand_in && skip_check {
+            tracing::warn!(
+                appid = app.app_id,
+                "stand-in: ticket check skipped (--no-ticket-check)"
+            );
+        }
+
         // With Steam integration the game talks to the host Steam client; make sure
         // one is running (start it silently if not) so Steamworks/Family-Sharing can
         // initialise. Best-effort.
