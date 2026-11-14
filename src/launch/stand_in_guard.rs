@@ -66,6 +66,16 @@ pub fn evaluate(app_id: u32, found: Vec<Protection>, config: &LauncherConfig) ->
     }
 }
 
+/// Logged when `--steam` is dropped.
+pub const REPLACES_STEAM_NOTE: &str = "stand-in: replaces Steam for this launch; not starting or \
+     bridging to Valve's Steam client (Family Sharing is answered by the daemon)";
+
+/// Start or bridge Valve's Steam?
+pub fn wants_valve_steam(steam_flag: bool, owned: bool, stand_in: bool) -> bool {
+    // Family Sharing implies `--steam`.
+    !stand_in && (steam_flag || !owned)
+}
+
 /// Whether this launch uses the stand-in.
 pub fn stand_in_applies(config: &LauncherConfig, app_id: u32, force_native_engine: bool) -> bool {
     if !cfg!(target_os = "linux") || !config.steamworks_client || force_native_engine {

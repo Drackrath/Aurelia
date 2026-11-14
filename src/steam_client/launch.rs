@@ -302,7 +302,8 @@ impl SteamClient {
         // A Family-Shared game (licensed to another account) can only be authorised
         // by a running Steam client, so it always needs Steam integration regardless
         // of the user's preference.
-        let steam_enabled = steam_enabled || !app.is_owned;
+        let mut steam_enabled =
+            crate::launch::stand_in_guard::wants_valve_steam(steam_enabled, app.is_owned, false);
 
         // Reject bad entries before starting Steam.
         let (launch_options, category_ids) =
@@ -315,6 +316,34 @@ impl SteamClient {
             }
             None => launch_options,
         };
+
+        let mut launcher_config = load_launcher_config().await?;
+        // Auto picks per launch.
+        let choice = crate::launch::stand_in_auto::apply(
+            &mut launcher_config,
+            crate::core::utils::is_steam_running,
+            crate::launch::stand_in_auto::installed,
+        );
+        if let Some(note) = choice.note() {
+            tracing::warn!("{note}");
+        }
+        guard_stand_in(
+            app,
+            &mut launcher_config,
+            category_ids.as_deref(),
+            force_native_engine,
+        )?;
+        // Stand-in replaces every Steam client.
+        let stand_in = crate::launch::stand_in_guard::stand_in_applies(
+            &launcher_config,
+            app.app_id,
+            force_native_engine,
+        );
+        if stand_in && steam_enabled {
+            tracing::warn!("{}", crate::launch::stand_in_guard::REPLACES_STEAM_NOTE);
+        }
+        steam_enabled =
+            crate::launch::stand_in_guard::wants_valve_steam(steam_enabled, true, stand_in);
 
         // With Steam integration the game talks to the host Steam client; make sure
         // one is running (start it silently if not) so Steamworks/Family-Sharing can
@@ -346,23 +375,6 @@ impl SteamClient {
             prefer_native_target,
         )
         .ok_or_else(|| anyhow!("no launch options"))?;
-
-        let mut launcher_config = load_launcher_config().await?;
-        // Auto picks per launch.
-        let choice = crate::launch::stand_in_auto::apply(
-            &mut launcher_config,
-            crate::core::utils::is_steam_running,
-            crate::launch::stand_in_auto::installed,
-        );
-        if let Some(note) = choice.note() {
-            tracing::warn!("{note}");
-        }
-        guard_stand_in(
-            app,
-            &mut launcher_config,
-            category_ids.as_deref(),
-            force_native_engine,
-        )?;
 
         // Proton/Wine only exists on Linux. On Windows, a Windows game runs natively, so
         // run its executable directly instead of routing through the Proton pipeline.

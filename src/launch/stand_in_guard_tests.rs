@@ -116,3 +116,24 @@ fn categories_missing_common_is_unknown() {
         None
     );
 }
+
+#[test]
+fn stand_in_drops_every_valve_steam_start() {
+    // flag, owned, stand-in -> start Steam
+    let rows = [
+        (false, true, false, false),
+        (true, true, false, true),
+        (false, false, false, true),
+        (true, true, true, false),
+        (false, false, true, false),
+        (true, false, true, false),
+    ];
+    for (flag, owned, stand_in, want) in rows {
+        assert_eq!(
+            wants_valve_steam(flag, owned, stand_in),
+            want,
+            "{flag} {owned} {stand_in}"
+        );
+    }
+    assert!(REPLACES_STEAM_NOTE.contains("stand-in"));
+}
