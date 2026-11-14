@@ -1047,3 +1047,60 @@ mod prefix_shim {
         );
     }
 }
+
+/// Stand-in checkout next to Aurelia.
+fn steamworks_checkout() -> Option<PathBuf> {
+    let env = std::env::var_os("AURELIA_STEAMWORKS_DIR").map(PathBuf::from);
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    // Main checkout or `.worktrees/<name>`.
+    let siblings = [
+        manifest.join("../aurelia-steamworks"),
+        manifest.join("../../aurelia-steamworks"),
+    ];
+    env.into_iter()
+        .chain(siblings)
+        .find(|dir| dir.join("src/log.rs").is_file())
+}
+
+/// Values of `pub const` strings.
+fn rust_consts(source: &str, module: &str) -> Option<Vec<(String, String)>> {
+    let start = source.find(&format!("pub mod {module} {{"))?;
+    let body = &source[start..];
+    let body = &body[..body.find("\n}")?];
+    let consts = body
+        .lines()
+        .filter_map(|l| {
+            let l = l.trim().strip_prefix("pub const ")?;
+            let (name, rest) = l.split_once(": &str = \"")?;
+            Some((name.to_string(), rest.strip_suffix("\";")?.to_string()))
+        })
+        .collect();
+    Some(consts)
+}
+
+#[test]
+fn markers_match_the_stand_in() {
+    let Some(dir) = steamworks_checkout() else {
+        eprintln!("aurelia-steamworks checkout not found; set AURELIA_STEAMWORKS_DIR");
+        return;
+    };
+    let source = std::fs::read_to_string(dir.join("src/log.rs")).unwrap();
+    let Some(theirs) = rust_consts(&source, "marker") else {
+        eprintln!("{} predates shared markers; skipped", dir.display());
+        return;
+    };
+    let ours = rust_consts(include_str!("steamworks_overlay.rs"), "marker").unwrap();
+    assert_eq!(ours, theirs, "stand-in log markers drifted");
+    // Real lines the stand-in emits.
+    let fixture = dir.join("tests/fixtures/stand-in-markers.log");
+    let summary = summarize_log(&std::fs::read_to_string(fixture).unwrap());
+    assert_eq!(summary.missing, ["SteamFoo001", "SteamBar002"]);
+    assert_eq!(summary.networking, ["SteamNetworkingSockets012"]);
+}
+
+#[test]
+fn const_reader_reads_markers() {
+    let ours = rust_consts(include_str!("steamworks_overlay.rs"), "marker").unwrap();
+    assert_eq!(ours.len(), 4);
+    assert_eq!(ours[0], ("PREFIX".to_string(), marker::PREFIX.to_string()));
+}

@@ -15,6 +15,18 @@ pub enum Choice {
     SteamRunning,
     /// Auto: nothing installed.
     NotInstalled,
+    /// Auto: library fails its hash check.
+    Unverified,
+}
+
+/// Installed stand-in library state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Library {
+    /// Installed with a matching hash.
+    Ready,
+    Missing,
+    /// Hash missing or different.
+    Unverified,
 }
 
 impl Choice {
@@ -33,6 +45,11 @@ impl Choice {
                 "Valve Steam: no stand-in library installed (aurelia config \
                  steamworks-client --path ...)",
             ),
+            Self::Unverified => Some(
+                "Valve Steam: the stand-in library has no recorded hash or changed since \
+                 it was installed, so this launch uses the normal way; reinstall it with \
+                 `aurelia config steamworks-client --path ...`",
+            ),
             Self::Off | Self::On => None,
         }
     }
@@ -42,7 +59,7 @@ impl Choice {
 pub fn decide(
     config: &LauncherConfig,
     steam_running: impl FnOnce() -> bool,
-    installed: impl FnOnce() -> bool,
+    installed: impl FnOnce() -> Library,
 ) -> Choice {
     if config.steamworks_client {
         return Choice::On;
@@ -51,11 +68,12 @@ pub fn decide(
         return Choice::Off;
     }
     if steam_running() {
-        Choice::SteamRunning
-    } else if installed() {
-        Choice::StandIn
-    } else {
-        Choice::NotInstalled
+        return Choice::SteamRunning;
+    }
+    match installed() {
+        Library::Ready => Choice::StandIn,
+        Library::Missing => Choice::NotInstalled,
+        Library::Unverified => Choice::Unverified,
     }
 }
 
@@ -63,7 +81,7 @@ pub fn decide(
 pub fn apply(
     config: &mut LauncherConfig,
     steam_running: impl FnOnce() -> bool,
-    installed: impl FnOnce(&LauncherConfig) -> bool,
+    installed: impl FnOnce(&LauncherConfig) -> Library,
 ) -> Choice {
     let snapshot = config.clone();
     let choice = decide(&snapshot, steam_running, || installed(&snapshot));
@@ -72,21 +90,32 @@ pub fn apply(
     choice
 }
 
-/// A 64-bit stand-in is installed.
+/// Stand-in libraries present and verified.
 #[cfg(target_os = "linux")]
-pub fn installed(config: &LauncherConfig) -> bool {
+pub fn installed(config: &LauncherConfig) -> Library {
     use crate::launch::steamworks_overlay::{default_client_dir, resolve_client_libs};
-    config
+    let libs = config
         .steamworks_client_path
         .as_deref()
         .map(std::path::PathBuf::from)
         .or_else(default_client_dir)
-        .is_some_and(|dir| resolve_client_libs(&dir).is_ok())
+        .and_then(|dir| resolve_client_libs(&dir).ok());
+    let Some(libs) = libs else {
+        return Library::Missing;
+    };
+    // Same check the launch makes.
+    for lib in std::iter::once(&libs.sdk64).chain(libs.sdk32.as_ref()) {
+        if let Err(e) = crate::launch::stand_in_lib::verify(lib) {
+            tracing::warn!("{e:#}");
+            return Library::Unverified;
+        }
+    }
+    Library::Ready
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn installed(_config: &LauncherConfig) -> bool {
-    false
+pub fn installed(_config: &LauncherConfig) -> Library {
+    Library::Missing
 }
 
 /// Note for refused games in auto.

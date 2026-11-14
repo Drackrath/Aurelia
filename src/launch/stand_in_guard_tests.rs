@@ -169,7 +169,11 @@ fn refused_auto_game_uses_the_compat_prefix() {
         steamworks_client_auto: true,
         ..LauncherConfig::default()
     };
-    crate::launch::stand_in_auto::apply(&mut cfg, || false, |_| true);
+    crate::launch::stand_in_auto::apply(
+        &mut cfg,
+        || false,
+        |_| crate::launch::stand_in_auto::Library::Ready,
+    );
     assert!(cfg.steamworks_client);
     let before = crate::core::utils::stand_in_save_prefix(&cfg, None, &compat, None, &master);
     assert_eq!(before, Some(master.clone()));

@@ -123,6 +123,7 @@ fn stand_in_install(
             .and_then(|c| c.stand_in_steam_install),
         crate::core::utils::host_steam_client_path(),
         &master,
+        crate::core::utils::is_steam_running,
     )
     .map_err(|msg| LaunchError::new(LaunchErrorKind::Dependency, msg))?;
     let layout = si::layout(&install, host_compat_data);
