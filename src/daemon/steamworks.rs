@@ -14,6 +14,7 @@ use tokio::task::JoinSet;
 
 use aurelia::steam_client::auth_ticket::{AuthSessionTicket, TicketAuthEvent, TicketKind};
 use aurelia::steam_client::playing::{self, GAMES, Launch};
+use aurelia::steam_client::remote_storage::{RemoteStorageInfo, remote_storage_info};
 use aurelia::steam_client::steamworks_info::{AppInstallInfo, DlcInfo};
 use aurelia::steam_client::{EncryptedTicketOutcome, SteamClient};
 
@@ -48,6 +49,14 @@ pub mod cmd {
     pub const DLC_LIST: u8 = 6;
     pub const APP_INFO: u8 = 7;
     pub const SESSION_INFO: u8 = 8;
+    /// Cloud folder and flags; 40-49 reserved.
+    pub const CLOUD_INFO: u8 = 40;
+}
+
+/// Cloud info flag bits.
+pub mod cloud_flag {
+    pub const ENABLED: u8 = 1;
+    pub const WRITABLE: u8 = 2;
 }
 
 /// Per-DLC flag bits.
@@ -269,6 +278,20 @@ pub fn session_info_body(server_time: u32, country: &str) -> Vec<u8> {
     out
 }
 
+/// Cloud info response body.
+pub fn cloud_info_body(info: &RemoteStorageInfo) -> Vec<u8> {
+    let mut flags = 0;
+    if info.enabled {
+        flags |= cloud_flag::ENABLED;
+    }
+    if info.writable {
+        flags |= cloud_flag::WRITABLE;
+    }
+    let mut out = vec![flags];
+    put_blob(&mut out, info.remote_dir.to_string_lossy().as_bytes());
+    out
+}
+
 /// What the daemon offers games.
 pub trait Backend: Send + Sync + 'static {
     /// SteamID when logged on.
@@ -306,6 +329,12 @@ pub trait Backend: Send + Sync + 'static {
     fn app_info(&self, app_id: u32) -> impl Future<Output = Result<AppInstallInfo>> + Send;
     /// Server time and logon country.
     fn session_info(&self) -> impl Future<Output = Result<(u32, String)>> + Send;
+    /// Cloud folder and switches.
+    fn cloud_info(
+        &self,
+        steam_id: u64,
+        app_id: u32,
+    ) -> impl Future<Output = Result<RemoteStorageInfo>> + Send;
 }
 
 /// Routes pushes to owning connections.
@@ -550,6 +579,7 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
             | cmd::DLC_LIST
             | cmd::APP_INFO
             | cmd::SESSION_INFO
+            | cmd::CLOUD_INFO
     ) {
         return (status::UNSUPPORTED, b"unknown command".to_vec());
     }
@@ -568,9 +598,9 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
             _ => (status::NO_SESSION, b"offline".to_vec()),
         };
     }
-    if steam_id.is_none() {
+    let Some(steam_id) = steam_id else {
         return (status::NO_SESSION, b"not logged in".to_vec());
-    }
+    };
     let mut f = Fields::new(&req.body);
     match req.command {
         cmd::OWNERSHIP_TICKET => match conn.backend.ownership_ticket(app_id).await {
@@ -594,6 +624,10 @@ async fn answer<B: Backend>(conn: &Conn<B>, req: &Request) -> (u8, Vec<u8>) {
         },
         cmd::SESSION_INFO => match conn.backend.session_info().await {
             Ok((time, country)) => (status::OK, session_info_body(time, &country)),
+            Err(e) => failed(&e),
+        },
+        cmd::CLOUD_INFO => match conn.backend.cloud_info(steam_id, app_id).await {
+            Ok(info) => (status::OK, cloud_info_body(&info)),
             Err(e) => failed(&e),
         },
         cmd::CREATE_AUTH_TICKET => {
@@ -738,6 +772,11 @@ impl Backend for DaemonBackend {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| u32::try_from(d.as_secs()).unwrap_or(u32::MAX));
         Ok((now, client.ip_country().unwrap_or_default()))
+    }
+
+    async fn cloud_info(&self, steam_id: u64, app_id: u32) -> Result<RemoteStorageInfo> {
+        let config = aurelia::core::config::LauncherConfig::load().await?;
+        remote_storage_info(&config, steam_id, app_id)
     }
 }
 

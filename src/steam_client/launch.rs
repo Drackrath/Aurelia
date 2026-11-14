@@ -435,7 +435,10 @@ impl SteamClient {
                 CloudPathResolver::new(remote_root, app.install_path.as_ref().map(PathBuf::from))
                     .with_wine_prefix(wine_prefix)
                     .with_root_overrides(&ufs.root_overrides, target_os)
-                    .with_steam_id(client.steam_id());
+                    .with_steam_id(client.steam_id())
+                    .with_remote_uploads(super::remote_storage::stand_in_cloud_writes(
+                        &launcher_config,
+                    ));
             tracing::info!(appid = app.app_id, "Syncing Cloud...");
             // Conflict-safe: a divergent save is left untouched (never clobbered),
             // so the user can resolve it via `cloud sync` / the Heroic chooser. The

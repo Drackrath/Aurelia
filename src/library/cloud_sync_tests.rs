@@ -572,3 +572,24 @@ async fn retry_fails_fast_on_client_error_and_recovers() {
     assert_eq!(res.unwrap(), 3);
     assert_eq!(calls, 3);
 }
+
+#[test]
+fn remote_files_only_when_enabled() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("remote");
+    std::fs::create_dir_all(root.join("saves")).unwrap();
+    std::fs::write(root.join("saves/slot1.sav"), b"x").unwrap();
+    std::fs::write(root.join("cfg.ini"), b"y").unwrap();
+    std::fs::write(root.join("cfg.ini.aurelia-tmp"), b"z").unwrap();
+    let resolver = CloudPathResolver::new(root.clone(), None);
+    assert!(resolver.remote_files().is_empty());
+    let mut found = resolver.with_remote_uploads(true).remote_files();
+    found.sort();
+    assert_eq!(
+        found,
+        vec![
+            ("cfg.ini".to_string(), root.join("cfg.ini")),
+            ("saves/slot1.sav".to_string(), root.join("saves/slot1.sav")),
+        ]
+    );
+}
