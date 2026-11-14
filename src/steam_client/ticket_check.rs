@@ -4,7 +4,7 @@ use super::*;
 use std::future::Future;
 
 /// Steam calls the check needs.
-pub trait TicketGate: Send + Sync {
+pub trait TicketGate: Clone + Send + Sync + 'static {
     /// Lender account for borrowed apps.
     fn lender(&self, app_id: u32) -> impl Future<Output = Result<Option<u32>>> + Send;
     /// Report playing; returns launch id.
@@ -43,17 +43,46 @@ pub fn refusal(app_id: u32, name: &str, lender: Option<u32>, why: &str) -> Strin
     )
 }
 
+/// Clears the report; drop spawns it.
+struct ClearOnDrop<G: TicketGate> {
+    gate: Option<G>,
+    id: u64,
+}
+
+impl<G: TicketGate> ClearOnDrop<G> {
+    async fn clear(mut self) {
+        if let Some(gate) = self.gate.take() {
+            gate.clear(self.id).await;
+        }
+    }
+}
+
+impl<G: TicketGate> Drop for ClearOnDrop<G> {
+    fn drop(&mut self) {
+        let Some(gate) = self.gate.take() else { return };
+        let id = self.id;
+        // Cancelled mid-check: clear later.
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                handle.spawn(async move { gate.clear(id).await });
+            }
+            Err(_) => tracing::warn!(id, "could not clear games played: no runtime"),
+        }
+    }
+}
+
 /// Report, ask for the ticket, clear.
 pub async fn check_ticket<G: TicketGate>(gate: &G, app_id: u32, name: &str) -> Result<()> {
     let lender = match gate.lender(app_id).await {
         Ok(lender) => lender,
-        Err(e) if e.is::<super::family_lock::LibraryInUse>() => {
-            bail!(refusal(app_id, name, None, &format!("{e:#}")));
-        }
-        Err(e) => {
-            tracing::warn!(app_id, "Family Sharing owner unknown: {e:#}");
-            None
-        }
+        Err(e) => match e.downcast_ref::<super::family_lock::LibraryInUse>() {
+            // Borrowed: name the lender.
+            Some(busy) => bail!(refusal(app_id, name, Some(busy.lender), &format!("{e:#}"))),
+            None => {
+                tracing::warn!(app_id, "Family Sharing owner unknown: {e:#}");
+                None
+            }
+        },
     };
     let id = gate
         .report(Launch {
@@ -62,9 +91,13 @@ pub async fn check_ticket<G: TicketGate>(gate: &G, app_id: u32, name: &str) -> R
             owner: lender,
         })
         .await?;
+    // Clears even if cancelled.
+    let guard = ClearOnDrop {
+        gate: Some(gate.clone()),
+        id,
+    };
     let reply = gate.ticket(app_id).await;
-    // Never leave the report behind.
-    gate.clear(id).await;
+    guard.clear().await;
     match reply {
         Ok((ERESULT_OK, ticket)) if !ticket.is_empty() => Ok(()),
         Ok((ERESULT_OK, _)) => bail!(refusal(app_id, name, lender, "empty ticket, EResult 1")),
