@@ -548,6 +548,7 @@ mod content;
 pub(crate) use content::ContentHost;
 mod launch;
 mod library;
+pub mod lobbies;
 #[cfg(test)]
 pub(crate) use library::category_ids_from_pics;
 mod manage;
