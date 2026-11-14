@@ -845,8 +845,8 @@ const AVATAR_WAIT: Duration = Duration::from_secs(3);
 
 /// What the daemon offers games.
 pub trait Backend: Send + Sync + 'static {
-    /// Peer runs under a stand-in launch.
-    fn stand_in_peer(&self, pid: Option<u32>) -> impl Future<Output = bool> + Send;
+    /// Peer is part of an `app_id` launch.
+    fn check_peer(&self, pid: Option<u32>, app_id: u32) -> impl Future<Output = PeerCheck> + Send;
     /// SteamID when logged on.
     fn steam_id(&self) -> impl Future<Output = Option<u64>> + Send;
     /// Report playing; returns launch id.
@@ -1079,6 +1079,25 @@ pub trait Backend: Send + Sync + 'static {
     fn networking_cert(&self, app_id: u32) -> impl Future<Output = Result<CertGrant>> + Send;
 }
 
+/// Peer check outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PeerCheck {
+    Ok,
+    /// No stand-in launch owns it.
+    NotStandIn,
+    /// Launched for this other app.
+    WrongApp(u32),
+}
+
+/// Launch app against the hello.
+pub fn peer_check(launched: Option<u32>, hello_app: u32) -> PeerCheck {
+    match launched {
+        None => PeerCheck::NotStandIn,
+        Some(app) if app != hello_app => PeerCheck::WrongApp(app),
+        Some(_) => PeerCheck::Ok,
+    }
+}
+
 /// Where a join goes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JoinTarget {
@@ -1282,15 +1301,33 @@ where
         }
     };
     // Only processes Aurelia launched.
-    if !backend.stand_in_peer(peer_pid).await {
-        tracing::warn!(
-            app_id = hello.app_id,
-            ?peer_pid,
-            "steamworks: refused a connection that is not part of a stand-in launch"
-        );
-        let msg = "not a stand-in launch started by Aurelia".to_string();
-        send(&writer, proto::C_SW_WELCOME, &refuse(msg)).await;
-        return Ok(());
+    match backend.check_peer(peer_pid, hello.app_id).await {
+        PeerCheck::NotStandIn => {
+            tracing::warn!(
+                app_id = hello.app_id,
+                ?peer_pid,
+                "steamworks: refused a connection that is not part of a stand-in launch"
+            );
+            let msg = "not a stand-in launch started by Aurelia".to_string();
+            send(&writer, proto::C_SW_WELCOME, &refuse(msg)).await;
+            return Ok(());
+        }
+        // Hello must name the launched app.
+        PeerCheck::WrongApp(launched) => {
+            tracing::warn!(
+                app_id = hello.app_id,
+                launched,
+                ?peer_pid,
+                "steamworks: refused a connection whose app id differs from its launch"
+            );
+            let msg = format!(
+                "app {} does not match the launched app {launched}",
+                hello.app_id
+            );
+            send(&writer, proto::C_SW_WELCOME, &refuse(msg)).await;
+            return Ok(());
+        }
+        PeerCheck::Ok => {}
     }
     let (steam_id, offline) = match backend.steam_id().await {
         Some(id) => (id, None),
@@ -2046,9 +2083,11 @@ fn not_logged_in() -> anyhow::Error {
 }
 
 impl Backend for DaemonBackend {
-    async fn stand_in_peer(&self, pid: Option<u32>) -> bool {
-        pid.and_then(aurelia::compat::running::stand_in_launch_of)
-            .is_some()
+    async fn check_peer(&self, pid: Option<u32>, app_id: u32) -> PeerCheck {
+        peer_check(
+            pid.and_then(aurelia::compat::running::stand_in_launch_of),
+            app_id,
+        )
     }
 
     async fn steam_id(&self) -> Option<u64> {

@@ -42,6 +42,8 @@ struct Fake {
     certs: Mutex<Vec<u32>>,
     /// Peer is not a stand-in launch.
     foreign_peer: bool,
+    /// Launch app, else the hello's.
+    launched_app: Option<u32>,
 }
 
 const SID: u64 = 76_561_197_960_287_930;
@@ -58,8 +60,12 @@ impl Fake {
 }
 
 impl Backend for Fake {
-    async fn stand_in_peer(&self, _pid: Option<u32>) -> bool {
-        !self.foreign_peer
+    async fn check_peer(&self, _pid: Option<u32>, app_id: u32) -> PeerCheck {
+        if self.foreign_peer {
+            return PeerCheck::NotStandIn;
+        }
+        // Default: launched as asked.
+        peer_check(Some(self.launched_app.unwrap_or(app_id)), app_id)
     }
 
     async fn steam_id(&self) -> Option<u64> {
@@ -2693,4 +2699,31 @@ async fn peers_outside_stand_in_launches_are_refused() {
     );
     // Nothing reported to Steam.
     assert!(fake.started.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn hello_for_another_app_is_refused() {
+    let fake = Arc::new(Fake {
+        steam_id: Mutex::new(Some(SID)),
+        launched_app: Some(570),
+        ..Fake::default()
+    });
+    let router = Arc::new(Router::default());
+    let (_game, welcome) = Game::connect(fake.clone(), router, hello(480), Some(4242)).await;
+    assert_eq!(
+        welcome,
+        welcome_payload(
+            welcome::REFUSED,
+            0,
+            "app 480 does not match the launched app 570"
+        )
+    );
+    assert!(fake.started.lock().unwrap().is_empty());
+}
+
+#[test]
+fn peer_check_table() {
+    assert_eq!(peer_check(None, 480), PeerCheck::NotStandIn);
+    assert_eq!(peer_check(Some(570), 480), PeerCheck::WrongApp(570));
+    assert_eq!(peer_check(Some(480), 480), PeerCheck::Ok);
 }

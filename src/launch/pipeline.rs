@@ -114,6 +114,8 @@ pub struct PipelineContext {
 
     /// Stand-in log for this launch.
     pub steamworks_log: Option<std::path::PathBuf>,
+    /// Command wrapped in the stand-in overlay.
+    pub stand_in: bool,
     pub session: Option<LaunchSession>,
     pub logger: Option<EventLogger>,
     pub warnings: Vec<CompatibilityWarning>,
@@ -230,6 +232,7 @@ impl PipelineContext {
             child: None,
             session: None,
             steamworks_log: None,
+            stand_in: false,
             logger: None,
             warnings: Vec::new(),
             graphics_stack: GraphicsStackInfo::default(),
