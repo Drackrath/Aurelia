@@ -18,6 +18,7 @@ struct Fake {
     cached: HashMap<u32, Vec<u8>>,
     left: Mutex<Vec<u64>>,
     lobby_tx: Mutex<Option<mpsc::UnboundedSender<LobbyEvent>>>,
+    persona_tx: Mutex<Option<mpsc::UnboundedSender<PersonaEvent>>>,
     lobby_calls: Mutex<Vec<String>>,
     writes: bool,
     stored: Mutex<Vec<(u32, u32, bool, StatChanges)>>,
@@ -265,6 +266,12 @@ impl Backend for Fake {
             .unwrap()
             .push(format!("request {lobby}"));
         Ok(())
+    }
+
+    async fn persona_events(&self) -> Option<mpsc::UnboundedReceiver<PersonaEvent>> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        *self.persona_tx.lock().unwrap() = Some(tx);
+        Some(rx)
     }
 
     async fn lobby_events(&self, _app: u32) -> Option<mpsc::UnboundedReceiver<LobbyEvent>> {
@@ -1730,6 +1737,46 @@ async fn avatar_round_trip_and_failures() {
     game.hang_up().await;
 }
 
+#[test]
+fn persona_push_payloads() {
+    let event = PersonaEvent {
+        steam_id: 7,
+        flags: change::NAME | change::RICH_PRESENCE,
+        app_id: 480,
+    };
+    let payloads = persona_payloads(&event);
+    assert_eq!(
+        payloads,
+        vec![
+            vec![100, 7, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
+            vec![101, 7, 0, 0, 0, 0, 0, 0, 0, 0xE0, 1, 0, 0],
+        ]
+    );
+    let only_rp = PersonaEvent {
+        flags: change::RICH_PRESENCE,
+        ..event
+    };
+    assert_eq!(persona_payloads(&only_rp).len(), 1);
+}
+
+#[tokio::test]
+async fn persona_changes_reach_the_game() {
+    let fake = Fake::logged_in();
+    let router = Arc::new(Router::default());
+    let (mut game, _) = Game::connect(fake.clone(), router, hello(480), None).await;
+    let tx = fake.persona_tx.lock().unwrap().clone().unwrap();
+    let event = PersonaEvent {
+        steam_id: SID + 1,
+        flags: change::STATUS,
+        app_id: 0,
+    };
+    tx.send(event.clone()).unwrap();
+    let (kind, payload) = game.next().await;
+    assert_eq!(kind, proto::C_SW_PUSH);
+    assert_eq!(vec![payload], persona_payloads(&event));
+    game.hang_up().await;
+}
+
 #[tokio::test]
 async fn offline_avatars_fail_closed() {
     let fake = offline(&[(480, vec![0xCC])]);
@@ -1738,5 +1785,14 @@ async fn offline_avatars_fail_closed() {
     let mut body = (SID + 1).to_le_bytes().to_vec();
     body.push(0);
     assert_eq!(game.ask(1, cmd::AVATAR, &body).await.0, status::NO_SESSION);
+    game.hang_up().await;
+}
+
+#[tokio::test]
+async fn offline_games_get_no_persona_pushes() {
+    let fake = offline(&[(480, vec![0xCC])]);
+    let router = Arc::new(Router::default());
+    let (game, _) = Game::connect(fake.clone(), router, hello(480), None).await;
+    assert!(fake.persona_tx.lock().unwrap().is_none());
     game.hang_up().await;
 }
