@@ -350,11 +350,14 @@ impl SteamClient {
         if stand_in && launcher_config.steamworks_ticket_check && !skip_check && !self.is_offline()
         {
             super::ticket_check::check_ticket(self, app.app_id, &app.name).await?;
-        } else if stand_in && skip_check {
-            tracing::warn!(
-                appid = app.app_id,
-                "stand-in: ticket check skipped (--no-ticket-check)"
-            );
+        } else if stand_in && !self.is_offline() {
+            // Say which switch skipped it.
+            let why = if skip_check {
+                "--no-ticket-check"
+            } else {
+                "aurelia config steamworks-client --ticket-check off"
+            };
+            tracing::warn!(appid = app.app_id, "stand-in: ticket check skipped ({why})");
         }
 
         // With Steam integration the game talks to the host Steam client; make sure
