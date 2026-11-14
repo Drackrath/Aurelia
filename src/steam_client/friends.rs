@@ -10,7 +10,10 @@
 use super::*;
 use std::sync::RwLock;
 use steam_vent::ReceivableMessage;
-use steam_vent_proto::steammessages_clientserver_2::CMsgClientPlayingSessionState;
+use steam_vent_proto::steammessages_clientserver_2::{
+    CMsgClientPlayingSessionState, CMsgClientSharedLibraryLockStatus,
+    CMsgClientSharedLibraryStopPlaying,
+};
 use steam_vent_proto::steammessages_clientserver_friends::{
     CMsgClientAddFriend, CMsgClientAddFriendResponse, CMsgClientChangeStatus,
     CMsgClientFriendsList, CMsgClientPersonaState, CMsgClientRemoveFriend,
@@ -245,6 +248,11 @@ fn drain_unprocessed_into(connection: &Connection, roster: &mut Roster) {
             if let Ok(msg) = raw.into_message::<CMsgClientPlayingSessionState>() {
                 super::chat::record_playing_session(connection.session_id(), &msg);
             }
+        } else if raw.kind == <CMsgClientSharedLibraryLockStatus as ReceivableMessage>::KIND {
+            // Family Sharing locks.
+            if let Ok(msg) = raw.into_message::<CMsgClientSharedLibraryLockStatus>() {
+                super::family_lock::record_lock_status(connection.session_id(), &msg);
+            }
         } else {
             super::auth_ticket::absorb_unprocessed(connection.session_id(), raw);
         }
@@ -380,6 +388,8 @@ impl SteamClient {
         let mut friends_stream = connection.on::<CMsgClientFriendsList>();
         let mut persona_stream = connection.on::<CMsgClientPersonaState>();
         let mut playing_stream = connection.on::<CMsgClientPlayingSessionState>();
+        let mut lock_stream = connection.on::<CMsgClientSharedLibraryLockStatus>();
+        let mut stop_stream = connection.on::<CMsgClientSharedLibraryStopPlaying>();
         let mut logoff_stream = connection.on::<CMsgClientLoggedOff>();
 
         // Announcing here signs out other clients.
@@ -447,6 +457,12 @@ impl SteamClient {
                 }
                 Some(Ok(state)) = playing_stream.next() => {
                     super::chat::record_playing_session(connection.session_id(), &state);
+                }
+                Some(Ok(locks)) = lock_stream.next() => {
+                    super::family_lock::record_lock_status(connection.session_id(), &locks);
+                }
+                Some(Ok(stop)) = stop_stream.next() => {
+                    super::family_lock::note_stop_playing(&stop);
                 }
                 state = persona_stream.next() => {
                     match state {

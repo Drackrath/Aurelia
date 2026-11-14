@@ -21,6 +21,8 @@ pub struct Launch {
     pub app_id: u32,
     /// Game process; None means caller-managed.
     pub pid: Option<u32>,
+    /// Lender account for borrowed apps.
+    pub owner: Option<u32>,
 }
 
 /// Session that reports games played.
@@ -86,6 +88,10 @@ pub fn games_played_message(launches: &[Launch]) -> CMsgClientGamesPlayed {
         game.set_game_id(u64::from(launch.app_id));
         if let Some(pid) = launch.pid {
             game.set_process_id(pid);
+        }
+        // Family Sharing: name the lender.
+        if let Some(owner) = launch.owner {
+            game.set_owner_id(owner);
         }
         msg.games_played.push(game);
     }
