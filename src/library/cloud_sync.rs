@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use sha1::{Digest, Sha1};
 use std::collections::{BTreeSet, HashMap};
@@ -399,8 +399,23 @@ impl CloudPathResolver {
                 })?;
                 Ok(join_relative(&base, &self.transform_path(token, rest)))
             }
-            None => Ok(join_relative(&self.remote_root, filename)),
+            None => {
+                let path = join_relative(&self.remote_root, filename);
+                // The remote folder never follows links.
+                if let Some(link) = first_link_below(&self.remote_root, &path) {
+                    bail!(
+                        "Cloud file '{filename}' refused: {} is a symlink",
+                        link.display()
+                    );
+                }
+                Ok(path)
+            }
         }
+    }
+
+    /// `path` lies in the remote folder.
+    pub fn is_remote(&self, path: &Path) -> bool {
+        path.starts_with(&self.remote_root)
     }
 
     /// Resolve a bare root token (e.g. `WinAppDataLocalLow`) to its OS directory, or
@@ -518,6 +533,38 @@ fn normalize_rel(rel: &str) -> String {
 
 /// Join a `/`- or `\`-separated cloud-relative path onto `base`, skipping empty,
 /// `.` and `..` components so a crafted filename can't escape the base directory.
+/// First symlink from `root` to `path`.
+pub fn first_link_below(root: &Path, path: &Path) -> Option<PathBuf> {
+    let rel = path.strip_prefix(root).ok()?;
+    let mut current = root.to_path_buf();
+    for part in rel.components() {
+        current.push(part);
+        if std::fs::symlink_metadata(&current).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Some(current);
+        }
+    }
+    None
+}
+
+/// Write via a new temp file.
+pub fn write_fresh(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".aurelia-tmp");
+    let tmp = PathBuf::from(tmp);
+    let _ = std::fs::remove_file(&tmp);
+    let result = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
+        .and_then(|mut f| f.write_all(data))
+        .and_then(|()| std::fs::rename(&tmp, path));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
 fn join_relative(base: &Path, rel: &str) -> PathBuf {
     let mut out = base.to_path_buf();
     for comp in rel.split(['/', '\\']) {
@@ -973,8 +1020,17 @@ impl CloudClient {
                         continue; // a pending down-change we're not applying now
                     }
                     let Some(c) = cloud else { continue };
-                    self.apply_download(appid, &name, &local_path, c, &mut baseline, &mut outcome)
-                        .await;
+                    let strict = resolver.is_remote(&local_path);
+                    self.apply_download(
+                        appid,
+                        &name,
+                        &local_path,
+                        strict,
+                        c,
+                        &mut baseline,
+                        &mut outcome,
+                    )
+                    .await;
                 }
                 PlannedAction::Upload => {
                     if direction == SyncDirection::Down {
@@ -1006,6 +1062,7 @@ impl CloudClient {
                                 appid,
                                 &name,
                                 &local_path,
+                                resolver.is_remote(&local_path),
                                 c,
                                 &mut baseline,
                                 &mut outcome,
@@ -1035,16 +1092,21 @@ impl CloudClient {
     /// Download one cloud file to `local_path` and stamp its mtime to the cloud's,
     /// so the next sync sees the two as in step rather than locally modified.
     /// Download and record baseline/outcome.
+    #[allow(clippy::too_many_arguments)]
     async fn apply_download(
         &self,
         appid: u32,
         name: &str,
         local_path: &Path,
+        strict: bool,
         cloud: &CloudFileEntry,
         baseline: &mut SyncBaseline,
         outcome: &mut SyncOutcome,
     ) {
-        match self.download_to(appid, name, local_path, cloud).await {
+        match self
+            .download_to(appid, name, local_path, strict, cloud)
+            .await
+        {
             Ok(()) => {
                 baseline
                     .files
@@ -1082,6 +1144,7 @@ impl CloudClient {
         appid: u32,
         filename: &str,
         local_path: &Path,
+        strict: bool,
         cloud: &CloudFileEntry,
     ) -> Result<()> {
         if let Some(parent) = local_path.parent() {
@@ -1097,9 +1160,13 @@ impl CloudClient {
         })
         .await
         .with_context(|| format!("failed downloading cloud file '{filename}' for app {appid}"))?;
-        tokio::fs::write(local_path, &body)
-            .await
-            .with_context(|| format!("failed writing {}", local_path.display()))?;
+        let written = if strict {
+            // Fresh temp, rename over links.
+            write_fresh(local_path, &body)
+        } else {
+            tokio::fs::write(local_path, &body).await
+        };
+        written.with_context(|| format!("failed writing {}", local_path.display()))?;
         set_file_mtime_secs(local_path, cloud.timestamp);
         Ok(())
     }
