@@ -44,7 +44,11 @@ impl PlayingLink for FakeLink {
 }
 
 fn launch(app_id: u32) -> Launch {
-    Launch { app_id, pid: None }
+    Launch {
+        app_id,
+        pid: None,
+        owner: None,
+    }
 }
 
 fn leaked() -> &'static Mutex<PlayingRegistry> {
@@ -56,6 +60,7 @@ fn message_carries_app_and_pid() {
     let msg = games_played_message(&[Launch {
         app_id: 440,
         pid: Some(1234),
+        owner: None,
     }]);
     assert_eq!(msg.client_os_type(), CLIENT_OS_TYPE);
     assert_eq!(msg.games_played.len(), 1);
@@ -203,6 +208,7 @@ async fn start_launch_refuses_dead_pid() {
     let dead = Launch {
         app_id: 440,
         pid: Some(u32::MAX - 1),
+        owner: None,
     };
     let res = start_launch(reg, dead, move || {
         let l = fake.clone();
@@ -227,6 +233,7 @@ async fn killed_game_clears_games_played() {
     let game = Launch {
         app_id: 440,
         pid: Some(pid),
+        owner: None,
     };
     start_launch_polling(
         reg,
@@ -268,4 +275,18 @@ fn zombie_counts_as_exited() {
     std::thread::sleep(Duration::from_millis(200));
     assert!(process_identity(pid).is_none());
     child.wait().unwrap();
+}
+
+#[test]
+fn borrowed_launch_names_the_lender() {
+    let msg = games_played_message(&[
+        Launch {
+            app_id: 945_360,
+            pid: None,
+            owner: Some(1_234),
+        },
+        launch(440),
+    ]);
+    assert_eq!(msg.games_played[0].owner_id(), 1_234);
+    assert!(!msg.games_played[1].has_owner_id(), "own games: no owner");
 }

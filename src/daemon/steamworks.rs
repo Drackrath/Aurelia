@@ -2110,7 +2110,26 @@ impl Backend for DaemonBackend {
     }
 
     async fn start(&self, app_id: u32, pid: Option<u32>) -> Result<u64> {
-        playing::start_launch(&GAMES, Launch { app_id, pid }, authed_client).await
+        // Borrowed apps report the lender.
+        let owner = match authed_client().await {
+            Some(client) => match client.lender_for(app_id).await {
+                Ok(owner) => owner,
+                // Fail closed: lender's library busy.
+                Err(e) if e.is::<aurelia::steam_client::family_lock::LibraryInUse>() => {
+                    return Err(e);
+                }
+                Err(e) => {
+                    tracing::warn!(app_id, "steamworks: Family Sharing owner unknown: {e:#}");
+                    None
+                }
+            },
+            None => None,
+        };
+        if let Some(lender) = owner {
+            tracing::info!(app_id, lender, "steamworks: reporting a borrowed game");
+        }
+        let launch = Launch { app_id, pid, owner };
+        playing::start_launch(&GAMES, launch, authed_client).await
     }
 
     async fn stop(&self, launch: u64) {

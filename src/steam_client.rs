@@ -542,6 +542,7 @@ mod client;
 pub use client::CodeReader;
 pub mod binary_kv;
 mod friends;
+pub mod family_lock;
 pub mod global_stats;
 mod install;
 mod market;
