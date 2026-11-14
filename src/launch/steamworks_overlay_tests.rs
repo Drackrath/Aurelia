@@ -24,6 +24,7 @@ fn plan(home: &Path, sdk32: Option<PathBuf>, mirror: Vec<MirrorEntry>) -> Overla
         account_id: Some(7),
         daemon_socket: None,
         log_path: None,
+        dll_binds: Vec::new(),
     }
 }
 
@@ -411,6 +412,7 @@ fn overlay_runs_under_bwrap_without_touching_real_dir() {
         account_id: None,
         daemon_socket: Some(socket.clone()),
         log_path: Some(dir.path().join("logs/steamworks.log")),
+        dll_binds: Vec::new(),
     };
     let script = "s=\"$HOME/.steam\"; cat \"$s/sdk64/steamclient.so\"; echo; \
                   [ \"$(cat \"$s/steam.pid\")\" = \"$$\" ] && echo pid-ok; \
@@ -633,5 +635,165 @@ mod stand_in_mode {
         let neutral = overrides(false);
         assert!(neutral.contains("lsteamclient="), "{neutral}");
         assert!(neutral.contains("steamclient64=n"), "{neutral}");
+    }
+}
+
+mod prefix_shim {
+    use super::*;
+
+    const STEAM: &str = "drive_c/Program Files (x86)/Steam";
+
+    #[test]
+    fn prefix_follows_compat_data_then_wineprefix() {
+        let dir = tempfile::tempdir().unwrap();
+        let compat = dir.path().join("compat");
+        std::fs::create_dir_all(compat.join("pfx")).unwrap();
+        let mut env = HashMap::new();
+        env.insert(
+            "WINEPREFIX".into(),
+            dir.path().to_string_lossy().into_owned(),
+        );
+        assert_eq!(game_prefix(&env), Some(dir.path().to_path_buf()));
+        env.insert(
+            "STEAM_COMPAT_DATA_PATH".into(),
+            compat.to_string_lossy().into_owned(),
+        );
+        assert_eq!(game_prefix(&env), Some(compat.join("pfx")));
+        assert_eq!(game_prefix(&HashMap::new()), None);
+    }
+
+    #[test]
+    fn runner_root_from_protonpath_or_argv() {
+        let mut s = spec(
+            "/usr/bin/python3",
+            &["/opt/Proton/proton", "run", "game.exe"],
+        );
+        assert_eq!(runner_root(&s), Some(PathBuf::from("/opt/Proton")));
+        s.env.insert("PROTONPATH".into(), "/opt/GE".into());
+        assert_eq!(runner_root(&s), Some(PathBuf::from("/opt/GE")));
+        assert_eq!(runner_root(&spec("/usr/bin/wine", &["game.exe"])), None);
+    }
+
+    #[test]
+    fn valve_legacycompat_wins_over_lsteamclient() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = dir.path().join("Steam");
+        let runner = dir.path().join("Proton");
+        let builtin64 = runner.join("files/lib/wine/x86_64-windows/lsteamclient.dll");
+        let builtin32 = runner.join("files/lib/wine/i386-windows/lsteamclient.dll");
+        write(&builtin64, "b64");
+        write(&builtin32, "b32");
+        let [s64, s32] = shim_sources(Some(&host), Some(&runner));
+        assert_eq!(
+            (s64.unwrap(), s32.unwrap()),
+            (
+                builtin64.canonicalize().unwrap(),
+                builtin32.canonicalize().unwrap()
+            )
+        );
+        let valve64 = host.join("steamclient64.dll");
+        write(&valve64, "valve64");
+        std::fs::create_dir_all(host.join("legacycompat")).unwrap();
+        std::os::unix::fs::symlink(
+            "../steamclient64.dll",
+            host.join("legacycompat/steamclient64.dll"),
+        )
+        .unwrap();
+        let [s64, s32] = shim_sources(Some(&host), Some(&runner));
+        assert_eq!(s64.unwrap(), valve64.canonicalize().unwrap());
+        assert_eq!(s32.unwrap(), builtin32.canonicalize().unwrap());
+        assert_eq!(shim_sources(None, None), [None, None]);
+    }
+
+    #[test]
+    fn only_existing_prefix_dlls_are_shadowed() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefix = dir.path().join("pfx");
+        let steam = prefix.join(STEAM);
+        write(&steam.join("steamclient64.dll"), "wine-steam 64");
+        write(&steam.join("steamclient64_aurelia.dll"), "aurelia copy");
+        let shim64 = dir.path().join("shim64.dll");
+        let shim32 = dir.path().join("shim32.dll");
+        write(&shim64, "s64");
+        write(&shim32, "s32");
+        let binds = prefix_dll_binds(&prefix, &[Some(shim64.clone()), Some(shim32.clone())]);
+        assert_eq!(
+            binds,
+            vec![
+                (shim64.clone(), steam.join("steamclient64.dll")),
+                (shim64.clone(), steam.join("steamclient64_aurelia.dll")),
+            ]
+        );
+        // No 32-bit file: nothing created.
+        assert!(!steam.join("steamclient.dll").exists());
+        // Already the shim: no bind.
+        let same = prefix_dll_binds(&prefix, &[Some(steam.join("steamclient64.dll")), None]);
+        assert_eq!(
+            same,
+            vec![(
+                steam.join("steamclient64.dll"),
+                steam.join("steamclient64_aurelia.dll")
+            )]
+        );
+        assert!(
+            prefix_dll_binds(&dir.path().join("none"), &[Some(shim64), Some(shim32)]).is_empty()
+        );
+    }
+
+    #[test]
+    fn binds_become_read_only_mounts() {
+        let mut p = plan(Path::new("/home/u"), None, Vec::new());
+        p.dll_binds = vec![(
+            PathBuf::from("/s/shim.dll"),
+            PathBuf::from("/p/Steam/steamclient64.dll"),
+        )];
+        let args = bwrap_args(&p, None);
+        assert!(
+            find_seq(
+                &args,
+                &["--ro-bind", "/s/shim.dll", "/p/Steam/steamclient64.dll"]
+            )
+            .is_some()
+        );
+    }
+
+    #[test]
+    fn shim_is_mounted_without_touching_the_prefix() {
+        let Some(bwrap) = bwrap_usable() else {
+            eprintln!("skipping: bwrap unusable here");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(home.join(".steam")).unwrap();
+        let so = dir.path().join("stand-in.so");
+        write(&so, "stand-in");
+        let target = dir.path().join("pfx").join(STEAM).join("steamclient64.dll");
+        write(&target, "valve in-wine steam");
+        let shim = dir.path().join("shim.dll");
+        write(&shim, "proton shim");
+        let mut p = plan(&home, None, Vec::new());
+        p.bwrap = bwrap;
+        p.libs.sdk64 = so;
+        p.dll_binds = vec![(shim, target.clone())];
+        let script = format!("cat '{}'", target.display());
+        let mut original = spec("/bin/sh", &["-c", &script]);
+        original.cwd = Some(dir.path().to_path_buf());
+        original
+            .env
+            .insert("HOME".into(), home.to_string_lossy().into());
+        let wrapped = wrap_command(&original, &p);
+        let out = Command::new(&wrapped.program)
+            .args(&wrapped.args)
+            .envs(&wrapped.env)
+            .current_dir(wrapped.cwd.as_ref().unwrap())
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), "proton shim");
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap(),
+            "valve in-wine steam"
+        );
     }
 }
