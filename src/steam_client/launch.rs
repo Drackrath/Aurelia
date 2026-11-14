@@ -347,10 +347,19 @@ impl SteamClient {
         )
         .ok_or_else(|| anyhow!("no launch options"))?;
 
-        let launcher_config = load_launcher_config().await?;
+        let mut launcher_config = load_launcher_config().await?;
+        // Auto picks per launch.
+        let choice = crate::launch::stand_in_auto::apply(
+            &mut launcher_config,
+            crate::core::utils::is_steam_running,
+            crate::launch::stand_in_auto::installed,
+        );
+        if let Some(note) = choice.note() {
+            tracing::warn!("{note}");
+        }
         guard_stand_in(
             app,
-            &launcher_config,
+            &mut launcher_config,
             category_ids.as_deref(),
             force_native_engine,
         )?;
@@ -795,7 +804,7 @@ impl SteamClient {
 /// Refuse protected games in stand-in mode.
 fn guard_stand_in(
     app: &LibraryGame,
-    config: &crate::core::config::LauncherConfig,
+    config: &mut crate::core::config::LauncherConfig,
     category_ids: Option<&[u32]>,
     force_native_engine: bool,
 ) -> Result<()> {
@@ -813,6 +822,15 @@ fn guard_stand_in(
         Verdict::Clear => Ok(()),
         Verdict::Allowed(found) => {
             tracing::warn!("{}", guard::allowed_warning(app.app_id, &app.name, &found));
+            Ok(())
+        }
+        // Auto: normal launch instead.
+        Verdict::Refused(found) if config.steamworks_client_auto => {
+            config.steamworks_client = false;
+            let labels = guard::labels(&found);
+            let note =
+                crate::launch::stand_in_auto::refused_fallback_note(app.app_id, &app.name, &labels);
+            tracing::warn!("{note}");
             Ok(())
         }
         Verdict::Refused(found) => Err(crate::core::error::TypedError::new(

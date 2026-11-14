@@ -665,15 +665,20 @@ pub(crate) enum ConfigCommand {
         is Aurelia's stand-in, which answers Steamworks calls through the daemon. \
         The real `~/.steam` is never written. Experimental.")]
     SteamworksClient {
-        /// `on` or `off`; omit to print.
-        mode: Option<OnOffArg>,
-        /// Library file or sdk64/sdk32 directory.
+        /// on, off or auto; omit prints.
+        mode: Option<StandInModeArg>,
+        /// Install a built stand-in library.
         #[arg(
             long,
             value_name = "PATH",
-            long_help = "The stand-in libsteamclient.so, or a directory with \
-                sdk64/steamclient.so (and optionally sdk32/steamclient.so). \
-                Pass \"\" to use the default directory."
+            long_help = "Install a built stand-in into Aurelia's own directory. \
+                PATH is a libsteamclient.so of any name (its ELF header picks \
+                sdk64 or sdk32), a directory with sdk64/steamclient.so and \
+                sdk32/steamclient.so, or an aurelia-steamworks checkout or its \
+                target directory (both architectures are taken when built). \
+                The file must export CreateInterface. It is copied, so later \
+                rebuilds need --path again. Does not turn the stand-in on. \
+                Pass \"\" to drop a custom directory from older versions."
         )]
         path: Option<String>,
         /// Let games write stats and achievements.
@@ -1311,6 +1316,17 @@ pub(crate) enum OnOffArg {
     On,
     /// Disable the setting.
     Off,
+}
+
+/// `steamworks-client` modes.
+#[derive(Clone, Copy, ValueEnum)]
+pub(crate) enum StandInModeArg {
+    /// Always use the stand-in.
+    On,
+    /// Never use the stand-in.
+    Off,
+    /// Stand-in only while Steam is down.
+    Auto,
 }
 
 /// `config shader-precache` choices.

@@ -79,7 +79,8 @@ pub fn stand_in_applies(config: &LauncherConfig, app_id: u32, force_native_engin
     !luxtorpeda
 }
 
-fn labels(found: &[Protection]) -> String {
+/// Comma list of protections.
+pub fn labels(found: &[Protection]) -> String {
     found
         .iter()
         .map(|p| p.label())
