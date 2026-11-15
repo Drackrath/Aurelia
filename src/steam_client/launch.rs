@@ -662,6 +662,7 @@ impl SteamClient {
                     depot_id: *depot_id as u32,
                     manifest_id: *manifest_id,
                     appinfo_vdf: String::new(),
+                    required: true,
                 })
                 .collect();
 

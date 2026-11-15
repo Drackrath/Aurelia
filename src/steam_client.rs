@@ -542,6 +542,7 @@ mod install;
 mod market;
 pub use install::InstallOptions;
 mod content;
+mod depots;
 pub(crate) use content::ContentHost;
 mod launch;
 mod library;
@@ -1684,6 +1685,8 @@ pub(crate) async fn run_depot_loop(
         "download"
     };
     let mut successful_depots = Vec::new();
+    let required_selected = selections.iter().any(|selection| selection.required);
+    let mut required_successful = 0;
     for selection in selections {
         tracing::info!(
             "Starting download for Depot {} (GID: {})...",
@@ -1708,7 +1711,7 @@ pub(crate) async fn run_depot_loop(
         if is_override {
             let ok = matches!(
                 client
-                    .get_manifest_request_code(appid, selection.depot_id, selection.manifest_id)
+                    .get_manifest_request_code(selection.app_id, selection.depot_id, selection.manifest_id)
                     .await,
                 Ok(code) if code != 0
             );
@@ -1725,27 +1728,27 @@ pub(crate) async fn run_depot_loop(
             }
         }
 
-        // Missing key skips; overridden depots hard-fail.
-        let key = match client.get_depot_key(appid, selection.depot_id).await {
+        // Appinfo can advertise mutually exclusive depots from different packages.
+        // Only an explicit access denial permits skipping automatically selected content.
+        let key = match client
+            .get_depot_key(selection.app_id, selection.depot_id)
+            .await
+        {
             Ok(k) => k,
             Err(e) => {
-                if is_override {
-                    emit_failed(
-                        tx,
-                        format!(
-                            "No depot key for depot {} — downgrade requires owning the game with a non-anonymous login: {}",
-                            selection.depot_id, e
-                        ),
-                    )
-                    .await;
-                    return None;
+                if depots::skip_denied_key(&e, is_override) {
+                    tracing::warn!("Skipping depot {}: Steam denied access", selection.depot_id);
+                    continue;
                 }
-                tracing::warn!(
-                    "Skipping Depot {} (No Key/Not Owned): {}",
-                    selection.depot_id,
-                    e
-                );
-                continue;
+                emit_failed(
+                    tx,
+                    format!(
+                        "No depot key for depot {} — installation is incomplete: {}",
+                        selection.depot_id, e
+                    ),
+                )
+                .await;
+                return None;
             }
         };
         // A valid depot key is exactly 32 bytes; a short/all-zero key would
@@ -1760,7 +1763,7 @@ pub(crate) async fn run_depot_loop(
 
         match client
             .download_depot_to_with_hosts(
-                appid,
+                selection.app_id,
                 selection.depot_id,
                 selection.manifest_id,
                 dest,
@@ -1774,6 +1777,9 @@ pub(crate) async fn run_depot_loop(
             .await
         {
             Ok(depot_size) => {
+                if selection.required {
+                    required_successful += 1;
+                }
                 successful_depots.push((selection.depot_id, selection.manifest_id, depot_size));
             }
             Err(e) => {
@@ -1787,6 +1793,18 @@ pub(crate) async fn run_depot_loop(
                 return None;
             }
         }
+    }
+    if !depots::has_installable_content(
+        successful_depots.len(),
+        required_selected,
+        required_successful,
+    ) {
+        emit_failed(
+            tx,
+            format!("No accessible base-game content installed for app {appid}"),
+        )
+        .await;
+        return None;
     }
     Some(successful_depots)
 }

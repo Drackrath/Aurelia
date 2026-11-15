@@ -105,7 +105,9 @@ impl SteamClient {
 
         let mut manifests = HashMap::new();
         if let Ok(vdf) = find_vdf_in_pics(&buffer) {
-            let depots_val = pics_depots_value(&vdf);
+            let resolved = depots::resolve(connection, appid, vdf).await?;
+            let resolved_value = steam_vdf_parser::Value::Obj(resolved.rows);
+            let depots_val = Some(&resolved_value);
 
             if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
                 for (key, value) in depots.iter() {
