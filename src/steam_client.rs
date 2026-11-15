@@ -1565,6 +1565,15 @@ pub fn find_vdf_in_pics(buffer: &[u8]) -> Result<steam_vdf_parser::Vdf<'static>>
 /// under a single root key — either the literal `appinfo` or the numeric appid.
 /// Return the inner value that actually holds those sections, descending one level
 /// past the wrapper when present so callers can navigate by section name directly.
+/// Install folder from a PICS app section.
+pub(crate) fn pics_installdir(section: &steam_vdf_parser::Value) -> Option<String> {
+    section
+        .get_str(&["config", "installdir"])
+        .or_else(|| section.get_str(&["common", "installdir"]))
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+}
+
 pub(crate) fn pics_app_section<'a, 'text>(
     root: &'a steam_vdf_parser::Value<'text>,
 ) -> &'a steam_vdf_parser::Value<'text> {

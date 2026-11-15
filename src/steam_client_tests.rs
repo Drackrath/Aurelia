@@ -1128,3 +1128,22 @@ async fn stdin_eof_ends_reader() {
     let code: CodeReader = Box::pin(async { Ok(None) });
     assert_eq!(client::feed_code_while(work, code, writer).await, 0);
 }
+
+#[test]
+fn installdir_read_from_config_section() {
+    let raw = r#""105600"
+{
+  "common" { "name" "Terraria" }
+  "config" { "installdir" "Terraria" }
+}"#;
+    let vdf = find_vdf_in_pics(raw.as_bytes()).expect("parse pics vdf");
+    let section = pics_app_section(vdf.value());
+    assert_eq!(pics_installdir(section).as_deref(), Some("Terraria"));
+}
+
+#[test]
+fn installdir_missing_is_none() {
+    let raw = r#""appinfo" { "common" { "name" "No Dir" } }"#;
+    let vdf = find_vdf_in_pics(raw.as_bytes()).expect("parse pics vdf");
+    assert_eq!(pics_installdir(pics_app_section(vdf.value())), None);
+}
