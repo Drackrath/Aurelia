@@ -366,10 +366,7 @@ impl SteamClient {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| format!("App {appid}"));
-        let installdir = common
-            .and_then(|c| c.get("installdir"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
+        let installdir = pics_installdir(pics_app_section(vdf.value()))
             .ok_or_else(|| anyhow!("PICS appinfo for {appid} has no installdir; cannot import"))?;
         if !crate::core::utils::is_safe_dir_name(&installdir) {
             bail!("PICS appinfo for {appid} has unsafe installdir {installdir:?}");
