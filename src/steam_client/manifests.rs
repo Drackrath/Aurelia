@@ -96,35 +96,8 @@ impl SteamClient {
         appid: u32,
         branch: &str,
     ) -> Result<HashMap<u64, u64>> {
-        let buffer = pics_app_buffer(
-            connection,
-            appid,
-            "failed requesting appinfo product info for update metadata",
-        )
-        .await?;
-
-        let mut manifests = HashMap::new();
-        if let Ok(vdf) = find_vdf_in_pics(&buffer) {
-            let resolved = depots::resolve(connection, appid, vdf).await?;
-            let resolved_value = steam_vdf_parser::Value::Obj(resolved.rows);
-            let depots_val = Some(&resolved_value);
-
-            if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
-                for (key, value) in depots.iter() {
-                    if let Ok(d_id) = key.parse::<u64>() {
-                        let m_id = extract_manifest_id_robust(value, branch).or_else(|| {
-                            (branch != "public")
-                                .then(|| extract_manifest_id_robust(value, "public"))
-                                .flatten()
-                        });
-                        if let Some(m_id) = m_id {
-                            manifests.insert(d_id, m_id);
-                        }
-                    }
-                }
-            }
-        }
-        Ok(manifests)
+        let resolved = depots::fetch(connection, appid, None).await?;
+        Ok(resolved.manifest_ids(branch))
     }
 
     /// Fetch the current build id for a branch from PICS, for recording in the

@@ -641,30 +641,22 @@ impl SteamClient {
             )
             .await;
 
-            let remote_manifests = if verify_mode {
-                local_manifests.clone()
+            let selections = if verify_mode && local_manifests.is_empty() {
+                Vec::new()
             } else {
-                let mut remote =
-                    SteamClient::remote_manifest_ids_static(&connection, appid, &active_branch)
-                        .await
-                        .unwrap_or_default();
-                // An update refreshes only installed depots
-                if !local_manifests.is_empty() {
-                    remote.retain(|depot_id, _| local_manifests.contains_key(depot_id));
-                }
-                remote
+                let selected = (!local_manifests.is_empty()).then_some(&local_manifests);
+                let resolved = match depots::fetch(&connection, appid, selected).await {
+                    Ok(resolved) => resolved,
+                    Err(error) => {
+                        emit_failed_err(&tx, "depot metadata", &error).await;
+                        if let Ok(mut state) = shared_state_clone.write() {
+                            state.finish("Operation failed or paused");
+                        }
+                        return;
+                    }
+                };
+                resolved.download_selections(&local_manifests, &active_branch, verify_mode)
             };
-
-            let selections: Vec<ManifestSelection> = remote_manifests
-                .iter()
-                .map(|(depot_id, manifest_id)| ManifestSelection {
-                    app_id: appid,
-                    depot_id: *depot_id as u32,
-                    manifest_id: *manifest_id,
-                    appinfo_vdf: String::new(),
-                    required: true,
-                })
-                .collect();
 
             if selections.is_empty() {
                 // In verify mode the selections come from the local appmanifest's

@@ -46,6 +46,52 @@ impl ResolvedDepots {
     pub fn source_app(&self, depot_id: u32) -> u32 {
         self.sources.get(&depot_id).copied().unwrap_or(self.app_id)
     }
+
+    pub fn manifest_ids(&self, branch: &str) -> HashMap<u64, u64> {
+        self.rows
+            .iter()
+            .filter_map(|(key, value)| {
+                let depot_id = key.parse().ok()?;
+                let manifest_id = extract_manifest_id_robust(value, branch).or_else(|| {
+                    (branch != "public")
+                        .then(|| extract_manifest_id_robust(value, "public"))
+                        .flatten()
+                })?;
+                Some((depot_id, manifest_id))
+            })
+            .collect()
+    }
+
+    pub fn download_selections(
+        &self,
+        installed: &HashMap<u64, u64>,
+        branch: &str,
+        verify_mode: bool,
+    ) -> Vec<ManifestSelection> {
+        let manifests = if verify_mode {
+            // Verification must keep installed (possibly pinned) manifest versions.
+            installed.clone()
+        } else {
+            let mut manifests = self.manifest_ids(branch);
+            if !installed.is_empty() {
+                manifests.retain(|depot_id, _| installed.contains_key(depot_id));
+            }
+            manifests
+        };
+        manifests
+            .into_iter()
+            .map(|(depot_id, manifest_id)| ManifestSelection {
+                app_id: self.source_app(depot_id as u32),
+                depot_id: depot_id as u32,
+                manifest_id,
+                appinfo_vdf: String::new(),
+                required: self
+                    .rows
+                    .get(&depot_id.to_string())
+                    .is_none_or(|row| required_depot(row, self.app_id)),
+            })
+            .collect()
+    }
 }
 
 pub(crate) fn required_depot(value: &Value<'_>, app_id: u32) -> bool {
@@ -65,7 +111,26 @@ pub(crate) async fn resolve(
     app_id: u32,
     vdf: Vdf<'static>,
 ) -> Result<ResolvedDepots> {
-    resolve_with(app_id, vdf, |source_app| async move {
+    resolve_selected(connection, app_id, vdf, None).await
+}
+
+pub(crate) async fn fetch(
+    connection: &Connection,
+    app_id: u32,
+    selected: Option<&HashMap<u64, u64>>,
+) -> Result<ResolvedDepots> {
+    let buffer = pics_app_buffer(connection, app_id, "failed requesting depot metadata").await?;
+    let vdf = find_vdf_in_pics(&buffer).context("failed to parse depot metadata")?;
+    resolve_selected(connection, app_id, vdf, selected).await
+}
+
+async fn resolve_selected(
+    connection: &Connection,
+    app_id: u32,
+    vdf: Vdf<'static>,
+    selected: Option<&HashMap<u64, u64>>,
+) -> Result<ResolvedDepots> {
+    resolve_with(app_id, vdf, selected, |source_app| async move {
         let buffer = pics_app_buffer(
             connection,
             source_app,
@@ -77,7 +142,12 @@ pub(crate) async fn resolve(
     .await
 }
 
-async fn resolve_with<F, Fut>(app_id: u32, vdf: Vdf<'static>, fetch: F) -> Result<ResolvedDepots>
+async fn resolve_with<F, Fut>(
+    app_id: u32,
+    vdf: Vdf<'static>,
+    selected: Option<&HashMap<u64, u64>>,
+    fetch: F,
+) -> Result<ResolvedDepots>
 where
     F: FnMut(u32) -> Fut + Send,
     Fut: Future<Output = Result<Vdf<'static>>> + Send,
@@ -86,10 +156,16 @@ where
         .and_then(Value::as_obj)
         .cloned()
         .context("appinfo has no depots object")?;
-    let ids: Vec<u32> = rows.keys().filter_map(|key| key.parse().ok()).collect();
+    // Uninstalled shared depots must not block updating or verifying this copy.
+    let ids: Vec<u32> = rows
+        .keys()
+        .filter_map(|key| key.parse().ok())
+        .filter(|id| selected.is_none_or(|depots| depots.contains_key(&u64::from(*id))))
+        .collect();
     let mut resolver = Resolver {
         apps: HashMap::from([(app_id, vdf)]),
         fetch,
+        allow_missing_manifests: selected.is_some(),
     };
     let mut sources = HashMap::new();
     for depot_id in ids {
@@ -105,7 +181,7 @@ where
                 rows.insert(depot_id.to_string(), row);
                 sources.insert(depot_id, source);
             }
-            Err(error) if optional => {
+            Err(error) if optional && selected.is_none() => {
                 tracing::warn!(
                     depot_id,
                     "Optional DLC depot metadata unavailable: {error:#}"
@@ -124,6 +200,7 @@ where
 struct Resolver<F> {
     apps: HashMap<u32, Vdf<'static>>,
     fetch: F,
+    allow_missing_manifests: bool,
 }
 
 impl<F, Fut> Resolver<F>
@@ -175,7 +252,8 @@ where
                 child.insert(key.clone(), value.clone());
             }
         }
-        if child.get("manifests").is_none() {
+        // Installed versions remain verifiable after current manifests disappear.
+        if child.get("manifests").is_none() && !self.allow_missing_manifests {
             bail!("shared depot {depot_id} from app {containing_app} has no manifests");
         }
         Ok((row, containing_app))
