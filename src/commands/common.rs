@@ -219,6 +219,8 @@ pub(crate) async fn account_steam_id(client: &SteamClient) -> Option<u64> {
 pub(crate) enum Licence {
     Owned,
     FamilyShared,
+    /// Ticket issued; family status unknown.
+    Licensed,
 }
 
 /// Steam's word on a licence, gaki's order.
@@ -239,14 +241,18 @@ where
     if offline {
         return None;
     }
-    match family.await {
+    let family_known = match family.await {
         Ok(apps) if apps.contains(&app_id) => return Some(Licence::FamilyShared),
-        Ok(_) => {}
-        Err(e) => tracing::warn!("family sharing lookup failed: {e:#}"),
-    }
+        Ok(_) => true,
+        Err(e) => {
+            tracing::warn!("family sharing lookup failed: {e:#}");
+            false
+        }
+    };
     // Covers never-played free-to-play titles.
     match ticket.await {
-        Ok(()) => Some(Licence::Owned),
+        Ok(()) if family_known => Some(Licence::Owned),
+        Ok(()) => Some(Licence::Licensed),
         Err(e) => {
             tracing::info!(appid = app_id, "no ownership ticket: {e:#}");
             None
@@ -284,6 +290,8 @@ pub(crate) async fn require_licence(client: &SteamClient, game: &mut LibraryGame
             game.is_family_shared = true;
             Ok(())
         }
+        // Keep the LastOwner-based flag.
+        Some(Licence::Licensed) => Ok(()),
         None => Err(TypedError::new(
             ErrorKind::AccessDenied,
             format!(

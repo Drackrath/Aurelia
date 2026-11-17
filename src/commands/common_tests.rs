@@ -141,7 +141,11 @@ mod licence {
         );
         assert_eq!(
             decide(false, false, Err(anyhow!("down")), true).await,
-            Some(Licence::Owned)
+            Some(Licence::Licensed)
+        );
+        assert_eq!(
+            decide(false, false, Err(anyhow!("down")), false).await,
+            None
         );
         assert_eq!(decide(false, false, Ok(vec![]), false).await, None);
     }
