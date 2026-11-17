@@ -591,10 +591,8 @@ pub fn guard_data_path() -> Result<PathBuf> {
     let path = config_dir()?.join("machine_tokens.json");
     let legacy = directories::ProjectDirs::from("", "steam-vent", "steam-vent")
         .map(|dirs| dirs.cache_dir().join("machine_tokens.json"));
-    if let Some(legacy) = legacy {
-        if let Err(e) = migrate_guard_data(&path, &legacy) {
-            tracing::warn!("could not move Steam Guard data: {e:#}");
-        }
+    if let Some(Err(e)) = legacy.map(|legacy| migrate_guard_data(&path, &legacy)) {
+        tracing::warn!("could not move Steam Guard data: {e:#}");
     }
     Ok(path)
 }
