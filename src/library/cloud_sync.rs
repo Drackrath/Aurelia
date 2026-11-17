@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use sha1::{Digest, Sha1};
 use std::collections::{BTreeSet, HashMap};
@@ -1129,12 +1129,10 @@ impl CloudClient {
             .map_err(http_error)
             .context("cloud HTTP GET returned failure status")?;
 
-        let body = http_response
-            .bytes()
+        let limit = cloud_body_limit(stored_size, raw_file_size);
+        let body = read_body_capped(http_response, limit)
             .await
-            .map_err(http_error)
-            .context("failed reading cloud download body")?
-            .to_vec();
+            .context("failed reading cloud download body")?;
 
         // Steam stores cloud files compressed: the transfer is then a ZIP container
         // holding the single real file. Writing the body straight to disk yields a
@@ -1278,6 +1276,43 @@ impl CloudClient {
 const MAX_CLOUD_UNZIPPED: u64 = 1024 * 1024 * 1024;
 /// Cap on Steam-supplied capacity hints.
 const MAX_CLOUD_PREALLOC: u32 = 64 * 1024 * 1024;
+
+/// Slack over the announced transfer size.
+const CLOUD_BODY_SLACK: u64 = 64 * 1024;
+
+/// Byte limit for one cloud download.
+fn cloud_body_limit(stored_size: u32, raw_file_size: u32) -> u64 {
+    let announced = if stored_size > 0 {
+        stored_size
+    } else {
+        raw_file_size
+    };
+    if announced == 0 {
+        return MAX_CLOUD_UNZIPPED;
+    }
+    (u64::from(announced) + CLOUD_BODY_SLACK).min(MAX_CLOUD_UNZIPPED)
+}
+
+/// Read a response body, refusing oversize.
+async fn read_body_capped(mut resp: reqwest::Response, limit: u64) -> Result<Vec<u8>> {
+    if resp.content_length().is_some_and(|len| len > limit) {
+        bail!("cloud download is larger than the {limit}-byte limit");
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(http_error)? {
+        push_capped(&mut body, &chunk, limit)?;
+    }
+    Ok(body)
+}
+
+/// Append a chunk within the limit.
+fn push_capped(body: &mut Vec<u8>, chunk: &[u8], limit: u64) -> Result<()> {
+    if body.len() as u64 + chunk.len() as u64 > limit {
+        bail!("cloud download is larger than the {limit}-byte limit");
+    }
+    body.extend_from_slice(chunk);
+    Ok(())
+}
 
 /// A ZIP local-file-header magic — how a compressed Steam Cloud transfer starts.
 const ZIP_MAGIC: &[u8; 4] = b"PK\x03\x04";
