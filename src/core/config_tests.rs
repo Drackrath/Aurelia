@@ -232,3 +232,27 @@ fn legacy_library_cache_parses_with_unknown_owner() {
     assert_eq!(cache.games.len(), 1);
     assert!(cache.games_for(Some(76561198000000001)).is_empty());
 }
+
+#[test]
+fn guard_data_moves_once_and_stays_private() {
+    let tmp = tempfile::tempdir().unwrap();
+    let legacy = tmp.path().join("cache/machine_tokens.json");
+    let path = tmp.path().join("config/machine_tokens.json");
+    std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+    std::fs::write(&legacy, r#"{"alice":"t"}"#).unwrap();
+
+    migrate_guard_data(&path, &legacy).unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), r#"{"alice":"t"}"#);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for p in [&path, &legacy] {
+            let mode = std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "{}", p.display());
+        }
+    }
+    // Existing file is never overwritten.
+    std::fs::write(&legacy, r#"{"bob":"u"}"#).unwrap();
+    migrate_guard_data(&path, &legacy).unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), r#"{"alice":"t"}"#);
+}

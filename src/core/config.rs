@@ -586,6 +586,39 @@ pub fn library_cache_path() -> Result<PathBuf> {
     Ok(data_dir()?.join("library_cache.json"))
 }
 
+/// Steam Guard machine tokens, owner-only.
+pub fn guard_data_path() -> Result<PathBuf> {
+    let path = config_dir()?.join("machine_tokens.json");
+    let legacy = directories::ProjectDirs::from("", "steam-vent", "steam-vent")
+        .map(|dirs| dirs.cache_dir().join("machine_tokens.json"));
+    if let Some(legacy) = legacy {
+        if let Err(e) = migrate_guard_data(&path, &legacy) {
+            tracing::warn!("could not move Steam Guard data: {e:#}");
+        }
+    }
+    Ok(path)
+}
+
+/// Copy legacy tokens once, lock both.
+pub(crate) fn migrate_guard_data(path: &Path, legacy: &Path) -> Result<()> {
+    if path.exists() || !legacy.exists() {
+        return Ok(());
+    }
+    let raw =
+        std::fs::read(legacy).with_context(|| format!("failed reading {}", legacy.display()))?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    crate::core::atomic::write_private(path, &raw)?;
+    // Shared steam-vent file; keep, but private.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(legacy, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
 /// Owned games plus whose list it is.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct LibraryCache {
