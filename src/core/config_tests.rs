@@ -256,3 +256,19 @@ fn guard_data_moves_once_and_stays_private() {
     migrate_guard_data(&path, &legacy).unwrap();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), r#"{"alice":"t"}"#);
 }
+
+#[cfg(unix)]
+#[test]
+fn guard_data_is_precreated_private_without_legacy() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("config/machine_tokens.json");
+    migrate_guard_data(&path, &tmp.path().join("missing.json")).unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "{}");
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    // Plain overwrite keeps the mode.
+    std::fs::write(&path, r#"{"alice":"t"}"#).unwrap();
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+}

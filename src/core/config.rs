@@ -599,8 +599,15 @@ pub fn guard_data_path() -> Result<PathBuf> {
 
 /// Copy legacy tokens once, lock both.
 pub(crate) fn migrate_guard_data(path: &Path, legacy: &Path) -> Result<()> {
-    if path.exists() || !legacy.exists() {
+    if path.exists() {
         return Ok(());
+    }
+    if !legacy.exists() {
+        // Precreate owner-only; writes keep mode.
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        return crate::core::atomic::write_private(path, b"{}");
     }
     let raw =
         std::fs::read(legacy).with_context(|| format!("failed reading {}", legacy.display()))?;
