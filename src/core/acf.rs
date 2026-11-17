@@ -76,7 +76,14 @@ pub fn parse_app_manifest(raw: &str) -> AppManifest {
 
         match parts[0].to_ascii_lowercase().as_str() {
             "appid" if m.app_id.is_none() => m.app_id = value.parse().ok(),
-            "installdir" if m.install_dir.is_none() => m.install_dir = Some(value.to_string()),
+            "installdir" if m.install_dir.is_none() => {
+                // Refuse names escaping steamapps/common.
+                if crate::core::utils::is_safe_dir_name(value) {
+                    m.install_dir = Some(value.to_string());
+                } else {
+                    tracing::warn!("ignoring unsafe appmanifest installdir {value:?}");
+                }
+            }
             "name" if m.name.is_none() => m.name = Some(value.to_string()),
             // "0" means no owner recorded; treat as unknown.
             "lastowner" if m.last_owner.is_none() => {
@@ -91,3 +98,7 @@ pub fn parse_app_manifest(raw: &str) -> AppManifest {
 
     m
 }
+
+#[cfg(test)]
+#[path = "acf_tests.rs"]
+mod tests;
