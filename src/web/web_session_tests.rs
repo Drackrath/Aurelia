@@ -39,3 +39,25 @@ fn ineligible_error_is_typed_access_denied() {
     let typed = err.downcast_ref::<TypedError>().unwrap();
     assert_eq!(typed.kind, ErrorKind::AccessDenied);
 }
+
+#[test]
+fn eligibility_redirect_stays_on_steam_https() {
+    let base = reqwest::Url::parse("https://steamcommunity.com/market/").unwrap();
+    let ok = eligibility_target(&base, "/market/eligibilitycheck/?goto=x")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        ok,
+        "https://steamcommunity.com/market/eligibilitycheck/?goto=x"
+    );
+    for bad in [
+        "https://evil.example/market/eligibilitycheck/",
+        "http://steamcommunity.com/market/eligibilitycheck/",
+        "https://steamcommunity.com.evil.example/eligibilitycheck",
+        "//evil.example/eligibilitycheck",
+    ] {
+        let err = eligibility_target(&base, bad).unwrap().unwrap_err();
+        assert!(err.to_string().contains("Community Market"), "{bad}: {err}");
+    }
+    assert!(eligibility_target(&base, "/market/listings/").is_none());
+}
