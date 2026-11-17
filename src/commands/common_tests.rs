@@ -98,3 +98,60 @@ fn cloud_write_prompt_calls_out_deletions() {
     let warn = cloud_write_prompt("upload", 3, 2);
     assert!(warn.contains("DELETES 2 collection(s)"), "{warn}");
 }
+
+mod licence {
+    use super::super::{Licence, decide_licence};
+    use anyhow::{Result, anyhow};
+
+    async fn decide(
+        owned: bool,
+        offline: bool,
+        family: Result<Vec<u32>>,
+        ticket: bool,
+    ) -> Option<Licence> {
+        decide_licence(owned, offline, 10, async { family }, async move {
+            if ticket {
+                Ok(())
+            } else {
+                Err(anyhow!("denied"))
+            }
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn owned_list_wins_without_lookups() {
+        let family = async { panic!("no family lookup for owned games") };
+        let ticket = async { panic!("no ticket for owned games") };
+        assert_eq!(
+            decide_licence(true, false, 10, family, ticket).await,
+            Some(Licence::Owned)
+        );
+    }
+
+    #[tokio::test]
+    async fn family_then_ticket_then_denied() {
+        assert_eq!(
+            decide(false, false, Ok(vec![10]), false).await,
+            Some(Licence::FamilyShared)
+        );
+        assert_eq!(
+            decide(false, false, Ok(vec![20]), true).await,
+            Some(Licence::Owned)
+        );
+        assert_eq!(
+            decide(false, false, Err(anyhow!("down")), true).await,
+            Some(Licence::Licensed)
+        );
+        assert_eq!(
+            decide(false, false, Err(anyhow!("down")), false).await,
+            None
+        );
+        assert_eq!(decide(false, false, Ok(vec![]), false).await, None);
+    }
+
+    #[tokio::test]
+    async fn offline_refuses_games_not_owned() {
+        assert_eq!(decide(false, true, Ok(vec![10]), true).await, None);
+    }
+}

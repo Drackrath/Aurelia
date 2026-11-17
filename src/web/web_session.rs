@@ -77,7 +77,7 @@ impl WebSession {
     pub async fn get_text(&self, url: &str) -> Result<String> {
         let mut resp = self.send_get(url).await?;
         if let Some(check) = eligibility_redirect(&resp) {
-            self.pass_eligibility_check(&check).await?;
+            self.pass_eligibility_check(&check?).await?;
             // Retry once with new cookies.
             resp = self.send_get(url).await?;
         }
@@ -139,12 +139,27 @@ fn redirect_location(resp: &reqwest::Response) -> Option<String> {
 }
 
 /// Absolute eligibility-check URL, if redirected there.
-fn eligibility_redirect(resp: &reqwest::Response) -> Option<String> {
-    let location = redirect_location(resp)?;
+fn eligibility_redirect(resp: &reqwest::Response) -> Option<Result<String>> {
+    eligibility_target(resp.url(), &redirect_location(resp)?)
+}
+
+/// Check URL, only on Steam over https.
+fn eligibility_target(base: &reqwest::Url, location: &str) -> Option<Result<String>> {
     if !location.contains("eligibilitycheck") {
         return None;
     }
-    resp.url().join(&location).ok().map(|u| u.to_string())
+    let Ok(url) = base.join(location) else {
+        return Some(Err(ineligible_error()));
+    };
+    let steam_host = matches!(
+        url.host_str(),
+        Some("steamcommunity.com" | "store.steampowered.com")
+    );
+    if url.scheme() != "https" || !steam_host {
+        tracing::warn!("ignoring eligibility redirect to {url}");
+        return Some(Err(ineligible_error()));
+    }
+    Some(Ok(url.to_string()))
 }
 
 /// Typed "market not available" error.

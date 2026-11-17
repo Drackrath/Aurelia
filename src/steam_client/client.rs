@@ -412,8 +412,10 @@ impl SteamClient {
         self.state = LoginState::AwaitingPollResult;
         self.state = LoginState::AwaitingAccessTokenLogon;
 
+        let guard_path = crate::core::config::guard_data_path()?;
         // One login, three guard handlers.
         async fn login_with<H: AuthConfirmationHandler + Send>(
+            guard_path: &std::path::Path,
             server_list: &ServerList,
             account_name: &str,
             password: &str,
@@ -423,7 +425,7 @@ impl SteamClient {
                 server_list,
                 account_name,
                 password,
-                FileGuardDataStore::user_cache(),
+                FileGuardDataStore::new(guard_path.to_path_buf()),
                 handler,
                 &ClientInfo::default(),
                 super::logon_id(),
@@ -444,7 +446,14 @@ impl SteamClient {
                 DeviceConfirmationHandler,
             );
 
-            login_with(&server_list, &account_name, password.expose(), handler).await
+            login_with(
+                &guard_path,
+                &server_list,
+                &account_name,
+                password.expose(),
+                handler,
+            )
+            .await
         } else if let Some(read_code) = interactive_pin {
             // Read the Steam Guard code from stdin when Steam asks for it; fall back
             // to mobile-app approval if the account only allows that.
@@ -454,10 +463,17 @@ impl SteamClient {
                 UserProvidedAuthConfirmationHandler::new(reader, tokio::io::stderr()),
                 DeviceConfirmationHandler,
             );
-            let login = login_with(&server_list, &account_name, password.expose(), handler);
+            let login = login_with(
+                &guard_path,
+                &server_list,
+                &account_name,
+                password.expose(),
+                handler,
+            );
             feed_code_while(login, read_code, writer).await
         } else {
             login_with(
+                &guard_path,
                 &server_list,
                 &account_name,
                 password.expose(),

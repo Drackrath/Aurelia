@@ -158,3 +158,117 @@ fn pick_steam_root_ignores_symlinked_duplicates() {
     std::os::unix::fs::symlink(&older, &link).unwrap();
     assert_eq!(pick_steam_root(&[link, other.clone(), older]), Some(other));
 }
+
+fn test_session() -> SessionState {
+    SessionState {
+        account_name: Some("alice".into()),
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn keyless_save_keeps_an_encrypted_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("session.json");
+    let mut envelope = crate::core::session_crypto::encrypt(b"{}", "k").unwrap();
+    envelope.keyring = true;
+    let before = serde_json::to_string(&envelope).unwrap();
+    std::fs::write(&path, &before).unwrap();
+
+    let err = save_session_to(&path, &test_session(), true, None)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("OS keyring"), "{err}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+}
+
+#[tokio::test]
+async fn keyless_save_writes_plaintext_when_nothing_was_encrypted() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("session.json");
+    save_session_to(&path, &test_session(), true, None)
+        .await
+        .unwrap();
+    let raw = std::fs::read_to_string(&path).unwrap();
+    assert!(raw.contains("alice"), "{raw}");
+}
+
+#[tokio::test]
+async fn keyed_save_writes_an_envelope() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("session.json");
+    save_session_to(&path, &test_session(), true, Some("k".into()))
+        .await
+        .unwrap();
+    let raw = std::fs::read_to_string(&path).unwrap();
+    assert!(crate::core::session_crypto::EncryptedSession::from_json(&raw).is_some());
+    assert!(!raw.contains("refresh_token"), "{raw}");
+}
+
+fn parse_cache(raw: &str) -> LibraryCache {
+    serde_json::from_str::<LibraryCacheFile>(raw)
+        .unwrap()
+        .into()
+}
+
+#[test]
+fn library_cache_is_used_only_for_its_owner() {
+    let raw = r#"{"steam_id": 76561198000000001, "games": [
+        {"app_id": 10, "name": "CS", "playtime_forever_minutes": 0}]}"#;
+    assert_eq!(parse_cache(raw).games_for(Some(76561198000000001)).len(), 1);
+    assert!(
+        parse_cache(raw)
+            .games_for(Some(76561198000000002))
+            .is_empty()
+    );
+    assert!(parse_cache(raw).games_for(None).is_empty());
+}
+
+#[test]
+fn legacy_library_cache_parses_with_unknown_owner() {
+    let raw = r#"[{"app_id": 10, "name": "CS", "playtime_forever_minutes": 0}]"#;
+    let cache = parse_cache(raw);
+    assert_eq!(cache.steam_id, None);
+    assert_eq!(cache.games.len(), 1);
+    assert!(cache.games_for(Some(76561198000000001)).is_empty());
+}
+
+#[test]
+fn guard_data_moves_once_and_stays_private() {
+    let tmp = tempfile::tempdir().unwrap();
+    let legacy = tmp.path().join("cache/machine_tokens.json");
+    let path = tmp.path().join("config/machine_tokens.json");
+    std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+    std::fs::write(&legacy, r#"{"alice":"t"}"#).unwrap();
+
+    migrate_guard_data(&path, &legacy).unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), r#"{"alice":"t"}"#);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for p in [&path, &legacy] {
+            let mode = std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "{}", p.display());
+        }
+    }
+    // Existing file is never overwritten.
+    std::fs::write(&legacy, r#"{"bob":"u"}"#).unwrap();
+    migrate_guard_data(&path, &legacy).unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), r#"{"alice":"t"}"#);
+}
+
+#[cfg(unix)]
+#[test]
+fn guard_data_is_precreated_private_without_legacy() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("config/machine_tokens.json");
+    migrate_guard_data(&path, &tmp.path().join("missing.json")).unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "{}");
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    // Plain overwrite keeps the mode.
+    std::fs::write(&path, r#"{"alice":"t"}"#).unwrap();
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+}

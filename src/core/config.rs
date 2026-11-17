@@ -398,7 +398,8 @@ pub async fn load_session() -> Result<SessionState> {
             // Passwords are gone; a login re-keys it.
             anyhow::bail!(
                 "session.json was encrypted with a legacy session password — \
-                 run `aurelia login` again to re-key it to the OS keyring"
+                 run `aurelia login` again to re-key it to the OS keyring \
+                 (without a keyring, run `aurelia logout` first)"
             );
         }
         // Keyring-keyed: automatic, never prompts.
@@ -408,7 +409,7 @@ pub async fn load_session() -> Result<SessionState> {
             .flatten()
             .context(
                 "session.json is keyed to the OS keyring, which is unavailable — \
-                 run `aurelia login` again",
+                 unlock the keyring, or run `aurelia logout` and then `aurelia login`",
             )?;
         let plain = crate::core::session_crypto::decrypt(&envelope, &key)?;
         return serde_json::from_slice(&plain)
@@ -428,6 +429,11 @@ async fn session_encryption_active(session_path: &Path) -> bool {
             return true;
         }
     }
+    session_file_encrypted(session_path).await
+}
+
+/// Whether session.json is an encrypted envelope.
+async fn session_file_encrypted(session_path: &Path) -> bool {
     match fs::read_to_string(session_path).await {
         Ok(raw) => crate::core::session_crypto::EncryptedSession::from_json(&raw).is_some(),
         Err(_) => false,
@@ -436,38 +442,57 @@ async fn session_encryption_active(session_path: &Path) -> bool {
 
 pub async fn save_session(session: &SessionState) -> Result<()> {
     let session_path = session_path()?;
-    if session_encryption_active(&session_path).await {
+    let encrypt = session_encryption_active(&session_path).await;
+    let key = if encrypt {
         // Automatic OS-keyring key; created on demand, never prompts.
-        let key =
-            tokio::task::spawn_blocking(crate::core::session_crypto::keyring_secret_or_create)
-                .await
-                .ok()
-                .flatten();
-        match key {
-            Some(key) => {
-                let plain = serde_json::to_vec(session)?;
-                let mut envelope = crate::core::session_crypto::encrypt(&plain, &key)?;
-                envelope.keyring = true;
-                // Display hint, readable without the key.
-                envelope.display_name = session
-                    .persona_name
-                    .clone()
-                    .or_else(|| session.account_name.clone());
-                write_json_private(&session_path, &envelope).await?;
-            }
-            None => {
-                tracing::warn!(
-                    "no OS keyring available; session.json stays plaintext \
-                     (owner-only permissions)"
-                );
-                write_json_private(&session_path, session).await?;
-            }
-        }
+        tokio::task::spawn_blocking(crate::core::session_crypto::keyring_secret_or_create)
+            .await
+            .ok()
+            .flatten()
     } else {
-        write_json_private(&session_path, session).await?;
-    }
+        None
+    };
+    save_session_to(&session_path, session, encrypt, key).await
+}
 
-    Ok(())
+/// Write the session, never downgrading encryption.
+pub(crate) async fn save_session_to(
+    session_path: &Path,
+    session: &SessionState,
+    encrypt: bool,
+    key: Option<String>,
+) -> Result<()> {
+    if !encrypt {
+        return write_json_private(session_path, session).await;
+    }
+    match key {
+        Some(key) => {
+            let plain = serde_json::to_vec(session)?;
+            let mut envelope = crate::core::session_crypto::encrypt(&plain, &key)?;
+            envelope.keyring = true;
+            // Display hint, readable without the key.
+            envelope.display_name = session
+                .persona_name
+                .clone()
+                .or_else(|| session.account_name.clone());
+            write_json_private(session_path, &envelope).await
+        }
+        None if session_file_encrypted(session_path).await => {
+            // Keep the encrypted file untouched.
+            anyhow::bail!(
+                "the OS keyring is unavailable; session.json was left encrypted \
+                 and this session change was not saved — unlock the keyring, or \
+                 run `aurelia logout` and then `aurelia login`"
+            )
+        }
+        None => {
+            tracing::warn!(
+                "no OS keyring available; session.json stays plaintext \
+                 (owner-only permissions)"
+            );
+            write_json_private(session_path, session).await
+        }
+    }
 }
 
 pub async fn delete_session() -> Result<()> {
@@ -563,16 +588,114 @@ pub fn library_cache_path() -> Result<PathBuf> {
     Ok(data_dir()?.join("library_cache.json"))
 }
 
-pub async fn save_library_cache(owned_games: &[OwnedGame]) -> Result<()> {
-    write_json_pretty(&library_cache_path()?, &owned_games).await
+/// Steam Guard machine tokens, owner-only.
+pub fn guard_data_path() -> Result<PathBuf> {
+    let path = config_dir()?.join("machine_tokens.json");
+    let legacy = directories::ProjectDirs::from("", "steam-vent", "steam-vent")
+        .map(|dirs| dirs.cache_dir().join("machine_tokens.json"));
+    if let Some(Err(e)) = legacy.map(|legacy| migrate_guard_data(&path, &legacy)) {
+        tracing::warn!("could not move Steam Guard data: {e:#}");
+    }
+    Ok(path)
 }
 
-pub async fn load_library_cache() -> Result<Vec<OwnedGame>> {
+/// Copy legacy tokens once, lock both.
+pub(crate) fn migrate_guard_data(path: &Path, legacy: &Path) -> Result<()> {
+    if path.exists() {
+        return Ok(());
+    }
+    if !legacy.exists() {
+        // Precreate owner-only; writes keep mode.
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        return crate::core::atomic::write_private(path, b"{}");
+    }
+    let raw =
+        std::fs::read(legacy).with_context(|| format!("failed reading {}", legacy.display()))?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    crate::core::atomic::write_private(path, &raw)?;
+    // Shared steam-vent file; keep, but private.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(legacy, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
+/// Owned games plus whose list it is.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct LibraryCache {
+    pub steam_id: Option<u64>,
+    pub games: Vec<OwnedGame>,
+}
+
+/// Current shape or legacy bare array.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum LibraryCacheFile {
+    Tagged(LibraryCache),
+    Legacy(Vec<OwnedGame>),
+}
+
+pub async fn save_library_cache(owned_games: &[OwnedGame], steam_id: Option<u64>) -> Result<()> {
+    #[derive(Serialize)]
+    struct Out<'a> {
+        steam_id: Option<u64>,
+        games: &'a [OwnedGame],
+    }
+    let out = Out {
+        steam_id,
+        games: owned_games,
+    };
+    write_json_pretty(&library_cache_path()?, &out).await
+}
+
+/// Cached library with its owner, if any.
+pub async fn read_library_cache() -> Result<LibraryCache> {
     let path = library_cache_path()?;
     if !path.exists() {
-        return Ok(Vec::new());
+        return Ok(LibraryCache::default());
     }
-    read_json(&path).await
+    Ok(read_json::<LibraryCacheFile>(&path).await?.into())
+}
+
+impl From<LibraryCacheFile> for LibraryCache {
+    fn from(file: LibraryCacheFile) -> Self {
+        match file {
+            LibraryCacheFile::Tagged(cache) => cache,
+            LibraryCacheFile::Legacy(games) => LibraryCache {
+                steam_id: None,
+                games,
+            },
+        }
+    }
+}
+
+impl LibraryCache {
+    /// Games, only when `steam_id` owns them.
+    pub fn games_for(self, steam_id: Option<u64>) -> Vec<OwnedGame> {
+        match steam_id {
+            Some(id) if self.steam_id == Some(id) => self.games,
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// Cached games of any owner (display only).
+pub async fn load_library_cache() -> Result<Vec<OwnedGame>> {
+    Ok(read_library_cache().await?.games)
+}
+
+/// Cached games, only if `steam_id` wrote them.
+pub async fn load_library_cache_for(steam_id: Option<u64>) -> Vec<OwnedGame> {
+    read_library_cache()
+        .await
+        .map(|cache| cache.games_for(steam_id))
+        .unwrap_or_default()
 }
 
 /// Default lifetime of a cached `aurelia info` record before it is re-fetched
