@@ -339,6 +339,9 @@ pub(crate) async fn cmd_play(
         return Ok(());
     }
 
+    // Steam must confirm the licence.
+    require_licence(&client, &mut game).await?;
+
     // Otherwise the spawn fails on the missing directory with a raw OS error.
     if !game.is_installed {
         bail!(

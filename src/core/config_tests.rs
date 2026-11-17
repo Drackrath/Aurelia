@@ -204,3 +204,31 @@ async fn keyed_save_writes_an_envelope() {
     assert!(crate::core::session_crypto::EncryptedSession::from_json(&raw).is_some());
     assert!(!raw.contains("refresh_token"), "{raw}");
 }
+
+fn parse_cache(raw: &str) -> LibraryCache {
+    serde_json::from_str::<LibraryCacheFile>(raw)
+        .unwrap()
+        .into()
+}
+
+#[test]
+fn library_cache_is_used_only_for_its_owner() {
+    let raw = r#"{"steam_id": 76561198000000001, "games": [
+        {"app_id": 10, "name": "CS", "playtime_forever_minutes": 0}]}"#;
+    assert_eq!(parse_cache(raw).games_for(Some(76561198000000001)).len(), 1);
+    assert!(
+        parse_cache(raw)
+            .games_for(Some(76561198000000002))
+            .is_empty()
+    );
+    assert!(parse_cache(raw).games_for(None).is_empty());
+}
+
+#[test]
+fn legacy_library_cache_parses_with_unknown_owner() {
+    let raw = r#"[{"app_id": 10, "name": "CS", "playtime_forever_minutes": 0}]"#;
+    let cache = parse_cache(raw);
+    assert_eq!(cache.steam_id, None);
+    assert_eq!(cache.games.len(), 1);
+    assert!(cache.games_for(Some(76561198000000001)).is_empty());
+}

@@ -41,7 +41,7 @@ impl SteamClient {
             })
             .collect();
 
-        save_library_cache(&owned).await.ok();
+        save_library_cache(&owned, self.steam_id()).await.ok();
         Ok(owned)
     }
 

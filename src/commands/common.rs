@@ -4,8 +4,8 @@ use crate::daemon;
 
 use anyhow::{Context, Result, bail};
 use aurelia::core::config::load_launcher_config;
-use aurelia::core::config::load_library_cache;
 use aurelia::core::config::load_session;
+use aurelia::core::config::{load_library_cache, load_library_cache_for};
 use aurelia::core::error::{ErrorKind, TypedError};
 use aurelia::core::models::{DownloadProgress, DownloadProgressState, DownloadState, LibraryGame};
 use aurelia::library::{build_game_library, scan_installed_app_info};
@@ -186,7 +186,8 @@ pub(crate) async fn load_library(client: &mut SteamClient) -> Vec<LibraryGame> {
             }
             Err(e) => {
                 tracing::warn!("Could not fetch owned games ({e:#}); using cached library");
-                cached
+                // Foreign or unknown cache owns nothing.
+                load_library_cache_for(account_steam_id(client).await).await
             }
         }
     } else if !cached.is_empty() {
@@ -200,6 +201,99 @@ pub(crate) async fn load_library(client: &mut SteamClient) -> Vec<LibraryGame> {
     };
     let installed = scan_installed_app_info().await.unwrap_or_default();
     build_game_library(owned, installed, client.steam_id()).games
+}
+
+/// Signed-in SteamID, else the stored session's.
+pub(crate) async fn account_steam_id(client: &SteamClient) -> Option<u64> {
+    if let Some(id) = client.steam_id() {
+        return Some(id);
+    }
+    aurelia::core::config::load_session()
+        .await
+        .ok()
+        .and_then(|s| s.steam_id)
+}
+
+/// How the account may play a game.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Licence {
+    Owned,
+    FamilyShared,
+}
+
+/// Steam's word on a licence, gaki's order.
+pub(crate) async fn decide_licence<F, T>(
+    owned: bool,
+    offline: bool,
+    app_id: u32,
+    family: F,
+    ticket: T,
+) -> Option<Licence>
+where
+    F: std::future::Future<Output = Result<Vec<u32>>>,
+    T: std::future::Future<Output = Result<()>>,
+{
+    if owned {
+        return Some(Licence::Owned);
+    }
+    if offline {
+        return None;
+    }
+    match family.await {
+        Ok(apps) if apps.contains(&app_id) => return Some(Licence::FamilyShared),
+        Ok(_) => {}
+        Err(e) => tracing::warn!("family sharing lookup failed: {e:#}"),
+    }
+    // Covers never-played free-to-play titles.
+    match ticket.await {
+        Ok(()) => Some(Licence::Owned),
+        Err(e) => {
+            tracing::info!(appid = app_id, "no ownership ticket: {e:#}");
+            None
+        }
+    }
+}
+
+/// Refuse games this account can't play.
+pub(crate) async fn require_licence(client: &SteamClient, game: &mut LibraryGame) -> Result<()> {
+    let app_id = game.app_id;
+    let family = async {
+        Ok(client
+            .fetch_family_shared_apps()
+            .await?
+            .into_iter()
+            .map(|a| a.app_id)
+            .collect())
+    };
+    let ticket = async {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            client.get_app_ticket(app_id),
+        )
+        .await
+        .context("ownership ticket request timed out")??;
+        Ok(())
+    };
+    match decide_licence(game.is_owned, client.is_offline(), app_id, family, ticket).await {
+        Some(Licence::Owned) => {
+            game.is_owned = true;
+            game.is_family_shared = false;
+            Ok(())
+        }
+        Some(Licence::FamilyShared) => {
+            game.is_family_shared = true;
+            Ok(())
+        }
+        None => Err(TypedError::new(
+            ErrorKind::AccessDenied,
+            format!(
+                "this Steam account has no licence for {} (app {app_id}), \
+                 neither owned nor shared through Steam Family",
+                game.name
+            ),
+        )
+        .into()),
+    }
 }
 
 /// Merge Family-Shared apps into the library. Apps already present (e.g. installed,

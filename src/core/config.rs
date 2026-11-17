@@ -586,16 +586,76 @@ pub fn library_cache_path() -> Result<PathBuf> {
     Ok(data_dir()?.join("library_cache.json"))
 }
 
-pub async fn save_library_cache(owned_games: &[OwnedGame]) -> Result<()> {
-    write_json_pretty(&library_cache_path()?, &owned_games).await
+/// Owned games plus whose list it is.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct LibraryCache {
+    pub steam_id: Option<u64>,
+    pub games: Vec<OwnedGame>,
 }
 
-pub async fn load_library_cache() -> Result<Vec<OwnedGame>> {
+/// Current shape or legacy bare array.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum LibraryCacheFile {
+    Tagged(LibraryCache),
+    Legacy(Vec<OwnedGame>),
+}
+
+pub async fn save_library_cache(owned_games: &[OwnedGame], steam_id: Option<u64>) -> Result<()> {
+    #[derive(Serialize)]
+    struct Out<'a> {
+        steam_id: Option<u64>,
+        games: &'a [OwnedGame],
+    }
+    let out = Out {
+        steam_id,
+        games: owned_games,
+    };
+    write_json_pretty(&library_cache_path()?, &out).await
+}
+
+/// Cached library with its owner, if any.
+pub async fn read_library_cache() -> Result<LibraryCache> {
     let path = library_cache_path()?;
     if !path.exists() {
-        return Ok(Vec::new());
+        return Ok(LibraryCache::default());
     }
-    read_json(&path).await
+    Ok(read_json::<LibraryCacheFile>(&path).await?.into())
+}
+
+impl From<LibraryCacheFile> for LibraryCache {
+    fn from(file: LibraryCacheFile) -> Self {
+        match file {
+            LibraryCacheFile::Tagged(cache) => cache,
+            LibraryCacheFile::Legacy(games) => LibraryCache {
+                steam_id: None,
+                games,
+            },
+        }
+    }
+}
+
+impl LibraryCache {
+    /// Games, only when `steam_id` owns them.
+    pub fn games_for(self, steam_id: Option<u64>) -> Vec<OwnedGame> {
+        match steam_id {
+            Some(id) if self.steam_id == Some(id) => self.games,
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// Cached games of any owner (display only).
+pub async fn load_library_cache() -> Result<Vec<OwnedGame>> {
+    Ok(read_library_cache().await?.games)
+}
+
+/// Cached games, only if `steam_id` wrote them.
+pub async fn load_library_cache_for(steam_id: Option<u64>) -> Vec<OwnedGame> {
+    read_library_cache()
+        .await
+        .map(|cache| cache.games_for(steam_id))
+        .unwrap_or_default()
 }
 
 /// Default lifetime of a cached `aurelia info` record before it is re-fetched
