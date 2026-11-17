@@ -158,3 +158,49 @@ fn pick_steam_root_ignores_symlinked_duplicates() {
     std::os::unix::fs::symlink(&older, &link).unwrap();
     assert_eq!(pick_steam_root(&[link, other.clone(), older]), Some(other));
 }
+
+fn test_session() -> SessionState {
+    SessionState {
+        account_name: Some("alice".into()),
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn keyless_save_keeps_an_encrypted_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("session.json");
+    let mut envelope = crate::core::session_crypto::encrypt(b"{}", "k").unwrap();
+    envelope.keyring = true;
+    let before = serde_json::to_string(&envelope).unwrap();
+    std::fs::write(&path, &before).unwrap();
+
+    let err = save_session_to(&path, &test_session(), true, None)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("OS keyring"), "{err}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+}
+
+#[tokio::test]
+async fn keyless_save_writes_plaintext_when_nothing_was_encrypted() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("session.json");
+    save_session_to(&path, &test_session(), true, None)
+        .await
+        .unwrap();
+    let raw = std::fs::read_to_string(&path).unwrap();
+    assert!(raw.contains("alice"), "{raw}");
+}
+
+#[tokio::test]
+async fn keyed_save_writes_an_envelope() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("session.json");
+    save_session_to(&path, &test_session(), true, Some("k".into()))
+        .await
+        .unwrap();
+    let raw = std::fs::read_to_string(&path).unwrap();
+    assert!(crate::core::session_crypto::EncryptedSession::from_json(&raw).is_some());
+    assert!(!raw.contains("refresh_token"), "{raw}");
+}

@@ -428,6 +428,11 @@ async fn session_encryption_active(session_path: &Path) -> bool {
             return true;
         }
     }
+    session_file_encrypted(session_path).await
+}
+
+/// Whether session.json is an encrypted envelope.
+async fn session_file_encrypted(session_path: &Path) -> bool {
     match fs::read_to_string(session_path).await {
         Ok(raw) => crate::core::session_crypto::EncryptedSession::from_json(&raw).is_some(),
         Err(_) => false,
@@ -436,38 +441,56 @@ async fn session_encryption_active(session_path: &Path) -> bool {
 
 pub async fn save_session(session: &SessionState) -> Result<()> {
     let session_path = session_path()?;
-    if session_encryption_active(&session_path).await {
+    let encrypt = session_encryption_active(&session_path).await;
+    let key = if encrypt {
         // Automatic OS-keyring key; created on demand, never prompts.
-        let key =
-            tokio::task::spawn_blocking(crate::core::session_crypto::keyring_secret_or_create)
-                .await
-                .ok()
-                .flatten();
-        match key {
-            Some(key) => {
-                let plain = serde_json::to_vec(session)?;
-                let mut envelope = crate::core::session_crypto::encrypt(&plain, &key)?;
-                envelope.keyring = true;
-                // Display hint, readable without the key.
-                envelope.display_name = session
-                    .persona_name
-                    .clone()
-                    .or_else(|| session.account_name.clone());
-                write_json_private(&session_path, &envelope).await?;
-            }
-            None => {
-                tracing::warn!(
-                    "no OS keyring available; session.json stays plaintext \
-                     (owner-only permissions)"
-                );
-                write_json_private(&session_path, session).await?;
-            }
-        }
+        tokio::task::spawn_blocking(crate::core::session_crypto::keyring_secret_or_create)
+            .await
+            .ok()
+            .flatten()
     } else {
-        write_json_private(&session_path, session).await?;
-    }
+        None
+    };
+    save_session_to(&session_path, session, encrypt, key).await
+}
 
-    Ok(())
+/// Write the session, never downgrading encryption.
+pub(crate) async fn save_session_to(
+    session_path: &Path,
+    session: &SessionState,
+    encrypt: bool,
+    key: Option<String>,
+) -> Result<()> {
+    if !encrypt {
+        return write_json_private(session_path, session).await;
+    }
+    match key {
+        Some(key) => {
+            let plain = serde_json::to_vec(session)?;
+            let mut envelope = crate::core::session_crypto::encrypt(&plain, &key)?;
+            envelope.keyring = true;
+            // Display hint, readable without the key.
+            envelope.display_name = session
+                .persona_name
+                .clone()
+                .or_else(|| session.account_name.clone());
+            write_json_private(session_path, &envelope).await
+        }
+        None if session_file_encrypted(session_path).await => {
+            // Keep the encrypted file untouched.
+            anyhow::bail!(
+                "the OS keyring is unavailable; session.json was left encrypted \
+                 and this session change was not saved"
+            )
+        }
+        None => {
+            tracing::warn!(
+                "no OS keyring available; session.json stays plaintext \
+                 (owner-only permissions)"
+            );
+            write_json_private(session_path, session).await
+        }
+    }
 }
 
 pub async fn delete_session() -> Result<()> {
