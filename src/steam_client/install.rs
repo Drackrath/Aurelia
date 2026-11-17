@@ -344,11 +344,17 @@ impl SteamClient {
             let mut grand_total_bytes: u64 = 0;
 
             let mut has_windows = false;
-            if let Ok(map) = parse_pics_product_info(appinfo_vdf_bytes) {
-                // To keep filtering, we re-parse or re-use the find_vdf logic.
-                // We'll re-parse here to stay strictly compliant with Task 2's request to call parse_pics_product_info.
+            if find_vdf_in_pics(appinfo_vdf_bytes).is_ok() {
                 if let Ok(vdf) = find_vdf_in_pics(appinfo_vdf_bytes) {
-                    let depots_val = pics_depots_value(&vdf);
+                    let resolved = match depots::resolve(&connection, appid, vdf).await {
+                        Ok(resolved) => resolved,
+                        Err(error) => {
+                            emit_failed_err(&tx, "required shared depot metadata", &error).await;
+                            return;
+                        }
+                    };
+                    let resolved_value = steam_vdf_parser::Value::Obj(resolved.rows.clone());
+                    let depots_val = Some(&resolved_value);
 
                     // depots -> branches -> public -> buildid
                     build_id = depots_val
@@ -401,7 +407,7 @@ impl SteamClient {
                                         .is_none_or(|list| list.contains(&depot_id_u64));
 
                                     if match_os && is_allowed {
-                                        map.get(&depot_id_u64).copied()
+                                        extract_manifest_id_robust(value, "public")
                                     } else {
                                         None
                                     }
@@ -426,7 +432,7 @@ impl SteamClient {
                                         })
                                         .unwrap_or(0);
                                     selections.push(ManifestSelection {
-                                        app_id: appid,
+                                        app_id: resolved.source_app(d_id),
                                         depot_id: d_id,
                                         manifest_id,
                                         // The download loop below consumes only
@@ -436,6 +442,8 @@ impl SteamClient {
                                         // once per depot. (Mirrors launch.rs, which
                                         // also leaves this empty.)
                                         appinfo_vdf: String::new(),
+                                        required: dlc_appid.is_some()
+                                            || depots::required_depot(value, appid),
                                     });
                                 }
                             }

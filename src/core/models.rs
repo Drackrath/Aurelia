@@ -247,6 +247,8 @@ pub struct ManifestSelection {
     pub depot_id: u32,
     pub manifest_id: u64,
     pub appinfo_vdf: String,
+    /// Required game content must fail installation if its depot key is unavailable.
+    pub required: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
