@@ -48,6 +48,10 @@ fn keyring_mode_without_a_keyring_names_the_keyring() {
         "error must name the keyring: {err}"
     );
     assert!(
+        err.contains("aurelia logout"),
+        "a plain login can't replace it: {err}"
+    );
+    assert!(
         !err.contains("not logged in"),
         "must not misreport as logged out: {err}"
     );

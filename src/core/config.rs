@@ -398,7 +398,8 @@ pub async fn load_session() -> Result<SessionState> {
             // Passwords are gone; a login re-keys it.
             anyhow::bail!(
                 "session.json was encrypted with a legacy session password — \
-                 run `aurelia login` again to re-key it to the OS keyring"
+                 run `aurelia login` again to re-key it to the OS keyring \
+                 (without a keyring, run `aurelia logout` first)"
             );
         }
         // Keyring-keyed: automatic, never prompts.
@@ -408,7 +409,7 @@ pub async fn load_session() -> Result<SessionState> {
             .flatten()
             .context(
                 "session.json is keyed to the OS keyring, which is unavailable — \
-                 run `aurelia login` again",
+                 unlock the keyring, or run `aurelia logout` and then `aurelia login`",
             )?;
         let plain = crate::core::session_crypto::decrypt(&envelope, &key)?;
         return serde_json::from_slice(&plain)
@@ -480,7 +481,8 @@ pub(crate) async fn save_session_to(
             // Keep the encrypted file untouched.
             anyhow::bail!(
                 "the OS keyring is unavailable; session.json was left encrypted \
-                 and this session change was not saved"
+                 and this session change was not saved — unlock the keyring, or \
+                 run `aurelia logout` and then `aurelia login`"
             )
         }
         None => {
