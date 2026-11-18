@@ -282,6 +282,19 @@ fn pick_launch_entry(
     }
 }
 
+/// Why a launch must use Steam, if forced.
+///
+/// A borrowed licence is only authorised by a running Steam client.
+pub fn forced_steam_reason(app: &LibraryGame) -> Option<&'static str> {
+    if app.is_family_shared {
+        Some("family-shared")
+    } else if !app.is_owned {
+        Some("licence-unconfirmed")
+    } else {
+        None
+    }
+}
+
 impl SteamClient {
     pub async fn play_game(
         &mut self,
@@ -299,10 +312,7 @@ impl SteamClient {
         on_target_resolved: Option<&(dyn Fn(Option<&str>) + Send + Sync)>,
         shaders: crate::launch::shaders::ShaderLaunch,
     ) -> Result<LaunchInfo> {
-        // A Family-Shared game (licensed to another account) can only be authorised
-        // by a running Steam client, so it always needs Steam integration regardless
-        // of the user's preference.
-        let steam_enabled = steam_enabled || !app.is_owned;
+        let steam_enabled = steam_enabled || forced_steam_reason(app).is_some();
 
         // Reject bad entries before starting Steam.
         let launch_options = self.get_product_info(app.app_id).await?;

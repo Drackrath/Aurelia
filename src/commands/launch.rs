@@ -163,7 +163,7 @@ pub(crate) async fn cmd_launch_targets(app_id: u32, steam: bool, json: bool) -> 
             .map(|e| e.target);
 
     let user_configs = load_user_configs().await?;
-    let steam = steam || !game.is_owned;
+    let steam = steam || aurelia::steam_client::forced_steam_reason(&game).is_some();
     let (default_mode, _) = aurelia::infra::runners::resolve_steam_mode_for(
         user_configs.get(&app_id),
         &launcher_config,
@@ -482,8 +482,22 @@ pub(crate) async fn cmd_play(
     }
     let user_config = user_config.as_ref();
 
+    // Report a silently overridden mode.
+    let steam_forced = (!steam)
+        .then(|| aurelia::steam_client::forced_steam_reason(&game))
+        .flatten();
+    if let Some(reason) = steam_forced {
+        tracing::warn!(
+            appid = app_id,
+            "launching {} with Steam despite the requested mode ({reason})",
+            game.name
+        );
+    }
     if !json {
         cli_println!("Launching {} ...", game.name);
+        if let Some(reason) = steam_forced {
+            cli_println!("⚠ Steam is required for this game ({reason}); starting it anyway.");
+        }
     }
     let announce_target: &(dyn Fn(Option<&str>) + Send + Sync) =
         &|proton: Option<&str>| match proton {
@@ -513,11 +527,15 @@ pub(crate) async fn cmd_play(
         .await
         .with_context(|| format!("failed to launch {}", game.name))?;
     if json {
-        print_json(&serde_json::json!({
+        let mut result = serde_json::json!({
             "app_id": app_id,
             "name": game.name,
             "status": "finished",
-        }));
+        });
+        if let Some(reason) = steam_forced {
+            result["steam_forced"] = reason.into();
+        }
+        print_json(&result);
     } else {
         cli_println!("Finished playing {}.", game.name);
     }
