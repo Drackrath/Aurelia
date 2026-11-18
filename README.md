@@ -226,13 +226,20 @@ The binary is produced at `target/release/aurelia` (`aurelia.exe` on Windows).
 
 ## Published crates
 
-Aurelia is published on crates.io as three crates, all licensed under GPL-3.0-or-later:
+Aurelia and the Steam crates it builds on are published on crates.io:
 
 | Crate | What it is | Source |
 | --- | --- | --- |
 | [`aurelia-steam`](https://crates.io/crates/aurelia-steam) | The `aurelia` command and its library | [Drackrath/Aurelia](https://github.com/Drackrath/Aurelia) |
 | [`aurelia-steam-cdn`](https://crates.io/crates/aurelia-steam-cdn) | Depot downloads, forked from [steam-cdn](https://github.com/OccamyLab/steam-cdn) | [Drackrath/aurelia-steam-cdn](https://github.com/Drackrath/aurelia-steam-cdn) |
 | [`aurelia-steam-vent-chat`](https://crates.io/crates/aurelia-steam-vent-chat) | Friend chat, forked from [steam-vent-chat](https://codeberg.org/steam-vent/chat) | [Drackrath/aurelia-steam-vent-chat](https://codeberg.org/Drackrath/aurelia-steam-vent-chat) |
+| [`aurelia-steam-vent`](https://crates.io/crates/aurelia-steam-vent) | Steam network protocol client, forked from [steam-vent](https://codeberg.org/steam-vent/steam-vent) | [Drackrath/aurelia-steam-vent](https://github.com/Drackrath/aurelia-steam-vent) |
+| [`aurelia-steam-vent-core`](https://crates.io/crates/aurelia-steam-vent-core) / [`aurelia-steam-vent-crypto`](https://crates.io/crates/aurelia-steam-vent-crypto) | Shared types and Steam crypto (on rsa 0.10) for `aurelia-steam-vent` | [Drackrath/aurelia-steam-vent](https://github.com/Drackrath/aurelia-steam-vent) |
+| [`aurelia-steam-vent-proto`](https://crates.io/crates/aurelia-steam-vent-proto) (with `-proto-common`, `-proto-steam`) | Steam protobuf messages, generated for protobuf 3.7, forked from [steam-vent proto](https://codeberg.org/steam-vent/proto) | [Drackrath/proto](https://codeberg.org/Drackrath/proto) |
+
+`aurelia-steam`, `aurelia-steam-cdn`, `aurelia-steam-vent-chat`, `aurelia-steam-vent` and
+`aurelia-steam-vent-core` are licensed under GPL-3.0-or-later. `aurelia-steam-vent-crypto` and
+the `aurelia-steam-vent-proto*` crates keep their upstream MIT licence.
 
 To use Aurelia as a library, add `aurelia-steam` to your project and import it as `aurelia`:
 
@@ -382,6 +389,7 @@ aurelia config presence online       # appear online for chat (default: invisibl
 aurelia config language german       # default language for info and achievements text
 aurelia config country DE            # default store region for prices (unset: system locale, else US)
 aurelia config game 1245620 --proton GE-Proton9-20  # pin a Proton version for one game
+aurelia config game 1245620 --launch-options "gamemoderun %command% -novid"  # Steam-style launch options
 aurelia config install-resume auto   # let the daemon resume interrupted installs when it starts
 aurelia config download-limit 50000  # cap all game downloads at 50000 kbit/s (off: no limit, the default)
 aurelia config shader-precache off   # Linux: don't pre-compile Vulkan shaders before play (default: auto)
@@ -561,7 +569,16 @@ a standalone install. Each config directory gets its own session daemon.
 - **Library path.** Aurelia auto-detects your existing Steam installation. Inspect the
   resolved configuration with `aurelia config show`.
 - **Session.** Refresh tokens are persisted in `session.json` so subsequent invocations
-  log in automatically.
+  log in automatically. The file is encrypted with a key kept in the OS keyring when one is
+  available, and an encrypted session is never rewritten as plaintext. Steam Guard machine
+  tokens live in `machine_tokens.json` next to it, owner-only. See
+  [Session storage](https://github.com/Drackrath/Aurelia/wiki/Usage-Authentication#session-storage).
+- **Licences.** `play` only starts games the signed-in account may play: owned (free licences
+  included), shared through Steam Family, or confirmed by a Steam ownership ticket. Anything
+  else is refused with `access_denied` before an update or launch.
+- **Launch options.** Per-game launch options use Steam's syntax, including `%command%`
+  wrappers and `NAME=value` environment variables. See
+  [Launch options](https://github.com/Drackrath/Aurelia/wiki/Usage-Launching#launch-options).
 - **Download engine.** Installs, updates, verifications and Workshop downloads share one
   engine. It picks the least-loaded content servers, spreads chunk requests over a pool of
   them, retries a failed chunk on another server, and keeps 16 chunk requests in flight per
@@ -676,7 +693,8 @@ pipeline.
 ### Credits
 
 - [SteamFlow](https://github.com/weter11/SteamFlow): the project Aurelia is derived from. Its groundwork is the base everything here is built on. Thank you!
-- [steam-vent](https://codeberg.org/steam-vent/steam-vent): Steam network protocol implementation
+- [steam-vent](https://codeberg.org/steam-vent/steam-vent): Steam network protocol implementation (forked & modified as [aurelia-steam-vent](https://github.com/Drackrath/aurelia-steam-vent))
+- [steam-vent proto](https://codeberg.org/steam-vent/proto): Steam protobuf bindings (forked & regenerated as [aurelia-steam-vent-proto](https://codeberg.org/Drackrath/proto))
 - [steam-vent-chat](https://codeberg.org/steam-vent/chat): Steam Chat protocol implementation (forked & modified as [aurelia-steam-vent-chat](https://codeberg.org/Drackrath/aurelia-steam-vent-chat))
 - [steam-cdn](https://github.com/OccamyLab/steam-cdn): content-delivery and depot download engine (forked & modified as [aurelia-steam-cdn](https://github.com/Drackrath/aurelia-steam-cdn))
 - [SteamKit2](https://github.com/SteamRE/SteamKit): Steam .NET research code
