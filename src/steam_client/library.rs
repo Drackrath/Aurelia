@@ -4,16 +4,23 @@
 //! and free helpers live in the parent module (in scope via `use super::*`).
 use super::*;
 
+/// Owned games, free licences included.
+pub(crate) fn owned_games_request(steamid: u64) -> CPlayer_GetOwnedGames_Request {
+    CPlayer_GetOwnedGames_Request {
+        steamid: Some(steamid),
+        include_appinfo: Some(true),
+        include_played_free_games: Some(true),
+        // Claimed but never played free games.
+        include_free_sub: Some(true),
+        ..Default::default()
+    }
+}
+
 impl SteamClient {
     pub async fn fetch_owned_games(&mut self) -> Result<Vec<OwnedGame>> {
         let connection = self.require_connection()?;
 
-        let request = CPlayer_GetOwnedGames_Request {
-            steamid: Some(u64::from(connection.steam_id())),
-            include_appinfo: Some(true),
-            include_played_free_games: Some(true),
-            ..Default::default()
-        };
+        let request = owned_games_request(u64::from(connection.steam_id()));
 
         tracing::debug!("Calling Player.GetOwnedGames ...");
         let response: CPlayer_GetOwnedGames_Response = connection
