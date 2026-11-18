@@ -1410,7 +1410,8 @@ pub(crate) struct GameConfigArgs {
     /// Reset ALL of this game's per-game settings to defaults (both stores).
     #[arg(long, conflicts_with_all = ["proton", "clear_proton", "platform", "no_platform",
         "native_engine", "no_native_engine", "umu", "no_umu", "launch_script",
-        "no_launch_script", "steam_runtime", "steam_prefix_mode"])]
+        "no_launch_script", "steam_runtime", "steam_prefix_mode", "launch_options",
+        "no_launch_options"])]
     pub(crate) clear: bool,
     /// Route this game through the luxtorpeda native-engine plugin (Linux only;
     /// requires `aurelia luxtorpeda enable`).
@@ -1443,4 +1444,13 @@ pub(crate) struct GameConfigArgs {
     /// prefix directly; `per-game` copies Steam into the game's own prefix.
     #[arg(short = 'm', long, value_name = "shared|per-game")]
     pub(crate) steam_prefix_mode: Option<SteamPrefixModeArg>,
+    /// Steam-style launch options for this game, e.g.
+    /// `"PROTON_LOG=1 nice -n 5 %command% -windowed"`: leading `VAR=value` set the
+    /// environment, words before `%command%` wrap the game, words after it (or
+    /// all words without it) are game arguments.
+    #[arg(long, value_name = "LINE", allow_hyphen_values = true)]
+    pub(crate) launch_options: Option<String>,
+    /// Clear this game's launch options.
+    #[arg(long, conflicts_with = "launch_options")]
+    pub(crate) no_launch_options: bool,
 }

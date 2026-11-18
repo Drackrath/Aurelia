@@ -579,7 +579,13 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
         no_launch_script,
         steam_runtime,
         steam_prefix_mode,
+        launch_options,
+        no_launch_options,
     } = args;
+    if let Some(line) = &launch_options {
+        aurelia::launch::stages::user_launch_options::parse_launch_options(line)
+            .map_err(|e| anyhow::anyhow!("invalid --launch-options {line:?}: {e}"))?;
+    }
     use aurelia::core::config::GameRunner;
     use aurelia::core::models::{SteamPrefixMode, SteamRuntimePolicy};
 
@@ -627,11 +633,18 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
             ua.steam_prefix_mode = pm.into();
             user_changed = true;
         }
+        if no_launch_options {
+            ua.launch_options.clear();
+            user_changed = true;
+        } else if let Some(line) = launch_options {
+            ua.launch_options = line.trim().to_string();
+            user_changed = true;
+        }
     }
     if user_changed {
         aurelia::core::config::save_user_configs(&user_configs)
             .await
-            .context("failed saving per-game Steam-runtime config")?;
+            .context("failed saving per-game config")?;
     }
 
     let mut cfg = load_launcher_config().await?;
@@ -737,6 +750,7 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
             "launch_script": entry.launch_script,
             "steam_runtime_policy": ua.steam_runtime_policy,
             "steam_prefix_mode": ua.steam_prefix_mode,
+            "launch_options": ua.launch_options,
         }));
     } else {
         cli_println!("App {app_id}:");
@@ -766,6 +780,14 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
         );
         cli_println!("  Steam runtime: {steam_runtime_label}");
         cli_println!("  Prefix mode  : {prefix_mode_label}");
+        cli_println!(
+            "  Launch opts  : {}",
+            if ua.launch_options.is_empty() {
+                "(none)"
+            } else {
+                &ua.launch_options
+            }
+        );
     }
     Ok(())
 }
