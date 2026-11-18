@@ -11,3 +11,4 @@ pub mod resolve_game;
 pub mod resolve_game_fixups;
 pub mod resolve_profile;
 pub mod spawn_process;
+pub mod user_launch_options;

@@ -1094,21 +1094,6 @@ impl Runner for WineTkgRunner {
             .map(ToString::to_string);
         spec.args.extend(args);
 
-        // Split user launch args
-        let user_launch_args = ctx
-            .user_config
-            .as_ref()
-            .map(|c| {
-                c.launch_options
-                    .split_whitespace()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|a| a != "-mangohud" && a != "--mangohud");
-        spec.args.extend(user_launch_args);
-
         spec.env = self.build_env(ctx).await?;
 
         if use_umu {

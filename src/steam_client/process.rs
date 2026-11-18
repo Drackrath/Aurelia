@@ -436,10 +436,17 @@ NoSavePersonalInfo=1
         let executable = install_dir.join(&exe_relative);
         let mut args = split_args(&launch_info.arguments);
 
-        if let Some(config) = user_config {
-            if !config.launch_options.trim().is_empty() {
-                args.extend(split_args(&config.launch_options));
+        if let Some(config) = user_config.filter(|c| !c.launch_options.trim().is_empty()) {
+            use crate::launch::stages::user_launch_options::parse_launch_options;
+            let options = parse_launch_options(&config.launch_options)
+                .map_err(|e| anyhow!("invalid launch options: {e}"))?;
+            // Direct spawn: arguments only.
+            if !options.env.is_empty() || !options.wrappers.is_empty() {
+                tracing::warn!(
+                    "launch option environment and wrappers are ignored for direct Windows launches"
+                );
             }
+            args.extend(options.args);
         }
 
         // Workingdir, exe parent, install dir.

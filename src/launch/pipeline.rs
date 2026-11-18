@@ -657,6 +657,9 @@ impl LaunchPipeline {
         ));
         pipeline.add_stage(Box::new(crate::launch::stages::preflight::PreflightStage));
         pipeline.add_stage(Box::new(
+            crate::launch::stages::user_launch_options::UserLaunchOptionsStage,
+        ));
+        pipeline.add_stage(Box::new(
             crate::launch::stages::apply_launch_script::ApplyLaunchScriptStage,
         ));
         pipeline.add_stage(Box::new(

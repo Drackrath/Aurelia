@@ -100,14 +100,6 @@ impl Runner for LuxtorpedaRunner {
                 .split_whitespace()
                 .map(ToString::to_string),
         );
-        if let Some(config) = &ctx.user_config {
-            args.extend(
-                config
-                    .launch_options
-                    .split_whitespace()
-                    .map(ToString::to_string),
-            );
-        }
 
         Ok(CommandSpec {
             program: entry,
