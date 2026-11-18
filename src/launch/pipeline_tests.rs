@@ -189,3 +189,12 @@ async fn test_pipeline_structured_error_logging() {
     assert!(content.contains("Unknown"));
     assert!(content.contains("failure"));
 }
+
+#[test]
+fn launch_options_apply_between_preflight_and_launch_script() {
+    let pipeline = LaunchPipeline::with_default_stages();
+    let names: Vec<&str> = pipeline.stages.iter().map(|s| s.name()).collect();
+    let at = |name: &str| names.iter().position(|n| *n == name).unwrap();
+    assert!(at("Preflight") < at("UserLaunchOptions"));
+    assert!(at("UserLaunchOptions") < at("ApplyLaunchScript"));
+}

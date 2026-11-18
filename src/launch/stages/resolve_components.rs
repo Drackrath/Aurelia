@@ -43,15 +43,12 @@ impl Runner for NativeRunner {
             })?;
 
         let exe_rel = ctx.launch_info.executable.replace('\\', "/");
-        let mut args: Vec<String> = ctx
+        let args: Vec<String> = ctx
             .launch_info
             .arguments
             .split_whitespace()
             .map(str::to_string)
             .collect();
-        if let Some(config) = &ctx.user_config {
-            args.extend(config.launch_options.split_whitespace().map(str::to_string));
-        }
         let program = PathBuf::from(install_path).join(&exe_rel);
         let mut env = self.build_env(ctx).await?;
 
@@ -304,7 +301,7 @@ mod tests {
     use crate::steam_client::{LaunchInfo, LaunchTarget};
 
     #[tokio::test]
-    async fn native_runner_appends_user_launch_options() {
+    async fn native_runner_leaves_launch_options_to_their_stage() {
         let mut user_config = UserAppConfig::default();
         user_config.launch_options = "-fullscreen --skip-intro".to_string();
 
@@ -347,6 +344,7 @@ mod tests {
         };
 
         let spec = NativeRunner.build_command(&ctx).await.unwrap();
-        assert_eq!(spec.args, vec!["-v", "-fullscreen", "--skip-intro"]);
+        // UserLaunchOptionsStage adds them later.
+        assert_eq!(spec.args, vec!["-v"]);
     }
 }

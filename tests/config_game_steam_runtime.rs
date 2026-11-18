@@ -126,3 +126,39 @@ fn setter_refuses_to_overwrite_a_corrupt_file() {
         "the corrupt file was overwritten"
     );
 }
+
+#[test]
+fn launch_options_set_validate_and_clear() {
+    let tmp = sandbox();
+    let line = r#"PROTON_LOG=1 nice -n 5 %command% -name "Big Bob""#;
+    let o = aurelia(
+        tmp.path(),
+        &["config", "game", "10", "--launch-options", line, "--json"],
+    );
+    assert!(o.status.success(), "{}", out(&o));
+    let saved = fs::read_to_string(tmp.path().join("user_apps.json")).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&saved).unwrap();
+    assert_eq!(parsed["10"]["launch_options"], line);
+
+    // Leading dash is a value.
+    let o = aurelia(
+        tmp.path(),
+        &["config", "game", "10", "--launch-options", "-novid"],
+    );
+    assert!(o.status.success(), "{}", out(&o));
+
+    // Invalid line keeps the old one.
+    let o = aurelia(
+        tmp.path(),
+        &["config", "game", "10", "--launch-options", "\"broken"],
+    );
+    assert!(!o.status.success());
+    assert!(out(&o).contains("unterminated double quote"), "{}", out(&o));
+    let saved = fs::read_to_string(tmp.path().join("user_apps.json")).unwrap();
+    assert!(saved.contains("-novid"), "{saved}");
+
+    let o = aurelia(tmp.path(), &["config", "game", "10", "--no-launch-options"]);
+    assert!(o.status.success(), "{}", out(&o));
+    let saved = fs::read_to_string(tmp.path().join("user_apps.json")).unwrap();
+    assert!(!saved.contains("-novid"), "{saved}");
+}
