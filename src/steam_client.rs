@@ -544,6 +544,7 @@ pub use install::InstallOptions;
 mod content;
 mod depots;
 pub(crate) use content::ContentHost;
+mod language;
 mod launch;
 mod library;
 mod manage;
@@ -1736,8 +1737,8 @@ pub(crate) async fn run_depot_loop(
         {
             Ok(k) => k,
             Err(e) => {
-                if depots::skip_denied_key(&e, is_override) {
-                    tracing::warn!("Skipping depot {}: Steam denied access", selection.depot_id);
+                if depots::skip_key_failure(&e, is_override, selection.required) {
+                    tracing::warn!("Skipping depot {}: {e:#}", selection.depot_id);
                     continue;
                 }
                 emit_failed(

@@ -619,6 +619,16 @@ impl SteamClient {
             .await
             .unwrap_or_else(|_| (HashMap::new(), "public".to_string()));
 
+        // Steam's StateUpdateRequired flag.
+        let raw_manifest = std::fs::read_to_string(&manifest_path).ok();
+        let update_pending = raw_manifest
+            .as_deref()
+            .is_some_and(|raw| crate::core::acf::parse_app_manifest(raw).update_pending());
+        let dlc_depots = raw_manifest
+            .as_deref()
+            .map(super::manifests::installed_dlc_depots)
+            .unwrap_or_default();
+
         let client_clone = self.clone();
         let shared_state_clone = shared_state.clone();
         // The name Steam already recorded for this copy.
@@ -665,7 +675,10 @@ impl SteamClient {
                         return;
                     }
                 };
-                resolved.download_selections(&local_manifests, &active_branch, verify_mode)
+                let mut selections =
+                    resolved.download_selections(&local_manifests, &active_branch, verify_mode);
+                depots::mark_dlc_optional(&mut selections, &dlc_depots);
+                selections
             };
 
             if selections.is_empty() {
@@ -689,6 +702,26 @@ impl SteamClient {
                 emit_failed(&tx, message).await;
                 return;
             };
+
+            // Same depots: Steam wants another set.
+            if !verify_mode
+                && update_pending
+                && depots::selections_match_installed(&selections, &local_manifests)
+            {
+                let err = anyhow!(crate::core::error::TypedError::new(
+                    crate::core::error::ErrorKind::SteamConfigMismatch,
+                    format!(
+                        "Steam wants a different depot configuration for app {appid}; \
+                         the installed depots are already current, so there is nothing to \
+                         update. The appmanifest was left unchanged."
+                    ),
+                ));
+                emit_failed_err(&tx, "update", &err).await;
+                if let Ok(mut state) = shared_state_clone.write() {
+                    state.finish("Nothing to update");
+                }
+                return;
+            }
 
             // Hosts first: fail before reporter spawns.
             let Some(hosts) = fetch_content_hosts(&client_clone, &connection, &tx, appid).await
@@ -762,6 +795,7 @@ impl SteamClient {
                 build_id.as_deref(),
                 true,
                 false,
+                None,
             ) {
                 tracing::warn!("failed writing appmanifest for {}: {}", appid, err);
             }

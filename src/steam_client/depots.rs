@@ -21,11 +21,24 @@ impl std::fmt::Display for DepotKeyError {
 
 impl std::error::Error for DepotKeyError {}
 
-pub(crate) fn skip_denied_key(error: &anyhow::Error, is_override: bool) -> bool {
+/// Does a key failure skip it?
+///
+/// Access denied skips any automatic depot.
+/// Optional depots skip on any refusal.
+pub(crate) fn skip_key_failure(error: &anyhow::Error, is_override: bool, required: bool) -> bool {
     !is_override
         && error
             .downcast_ref::<DepotKeyError>()
-            .is_some_and(|e| e.eresult == 15)
+            .is_some_and(|e| e.eresult == 15 || !required)
+}
+
+/// Installed DLC depots are optional.
+pub(crate) fn mark_dlc_optional(selections: &mut [ManifestSelection], dlc_depots: &HashSet<u64>) {
+    for selection in selections {
+        if dlc_depots.contains(&(selection.depot_id as u64)) {
+            selection.required = false;
+        }
+    }
 }
 
 pub(crate) fn has_installable_content(
@@ -92,6 +105,49 @@ impl ResolvedDepots {
             })
             .collect()
     }
+}
+
+/// Every selected manifest is already installed.
+pub(crate) fn selections_match_installed(
+    selections: &[ManifestSelection],
+    installed: &HashMap<u64, u64>,
+) -> bool {
+    !selections.is_empty()
+        && selections
+            .iter()
+            .all(|s| installed.get(&(s.depot_id as u64)) == Some(&s.manifest_id))
+}
+
+/// A depot row's `config/language`, if set.
+pub(crate) fn depot_language<'a>(value: &'a Value<'_>) -> Option<&'a str> {
+    value
+        .get_obj(&["config"])
+        .and_then(|c| c.get("language"))
+        .and_then(|l| l.as_str())
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+}
+
+/// `wanted` if available, else English.
+pub(crate) fn effective_language(rows: &Obj<'_>, platform: DepotPlatform, wanted: &str) -> String {
+    let available = rows.values().any(|row| {
+        let oslist = row
+            .get_obj(&["config"])
+            .and_then(|c| c.get("oslist"))
+            .and_then(|o| o.as_str());
+        should_keep_depot(oslist, platform)
+            && depot_language(row).is_some_and(|l| l.eq_ignore_ascii_case(wanted))
+    });
+    if available {
+        wanted.to_ascii_lowercase()
+    } else {
+        "english".to_string()
+    }
+}
+
+/// Whether a depot serves `language`.
+pub(crate) fn depot_matches_language(value: &Value<'_>, language: &str) -> bool {
+    depot_language(value).is_none_or(|l| l.eq_ignore_ascii_case(language))
 }
 
 pub(crate) fn required_depot(value: &Value<'_>, app_id: u32) -> bool {

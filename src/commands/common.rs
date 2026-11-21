@@ -330,6 +330,7 @@ pub(crate) fn merge_family_shared(games: &mut Vec<LibraryGame>, shared: Vec<Shar
             install_path: None,
             local_manifest_ids: Default::default(),
             update_available: false,
+            steam_config_mismatch: false,
             update_queued: false,
             active_branch: "public".to_string(),
             is_owned: false,

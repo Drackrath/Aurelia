@@ -7,18 +7,46 @@ fn appinfo(text: &str) -> Vdf<'static> {
 }
 
 #[test]
-fn only_explicit_access_denial_is_skippable() {
-    for eresult in [2, 5, 15, 16, 20] {
+fn key_failures_skip_only_automatic_optional_or_denied_depots() {
+    for eresult in [2, 5, 9, 15, 16, 20] {
         let error = anyhow::Error::new(DepotKeyError {
             depot_id: 476604,
             eresult,
         })
         .context("request failed");
-        assert_eq!(skip_denied_key(&error, false), eresult == 15);
-        assert!(!skip_denied_key(&error, true));
+        // Required: only access denied skips.
+        assert_eq!(skip_key_failure(&error, false, true), eresult == 15);
+        // Optional: any Steam refusal skips.
+        assert!(skip_key_failure(&error, false, false));
+        assert!(!skip_key_failure(&error, true, false));
     }
-    assert!(!skip_denied_key(&anyhow!("network timeout"), false));
-    assert!(!skip_denied_key(&anyhow!("eresult 15"), false));
+    // Transport errors never skip.
+    assert!(!skip_key_failure(&anyhow!("network timeout"), false, false));
+    assert!(!skip_key_failure(&anyhow!("eresult 15"), false, true));
+}
+
+#[test]
+fn installed_dlc_depots_become_optional() {
+    let mut selections = vec![
+        ManifestSelection {
+            app_id: 977950,
+            depot_id: 977954,
+            manifest_id: 1,
+            appinfo_vdf: String::new(),
+            required: true,
+        },
+        ManifestSelection {
+            app_id: 977950,
+            depot_id: 1977574,
+            manifest_id: 7,
+            appinfo_vdf: String::new(),
+            required: true,
+        },
+    ];
+    let dlc: HashSet<u64> = [1977574].into_iter().collect();
+    mark_dlc_optional(&mut selections, &dlc);
+    assert!(selections[0].required);
+    assert!(!selections[1].required);
 }
 
 #[test]

@@ -90,6 +90,81 @@ pub(crate) async fn cmd_proton_list(installed_only: bool, json: bool) -> Result<
         }
     }
     cli_println!("\nInstall with `aurelia proton install <NAME>`.");
+    warn_dangling_mappings();
+    Ok(())
+}
+
+/// Steam root's mappings with a suggestion.
+fn tool_mapping_report() -> Option<(Vec<aurelia::compat::mapping::ToolMapping>, String)> {
+    let root = aurelia::core::config::detect_steam_path()?;
+    let mappings = aurelia::compat::mapping::steam_tool_mappings(&root);
+    let suggestion =
+        aurelia::compat::mapping::suggest_tool(&aurelia::compat::mapping::installed_tools(&root));
+    Some((mappings, suggestion))
+}
+
+/// Label for a mapping's app id.
+fn mapping_target(app_id: u64) -> String {
+    if app_id == 0 {
+        "default (all other titles)".to_string()
+    } else {
+        format!("app {app_id}")
+    }
+}
+
+/// Print dangling mappings to stderr.
+fn warn_dangling_mappings() {
+    let Some((mappings, suggestion)) = tool_mapping_report() else {
+        return;
+    };
+    let dangling: Vec<_> = mappings.iter().filter(|m| !m.known).collect();
+    if dangling.is_empty() {
+        return;
+    }
+    cli_eprintln!(
+        "\nWarning: Steam maps {} game(s) to compatibility tools that aren't installed:",
+        dangling.len()
+    );
+    for m in &dangling {
+        cli_eprintln!("  {:<28} -> {}", mapping_target(m.app_id), m.tool);
+    }
+    cli_eprintln!(
+        "Steam can't run those through Proton. Pick another tool in Steam (for example \
+         {suggestion}); see `aurelia proton mappings`."
+    );
+}
+
+/// `proton mappings`: list tool mappings.
+pub(crate) async fn cmd_proton_mappings(json: bool) -> Result<()> {
+    let Some((mappings, suggestion)) = tool_mapping_report() else {
+        bail!("no Steam installation found");
+    };
+    let dangling = mappings.iter().filter(|m| !m.known).count();
+    if json {
+        print_json(&serde_json::json!({
+            "mappings": mappings,
+            "dangling": dangling,
+            "suggestion": suggestion,
+        }));
+        return Ok(());
+    }
+    if mappings.is_empty() {
+        cli_println!("Steam has no compatibility tool mappings.");
+        return Ok(());
+    }
+    cli_println!("{:<28}  {:<32}  STATUS", "TARGET", "TOOL");
+    for m in &mappings {
+        let status = if m.known { "ok" } else { "missing" };
+        cli_println!("{:<28}  {:<32}  {status}", mapping_target(m.app_id), m.tool);
+    }
+    if dangling > 0 {
+        cli_println!(
+            "\n{dangling} mapping(s) name a tool that isn't installed. Steam then has no \
+             Proton for those games and may flag them \"Update Required\" on every start. \
+             Re-point them in Steam (Settings > Compatibility, or the game's Properties), \
+             for example to {suggestion}."
+        );
+    }
     Ok(())
 }
 

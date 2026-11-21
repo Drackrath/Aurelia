@@ -881,6 +881,27 @@ pub(crate) async fn cmd_update(app_id: u32, force: bool, json: bool) -> Result<(
     Ok(())
 }
 
+/// `set-language`: swap a game's language depots.
+pub(crate) async fn cmd_set_language(app_id: u32, language: String, json: bool) -> Result<()> {
+    let client = authed_client().await?;
+    let (_install_guard, state) = InstallGuard::begin(app_id)?;
+    let rx = client
+        .set_game_language(app_id, &language, state)
+        .await
+        .with_context(|| format!("failed to switch app {app_id} to {language}"))?;
+    drive_progress(rx, json).await?;
+    if json {
+        print_json(&serde_json::json!({
+            "app_id": app_id,
+            "language": language.trim().to_ascii_lowercase(),
+            "status": "language_set",
+        }));
+    } else {
+        cli_println!("App {app_id} now uses {language}.");
+    }
+    Ok(())
+}
+
 /// `aurelia update` with no app id: list every installed game whose active branch
 /// has a newer build available than what's on disk.
 pub(crate) async fn cmd_check_updates(json: bool) -> Result<()> {
@@ -917,6 +938,10 @@ pub(crate) async fn cmd_check_updates(json: bool) -> Result<()> {
     let mut pinned: Vec<&LibraryGame> = games.iter().filter(|g| is_pinned(g.app_id)).collect();
     pinned.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
+    let mut mismatched: Vec<&LibraryGame> =
+        games.iter().filter(|g| g.steam_config_mismatch).collect();
+    mismatched.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+
     if json {
         let arr: Vec<_> = updates
             .iter()
@@ -932,7 +957,15 @@ pub(crate) async fn cmd_check_updates(json: bool) -> Result<()> {
             .iter()
             .map(|g| serde_json::json!({ "app_id": g.app_id, "name": g.name }))
             .collect();
-        print_json(&serde_json::json!({ "updates": arr, "pinned": pinned_arr }));
+        let mismatch_arr: Vec<_> = mismatched
+            .iter()
+            .map(|g| serde_json::json!({ "app_id": g.app_id, "name": g.name }))
+            .collect();
+        print_json(&serde_json::json!({
+            "updates": arr,
+            "pinned": pinned_arr,
+            "steam_config_mismatch": mismatch_arr,
+        }));
         return Ok(());
     }
 
@@ -948,6 +981,16 @@ pub(crate) async fn cmd_check_updates(json: bool) -> Result<()> {
             "\n{} game(s) need an update. Run `aurelia update <app_id>` to install one.",
             updates.len()
         );
+    }
+
+    if !mismatched.is_empty() {
+        cli_println!(
+            "\nSteam wants a different depot set (language or compatibility tool), \
+             not a newer build; `aurelia update` can't fix these:"
+        );
+        for g in &mismatched {
+            cli_println!("{:>9}  {}", g.app_id, g.name);
+        }
     }
 
     if !pinned.is_empty() {

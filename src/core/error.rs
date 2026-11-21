@@ -31,6 +31,8 @@ pub enum ErrorKind {
     DiskFull,
     /// No network route or DNS.
     Offline,
+    /// Steam wants other depots.
+    SteamConfigMismatch,
     Unknown,
 }
 
@@ -52,6 +54,7 @@ impl ErrorKind {
         Self::InputClosed,
         Self::DiskFull,
         Self::Offline,
+        Self::SteamConfigMismatch,
         Self::Unknown,
     ];
 
@@ -69,6 +72,10 @@ impl ErrorKind {
             Self::InputClosed => Some("keep stdin open while a --json command waits"),
             Self::DiskFull => Some("free space on the target drive or pick another `--library`"),
             Self::Offline => Some("no network connection; reconnect and retry"),
+            Self::SteamConfigMismatch => Some(
+                "Steam wants a different platform or language depot set; check the game's \
+                 language and compatibility tool in Steam (`aurelia proton mappings` lists dangling tools)",
+            ),
             _ => None,
         }
     }
@@ -85,6 +92,7 @@ impl ErrorKind {
             Self::InputClosed => 84,
             Self::DiskFull => 85,
             Self::Offline => 86,
+            Self::SteamConfigMismatch => 87,
             _ => 1,
         }
     }

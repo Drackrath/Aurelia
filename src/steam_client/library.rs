@@ -115,6 +115,7 @@ impl SteamClient {
     pub async fn check_for_updates(&self, games: &mut [LibraryGame]) -> Result<()> {
         for game in games.iter_mut() {
             game.update_available = false;
+            game.steam_config_mismatch = false;
             game.local_manifest_ids.clear();
 
             if !game.is_installed {
@@ -125,16 +126,9 @@ impl SteamClient {
             game.local_manifest_ids = local.clone();
             game.active_branch = branch;
 
-            // A partially-started update leaves Steam's `StateUpdateRequired` flag
-            // set, with the new content staged (not in `InstalledDepots`), so the
-            // per-depot comparison below can't see it. The flag is authoritative —
-            // and works offline — so trust it and skip the remote round-trip.
-            if update_pending {
-                game.update_available = true;
-                continue;
-            }
-
+            // Offline: trust Steam's flag.
             if self.is_offline() || self.connection.is_none() {
+                game.update_available = update_pending;
                 continue;
             }
 
@@ -143,10 +137,13 @@ impl SteamClient {
                 .await
                 .unwrap_or_default();
             if remote.is_empty() {
+                game.update_available = update_pending;
                 continue;
             }
 
-            game.update_available = installed_depots_need_update(&local, &remote);
+            let (update, mismatch) = update_state(&local, &remote, update_pending);
+            game.update_available = update;
+            game.steam_config_mismatch = mismatch;
         }
 
         Ok(())
@@ -509,6 +506,20 @@ fn launch_options_from_section(section: &steam_vdf_parser::Value) -> Vec<RawLaun
 /// Decide whether an installed game has a pending update, given its installed
 /// (`local`) depot→manifest map (from the appmanifest) and the full remote
 /// (`remote`) depot→manifest map from PICS.
+/// `(update_available, steam_config_mismatch)` for a game.
+///
+/// Steam also flags other wanted depots.
+/// Current depots mean nothing to download.
+fn update_state(
+    local: &HashMap<u64, u64>,
+    remote: &HashMap<u64, u64>,
+    update_pending: bool,
+) -> (bool, bool) {
+    let newer = installed_depots_need_update(local, remote);
+    let mismatch = update_pending && !newer && !local.is_empty();
+    (newer || (update_pending && local.is_empty()), mismatch)
+}
+
 fn installed_depots_need_update(local: &HashMap<u64, u64>, remote: &HashMap<u64, u64>) -> bool {
     local.iter().any(|(depot, local_manifest)| {
         remote

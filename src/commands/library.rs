@@ -296,6 +296,8 @@ pub(crate) async fn cmd_list(
         let status = if g.is_installed {
             if g.update_available {
                 "update"
+            } else if g.steam_config_mismatch {
+                "mismatch"
             } else {
                 "installed"
             }

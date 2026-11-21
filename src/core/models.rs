@@ -172,6 +172,9 @@ pub struct LibraryGame {
     pub local_manifest_ids: HashMap<u64, u64>,
     #[serde(default)]
     pub update_available: bool,
+    /// Flagged update no download fixes.
+    #[serde(default)]
+    pub steam_config_mismatch: bool,
     #[serde(default)]
     pub update_queued: bool,
     #[serde(default = "default_branch")]

@@ -497,6 +497,7 @@ async fn run(mut cli: Cli) -> Result<()> {
         } => cmd_set_dlc(app_id, false, restart_steam, json).await,
         Command::Branches { app_id } => cmd_branches(app_id, json).await,
         Command::SetBranch { app_id, branch } => cmd_set_branch(app_id, branch, json).await,
+        Command::SetLanguage { app_id, language } => cmd_set_language(app_id, language, json).await,
         Command::Info {
             app_ids,
             extended,
@@ -650,6 +651,7 @@ async fn run(mut cli: Cli) -> Result<()> {
             ProtonCommand::Install { version } => cmd_proton_install(version, json).await,
             ProtonCommand::Uninstall { version } => cmd_proton_uninstall(version, json).await,
             ProtonCommand::Default { version } => cmd_proton_default(version, json).await,
+            ProtonCommand::Mappings => cmd_proton_mappings(json).await,
             ProtonCommand::Anticheat { runtime } => {
                 let kind = match runtime {
                     AntiCheatArg::Eac => aurelia::compat::anticheat::AntiCheat::EasyAntiCheat,

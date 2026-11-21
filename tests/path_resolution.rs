@@ -40,6 +40,7 @@ async fn test_batman_path_resolution() {
         playtime_forever_minutes: Some(0),
         active_branch: "public".to_string(),
         update_available: false,
+        steam_config_mismatch: false,
         update_queued: false,
         local_manifest_ids: HashMap::new(),
         is_owned: true,

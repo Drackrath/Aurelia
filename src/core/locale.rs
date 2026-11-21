@@ -148,6 +148,51 @@ pub fn normalize_country(raw: &str) -> Option<String> {
     Some(if code == "UK" { "GB".to_string() } else { code })
 }
 
+/// `HKCU/Software/Valve/Steam/language` from `registry.vdf` text.
+pub fn registry_steam_language(raw: &str) -> Option<String> {
+    let vdf = steam_vdf_parser::parse_text(raw).ok()?;
+    let mut node = vdf.value();
+    for key in ["HKCU", "Software", "Valve", "Steam", "language"] {
+        // Steam's key case varies.
+        node = node
+            .as_obj()?
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(key))
+            .map(|(_, v)| v)?;
+    }
+    node.as_str()
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+}
+
+/// The desktop Steam client's UI language.
+pub fn steam_client_language() -> Option<String> {
+    let home = crate::core::config::home_dir().ok()?;
+    [
+        home.join(".steam/registry.vdf"),
+        home.join(".var/app/com.valvesoftware.Steam/.steam/registry.vdf"),
+    ]
+    .iter()
+    .filter_map(|p| std::fs::read_to_string(p).ok())
+    .find_map(|raw| registry_steam_language(&raw))
+}
+
+/// Install language, in Steam's order.
+///
+/// Manifest, Steam client, config, English.
+pub fn pick_install_language(
+    manifest: Option<&str>,
+    steam_client: Option<&str>,
+    config: Option<&str>,
+) -> String {
+    [manifest, steam_client, config]
+        .into_iter()
+        .flatten()
+        .map(|l| l.trim().to_ascii_lowercase())
+        .find(|l| !l.is_empty())
+        .unwrap_or_else(|| "english".to_string())
+}
+
 #[cfg(test)]
 #[path = "locale_tests.rs"]
 mod tests;
