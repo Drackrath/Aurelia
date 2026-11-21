@@ -1,4 +1,8 @@
-use crate::launch::pipeline::{LaunchError, LaunchErrorKind, PipelineContext, PipelineStage};
+use crate::launch::{
+    context::PipelineContext,
+    error::{LaunchError, LaunchErrorKind},
+    pipeline::PipelineStage,
+};
 use async_trait::async_trait;
 
 pub struct PreparePrefixStage;

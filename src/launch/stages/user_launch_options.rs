@@ -1,6 +1,10 @@
 use crate::core::dll_overrides::{dll_override_entries, merge_dll_overrides};
-use crate::launch::pipeline::{LaunchError, LaunchErrorKind, PipelineContext, PipelineStage};
 use crate::launch::runners::CommandSpec;
+use crate::launch::{
+    context::PipelineContext,
+    error::{LaunchError, LaunchErrorKind},
+    pipeline::PipelineStage,
+};
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 

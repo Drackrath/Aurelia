@@ -12,7 +12,7 @@ use std::process::Command;
 
 use anyhow::anyhow;
 
-use crate::launch::pipeline::{LaunchError, LaunchErrorKind};
+use crate::launch::error::{LaunchError, LaunchErrorKind};
 use crate::launch::runners::{CommandSpec, LaunchContext, Runner};
 
 pub struct LuxtorpedaRunner;

@@ -556,7 +556,7 @@ NoSavePersonalInfo=1
         steam_enabled: bool,
         shaders: crate::launch::shaders::ShaderLaunch,
     ) -> Result<std::process::Child> {
-        use crate::launch::pipeline::{LaunchPipeline, PipelineContext};
+        use crate::launch::{context::PipelineContext, pipeline::LaunchPipeline};
         use crate::logging::{EventLogger, LaunchSession};
 
         let mut ctx = PipelineContext::new(app.app_id);

@@ -1,4 +1,4 @@
-use crate::launch::pipeline::PipelineContext;
+use crate::launch::context::PipelineContext;
 use crate::launch::validators::LaunchValidator;
 use std::collections::HashMap;
 

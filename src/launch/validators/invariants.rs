@@ -1,4 +1,4 @@
-use crate::launch::pipeline::{EvidenceScanMetadata, PipelineContext};
+use crate::launch::context::{EvidenceScanMetadata, PipelineContext};
 use crate::launch::validators::LaunchValidator;
 
 /// Parse a `WINEDLLOVERRIDES` value and return the DLL names (as written in the

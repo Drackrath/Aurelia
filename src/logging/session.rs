@@ -35,9 +35,9 @@ pub struct LaunchSummary {
     pub stage_durations_ms: HashMap<String, u128>,
     pub timestamp: u64,
     #[serde(default)]
-    pub warnings: Vec<crate::launch::pipeline::CompatibilityWarning>,
+    pub warnings: Vec<crate::launch::context::CompatibilityWarning>,
     #[serde(default)]
-    pub graphics_stack: Option<crate::launch::pipeline::GraphicsStackInfo>,
+    pub graphics_stack: Option<crate::launch::context::GraphicsStackInfo>,
     #[serde(default)]
     pub verification: LaunchVerification,
 }
@@ -143,7 +143,7 @@ pub struct EffectiveSettingsConfig {
     pub target_architecture: crate::core::models::ExecutableArchitecture,
     pub dll_resolutions: Vec<crate::launch::dll_provider_resolver::DllResolution>,
     pub wine_dll_overrides: Option<String>,
-    pub runtime_evidence: Option<crate::launch::pipeline::RuntimeEvidence>,
+    pub runtime_evidence: Option<crate::launch::context::RuntimeEvidence>,
     pub env_propagation: Option<HashMap<String, bool>>,
 }
 
@@ -286,8 +286,8 @@ fn sanity_warning(
     code: &str,
     message: String,
     context: impl IntoIterator<Item = (String, String)>,
-) -> crate::launch::pipeline::CompatibilityWarning {
-    crate::launch::pipeline::CompatibilityWarning {
+) -> crate::launch::context::CompatibilityWarning {
+    crate::launch::context::CompatibilityWarning {
         code: code.to_string(),
         message,
         context: context.into_iter().collect(),
@@ -298,7 +298,7 @@ pub fn check_environment_sanity(
     env_vars: &HashMap<String, String>,
     runner_name: &str,
     user_config: Option<&crate::core::models::UserAppConfig>,
-) -> Vec<crate::launch::pipeline::CompatibilityWarning> {
+) -> Vec<crate::launch::context::CompatibilityWarning> {
     let mut warnings = Vec::new();
 
     // 1. Check for forced D3D defaults in WINEDLLOVERRIDES when they shouldn't be there

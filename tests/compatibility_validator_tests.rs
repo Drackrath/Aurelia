@@ -1,5 +1,5 @@
 use aurelia::core::models::UserAppConfig;
-use aurelia::launch::pipeline::PipelineContext;
+use aurelia::launch::context::PipelineContext;
 use aurelia::launch::validators::LaunchValidator;
 use aurelia::launch::validators::overrides::OverrideConflictValidator;
 

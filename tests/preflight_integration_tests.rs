@@ -1,6 +1,6 @@
-use aurelia::launch::pipeline::{LaunchPipeline, PipelineContext};
 use aurelia::launch::runners::CommandSpec;
 use aurelia::launch::stages::preflight::PreflightStage;
+use aurelia::launch::{context::PipelineContext, pipeline::LaunchPipeline};
 use std::path::Path;
 
 #[tokio::test]
@@ -17,7 +17,7 @@ async fn test_pipeline_preflight_prevents_spawn() {
         async fn execute(
             &self,
             _ctx: &mut PipelineContext,
-        ) -> Result<(), aurelia::launch::pipeline::LaunchError> {
+        ) -> Result<(), aurelia::launch::error::LaunchError> {
             panic!("SpawnProcess stage reached but should have been prevented by Preflight!");
         }
     }
@@ -37,9 +37,11 @@ async fn test_pipeline_preflight_prevents_spawn() {
 
 #[tokio::test]
 async fn test_spawn_process_failure_diagnostics() {
-    use aurelia::launch::pipeline::{LaunchErrorKind, LaunchPipeline, PipelineContext};
     use aurelia::launch::runners::CommandSpec;
     use aurelia::launch::stages::spawn_process::SpawnProcessStage;
+    use aurelia::launch::{
+        context::PipelineContext, error::LaunchErrorKind, pipeline::LaunchPipeline,
+    };
 
     let mut pipeline = LaunchPipeline::new();
     pipeline.add_stage(Box::new(SpawnProcessStage));
@@ -59,30 +61,30 @@ async fn test_spawn_process_failure_diagnostics() {
         async fn prepare_prefix(
             &self,
             _: &aurelia::launch::runners::LaunchContext,
-        ) -> Result<(), aurelia::launch::pipeline::LaunchError> {
+        ) -> Result<(), aurelia::launch::error::LaunchError> {
             Ok(())
         }
         async fn build_env(
             &self,
             _: &aurelia::launch::runners::LaunchContext,
-        ) -> Result<std::collections::HashMap<String, String>, aurelia::launch::pipeline::LaunchError>
+        ) -> Result<std::collections::HashMap<String, String>, aurelia::launch::error::LaunchError>
         {
             Ok(std::collections::HashMap::new())
         }
         async fn build_command(
             &self,
             _: &aurelia::launch::runners::LaunchContext,
-        ) -> Result<CommandSpec, aurelia::launch::pipeline::LaunchError> {
+        ) -> Result<CommandSpec, aurelia::launch::error::LaunchError> {
             Ok(CommandSpec::default())
         }
         fn launch(
             &self,
             spec: &CommandSpec,
-        ) -> Result<std::process::Child, aurelia::launch::pipeline::LaunchError> {
+        ) -> Result<std::process::Child, aurelia::launch::error::LaunchError> {
             let res = std::process::Command::new(&spec.program).spawn();
             match res {
                 Ok(child) => Ok(child),
-                Err(e) => Err(aurelia::launch::pipeline::LaunchError::new(
+                Err(e) => Err(aurelia::launch::error::LaunchError::new(
                     LaunchErrorKind::Process,
                     "spawn failed",
                 )
@@ -106,9 +108,11 @@ async fn test_spawn_process_failure_diagnostics() {
 
 #[tokio::test]
 async fn test_spawn_failure_with_synthetic_lock_shows_hint() {
-    use aurelia::launch::pipeline::{LaunchErrorKind, LaunchPipeline, PipelineContext};
     use aurelia::launch::runners::CommandSpec;
     use aurelia::launch::stages::spawn_process::SpawnProcessStage;
+    use aurelia::launch::{
+        context::PipelineContext, error::LaunchErrorKind, pipeline::LaunchPipeline,
+    };
 
     let tmp = tempfile::tempdir().unwrap();
     let lockfile = tmp.path().join(".aurelia_launch.lock");
@@ -131,28 +135,28 @@ async fn test_spawn_failure_with_synthetic_lock_shows_hint() {
         async fn prepare_prefix(
             &self,
             _: &aurelia::launch::runners::LaunchContext,
-        ) -> Result<(), aurelia::launch::pipeline::LaunchError> {
+        ) -> Result<(), aurelia::launch::error::LaunchError> {
             Ok(())
         }
         async fn build_env(
             &self,
             _: &aurelia::launch::runners::LaunchContext,
-        ) -> Result<std::collections::HashMap<String, String>, aurelia::launch::pipeline::LaunchError>
+        ) -> Result<std::collections::HashMap<String, String>, aurelia::launch::error::LaunchError>
         {
             Ok(std::collections::HashMap::new())
         }
         async fn build_command(
             &self,
             _: &aurelia::launch::runners::LaunchContext,
-        ) -> Result<CommandSpec, aurelia::launch::pipeline::LaunchError> {
+        ) -> Result<CommandSpec, aurelia::launch::error::LaunchError> {
             Ok(CommandSpec::default())
         }
         fn launch(
             &self,
             _: &CommandSpec,
-        ) -> Result<std::process::Child, aurelia::launch::pipeline::LaunchError> {
+        ) -> Result<std::process::Child, aurelia::launch::error::LaunchError> {
             // Force a generic spawn failure
-            Err(aurelia::launch::pipeline::LaunchError::new(
+            Err(aurelia::launch::error::LaunchError::new(
                 LaunchErrorKind::Process,
                 "generic spawn failure",
             )
@@ -191,9 +195,9 @@ async fn test_spawn_failure_with_synthetic_lock_shows_hint() {
 
 #[tokio::test]
 async fn test_launch_artifacts_generation() {
-    use aurelia::launch::pipeline::{LaunchPipeline, PipelineContext};
     use aurelia::launch::runners::CommandSpec;
     use aurelia::launch::stages::preflight::PreflightStage;
+    use aurelia::launch::{context::PipelineContext, pipeline::LaunchPipeline};
     use aurelia::logging::LaunchSession;
     use tempfile::tempdir;
 

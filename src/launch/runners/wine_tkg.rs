@@ -1,4 +1,4 @@
-use crate::launch::pipeline::{LaunchError, LaunchErrorKind};
+use crate::launch::error::{LaunchError, LaunchErrorKind};
 use crate::launch::runners::{CommandSpec, LaunchContext, Runner};
 use crate::steam_client::SteamClient;
 use anyhow::anyhow;

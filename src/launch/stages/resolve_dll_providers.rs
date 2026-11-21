@@ -1,5 +1,9 @@
 use crate::launch::dll_provider_resolver::DllProviderResolver;
-use crate::launch::pipeline::{LaunchError, LaunchErrorKind, PipelineContext, PipelineStage};
+use crate::launch::{
+    context::PipelineContext,
+    error::{LaunchError, LaunchErrorKind},
+    pipeline::PipelineStage,
+};
 use async_trait::async_trait;
 use std::path::PathBuf;
 

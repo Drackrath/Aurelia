@@ -1,5 +1,9 @@
 use async_trait::async_trait;
-use aurelia::launch::pipeline::{LaunchError, LaunchErrorKind, LaunchPipeline, PipelineContext};
+use aurelia::launch::{
+    context::PipelineContext,
+    error::{LaunchError, LaunchErrorKind},
+    pipeline::LaunchPipeline,
+};
 use aurelia::logging::{LaunchResult, LaunchSession, load_launch_summary};
 use tempfile::tempdir;
 

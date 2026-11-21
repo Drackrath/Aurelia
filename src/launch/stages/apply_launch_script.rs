@@ -4,7 +4,11 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 
 use crate::launch::launch_script;
-use crate::launch::pipeline::{LaunchError, LaunchErrorKind, PipelineContext, PipelineStage};
+use crate::launch::{
+    context::PipelineContext,
+    error::{LaunchError, LaunchErrorKind},
+    pipeline::PipelineStage,
+};
 
 /// Wraps the resolved launch command with a per-game launch script when one is
 /// active. Runs **between** `PreflightStage` (which validates the real runner

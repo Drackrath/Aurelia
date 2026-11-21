@@ -43,9 +43,8 @@ impl LaunchContext {
     /// Resolve install dir, executable, workingdir.
     pub fn game_paths(
         &self,
-    ) -> std::result::Result<(PathBuf, PathBuf, PathBuf), crate::launch::pipeline::LaunchError>
-    {
-        use crate::launch::pipeline::{LaunchError, LaunchErrorKind};
+    ) -> std::result::Result<(PathBuf, PathBuf, PathBuf), crate::launch::error::LaunchError> {
+        use crate::launch::error::{LaunchError, LaunchErrorKind};
         let install_dir = PathBuf::from(self.app.install_path.clone().ok_or_else(|| {
             LaunchError::new(
                 LaunchErrorKind::GameData,
@@ -75,8 +74,8 @@ impl LaunchContext {
 /// Point compat install path at trap.
 pub fn insert_fake_steam_trap(
     env: &mut HashMap<String, String>,
-) -> std::result::Result<PathBuf, crate::launch::pipeline::LaunchError> {
-    use crate::launch::pipeline::{LaunchError, LaunchErrorKind};
+) -> std::result::Result<PathBuf, crate::launch::error::LaunchError> {
+    use crate::launch::error::{LaunchError, LaunchErrorKind};
     let config_dir = crate::core::config::config_dir().map_err(|e| {
         LaunchError::new(LaunchErrorKind::Environment, "failed to get config dir").with_source(e)
     })?;
@@ -108,17 +107,17 @@ pub trait Runner: Send + Sync {
     async fn prepare_prefix(
         &self,
         ctx: &LaunchContext,
-    ) -> std::result::Result<(), crate::launch::pipeline::LaunchError>;
+    ) -> std::result::Result<(), crate::launch::error::LaunchError>;
     async fn build_env(
         &self,
         ctx: &LaunchContext,
-    ) -> std::result::Result<HashMap<String, String>, crate::launch::pipeline::LaunchError>;
+    ) -> std::result::Result<HashMap<String, String>, crate::launch::error::LaunchError>;
     async fn build_command(
         &self,
         ctx: &LaunchContext,
-    ) -> std::result::Result<CommandSpec, crate::launch::pipeline::LaunchError>;
+    ) -> std::result::Result<CommandSpec, crate::launch::error::LaunchError>;
     fn launch(
         &self,
         spec: &CommandSpec,
-    ) -> std::result::Result<std::process::Child, crate::launch::pipeline::LaunchError>;
+    ) -> std::result::Result<std::process::Child, crate::launch::error::LaunchError>;
 }

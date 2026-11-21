@@ -1,4 +1,8 @@
-use crate::launch::pipeline::{LaunchError, LaunchErrorKind, PipelineContext, PipelineStage};
+use crate::launch::{
+    context::PipelineContext,
+    error::{LaunchError, LaunchErrorKind},
+    pipeline::PipelineStage,
+};
 use async_trait::async_trait;
 
 pub struct SpawnProcessStage;
@@ -51,8 +55,9 @@ impl PipelineStage for SpawnProcessStage {
                         .and_then(|s| s.downcast_ref::<std::io::Error>())
                     {
                         Some(io_err) => {
-                            let dup_info = crate::launch::pipeline::detect_duplicate_instance(ctx);
-                            crate::launch::pipeline::map_io_error(io_err, Some(&dup_info))
+                            let dup_info =
+                                crate::launch::diagnostics::detect_duplicate_instance(ctx);
+                            crate::launch::error::map_io_error(io_err, Some(&dup_info))
                         }
                         None => e,
                     }
@@ -100,8 +105,8 @@ impl PipelineStage for SpawnProcessStage {
                 .await
                 .map_err(|e| {
                     if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
-                        let dup_info = crate::launch::pipeline::detect_duplicate_instance(ctx);
-                        crate::launch::pipeline::map_io_error(io_err, Some(&dup_info))
+                        let dup_info = crate::launch::diagnostics::detect_duplicate_instance(ctx);
+                        crate::launch::error::map_io_error(io_err, Some(&dup_info))
                     } else {
                         LaunchError::new(LaunchErrorKind::Process, "failed to spawn adhoc process")
                             .with_source(e)

@@ -1,7 +1,7 @@
 //! Replay Vulkan pipelines before launch.
 
-use crate::launch::pipeline::{LaunchError, PipelineContext, PipelineStage};
 use crate::launch::shaders::{self, ShaderEvent, ShaderPrecache};
+use crate::launch::{context::PipelineContext, error::LaunchError, pipeline::PipelineStage};
 use async_trait::async_trait;
 
 pub struct PrecacheShadersStage;

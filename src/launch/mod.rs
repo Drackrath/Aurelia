@@ -1,4 +1,7 @@
+pub mod context;
+pub mod diagnostics;
 pub mod dll_provider_resolver;
+pub mod error;
 pub mod fixups;
 pub mod game_process;
 pub mod launch_script;
@@ -6,6 +9,7 @@ pub mod pipeline;
 pub mod runners;
 pub mod shaders;
 pub mod stages;
+pub mod summary;
 pub mod validators;
 
 #[cfg(test)]

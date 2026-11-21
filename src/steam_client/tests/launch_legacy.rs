@@ -47,7 +47,7 @@ async fn test_legacy_path_blocks_windows_proton() {
 #[tokio::test]
 async fn test_pipeline_integration_scaffolding() {
     // Passing no app causes ResolveGame to fail early.
-    let mut ctx = crate::launch::pipeline::PipelineContext::new(999999);
+    let mut ctx = crate::launch::context::PipelineContext::new(999999);
     let pipeline = crate::launch::pipeline::LaunchPipeline::with_default_stages();
 
     let result = pipeline.run(&mut ctx).await;

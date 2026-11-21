@@ -1,8 +1,8 @@
 use aurelia::core::models::LibraryGame;
-use aurelia::launch::pipeline::{LaunchErrorKind, LaunchPipeline, PipelineContext};
 use aurelia::launch::stages::resolve_game::ResolveGameStage;
 use aurelia::launch::stages::resolve_profile::ResolveProfileStage;
 use aurelia::launch::stages::spawn_process::SpawnProcessStage;
+use aurelia::launch::{context::PipelineContext, error::LaunchErrorKind, pipeline::LaunchPipeline};
 use std::collections::HashMap;
 
 #[tokio::test]

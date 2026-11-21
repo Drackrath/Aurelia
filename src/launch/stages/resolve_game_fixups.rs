@@ -1,4 +1,4 @@
-use crate::launch::pipeline::{LaunchError, PipelineContext, PipelineStage};
+use crate::launch::{context::PipelineContext, error::LaunchError, pipeline::PipelineStage};
 use async_trait::async_trait;
 
 /// Resolves the data-driven per-game fixups (see [`crate::launch::fixups`]) for the

@@ -4,8 +4,12 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use tempfile::tempdir;
 
-use crate::launch::pipeline::{LaunchError, LaunchErrorKind, LaunchPipeline, PipelineContext};
 use crate::launch::runners::{CommandSpec, LaunchContext, Runner};
+use crate::launch::{
+    context::PipelineContext,
+    error::{LaunchError, LaunchErrorKind},
+    pipeline::LaunchPipeline,
+};
 use crate::logging::{EventLogger, LaunchSession};
 
 struct MockRunner {
