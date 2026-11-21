@@ -105,10 +105,7 @@ pub(crate) async fn cmd_user(user: String, json: bool) -> Result<()> {
         cli_println!("Location : {place}");
     }
     if let Some(t) = profile.created {
-        cli_println!(
-            "Created  : {}",
-            aurelia::steam_client::unix_to_ymd(t as i64)
-        );
+        cli_println!("Created  : {}", aurelia::core::time::unix_to_ymd(t as i64));
     }
     cli_println!("Status   : {}", persona_state_label(profile.persona_state));
     match (&profile.game_name, profile.game_app_id) {
@@ -117,10 +114,7 @@ pub(crate) async fn cmd_user(user: String, json: bool) -> Result<()> {
         _ => {}
     }
     if let Some(t) = profile.last_logoff {
-        cli_println!(
-            "Last seen: {}",
-            aurelia::steam_client::unix_to_ymd(t as i64)
-        );
+        cli_println!("Last seen: {}", aurelia::core::time::unix_to_ymd(t as i64));
     }
     if let Some(h) = &profile.headline {
         cli_println!("Headline : {h}");
@@ -131,7 +125,7 @@ pub(crate) async fn cmd_user(user: String, json: bool) -> Result<()> {
     if let Some(t) = profile.ban_expires {
         cli_println!(
             "\nCommunity ban until {}",
-            aurelia::steam_client::unix_to_ymd(t as i64)
+            aurelia::core::time::unix_to_ymd(t as i64)
         );
     }
     Ok(())

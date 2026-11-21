@@ -660,7 +660,7 @@ pub(crate) fn format_unix_timestamp(secs: u64) -> String {
     let (h, m, s) = (tod / 3600, (tod % 3600) / 60, tod % 60);
     format!(
         "{} {:02}:{:02}:{:02}",
-        aurelia::steam_client::unix_to_ymd(secs as i64),
+        aurelia::core::time::unix_to_ymd(secs as i64),
         h,
         m,
         s

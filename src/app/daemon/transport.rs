@@ -35,7 +35,7 @@ pub(super) fn config_tag_for(
     let key = dir.to_string_lossy();
     Some(format!(
         "{:08x}",
-        aurelia::steam_client::stable_logon_id(&key)
+        aurelia::steam_client::connection::stable_logon_id(&key)
     ))
 }
 

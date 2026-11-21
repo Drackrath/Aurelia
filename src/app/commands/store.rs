@@ -5,7 +5,8 @@ use crate::app::commands::common::*;
 use anyhow::Result;
 use aurelia::core::error::{ErrorKind, TypedError};
 use aurelia::core::locale::normalize_country;
-use aurelia::steam_client::{StoreAppInfo, StorePurchaseOption, unix_to_ymd};
+use aurelia::core::time::unix_to_ymd;
+use aurelia::steam_client::{StoreAppInfo, StorePurchaseOption};
 use std::time::Duration;
 
 /// Spacing between per-region StoreBrowse calls.

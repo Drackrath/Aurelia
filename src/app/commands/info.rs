@@ -318,7 +318,7 @@ pub(crate) fn info_json_value(
         "original_price": details.original_price,
         "original_price_cents": details.original_price_cents,
         "discount_end": details.discount_end,
-        "discount_end_date": details.discount_end.map(|t| aurelia::steam_client::unix_to_ymd(t as i64)),
+        "discount_end_date": details.discount_end.map(|t| aurelia::core::time::unix_to_ymd(t as i64)),
         "region_locked": details.region_locked,
         "purchase_options": details.purchase_options,
         "tags": details.tags,
@@ -403,7 +403,7 @@ pub(crate) fn print_info_human(
             if let Some(end) = details.discount_end {
                 note.push_str(&format!(
                     ", until {}",
-                    aurelia::steam_client::unix_to_ymd(end as i64)
+                    aurelia::core::time::unix_to_ymd(end as i64)
                 ));
             }
             note.push(')');
@@ -621,7 +621,7 @@ pub(crate) async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
                     "discount_end_date": store
                         .get(id)
                         .and_then(|i| i.discount_end)
-                        .map(|t| aurelia::steam_client::unix_to_ymd(t as i64)),
+                        .map(|t| aurelia::core::time::unix_to_ymd(t as i64)),
                     "release_date": store.get(id).and_then(|i| i.release_date.clone()),
                     "reviews": store.get(id).and_then(|i| i.review_summary.clone()),
                     "image_url": steam_urls::header_url(*id),

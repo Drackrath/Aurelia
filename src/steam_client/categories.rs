@@ -38,3 +38,30 @@ impl SteamClient {
         Ok(names)
     }
 }
+
+/// Steam store category IDs that denote *online* multiplayer (as opposed to
+/// local/LAN play). A title carrying any of these effectively needs a network
+/// connection for its core multiplayer experience.
+/// 20 = MMO, 36 = Online PvP, 38 = Online Co-op.
+pub(super) const ONLINE_MULTIPLAYER_CATEGORIES: &[u32] = &[20, 36, 38];
+
+/// Steam store category ID for Single-player.
+pub(super) const SINGLE_PLAYER_CATEGORY: u32 = 2;
+
+/// Infer whether a game requires an online connection from its PICS `common`
+/// store-category map (keyed `category_<id>`).
+///
+/// Steam has no dedicated "online required" field, so this is a heuristic: a
+/// title is treated as online-required when it advertises an online-multiplayer
+/// category (MMO / Online PvP / Online Co-op) but does *not* advertise
+/// single-player support — i.e. there is no documented way to play it offline.
+pub fn category_online_required(categories: &HashMap<String, String>) -> bool {
+    let has = |id: u32| {
+        categories
+            .get(&format!("category_{id}"))
+            .map(|v| v != "0")
+            .unwrap_or(false)
+    };
+    let online = ONLINE_MULTIPLAYER_CATEGORIES.iter().any(|&id| has(id));
+    online && !has(SINGLE_PLAYER_CATEGORY)
+}

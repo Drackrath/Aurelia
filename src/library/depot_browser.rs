@@ -223,7 +223,7 @@ async fn resolve_manifest_id(
 }
 
 async fn fetch_appinfo(connection: &Connection, appid: u32) -> Result<AppInfoRoot> {
-    let buffer = crate::steam_client::pics_app_buffer(
+    let buffer = crate::steam_client::pics::pics_app_buffer(
         connection,
         appid,
         "failed requesting appinfo product info",
