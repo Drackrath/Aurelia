@@ -2075,13 +2075,10 @@ pub fn wineprefix_for_game(
     user_config: Option<&crate::core::models::UserAppConfig>,
     install_path: Option<&Path>,
 ) -> std::path::PathBuf {
-    let use_steam_runtime = match user_config.map(|c| &c.steam_runtime_policy) {
-        Some(crate::core::models::SteamRuntimePolicy::Enabled) => true,
-        Some(crate::core::models::SteamRuntimePolicy::Disabled) => false,
-        Some(crate::core::models::SteamRuntimePolicy::Auto) | None => {
-            user_config.map(|c| c.use_steam_runtime).unwrap_or(false)
-        }
-    };
+    let use_steam_runtime = matches!(
+        user_config.map(|c| &c.steam_runtime_policy),
+        Some(crate::core::models::SteamRuntimePolicy::Enabled)
+    );
 
     let use_per_game_compat_data = user_config
         .map(|c| {

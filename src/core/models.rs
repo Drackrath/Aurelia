@@ -113,7 +113,6 @@ impl Default for GraphicsLayerConfig {
 pub struct UserAppConfig {
     pub launch_options: String,                 // e.g. "-novid -console"
     pub env_variables: HashMap<String, String>, // e.g. {"MANGOHUD": "1"}
-    pub use_steam_runtime: bool,                // DEPRECATED: use steam_runtime_policy instead
     #[serde(default)]
     pub steam_runtime_policy: SteamRuntimePolicy,
     #[serde(default)]

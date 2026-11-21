@@ -132,7 +132,6 @@ pub(crate) async fn cmd_shaders(app_id: u32, force: bool, json: bool) -> Result<
 /// Force a Steam mode via policy.
 fn apply_steam_mode(cfg: &mut aurelia::core::models::UserAppConfig, mode: SteamModeArg) {
     use aurelia::core::models::SteamRuntimePolicy;
-    cfg.use_steam_runtime = false;
     cfg.steam_runtime_policy = match mode {
         SteamModeArg::Runtime => SteamRuntimePolicy::Enabled,
         SteamModeArg::Host | SteamModeArg::None => SteamRuntimePolicy::Disabled,

@@ -762,9 +762,6 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
         GameRunner::Umu => "umu (Proton via umu-launcher)".to_string(),
     };
     let steam_runtime_label = match ua.steam_runtime_policy {
-        SteamRuntimePolicy::Auto if ua.use_steam_runtime => {
-            "auto (on: legacy per-game flag)".to_string()
-        }
         SteamRuntimePolicy::Auto => match cfg.steam_runtime_policy {
             SteamRuntimePolicy::Enabled => "auto (on, from global)".to_string(),
             SteamRuntimePolicy::Disabled => "auto (off, from global)".to_string(),

@@ -1240,14 +1240,11 @@ pub fn resolve_steam_mode_for(
 ) -> (SteamMode, &'static str) {
     use crate::core::models::SteamRuntimePolicy;
 
-    // Per-game policy wins; `Auto` inherits the global default. The deprecated
-    // per-game `use_steam_runtime` boolean still forces the runtime on.
+    // Per-game wins; `Auto` inherits global.
     let per_game = user_config
         .map(|c| c.steam_runtime_policy)
         .unwrap_or_default();
-    let legacy_forced = user_config.map(|c| c.use_steam_runtime).unwrap_or(false);
     let effective = match per_game {
-        SteamRuntimePolicy::Auto if legacy_forced => SteamRuntimePolicy::Enabled,
         SteamRuntimePolicy::Auto => launcher_config.steam_runtime_policy,
         explicit => explicit,
     };

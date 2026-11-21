@@ -372,3 +372,101 @@ fn cloud_sync_override_round_trips_and_is_optional() {
     let back: GameConfig = serde_json::from_str(&serde_json::to_string(&off).unwrap()).unwrap();
     assert_eq!(back.cloud_sync, Some(false));
 }
+
+/// A v0.2.5/v0.2.6 `user_apps.json` entry.
+fn v02_user_app(use_steam_runtime: bool, policy: &str) -> String {
+    format!(
+        r#"{{
+    "launch_options": "-novid",
+    "env_variables": {{ "MANGOHUD": "1" }},
+    "use_steam_runtime": {use_steam_runtime},
+    "steam_runtime_policy": "{policy}",
+    "steam_prefix_mode": "PerGame",
+    "steam_launch_config": {{
+      "no_browser": true,
+      "no_friends_ui": true,
+      "no_overlay": true,
+      "no_chat_ui": true,
+      "no_vr": false,
+      "big_picture": false
+    }},
+    "graphics_layers": {{
+      "dxvk_enabled": false,
+      "vkd3d_proton_enabled": false,
+      "vkd3d_enabled": false,
+      "nvapi_enabled": true,
+      "graphics_backend_policy": "Auto",
+      "d3d12_policy": "Auto",
+      "use_symlinks_in_prefix": false,
+      "custom_dxvk_path": null,
+      "custom_vkd3d_path": null,
+      "custom_vkd3d_proton_path": null
+    }},
+    "gpu_preference": null,
+    "hidden": false,
+    "favorite": false
+  }}"#
+    )
+}
+
+#[tokio::test]
+async fn v02_use_steam_runtime_converts_to_policy_once() {
+    use crate::core::models::{SteamPrefixMode, SteamRuntimePolicy};
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("user_apps.json");
+    let raw = format!(
+        "{{\n  \"10\": {},\n  \"20\": {},\n  \"30\": {},\n  \"40\": {}\n}}",
+        v02_user_app(true, "Auto"),
+        v02_user_app(true, "Disabled"),
+        v02_user_app(false, "Auto"),
+        v02_user_app(false, "Enabled"),
+    );
+    std::fs::write(&path, raw).unwrap();
+
+    let store = load_user_configs_at(&path).await.unwrap();
+    let policy = |id: u32| store[&id].steam_runtime_policy;
+    assert_eq!(policy(10), SteamRuntimePolicy::Enabled);
+    assert_eq!(policy(20), SteamRuntimePolicy::Disabled);
+    assert_eq!(policy(30), SteamRuntimePolicy::Auto);
+    assert_eq!(policy(40), SteamRuntimePolicy::Enabled);
+    assert_eq!(store[&10].launch_options, "-novid");
+    assert_eq!(store[&10].steam_prefix_mode, SteamPrefixMode::PerGame);
+
+    let on_disk = std::fs::read_to_string(&path).unwrap();
+    assert!(!on_disk.contains("use_steam_runtime"), "{on_disk}");
+    let again = load_user_configs_at(&path).await.unwrap();
+    assert_eq!(again[&10].steam_runtime_policy, SteamRuntimePolicy::Enabled);
+    assert_eq!(again[&30].steam_runtime_policy, SteamRuntimePolicy::Auto);
+}
+
+#[test]
+fn fold_use_steam_runtime_defaults_missing_policy_to_auto() {
+    let mut v = serde_json::json!({
+        "1": { "use_steam_runtime": true },
+        "2": { "use_steam_runtime": false },
+        "3": { "steam_runtime_policy": "Disabled" }
+    });
+    assert!(fold_use_steam_runtime(&mut v));
+    assert_eq!(
+        v,
+        serde_json::json!({
+            "1": { "steam_runtime_policy": "Enabled" },
+            "2": {},
+            "3": { "steam_runtime_policy": "Disabled" }
+        })
+    );
+    assert!(!fold_use_steam_runtime(&mut v));
+}
+
+#[tokio::test]
+async fn corrupt_user_configs_still_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("user_apps.json");
+    std::fs::write(&path, r#"{ "10": { "use_steam_runtime": tru } }"#).unwrap();
+    let err = load_user_configs_at(&path).await.unwrap_err();
+    assert!(
+        format!("{err:#}").contains("invalid per-game config"),
+        "{err:#}"
+    );
+    assert!(std::fs::read_to_string(&path).unwrap().contains("tru }"));
+}

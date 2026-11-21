@@ -830,16 +830,61 @@ pub async fn save_tag_name_cache(
 /// options, env vars, the Steam-runtime policy) on one typo is exactly the footgun this
 /// avoids. See the same contract on [`load_launcher_config`].
 pub async fn load_user_configs() -> Result<UserConfigStore> {
-    let path = config_dir()?.join("user_apps.json");
+    load_user_configs_at(&config_dir()?.join("user_apps.json")).await
+}
+
+pub(crate) async fn load_user_configs_at(path: &Path) -> Result<UserConfigStore> {
     if !path.exists() {
         return Ok(UserConfigStore::new());
     }
-    read_json(&path).await.with_context(|| {
+    if let Some(store) = convert_use_steam_runtime(path).await {
+        return Ok(store);
+    }
+    read_json(path).await.with_context(|| {
         format!(
             "invalid per-game config — fix the JSON in {}, or delete it to start fresh",
             path.display()
         )
     })
+}
+
+/// Rewrite v0.2 `use_steam_runtime` keys once.
+async fn convert_use_steam_runtime(path: &Path) -> Option<UserConfigStore> {
+    let raw = fs::read_to_string(path).await.ok()?;
+    if !raw.contains("\"use_steam_runtime\"") {
+        return None;
+    }
+    let mut value: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    if !fold_use_steam_runtime(&mut value) {
+        return None;
+    }
+    let store: UserConfigStore = serde_json::from_value(value).ok()?;
+    if let Err(e) = write_json_pretty(path, &store).await {
+        tracing::warn!("could not convert {}: {e:#}", path.display());
+    }
+    Some(store)
+}
+
+/// `use_steam_runtime: true` on `Auto` means `Enabled`.
+pub(crate) fn fold_use_steam_runtime(store: &mut serde_json::Value) -> bool {
+    let Some(entries) = store.as_object_mut() else {
+        return false;
+    };
+    let mut changed = false;
+    for entry in entries.values_mut() {
+        let Some(obj) = entry.as_object_mut() else {
+            continue;
+        };
+        let Some(legacy) = obj.remove("use_steam_runtime") else {
+            continue;
+        };
+        changed = true;
+        let auto = obj.get("steam_runtime_policy").is_none_or(|p| p == "Auto");
+        if legacy == true && auto {
+            obj.insert("steam_runtime_policy".into(), "Enabled".into());
+        }
+    }
+    changed
 }
 
 pub async fn save_user_configs(configs: &UserConfigStore) -> Result<()> {
