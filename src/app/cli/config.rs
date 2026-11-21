@@ -169,7 +169,7 @@ pub(crate) struct GameConfigArgs {
     #[arg(long, conflicts_with_all = ["proton", "clear_proton", "platform", "no_platform",
         "native_engine", "no_native_engine", "umu", "no_umu", "launch_script",
         "no_launch_script", "steam_runtime", "steam_prefix_mode", "launch_options",
-        "no_launch_options", "cloud_sync"])]
+        "no_launch_options", "cloud_sync", "prefix", "no_prefix"])]
     pub(crate) clear: bool,
     /// Route this game through the luxtorpeda native-engine plugin (Linux only;
     /// requires `aurelia luxtorpeda enable`).
@@ -214,4 +214,12 @@ pub(crate) struct GameConfigArgs {
     /// Per-game Steam Cloud sync on `play`.
     #[arg(long, value_name = "auto|on|off")]
     pub(crate) cloud_sync: Option<CloudSyncArg>,
+    /// Use DIR instead of Steam's compatdata folder for this game
+    /// (`STEAM_COMPAT_DATA_PATH`; the Wine prefix is `DIR/pfx`). Launches and
+    /// `cloud sync` both use it.
+    #[arg(long, value_name = "DIR")]
+    pub(crate) prefix: Option<PathBuf>,
+    /// Go back to Steam's compatdata folder.
+    #[arg(long, conflicts_with = "prefix")]
+    pub(crate) no_prefix: bool,
 }

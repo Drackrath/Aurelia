@@ -56,11 +56,16 @@ impl SteamLayout {
     fn derive(ctx: &LaunchContext) -> Self {
         let library_root = PathBuf::from(&ctx.launcher_config.steam_library_path);
         let (steam_mode, steam_mode_source) = resolve_steam_mode(ctx);
-        let steam_prefix_mode = ctx
-            .user_config
-            .as_ref()
-            .map(|c| c.steam_prefix_mode.clone())
-            .unwrap_or_else(|| ctx.launcher_config.steam_prefix_mode.clone());
+        let custom_prefix = ctx.launcher_config.prefix_dir(ctx.app.app_id);
+        // Steam must share the custom prefix.
+        let steam_prefix_mode = if custom_prefix.is_some() {
+            crate::core::models::SteamPrefixMode::PerGame
+        } else {
+            ctx.user_config
+                .as_ref()
+                .map(|c| c.steam_prefix_mode.clone())
+                .unwrap_or_else(|| ctx.launcher_config.steam_prefix_mode.clone())
+        };
         // Only Shared+InWine consults the master prefix.
         let master_wine_prefix = if steam_mode == SteamMode::InWineRuntime {
             crate::core::steam_host::get_master_steam_config().wine_prefix
@@ -73,13 +78,16 @@ impl SteamLayout {
             ctx.app.app_id,
             ctx.app.install_path.as_deref().map(std::path::Path::new),
         );
-        let compat_data_path = game_compat_data_path(
-            &game_library,
-            ctx.app.app_id,
-            steam_mode,
-            steam_prefix_mode.clone(),
-            &master_wine_prefix,
-        );
+        let compat_data_path = match custom_prefix {
+            Some(dir) => dir.to_path_buf(),
+            None => game_compat_data_path(
+                &game_library,
+                ctx.app.app_id,
+                steam_mode,
+                steam_prefix_mode.clone(),
+                &master_wine_prefix,
+            ),
+        };
         let game_prefix = effective_game_prefix(ctx);
         Self {
             library_root,

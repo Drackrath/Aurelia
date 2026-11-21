@@ -598,6 +598,19 @@ async fn installed_platform_set(app_id: u32) -> Option<(bool, bool)> {
 }
 
 /// `config game`: view or set a game's per-game launch settings.
+/// Absolute form of a `--prefix` dir.
+fn absolute_prefix_dir(dir: std::path::PathBuf) -> Result<std::path::PathBuf> {
+    if dir.as_os_str().is_empty() {
+        anyhow::bail!("--prefix needs a directory");
+    }
+    if dir.is_absolute() {
+        return Ok(dir);
+    }
+    Ok(std::env::current_dir()
+        .context("failed reading the current directory")?
+        .join(dir))
+}
+
 pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<()> {
     let GameConfigArgs {
         app_id,
@@ -617,7 +630,10 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
         launch_options,
         no_launch_options,
         cloud_sync,
+        prefix,
+        no_prefix,
     } = args;
+    let prefix = prefix.map(absolute_prefix_dir).transpose()?;
     if let Some(line) = &launch_options {
         aurelia::launch::stages::user_launch_options::parse_launch_options(line)
             .map_err(|e| anyhow::anyhow!("invalid --launch-options {line:?}: {e}"))?;
@@ -640,6 +656,7 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
                 "--steam-runtime on",
             ),
             (steam_prefix_mode.is_some(), "--steam-prefix-mode"),
+            (prefix.is_some(), "--prefix"),
         ]
         .into_iter()
         .filter_map(|(used, flag)| used.then_some(flag))
@@ -733,6 +750,13 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
             entry.cloud_sync = mode.as_override();
             changed = true;
         }
+        if no_prefix {
+            entry.prefix_dir = None;
+            changed = true;
+        } else if let Some(dir) = prefix {
+            entry.prefix_dir = Some(dir);
+            changed = true;
+        }
     }
     if changed {
         cfg.save().await.context("failed saving game config")?;
@@ -780,6 +804,7 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
         Some(on) => on_off(on).to_string(),
         None => format!("auto ({}, from global)", on_off(cloud_sync_effective)),
     };
+    let wine_prefix = aurelia::core::paths::proton_compat_prefix(&cfg, app_id, None);
     let prefix_mode_label = match ua.steam_prefix_mode {
         SteamPrefixMode::Shared => "shared",
         SteamPrefixMode::PerGame => "per-game",
@@ -796,6 +821,8 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
             "launch_options": ua.launch_options,
             "cloud_sync": entry.cloud_sync,
             "cloud_sync_effective": cloud_sync_effective,
+            "prefix_dir": entry.prefix_dir,
+            "wine_prefix": wine_prefix,
         }));
     } else {
         cli_println!("App {app_id}:");
@@ -826,6 +853,15 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
         cli_println!("  Steam runtime: {steam_runtime_label}");
         cli_println!("  Prefix mode  : {prefix_mode_label}");
         cli_println!("  Cloud sync   : {cloud_sync_label}");
+        cli_println!(
+            "  Wine prefix  : {}{}",
+            wine_prefix.display(),
+            if entry.prefix_dir.is_some() {
+                " (custom)"
+            } else {
+                ""
+            }
+        );
         cli_println!(
             "  Launch opts  : {}",
             if ua.launch_options.is_empty() {

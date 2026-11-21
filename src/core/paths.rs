@@ -62,6 +62,10 @@ pub fn wineprefix_for_game(
     user_config: Option<&crate::core::models::UserAppConfig>,
     install_path: Option<&Path>,
 ) -> std::path::PathBuf {
+    // Custom prefix is always per-game.
+    if let Some(dir) = config.prefix_dir(app_id) {
+        return dir.join("pfx");
+    }
     let use_steam_runtime = matches!(
         user_config.map(|c| &c.steam_runtime_policy),
         Some(crate::core::models::SteamRuntimePolicy::Enabled)
@@ -97,6 +101,9 @@ pub fn game_compat_data_dir(
     app_id: u32,
     install_path: Option<&Path>,
 ) -> PathBuf {
+    if let Some(dir) = config.prefix_dir(app_id) {
+        return dir.to_path_buf();
+    }
     let configured = Path::new(&config.steam_library_path);
     let root = game_library_root(config, app_id, install_path);
     let dir = compat_data_dir(&root, app_id);

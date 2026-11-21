@@ -56,6 +56,9 @@ pub struct GameConfig {
     /// Overrides `enable_cloud_sync` for `play`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cloud_sync: Option<bool>,
+    /// Custom compatdata folder; prefix is `<dir>/pfx`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_dir: Option<PathBuf>,
 }
 
 /// Per-game launch backend selection.
@@ -212,6 +215,13 @@ impl LauncherConfig {
             .get(&app_id)
             .and_then(|g| g.cloud_sync)
             .unwrap_or(self.enable_cloud_sync)
+    }
+
+    /// Custom compatdata folder, if set.
+    pub fn prefix_dir(&self, app_id: u32) -> Option<&Path> {
+        self.game_configs
+            .get(&app_id)
+            .and_then(|g| g.prefix_dir.as_deref())
     }
 
     /// Download limit in bytes/s; 0 is unlimited.
