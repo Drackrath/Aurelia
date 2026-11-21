@@ -74,15 +74,15 @@ fn logout_removes_an_unreadable_session() {
 }
 
 #[test]
-fn legacy_password_envelope_points_at_relogin() {
+fn legacy_password_envelope_is_unreadable() {
     let tmp = tempdir().unwrap();
     write_envelope(tmp.path(), false);
     let out = aurelia(tmp.path(), &["account"]);
     assert!(!out.status.success(), "expected failure, got: {out:?}");
     let err = stderr(&out);
     assert!(
-        err.contains("legacy session password") && err.contains("aurelia login"),
-        "error must point at a re-login: {err}"
+        err.contains("aurelia logout"),
+        "error must point at a logout: {err}"
     );
     assert!(
         !err.contains("not logged in"),

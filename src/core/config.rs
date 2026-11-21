@@ -405,14 +405,6 @@ pub async fn load_session() -> Result<SessionState> {
         .with_context(|| format!("failed reading {}", session_path.display()))?;
     // Encrypted sessions decrypt on the fly.
     if let Some(envelope) = crate::core::session_crypto::EncryptedSession::from_json(&raw) {
-        if !envelope.keyring {
-            // Passwords are gone; a login re-keys it.
-            anyhow::bail!(
-                "session.json was encrypted with a legacy session password — \
-                 run `aurelia login` again to re-key it to the OS keyring \
-                 (without a keyring, run `aurelia logout` first)"
-            );
-        }
         // Keyring-keyed: automatic, never prompts.
         let key = tokio::task::spawn_blocking(crate::core::session_crypto::keyring_secret)
             .await
