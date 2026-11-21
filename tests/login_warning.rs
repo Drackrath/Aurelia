@@ -1,5 +1,8 @@
 //! `aurelia login` must warn about an already-active session.
 
+mod common;
+use common::stderr;
+
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
@@ -16,10 +19,6 @@ fn login(config_dir: &Path) -> Output {
         .stdin(std::process::Stdio::null())
         .output()
         .expect("failed running the aurelia binary")
-}
-
-fn stderr(out: &Output) -> String {
-    String::from_utf8_lossy(&out.stderr).to_string()
 }
 
 #[test]

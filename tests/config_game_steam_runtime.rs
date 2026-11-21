@@ -6,27 +6,11 @@
 //! launch). These drive the real binary with an isolated config dir; `AURELIA_NO_DAEMON`
 //! keeps the command from forwarding to a session daemon.
 
+mod common;
+use common::{aurelia, out};
+
 use std::fs;
-use std::path::Path;
-use std::process::{Command, Output};
 use tempfile::{TempDir, tempdir};
-
-fn aurelia(config_dir: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_aurelia"))
-        .args(args)
-        .env("AURELIA_CONFIG_DIR", config_dir)
-        .env("AURELIA_NO_DAEMON", "1")
-        .output()
-        .expect("failed running the aurelia binary")
-}
-
-fn out(o: &Output) -> String {
-    format!(
-        "{}{}",
-        String::from_utf8_lossy(&o.stdout),
-        String::from_utf8_lossy(&o.stderr)
-    )
-}
 
 fn sandbox() -> TempDir {
     let tmp = tempdir().unwrap();

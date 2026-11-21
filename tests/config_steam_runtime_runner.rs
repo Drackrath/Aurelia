@@ -6,19 +6,11 @@
 //! under `AURELIA_CONFIG_DIR`, and `AURELIA_NO_DAEMON` keeps the command from forwarding
 //! to a session daemon that would resolve config against its own environment.
 
-use std::fs;
-use std::path::Path;
-use std::process::{Command, Output};
-use tempfile::{TempDir, tempdir};
+mod common;
+use common::{aurelia, out};
 
-fn aurelia(config_dir: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_aurelia"))
-        .args(args)
-        .env("AURELIA_CONFIG_DIR", config_dir)
-        .env("AURELIA_NO_DAEMON", "1")
-        .output()
-        .expect("failed running the aurelia binary")
-}
+use std::fs;
+use tempfile::{TempDir, tempdir};
 
 /// A config dir whose library contains an installed GE-Proton tree (proton script +
 /// bundled bare wine), so a set runner resolves.
@@ -38,14 +30,6 @@ fn sandbox_with_proton() -> TempDir {
     )
     .unwrap();
     tmp
-}
-
-fn out(o: &Output) -> String {
-    format!(
-        "{}{}",
-        String::from_utf8_lossy(&o.stdout),
-        String::from_utf8_lossy(&o.stderr)
-    )
 }
 
 #[test]

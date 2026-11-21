@@ -1,5 +1,8 @@
 //! Encrypted-session error-surfacing regression tests.
 
+mod common;
+use common::stderr;
+
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
@@ -14,10 +17,6 @@ fn aurelia(config_dir: &Path, args: &[&str]) -> Output {
         .stdin(std::process::Stdio::null())
         .output()
         .expect("failed running the aurelia binary")
-}
-
-fn stderr(out: &Output) -> String {
-    String::from_utf8_lossy(&out.stderr).to_string()
 }
 
 // Tokenless session: restore fails before networking.
