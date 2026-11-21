@@ -5,8 +5,6 @@ use clap::Parser;
 #[path = "core/output.rs"]
 mod output;
 mod daemon;
-#[path = "compat/proc_admin.rs"]
-mod proc_admin;
 #[path = "web/steam_urls.rs"]
 mod steam_urls;
 

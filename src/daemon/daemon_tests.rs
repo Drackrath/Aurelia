@@ -76,3 +76,37 @@ fn config_dir_mismatch_refuses_only_differing_dirs() {
     let msg = config_dir_mismatch(Some(b), Some(a)).unwrap();
     assert!(msg.contains("/tmp/iso") && msg.contains("AURELIA_DAEMON_SOCKET"));
 }
+
+#[test]
+fn distinguishes_daemon_from_admin_and_clients() {
+    let s = |args: &[&str]| args.iter().map(|a| a.to_string()).collect::<Vec<_>>();
+    assert!(is_daemon_argv(&s(&["aurelia.exe", "daemon"])));
+    assert!(is_daemon_argv(&s(&[
+        "aurelia", "daemon", "--socket", "/tmp/x"
+    ])));
+    // A `daemon stop|list` invocation is not itself a daemon.
+    assert!(!is_daemon_argv(&s(&["aurelia", "daemon", "stop"])));
+    assert!(!is_daemon_argv(&s(&["aurelia", "daemon", "list"])));
+    // Thin clients / one-off commands.
+    assert!(!is_daemon_argv(&s(&["aurelia", "list"])));
+    assert!(!is_daemon_argv(&s(&["aurelia"])));
+}
+
+#[test]
+fn recognises_daemon_after_global_flags() {
+    let s = |args: &[&str]| args.iter().map(|a| a.to_string()).collect::<Vec<_>>();
+    assert!(is_daemon_argv(&s(&["aurelia", "-v", "daemon"])));
+    assert!(is_daemon_argv(&s(&[
+        "aurelia", "-j", "daemon", "--socket", "/x"
+    ])));
+    assert!(is_daemon_argv(&s(&[
+        "aurelia",
+        "daemon",
+        "--socket",
+        "/tmp/stop.sock"
+    ])));
+    assert!(!is_daemon_argv(&s(&["aurelia", "-v", "daemon", "list"])));
+    assert!(!is_daemon_argv(&s(&["aurelia", "daemon", "stop", "42"])));
+    // Unknown flags from another build.
+    assert!(!is_daemon_argv(&s(&["aurelia", "--bogus", "daemon"])));
+}

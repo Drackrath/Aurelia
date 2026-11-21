@@ -198,7 +198,7 @@ impl SteamClient {
         Self::kill_processes_for_app(app_id, force);
 
         if owns_pid {
-            kill_process_tree(record.pid, force);
+            crate::compat::proc_admin::kill_process_tree(record.pid, force);
         }
         crate::compat::running::clear(app_id);
         Ok(record)
