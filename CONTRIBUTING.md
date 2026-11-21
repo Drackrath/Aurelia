@@ -61,6 +61,7 @@ A few expectations:
   handling, state derivation, etc.) should have unit tests; look at the `#[cfg(test)]`
   modules in `src/` for the existing style. Network- or Steam-dependent code can't be
   unit-tested directly, so factor the testable logic out into pure functions.
+- **Test layout:** unit tests live in `<module>/tests/<topic>.rs`, not inline, so source files stay small and readable.
 
 ## Coding style
 
