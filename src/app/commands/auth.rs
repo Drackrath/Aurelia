@@ -1,7 +1,7 @@
 //! `auth` command handlers.
 
 use crate::app::daemon;
-use crate::output;
+use crate::app::output;
 
 use crate::app::commands::common::*;
 
@@ -191,7 +191,7 @@ pub(crate) async fn cmd_login(args: crate::app::cli::LoginArgs, json: bool) -> R
             guard.clone(),
             // Never hand stdin to steam-vent.
             code.then(|| {
-                Box::pin(crate::output::read_line_opt()) as aurelia::steam_client::CodeReader
+                Box::pin(crate::app::output::read_line_opt()) as aurelia::steam_client::CodeReader
             }),
         )
         .await;

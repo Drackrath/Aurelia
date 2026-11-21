@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 
 use super::transport::{self, Listener};
 use super::{Header, proto};
-use crate::output::{OutChunk, OutputCtx, Stream};
+use crate::app::output::{OutChunk, OutputCtx, Stream};
 
 /// Number of forwarded commands currently running, so the upgrade watcher only
 /// restarts the daemon while it is idle (never mid-request).
@@ -227,7 +227,7 @@ async fn auto_resume_installs() {
     let (out_tx, _) = tokio::sync::mpsc::unbounded_channel();
     let (_, in_rx) = tokio::sync::mpsc::unbounded_channel();
     let resume = crate::app::commands::resume_entries(&ids, true, true);
-    if let Err(e) = crate::output::scoped(OutputCtx::new(out_tx, in_rx, None), resume).await {
+    if let Err(e) = crate::app::output::scoped(OutputCtx::new(out_tx, in_rx, None), resume).await {
         tracing::warn!("daemon: auto-resume: {e:#}");
     }
 }
@@ -407,7 +407,8 @@ where
             None => crate::run_argv(run_argv).await,
         }
     };
-    let command = crate::output::scoped(ctx, aurelia::infra::logging::relay::scoped(relay, run));
+    let command =
+        crate::app::output::scoped(ctx, aurelia::infra::logging::relay::scoped(relay, run));
     tokio::pin!(command);
 
     // Run the command, but if the client's connection drops abort the command

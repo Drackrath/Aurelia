@@ -255,9 +255,9 @@ impl DaemonStdin {
 /// `println!`-alike that routes through the active output context.
 #[macro_export]
 macro_rules! cli_println {
-    () => { $crate::output::write($crate::output::Stream::Stdout, "\n") };
+    () => { $crate::app::output::write($crate::app::output::Stream::Stdout, "\n") };
     ($($arg:tt)*) => {
-        $crate::output::write($crate::output::Stream::Stdout, &format!("{}\n", format_args!($($arg)*)))
+        $crate::app::output::write($crate::app::output::Stream::Stdout, &format!("{}\n", format_args!($($arg)*)))
     };
 }
 
@@ -265,16 +265,16 @@ macro_rules! cli_println {
 #[macro_export]
 macro_rules! cli_print {
     ($($arg:tt)*) => {
-        $crate::output::write($crate::output::Stream::Stdout, &format!("{}", format_args!($($arg)*)))
+        $crate::app::output::write($crate::app::output::Stream::Stdout, &format!("{}", format_args!($($arg)*)))
     };
 }
 
 /// `eprintln!`-alike that routes through the active output context.
 #[macro_export]
 macro_rules! cli_eprintln {
-    () => { $crate::output::write($crate::output::Stream::Stderr, "\n") };
+    () => { $crate::app::output::write($crate::app::output::Stream::Stderr, "\n") };
     ($($arg:tt)*) => {
-        $crate::output::write($crate::output::Stream::Stderr, &format!("{}\n", format_args!($($arg)*)))
+        $crate::app::output::write($crate::app::output::Stream::Stderr, &format!("{}\n", format_args!($($arg)*)))
     };
 }
 
@@ -282,7 +282,7 @@ macro_rules! cli_eprintln {
 #[macro_export]
 macro_rules! cli_eprint {
     ($($arg:tt)*) => {
-        $crate::output::write($crate::output::Stream::Stderr, &format!("{}", format_args!($($arg)*)))
+        $crate::app::output::write($crate::app::output::Stream::Stderr, &format!("{}", format_args!($($arg)*)))
     };
 }
 

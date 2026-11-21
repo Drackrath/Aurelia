@@ -2,11 +2,6 @@ use anyhow::{Result, bail};
 use clap::Parser;
 
 #[macro_use]
-#[path = "core/output.rs"]
-mod output;
-#[path = "web/steam_urls.rs"]
-mod steam_urls;
-
 mod app;
 use crate::app::cli::*;
 use crate::app::commands::*;
@@ -255,7 +250,7 @@ async fn run_and_report(cli: Cli) -> i32 {
 
 /// Absolutize path args; add new ones.
 pub(crate) fn absolutize_path_args(command: &mut Command) {
-    use crate::output::{user_path, user_path_str};
+    use crate::app::output::{user_path, user_path_str};
     let path = |p: &mut std::path::PathBuf| *p = user_path(p);
     let opt_path = |p: &mut Option<std::path::PathBuf>| {
         if let Some(p) = p {

@@ -1,6 +1,6 @@
 //! `info` command handlers.
 
-use crate::steam_urls;
+use crate::app::steam_urls;
 
 use crate::app::commands::common::*;
 
