@@ -233,8 +233,12 @@ impl Slot {
 /// Clap-parsed argv is bare `daemon`.
 pub(crate) fn is_daemon_argv(cmd: &[String]) -> bool {
     use clap::Parser;
-    crate::cli::Cli::try_parse_from(cmd)
-        .is_ok_and(|c| matches!(c.command, crate::cli::Command::Daemon { command: None, .. }))
+    crate::app::cli::Cli::try_parse_from(cmd).is_ok_and(|c| {
+        matches!(
+            c.command,
+            crate::app::cli::Command::Daemon { command: None, .. }
+        )
+    })
 }
 
 /// Whether this process is the daemon (vs. a thin client / standalone run).

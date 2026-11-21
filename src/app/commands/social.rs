@@ -1,9 +1,9 @@
 //! `social` command handlers.
 
-use crate::daemon;
+use crate::app::daemon;
 use crate::output;
 
-use crate::commands::common::*;
+use crate::app::commands::common::*;
 
 use anyhow::Result;
 

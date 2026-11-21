@@ -2,7 +2,7 @@
 
 use crate::steam_urls;
 
-use crate::commands::common::*;
+use crate::app::commands::common::*;
 
 use anyhow::{Context, Result, bail};
 
@@ -372,7 +372,7 @@ pub(crate) async fn cmd_account(json: bool) -> Result<()> {
     // Resolve the public persona
     data.persona_name = client.own_persona_name().await;
     // Only the daemon has one.
-    let daemon_logon_id = crate::daemon::in_daemon().then(aurelia::steam_client::logon_id);
+    let daemon_logon_id = crate::app::daemon::in_daemon().then(aurelia::steam_client::logon_id);
 
     if json {
         let value = serde_json::json!({

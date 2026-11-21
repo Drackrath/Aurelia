@@ -1,6 +1,6 @@
 //! Store price lookups (`price`).
 
-use crate::commands::common::*;
+use crate::app::commands::common::*;
 
 use anyhow::Result;
 use aurelia::core::error::{ErrorKind, TypedError};
@@ -430,7 +430,7 @@ pub(crate) async fn cmd_search(
 
 /// `aurelia deals`: discounted and top-selling games.
 pub(crate) async fn cmd_deals(
-    scope: crate::cli::DealsScopeArg,
+    scope: crate::app::cli::DealsScopeArg,
     min_discount: i32,
     count: i32,
     start: i32,
@@ -442,9 +442,9 @@ pub(crate) async fn cmd_deals(
     let lang = resolve_steam_language(lang).await;
     let country = resolve_steam_country(country).await?;
     let scope = match scope {
-        crate::cli::DealsScopeArg::DiscountedTopSellers => DealsScope::DiscountedTopSellers,
-        crate::cli::DealsScopeArg::TopSellers => DealsScope::TopSellers,
-        crate::cli::DealsScopeArg::Specials => DealsScope::Specials,
+        crate::app::cli::DealsScopeArg::DiscountedTopSellers => DealsScope::DiscountedTopSellers,
+        crate::app::cli::DealsScopeArg::TopSellers => DealsScope::TopSellers,
+        crate::app::cli::DealsScopeArg::Specials => DealsScope::Specials,
     };
     let client = authed_client().await?;
     let page = client
@@ -572,8 +572,8 @@ pub(crate) async fn cmd_news(app_id: u32, count: u32, max_length: u32, json: boo
 }
 
 /// `aurelia reviews APPID`: one page of user reviews.
-pub(crate) async fn cmd_reviews(args: crate::cli::ReviewsArgs, json: bool) -> Result<()> {
-    let crate::cli::ReviewsArgs {
+pub(crate) async fn cmd_reviews(args: crate::app::cli::ReviewsArgs, json: bool) -> Result<()> {
+    let crate::app::cli::ReviewsArgs {
         app_id,
         filter,
         review_type,
@@ -785,7 +785,7 @@ pub(crate) async fn cmd_wishlist_remove(app_id: u32, json: bool) -> Result<()> {
 
 /// `aurelia appinfo APPID`: raw PICS `common`/`extended` sections.
 pub(crate) async fn cmd_appinfo(app_id: u32) -> Result<()> {
-    crate::commands::auth::require_experimental("appinfo").await?;
+    crate::app::commands::auth::require_experimental("appinfo").await?;
     let client = authed_client().await?;
     cli_println!("{}", client.appinfo_debug(app_id).await?);
     Ok(())
@@ -793,7 +793,7 @@ pub(crate) async fn cmd_appinfo(app_id: u32) -> Result<()> {
 
 /// `aurelia tags [--dump]`: the store tag vocabulary.
 pub(crate) async fn cmd_tags(dump: bool, json: bool) -> Result<()> {
-    crate::commands::auth::require_experimental("tags").await?;
+    crate::app::commands::auth::require_experimental("tags").await?;
     let client = authed_client().await?;
     let tags = client.fetch_tag_list("english").await?;
     if json {

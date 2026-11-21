@@ -1,6 +1,6 @@
 //! `collections` command handlers.
 
-use crate::commands::common::*;
+use crate::app::commands::common::*;
 
 use anyhow::Result;
 use aurelia::library::collections::{self, CollectionsStore};

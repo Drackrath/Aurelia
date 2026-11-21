@@ -6,8 +6,8 @@ use serde_json::{Map, Value, json};
 
 use aurelia::core::error::{ErrorKind, TypedError};
 
-use crate::cli::Cli;
-use crate::commands::common::*;
+use crate::app::cli::Cli;
+use crate::app::commands::common::*;
 
 /// Every `event` name in JSON output.
 pub(crate) const EVENTS: &[&str] = &[

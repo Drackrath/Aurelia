@@ -1,9 +1,9 @@
 //! `auth` command handlers.
 
-use crate::daemon;
+use crate::app::daemon;
 use crate::output;
 
-use crate::commands::common::*;
+use crate::app::commands::common::*;
 
 use std::time::Duration;
 
@@ -123,8 +123,8 @@ async fn warn_if_already_logged_in() {
     }
 }
 
-pub(crate) async fn cmd_login(args: crate::cli::LoginArgs, json: bool) -> Result<()> {
-    let crate::cli::LoginArgs {
+pub(crate) async fn cmd_login(args: crate::app::cli::LoginArgs, json: bool) -> Result<()> {
+    let crate::app::cli::LoginArgs {
         username,
         password,
         guard,
@@ -495,7 +495,7 @@ pub(crate) async fn cmd_login_web_token(pasted: Option<String>, json: bool) -> R
         match info.expires_at {
             Some(exp) => cli_println!(
                 "Expires   : {} UTC",
-                crate::commands::common::format_unix_timestamp(exp)
+                crate::app::commands::common::format_unix_timestamp(exp)
             ),
             None => cli_println!("Expires   : unknown (typically ~24h — Steam decides)"),
         }

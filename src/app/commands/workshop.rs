@@ -1,7 +1,7 @@
 //! `workshop` command handlers.
 
-use crate::cli::*;
-use crate::commands::common::*;
+use crate::app::cli::*;
+use crate::app::commands::common::*;
 
 use anyhow::{Context, Result, bail};
 use aurelia::core::models::DownloadState;

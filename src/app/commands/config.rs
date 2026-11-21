@@ -1,7 +1,7 @@
 //! `config` command handlers.
 
-use crate::cli::*;
-use crate::commands::common::*;
+use crate::app::cli::*;
+use crate::app::commands::common::*;
 
 use anyhow::{Context, Result};
 use aurelia::core::config::load_launcher_config;
@@ -297,7 +297,7 @@ pub(crate) async fn cmd_config_steam_runtime_runner(
 /// `config steam-runtime-policy [auto|on|off]`: view or set the global default
 /// Steam-integration policy applied when a game's own policy is `auto`. Governs how
 /// `aurelia play --steam` provides Steam DRM/Steamworks (host client vs the in-Wine
-/// Steam runtime). See [`crate::cli::ConfigCommand::SteamRuntimePolicy`].
+/// Steam runtime). See [`crate::app::cli::ConfigCommand::SteamRuntimePolicy`].
 /// `config shader-precache [auto|off]`.
 pub(crate) async fn cmd_config_shader_precache(
     mode: Option<ShaderPrecacheArg>,
@@ -565,7 +565,7 @@ pub(crate) async fn cmd_config_clear_games(yes: bool, json: bool) -> Result<()> 
         }
         return Ok(());
     }
-    crate::commands::common::confirm_write(
+    crate::app::commands::common::confirm_write(
         "clear",
         &format!(
             "About to reset the per-game settings of {} game(s) to defaults. Continue? [y/N] ",
@@ -592,7 +592,9 @@ pub(crate) async fn cmd_config_clear_games(yes: bool, json: bool) -> Result<()> 
 async fn installed_platform_set(app_id: u32) -> Option<(bool, bool)> {
     let installed = aurelia::library::scan_installed_app_info().await.ok()?;
     let info = installed.get(&app_id)?;
-    crate::commands::library::detect_installed_platform_set(&info.install_path.to_string_lossy())
+    crate::app::commands::library::detect_installed_platform_set(
+        &info.install_path.to_string_lossy(),
+    )
 }
 
 /// `config game`: view or set a game's per-game launch settings.

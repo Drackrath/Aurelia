@@ -2,7 +2,7 @@
 
 use crate::steam_urls;
 
-use crate::commands::common::*;
+use crate::app::commands::common::*;
 
 use anyhow::{Context, Result, bail};
 use aurelia::core::config::info_cache_ttl;

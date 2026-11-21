@@ -99,7 +99,7 @@ fn idle_expired(last: u64, now: u64, timeout: Duration, busy: bool) -> bool {
 /// Requests, installs or games still active.
 fn busy() -> bool {
     INFLIGHT.load(Ordering::SeqCst) > 0
-        || crate::commands::common::active_installs()
+        || crate::app::commands::common::active_installs()
             .lock()
             .map_or(true, |map| !map.is_empty())
         || !aurelia::compat::running::list().is_empty()
@@ -226,7 +226,7 @@ async fn auto_resume_installs() {
     // No client: discard output, stdin at EOF.
     let (out_tx, _) = tokio::sync::mpsc::unbounded_channel();
     let (_, in_rx) = tokio::sync::mpsc::unbounded_channel();
-    let resume = crate::commands::resume_entries(&ids, true, true);
+    let resume = crate::app::commands::resume_entries(&ids, true, true);
     if let Err(e) = crate::output::scoped(OutputCtx::new(out_tx, in_rx, None), resume).await {
         tracing::warn!("daemon: auto-resume: {e:#}");
     }
@@ -253,9 +253,9 @@ where
 /// Print a config-dir refusal; exit 2.
 fn report_refusal(argv: &[String], message: &str) -> i32 {
     use clap::Parser;
-    let json = crate::cli::Cli::try_parse_from(argv).is_ok_and(|c| c.json);
+    let json = crate::app::cli::Cli::try_parse_from(argv).is_ok_and(|c| c.json);
     if json {
-        crate::commands::print_json_line(&serde_json::json!({
+        crate::app::commands::print_json_line(&serde_json::json!({
             "error": message,
             "type": aurelia::core::error::ErrorKind::InvalidInput,
         }));
@@ -329,8 +329,9 @@ where
 fn watches_daemon(argv: &[String]) -> bool {
     use clap::Parser;
 
-    crate::cli::Cli::try_parse_from(argv)
-        .is_ok_and(|cli| cli.verbose > 0 && matches!(cli.command, crate::cli::Command::Play { .. }))
+    crate::app::cli::Cli::try_parse_from(argv).is_ok_and(|cli| {
+        cli.verbose > 0 && matches!(cli.command, crate::app::cli::Command::Play { .. })
+    })
 }
 
 /// Build the request's output relay: the requester's `-v` count (parsed from its
@@ -342,7 +343,7 @@ fn output_relay(
     use aurelia::infra::logging::relay::{Relay, RelayStream};
     use clap::Parser;
 
-    let verbosity = crate::cli::Cli::try_parse_from(argv).map_or(0, |cli| cli.verbose);
+    let verbosity = crate::app::cli::Cli::try_parse_from(argv).map_or(0, |cli| cli.verbose);
     let weak = out_tx.downgrade();
     Relay::new(
         verbosity,

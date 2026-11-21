@@ -1,6 +1,6 @@
 //! Cross-cutting command helpers shared across command modules.
 
-use crate::daemon;
+use crate::app::daemon;
 
 use anyhow::{Context, Result, bail};
 use aurelia::core::config::load_launcher_config;

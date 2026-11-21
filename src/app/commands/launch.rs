@@ -2,9 +2,9 @@
 
 use aurelia::compat::proc_admin;
 
-use crate::commands::common::*;
+use crate::app::commands::common::*;
 
-use crate::cli::{PlatformArg, SteamModeArg};
+use crate::app::cli::{PlatformArg, SteamModeArg};
 use anyhow::{Context, Result, bail};
 use aurelia::core::config::load_launcher_config;
 use aurelia::core::config::load_user_configs;
@@ -597,7 +597,7 @@ pub(crate) async fn cmd_stop(app_id: Option<u32>, force: bool, json: bool) -> Re
 /// `aurelia kill`: terminate every running aurelia process (daemon and otherwise),
 /// except the current one.
 pub(crate) fn cmd_kill(json: bool) -> Result<()> {
-    let procs = proc_admin::find_aurelia_processes(crate::daemon::is_daemon_argv);
+    let procs = proc_admin::find_aurelia_processes(crate::app::daemon::is_daemon_argv);
     let pids: Vec<u32> = procs.iter().map(|p| p.pid).collect();
     let killed = proc_admin::kill_pids(&pids);
 
@@ -617,7 +617,7 @@ pub(crate) fn cmd_kill(json: bool) -> Result<()> {
 /// `aurelia daemon stop [PID]`: terminate the session daemon(s). With a PID, stop
 /// only that daemon (erroring if it isn't a running aurelia daemon).
 pub(crate) fn cmd_daemon_stop(pid: Option<u32>, json: bool) -> Result<()> {
-    let daemons: Vec<_> = proc_admin::find_aurelia_processes(crate::daemon::is_daemon_argv)
+    let daemons: Vec<_> = proc_admin::find_aurelia_processes(crate::app::daemon::is_daemon_argv)
         .into_iter()
         .filter(|p| p.is_daemon)
         .collect();
@@ -645,7 +645,7 @@ pub(crate) fn cmd_daemon_stop(pid: Option<u32>, json: bool) -> Result<()> {
 
 /// `aurelia daemon list`: show running aurelia daemon(s) and their PIDs.
 pub(crate) fn cmd_daemon_list(json: bool) -> Result<()> {
-    let daemons: Vec<_> = proc_admin::find_aurelia_processes(crate::daemon::is_daemon_argv)
+    let daemons: Vec<_> = proc_admin::find_aurelia_processes(crate::app::daemon::is_daemon_argv)
         .into_iter()
         .filter(|p| p.is_daemon)
         .collect();

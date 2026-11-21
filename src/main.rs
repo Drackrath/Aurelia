@@ -4,15 +4,13 @@ use clap::Parser;
 #[macro_use]
 #[path = "core/output.rs"]
 mod output;
-mod daemon;
 #[path = "web/steam_urls.rs"]
 mod steam_urls;
 
-mod cli;
-use crate::cli::*;
-
-mod commands;
-use crate::commands::*;
+mod app;
+use crate::app::cli::*;
+use crate::app::commands::*;
+use crate::app::daemon;
 
 /// ASCII-art banner shown when `aurelia` is run with no subcommand.
 const BANNER: &str = include_str!("../assets/asciiart_banner.txt");

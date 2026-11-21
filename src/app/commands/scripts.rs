@@ -1,6 +1,6 @@
 //! `scripts` command handlers.
 
-use crate::commands::common::*;
+use crate::app::commands::common::*;
 
 use anyhow::{Context, Result};
 use aurelia::core::config::load_launcher_config;
