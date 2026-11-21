@@ -1,3 +1,4 @@
+use crate::core::utils::{dll_override_entries, merge_dll_overrides};
 use crate::infra::runners::CommandSpec;
 use crate::launch::pipeline::{LaunchError, LaunchErrorKind, PipelineContext, PipelineStage};
 use async_trait::async_trait;
@@ -5,6 +6,9 @@ use std::path::{Path, PathBuf};
 
 /// Steam's game placeholder in launch options.
 pub const COMMAND_MARKER: &str = "%command%";
+
+/// Merged per DLL, not replaced.
+const DLL_OVERRIDES_VAR: &str = "WINEDLLOVERRIDES";
 
 /// User launch options, split Steam-style.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -125,7 +129,16 @@ pub fn split_command_line(line: &str) -> Result<Vec<String>, String> {
 
 /// Wrap the command; user env wins.
 pub fn wrap_command(spec: &mut CommandSpec, options: &LaunchOptions) {
-    spec.env.extend(options.env.iter().cloned());
+    for (name, value) in &options.env {
+        let merged = match spec.env.get(name) {
+            // User wins per DLL only.
+            Some(computed) if name == DLL_OVERRIDES_VAR => {
+                merge_dll_overrides(computed, &dll_override_entries(value))
+            }
+            _ => value.clone(),
+        };
+        spec.env.insert(name.clone(), merged);
+    }
     spec.args.extend(options.args.iter().cloned());
     let Some((wrapper, wrapper_args)) = options.wrappers.split_first() else {
         return;
