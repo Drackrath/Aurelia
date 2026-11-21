@@ -86,10 +86,6 @@ pub fn validate_proxy_url(url: &str) -> anyhow::Result<()> {
         .map_err(|err| anyhow::anyhow!("invalid proxy URL `{url}`: {err}"))
 }
 
-#[cfg(test)]
-#[path = "net_tests.rs"]
-mod tests;
-
 /// Attempts per request, including the first.
 const HTTP_ATTEMPTS: u32 = 3;
 /// Base backoff for transient failures.
@@ -138,18 +134,14 @@ fn ratelimit_reset(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
     let reset = header_str(headers, "x-ratelimit-reset")?
         .parse::<u64>()
         .ok()?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_secs();
+    let now = crate::core::time::since_unix_epoch().ok()?.as_secs();
     Some(Duration::from_secs(reset.saturating_sub(now).max(1)))
 }
 
 /// Exponential backoff with sub-second jitter.
 fn backoff(attempt: u32) -> Duration {
     let jitter_ms = u64::from(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        crate::core::time::since_unix_epoch()
             .map(|d| d.subsec_nanos())
             .unwrap_or(0)
             % 250,
@@ -245,3 +237,6 @@ pub fn http_client(timeout: Duration) -> anyhow::Result<reqwest::Client> {
 pub fn steam_web_client() -> anyhow::Result<reqwest::Client> {
     http_client(Duration::from_secs(20))
 }
+
+#[cfg(test)]
+mod tests;

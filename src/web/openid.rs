@@ -316,5 +316,4 @@ const SUCCESS_PAGE: &str = "<!DOCTYPE html><html><head><title>Aurelia</title></h
 const FAILURE_PAGE: &str = "<!DOCTYPE html><html><head><title>Aurelia</title></head><body style=\"font-family:sans-serif;text-align:center;margin-top:4em\"><h2>Steam sign-in not verified</h2><p>Return to the terminal for details.</p></body></html>";
 
 #[cfg(test)]
-#[path = "openid_tests.rs"]
 mod tests;

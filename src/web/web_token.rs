@@ -141,7 +141,7 @@ pub fn check_stored_expiry(token: &str, now_unix: u64, leeway_secs: u64) -> Resu
         bail!(
             "the stored web token expired {} — sign in on steamcommunity.com again and re-run \
              `aurelia login --web-token`",
-            crate::steam_client::unix_to_ymd(exp as i64)
+            crate::core::time::unix_to_ymd(exp as i64)
         );
     }
     Ok(())
@@ -153,7 +153,7 @@ fn unescape_json_slashes(s: &str) -> String {
     s.trim().replace("\\/", "/")
 }
 
-pub use crate::core::utils::now_unix;
+pub use crate::core::time::now_unix;
 
 /// Decode a JWT's payload (claims) segment. No signature verification — Steam
 /// verifies the token server-side; we only read metadata out of it.
@@ -195,5 +195,4 @@ pub(crate) fn b64url_decode(input: &str) -> Result<Vec<u8>> {
 }
 
 #[cfg(test)]
-#[path = "web_token_tests.rs"]
 mod tests;

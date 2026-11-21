@@ -557,5 +557,4 @@ impl SteamClient {
 }
 
 #[cfg(test)]
-#[path = "workshop_tests.rs"]
 mod tests;

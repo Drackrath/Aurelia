@@ -8,7 +8,7 @@
 //! integrator can `mod workshop_manifest;` in `steam_client.rs` without any
 //! build-order concerns.
 
-use crate::core::utils::extract_quoted_values;
+use crate::core::acf::extract_quoted_values;
 use anyhow::{Context, Result};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -191,10 +191,7 @@ fn write_item_block(buf: &mut String, published_file_id: u64, fields: impl FnOnc
 // Internal: parse
 // ---------------------------------------------------------------------------
 
-/// Extract all Workshop items from the raw ACF text.
-///
-/// The parser is a straightforward line-by-line state machine — the same style
-/// used by `parse_installed_depots_from_acf` in `manifests.rs`.
+/// Workshop items from raw ACF text.
 fn parse_installed_items(raw: &str) -> Vec<InstalledWorkshopItem> {
     #[derive(Debug, PartialEq)]
     enum Section {
@@ -367,5 +364,4 @@ impl ItemDetails {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-#[path = "workshop_manifest_tests.rs"]
 mod tests;

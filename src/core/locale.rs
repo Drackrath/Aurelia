@@ -194,5 +194,4 @@ pub fn pick_install_language(
 }
 
 #[cfg(test)]
-#[path = "locale_tests.rs"]
 mod tests;

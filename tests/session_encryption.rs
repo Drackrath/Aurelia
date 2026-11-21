@@ -1,5 +1,8 @@
 //! Encrypted-session error-surfacing regression tests.
 
+mod common;
+use common::stderr;
+
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
@@ -14,10 +17,6 @@ fn aurelia(config_dir: &Path, args: &[&str]) -> Output {
         .stdin(std::process::Stdio::null())
         .output()
         .expect("failed running the aurelia binary")
-}
-
-fn stderr(out: &Output) -> String {
-    String::from_utf8_lossy(&out.stderr).to_string()
 }
 
 // Tokenless session: restore fails before networking.
@@ -74,15 +73,15 @@ fn logout_removes_an_unreadable_session() {
 }
 
 #[test]
-fn legacy_password_envelope_points_at_relogin() {
+fn legacy_password_envelope_is_unreadable() {
     let tmp = tempdir().unwrap();
     write_envelope(tmp.path(), false);
     let out = aurelia(tmp.path(), &["account"]);
     assert!(!out.status.success(), "expected failure, got: {out:?}");
     let err = stderr(&out);
     assert!(
-        err.contains("legacy session password") && err.contains("aurelia login"),
-        "error must point at a re-login: {err}"
+        err.contains("aurelia logout"),
+        "error must point at a logout: {err}"
     );
     assert!(
         !err.contains("not logged in"),

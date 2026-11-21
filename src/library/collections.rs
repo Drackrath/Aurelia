@@ -554,5 +554,4 @@ pub async fn sync(client: &SteamClient) -> Result<CollectionsStore> {
 }
 
 #[cfg(test)]
-#[path = "collections_tests.rs"]
 mod tests;

@@ -570,5 +570,4 @@ impl SteamClient {
 }
 
 #[cfg(test)]
-#[path = "depots_tests.rs"]
 mod tests;

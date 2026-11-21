@@ -1,4 +1,8 @@
-use crate::launch::pipeline::{LaunchError, LaunchErrorKind, PipelineContext, PipelineStage};
+use crate::launch::{
+    context::PipelineContext,
+    error::{LaunchError, LaunchErrorKind},
+    pipeline::PipelineStage,
+};
 use async_trait::async_trait;
 
 pub struct PreparePrefixStage;
@@ -26,7 +30,7 @@ impl PipelineStage for PreparePrefixStage {
 
         // Post-runner prefix preparation: handle symlinks
         let app_id = runner_ctx.app.app_id;
-        let prefix_path = crate::core::utils::wineprefix_for_game(
+        let prefix_path = crate::core::paths::wineprefix_for_game(
             &runner_ctx.launcher_config,
             app_id,
             ctx.user_config.as_ref(),
@@ -39,7 +43,7 @@ impl PipelineStage for PreparePrefixStage {
 
         if !use_symlinks {
             // Cleanup if it was previously enabled
-            let _ = crate::core::utils::cleanup_dll_symlinks(&prefix_path);
+            let _ = crate::core::dll_symlinks::cleanup_dll_symlinks(&prefix_path);
             return Ok(());
         }
 
@@ -47,7 +51,7 @@ impl PipelineStage for PreparePrefixStage {
             "Symlink mode enabled, deploying DLLs to prefix: {}",
             prefix_path.display()
         );
-        let deployed = crate::core::utils::deploy_dll_symlinks(
+        let deployed = crate::core::dll_symlinks::deploy_dll_symlinks(
             &prefix_path,
             &ctx.dll_resolutions,
             &ctx.target_architecture,

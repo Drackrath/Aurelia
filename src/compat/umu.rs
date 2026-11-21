@@ -100,5 +100,4 @@ pub fn uninstall() -> Result<bool> {
 }
 
 #[cfg(test)]
-#[path = "umu_tests.rs"]
 mod tests;

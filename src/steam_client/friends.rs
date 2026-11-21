@@ -202,7 +202,7 @@ pub fn apply_persona_state(roster: &mut Roster, msg: &CMsgClientPersonaState) {
 
 /// Announcing would sign it out.
 pub fn host_steam_owns_presence() -> bool {
-    crate::core::utils::is_steam_running()
+    crate::core::steam_host::is_steam_running()
 }
 
 /// Drain steam-vent's buffer of messages that arrived with no registered
@@ -532,5 +532,4 @@ impl SteamClient {
 }
 
 #[cfg(test)]
-#[path = "friends_tests.rs"]
 mod tests;

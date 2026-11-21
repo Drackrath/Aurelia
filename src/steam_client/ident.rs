@@ -117,5 +117,4 @@ pub fn match_friend_name<'a>(
 }
 
 #[cfg(test)]
-#[path = "ident_tests.rs"]
 mod tests;

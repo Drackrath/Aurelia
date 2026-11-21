@@ -75,7 +75,7 @@ impl SteamClient {
 
     #[cfg(target_os = "linux")]
     pub fn steam_is_running() -> bool {
-        crate::core::utils::is_steam_running()
+        crate::core::steam_host::is_steam_running()
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
@@ -127,9 +127,9 @@ impl SteamClient {
         if !SteamClient::steam_is_running() {
             return Ok(());
         }
-        crate::core::utils::start_steam_detached(&["-shutdown"])
+        crate::core::steam_host::start_steam_detached(&["-shutdown"])
             .context("failed to signal Steam shutdown")?;
-        let stopped = crate::core::utils::wait_until(
+        let stopped = crate::core::time::wait_until(
             || !SteamClient::steam_is_running(),
             std::time::Duration::from_secs(30),
             std::time::Duration::from_millis(250),
@@ -143,7 +143,7 @@ impl SteamClient {
     /// Start host Steam silently (Linux).
     #[cfg(target_os = "linux")]
     pub fn start_steam() -> Result<()> {
-        crate::core::utils::start_steam_detached(&["-silent"]).context("failed to start Steam")
+        crate::core::steam_host::start_steam_detached(&["-silent"]).context("failed to start Steam")
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
@@ -198,7 +198,7 @@ impl SteamClient {
         Self::kill_processes_for_app(app_id, force);
 
         if owns_pid {
-            kill_process_tree(record.pid, force);
+            crate::compat::proc_admin::kill_process_tree(record.pid, force);
         }
         crate::compat::running::clear(app_id);
         Ok(record)
@@ -474,7 +474,7 @@ NoSavePersonalInfo=1
             .await?;
 
         // Standard Steam identity fallback so the game can resolve its app id.
-        crate::core::utils::ensure_steam_appid_logged(&game_working_dir, app.app_id);
+        crate::core::fsutil::ensure_steam_appid_logged(&game_working_dir, app.app_id);
 
         let mut cmd = Command::new(&executable);
         cmd.args(&args);
@@ -487,8 +487,8 @@ NoSavePersonalInfo=1
             }
         }
 
-        cmd.stdout(crate::infra::logging::relay::child_stdio());
-        cmd.stderr(crate::infra::logging::relay::child_stdio());
+        cmd.stdout(crate::logging::relay::child_stdio());
+        cmd.stderr(crate::logging::relay::child_stdio());
 
         tracing::info!(
             "Launching game (Native Windows): {:?} with args {:?}",
@@ -496,7 +496,7 @@ NoSavePersonalInfo=1
             args
         );
         match cmd.spawn() {
-            Ok(child) => Ok(crate::infra::logging::relay::attach(child).into()),
+            Ok(child) => Ok(crate::logging::relay::attach(child).into()),
             #[cfg(windows)]
             Err(e) if crate::launch::game_process::needs_elevation(&e) => {
                 self.spawn_windows_elevated(app, executable, args, game_working_dir, user_config)
@@ -556,8 +556,8 @@ NoSavePersonalInfo=1
         steam_enabled: bool,
         shaders: crate::launch::shaders::ShaderLaunch,
     ) -> Result<std::process::Child> {
-        use crate::infra::logging::{EventLogger, LaunchSession};
-        use crate::launch::pipeline::{LaunchPipeline, PipelineContext};
+        use crate::launch::{context::PipelineContext, pipeline::LaunchPipeline};
+        use crate::logging::{EventLogger, LaunchSession};
 
         let mut ctx = PipelineContext::new(app.app_id);
         ctx.app = Some(app.clone());
@@ -604,7 +604,7 @@ NoSavePersonalInfo=1
 
         match launch_info.target {
             LaunchTarget::NativeLinux => {
-                crate::core::utils::ensure_steam_appid_logged(&game_working_dir, app.app_id);
+                crate::core::fsutil::ensure_steam_appid_logged(&game_working_dir, app.app_id);
 
                 #[cfg(unix)]
                 {
@@ -637,8 +637,8 @@ NoSavePersonalInfo=1
                     }
                 }
 
-                cmd.stdout(crate::infra::logging::relay::child_stdio());
-                cmd.stderr(crate::infra::logging::relay::child_stdio());
+                cmd.stdout(crate::logging::relay::child_stdio());
+                cmd.stderr(crate::logging::relay::child_stdio());
 
                 tracing::info!(
                     "Launching game (Native): {:?} with args {:?}",
@@ -646,7 +646,7 @@ NoSavePersonalInfo=1
                     args
                 );
                 cmd.spawn()
-                    .map(crate::infra::logging::relay::attach)
+                    .map(crate::logging::relay::attach)
                     .context("failed to spawn native linux game")
             }
             LaunchTarget::WindowsProton => {

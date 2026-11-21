@@ -3,6 +3,7 @@
 //! Split out of `steam_client.rs` for readability; the struct, shared imports
 //! and free helpers live in the parent module (in scope via `use super::*`).
 use super::*;
+use crate::core::acf;
 
 impl SteamClient {
     /// Resolve an installed app's on-disk layout from its `appmanifest`:
@@ -29,9 +30,10 @@ impl SteamClient {
 
         let raw = std::fs::read_to_string(&src_manifest)
             .with_context(|| format!("failed reading {}", src_manifest.display()))?;
-        let installdir = parse_installdir_from_acf(&raw)
+        let installdir = acf::parse_app_manifest(&raw)
+            .install_dir
             .ok_or_else(|| anyhow!("appmanifest for {appid} has no installdir"))?;
-        if !crate::core::utils::is_safe_dir_name(&installdir) {
+        if !crate::core::paths::is_safe_dir_name(&installdir) {
             bail!("app {appid} has unsafe installdir {installdir:?}");
         }
 
@@ -47,7 +49,7 @@ impl SteamClient {
         let raw = std::fs::read_to_string(&manifest_path)
             .with_context(|| format!("failed reading {}", manifest_path.display()))?;
 
-        let rewritten = rewrite_app_branch(&raw, branch);
+        let rewritten = acf::rewrite_branch(&raw, branch);
         std::fs::write(&manifest_path, rewritten)
             .with_context(|| format!("failed writing {}", manifest_path.display()))?;
 
@@ -69,14 +71,14 @@ impl SteamClient {
         let installdir = if appmanifest.exists() {
             let raw = std::fs::read_to_string(&appmanifest)
                 .with_context(|| format!("failed reading {}", appmanifest.display()))?;
-            parse_installdir_from_acf(&raw)
+            acf::parse_app_manifest(&raw).install_dir
         } else {
             None
         };
         // Never delete outside steamapps/common/<dir>.
         if let Some(dir) = installdir
             .as_deref()
-            .filter(|d| !crate::core::utils::is_safe_dir_name(d))
+            .filter(|d| !crate::core::paths::is_safe_dir_name(d))
         {
             bail!("refusing to uninstall app {appid}: unsafe installdir {dir:?}");
         }
@@ -186,10 +188,10 @@ impl SteamClient {
             let result = (|| -> Result<()> {
                 let _ = tx.blocking_send(DownloadProgress::queued("sizing"));
 
-                let common_bytes = relocate::dir_size(&src_common);
+                let common_bytes = crate::core::fsutil::dir_size(&src_common);
                 let compat_bytes = src_compat
                     .as_ref()
-                    .map(|p| relocate::dir_size(p))
+                    .map(|p| crate::core::fsutil::dir_size(p))
                     .unwrap_or(0);
                 let total = common_bytes + compat_bytes;
 
@@ -288,7 +290,7 @@ impl SteamClient {
         }
         // A manifest written at install start
         match std::fs::read_to_string(&manifest) {
-            Ok(raw) if !manifest_is_fully_installed(&raw) => return (false, None),
+            Ok(raw) if !acf::parse_app_manifest(&raw).fully_installed() => return (false, None),
             Ok(_) => {}
             Err(_) => return (false, None),
         }
@@ -368,7 +370,7 @@ impl SteamClient {
             .unwrap_or_else(|| format!("App {appid}"));
         let installdir = pics_installdir(pics_app_section(vdf.value()))
             .ok_or_else(|| anyhow!("PICS appinfo for {appid} has no installdir; cannot import"))?;
-        if !crate::core::utils::is_safe_dir_name(&installdir) {
+        if !crate::core::paths::is_safe_dir_name(&installdir) {
             bail!("PICS appinfo for {appid} has unsafe installdir {installdir:?}");
         }
 

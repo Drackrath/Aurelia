@@ -62,7 +62,7 @@ pub struct DllCandidate {
 pub struct DllResolveRequest<'a> {
     pub game_exe_dir: &'a Path,
     pub runner_path: &'a Path,
-    pub runner_components: &'a crate::core::utils::RunnerComponents,
+    pub runner_components: &'a crate::core::components::RunnerComponents,
     pub d3d12_policy: &'a crate::core::models::D3D12ProviderPolicy,
     pub target_arch: &'a crate::core::models::ExecutableArchitecture,
     pub custom_dxvk_path: Option<&'a Path>,
@@ -104,7 +104,7 @@ impl DllProviderResolver {
             req.runner_path.display()
         );
         let runner_path = req.runner_path;
-        let runner_root = crate::core::utils::derive_runner_root(runner_path);
+        let runner_root = crate::core::runner::derive_runner_root(runner_path);
 
         let mut report = ComponentScanReport {
             runner_binary: runner_path.to_path_buf(),
@@ -135,7 +135,7 @@ impl DllProviderResolver {
             .collect();
 
         let mut record_component =
-            |family: &str, component: &Option<crate::core::utils::ComponentInfo>| {
+            |family: &str, component: &Option<crate::core::components::ComponentInfo>| {
                 if let Some(c) = component {
                     report.components_found.insert(
                         family.into(),
@@ -385,11 +385,11 @@ impl DllProviderResolver {
         &self,
         dll_name: &str,
         runner_path: &Path,
-        components: &crate::core::utils::RunnerComponents,
+        components: &crate::core::components::RunnerComponents,
         d3d12_policy: &crate::core::models::D3D12ProviderPolicy,
         target_arch: &crate::core::models::ExecutableArchitecture,
     ) -> Option<PathBuf> {
-        let runner_root = crate::core::utils::derive_runner_root(runner_path);
+        let runner_root = crate::core::runner::derive_runner_root(runner_path);
 
         let dll_filename = format!("{}.dll", dll_name);
 
@@ -461,5 +461,4 @@ impl DllProviderResolver {
 }
 
 #[cfg(test)]
-#[path = "dll_provider_resolver_tests.rs"]
 mod tests;

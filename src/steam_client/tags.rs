@@ -111,5 +111,4 @@ impl SteamClient {
 }
 
 #[cfg(test)]
-#[path = "tags_tests.rs"]
 mod tests;

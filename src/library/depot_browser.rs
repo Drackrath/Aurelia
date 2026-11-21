@@ -163,7 +163,7 @@ pub fn download_single_file(
         .find(|f| f.full_path() == file_path)
         .ok_or_else(|| anyhow!("file not found in manifest: {file_path}"))?;
 
-    let relative = crate::core::utils::safe_relative_path(&file.full_path())
+    let relative = crate::core::paths::safe_relative_path(&file.full_path())
         .ok_or_else(|| anyhow!("unsafe path in manifest: {:?}", file.full_path()))?;
 
     std::fs::create_dir_all(output_dir)
@@ -173,7 +173,7 @@ pub fn download_single_file(
         .with_context(|| format!("failed resolving {}", output_dir.display()))?;
 
     let full_path = root.join(&relative);
-    if !crate::core::utils::resolves_within(&root, &full_path) {
+    if !crate::core::paths::resolves_within(&root, &full_path) {
         bail!("{} leaves {}", relative.display(), root.display());
     }
     if let Some(parent) = full_path.parent() {
@@ -223,7 +223,7 @@ async fn resolve_manifest_id(
 }
 
 async fn fetch_appinfo(connection: &Connection, appid: u32) -> Result<AppInfoRoot> {
-    let buffer = crate::steam_client::pics_app_buffer(
+    let buffer = crate::steam_client::pics::pics_app_buffer(
         connection,
         appid,
         "failed requesting appinfo product info",

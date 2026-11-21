@@ -137,3 +137,6 @@ pub async fn installed_runtimes() -> HashMap<u32, PathBuf> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests;

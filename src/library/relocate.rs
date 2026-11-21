@@ -13,17 +13,6 @@ use std::path::{Path, PathBuf};
 
 use walkdir::WalkDir;
 
-/// Total size in bytes of every regular file under `path` (0 if it doesn't exist).
-pub fn dir_size(path: &Path) -> u64 {
-    WalkDir::new(path)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-        .filter_map(|e| e.metadata().ok())
-        .map(|m| m.len())
-        .sum()
-}
-
 /// Move the directory tree at `src` to `dst`, invoking `on_progress(copied_bytes,
 /// current_file)` as it goes.
 ///
@@ -253,5 +242,4 @@ fn parse_kv(line: &str, key: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-#[path = "relocate_tests.rs"]
 mod tests;

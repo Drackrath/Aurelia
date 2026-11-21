@@ -1,6 +1,10 @@
-use crate::core::utils::{dll_override_entries, merge_dll_overrides};
-use crate::infra::runners::CommandSpec;
-use crate::launch::pipeline::{LaunchError, LaunchErrorKind, PipelineContext, PipelineStage};
+use crate::core::dll_overrides::{dll_override_entries, merge_dll_overrides};
+use crate::launch::runners::CommandSpec;
+use crate::launch::{
+    context::PipelineContext,
+    error::{LaunchError, LaunchErrorKind},
+    pipeline::PipelineStage,
+};
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 
@@ -210,5 +214,4 @@ impl PipelineStage for UserLaunchOptionsStage {
 }
 
 #[cfg(test)]
-#[path = "user_launch_options_tests.rs"]
 mod tests;

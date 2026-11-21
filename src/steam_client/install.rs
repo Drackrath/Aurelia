@@ -3,6 +3,7 @@
 //! Split out of `steam_client.rs` for readability; the struct, shared imports
 //! and free helpers live in the parent module (in scope via `use super::*`).
 use super::*;
+use crate::core::acf;
 use crate::core::error::{ErrorKind, TypedError, io_kind, message_kind};
 
 /// CDN hosts tried together.
@@ -240,13 +241,13 @@ impl SteamClient {
             .join("steamapps")
             .join(format!("appmanifest_{appid}.acf"));
         if let Ok(raw) = std::fs::read_to_string(&existing_manifest) {
-            let parsed = crate::core::acf::parse_app_manifest(&raw);
+            let parsed = acf::parse_app_manifest(&raw);
             if let Some(dir) = parsed.install_dir.clone() {
                 let existing_dir = Path::new(&library_root)
                     .join("steamapps")
                     .join("common")
                     .join(&dir);
-                if existing_dir.is_dir() && crate::core::utils::is_safe_dir_name(&dir) {
+                if existing_dir.is_dir() && crate::core::paths::is_safe_dir_name(&dir) {
                     existing_installdir = Some(dir);
                 }
             }
@@ -272,9 +273,12 @@ impl SteamClient {
             }
             let base_raw = std::fs::read_to_string(&base_manifest)
                 .with_context(|| format!("failed reading {}", base_manifest.display()))?;
-            let base_installdir = parse_installdir_from_acf(&base_raw).ok_or_else(|| {
-                anyhow!("could not determine base game install dir for app {base_appid}")
-            })?;
+            let base_installdir =
+                acf::parse_app_manifest(&base_raw)
+                    .install_dir
+                    .ok_or_else(|| {
+                        anyhow!("could not determine base game install dir for app {base_appid}")
+                    })?;
             let steamapps = base_manifest
                 .parent()
                 .ok_or_else(|| anyhow!("invalid base manifest path for app {base_appid}"))?;

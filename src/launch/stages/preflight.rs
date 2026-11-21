@@ -1,4 +1,8 @@
-use crate::launch::pipeline::{LaunchError, LaunchErrorKind, PipelineContext, PipelineStage};
+use crate::launch::{
+    context::PipelineContext,
+    error::{LaunchError, LaunchErrorKind},
+    pipeline::PipelineStage,
+};
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 
@@ -316,5 +320,4 @@ impl PipelineStage for PreflightStage {
 }
 
 #[cfg(test)]
-#[path = "preflight_tests.rs"]
 mod tests;

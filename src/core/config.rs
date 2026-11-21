@@ -405,14 +405,6 @@ pub async fn load_session() -> Result<SessionState> {
         .with_context(|| format!("failed reading {}", session_path.display()))?;
     // Encrypted sessions decrypt on the fly.
     if let Some(envelope) = crate::core::session_crypto::EncryptedSession::from_json(&raw) {
-        if !envelope.keyring {
-            // Passwords are gone; a login re-keys it.
-            anyhow::bail!(
-                "session.json was encrypted with a legacy session password — \
-                 run `aurelia login` again to re-key it to the OS keyring \
-                 (without a keyring, run `aurelia logout` first)"
-            );
-        }
         // Keyring-keyed: automatic, never prompts.
         let key = tokio::task::spawn_blocking(crate::core::session_crypto::keyring_secret)
             .await
@@ -644,14 +636,6 @@ pub struct LibraryCache {
     pub games: Vec<OwnedGame>,
 }
 
-/// Current shape or legacy bare array.
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum LibraryCacheFile {
-    Tagged(LibraryCache),
-    Legacy(Vec<OwnedGame>),
-}
-
 pub async fn save_library_cache(owned_games: &[OwnedGame], steam_id: Option<u64>) -> Result<()> {
     #[derive(Serialize)]
     struct Out<'a> {
@@ -667,23 +651,34 @@ pub async fn save_library_cache(owned_games: &[OwnedGame], steam_id: Option<u64>
 
 /// Cached library with its owner, if any.
 pub async fn read_library_cache() -> Result<LibraryCache> {
-    let path = library_cache_path()?;
+    read_library_cache_at(&library_cache_path()?).await
+}
+
+pub(crate) async fn read_library_cache_at(path: &Path) -> Result<LibraryCache> {
     if !path.exists() {
         return Ok(LibraryCache::default());
     }
-    Ok(read_json::<LibraryCacheFile>(&path).await?.into())
+    if let Some(cache) = convert_bare_library_cache(path).await {
+        return Ok(cache);
+    }
+    read_json(path).await
 }
 
-impl From<LibraryCacheFile> for LibraryCache {
-    fn from(file: LibraryCacheFile) -> Self {
-        match file {
-            LibraryCacheFile::Tagged(cache) => cache,
-            LibraryCacheFile::Legacy(games) => LibraryCache {
-                steam_id: None,
-                games,
-            },
-        }
+/// v0.2.5 bare array, owner unknown.
+async fn convert_bare_library_cache(path: &Path) -> Option<LibraryCache> {
+    let raw = fs::read_to_string(path).await.ok()?;
+    if !raw.trim_start().starts_with('[') {
+        return None;
     }
+    let games: Vec<OwnedGame> = serde_json::from_str(&raw).ok()?;
+    let cache = LibraryCache {
+        steam_id: None,
+        games,
+    };
+    if let Err(e) = write_json_pretty(path, &cache).await {
+        tracing::warn!("could not convert {}: {e:#}", path.display());
+    }
+    Some(cache)
 }
 
 impl LibraryCache {
@@ -760,7 +755,7 @@ fn info_cache_path(app_id: u32, language: &str, country: &str) -> Result<PathBuf
     Ok(info_cache_dir()?.join(format!("{app_id}.{lang}.{cc}.json")))
 }
 
-use crate::core::utils::now_unix;
+use crate::core::time::now_unix;
 
 /// Load a cached `info` record for `app_id` if one exists and is still within
 /// `ttl`. Returns `None` on a miss, a stale entry, or any read/parse error, so the
@@ -835,16 +830,61 @@ pub async fn save_tag_name_cache(
 /// options, env vars, the Steam-runtime policy) on one typo is exactly the footgun this
 /// avoids. See the same contract on [`load_launcher_config`].
 pub async fn load_user_configs() -> Result<UserConfigStore> {
-    let path = config_dir()?.join("user_apps.json");
+    load_user_configs_at(&config_dir()?.join("user_apps.json")).await
+}
+
+pub(crate) async fn load_user_configs_at(path: &Path) -> Result<UserConfigStore> {
     if !path.exists() {
         return Ok(UserConfigStore::new());
     }
-    read_json(&path).await.with_context(|| {
+    if let Some(store) = convert_use_steam_runtime(path).await {
+        return Ok(store);
+    }
+    read_json(path).await.with_context(|| {
         format!(
             "invalid per-game config — fix the JSON in {}, or delete it to start fresh",
             path.display()
         )
     })
+}
+
+/// Rewrite v0.2 `use_steam_runtime` keys once.
+async fn convert_use_steam_runtime(path: &Path) -> Option<UserConfigStore> {
+    let raw = fs::read_to_string(path).await.ok()?;
+    if !raw.contains("\"use_steam_runtime\"") {
+        return None;
+    }
+    let mut value: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    if !fold_use_steam_runtime(&mut value) {
+        return None;
+    }
+    let store: UserConfigStore = serde_json::from_value(value).ok()?;
+    if let Err(e) = write_json_pretty(path, &store).await {
+        tracing::warn!("could not convert {}: {e:#}", path.display());
+    }
+    Some(store)
+}
+
+/// `use_steam_runtime: true` on `Auto` means `Enabled`.
+pub(crate) fn fold_use_steam_runtime(store: &mut serde_json::Value) -> bool {
+    let Some(entries) = store.as_object_mut() else {
+        return false;
+    };
+    let mut changed = false;
+    for entry in entries.values_mut() {
+        let Some(obj) = entry.as_object_mut() else {
+            continue;
+        };
+        let Some(legacy) = obj.remove("use_steam_runtime") else {
+            continue;
+        };
+        changed = true;
+        let auto = obj.get("steam_runtime_policy").is_none_or(|p| p == "Auto");
+        if legacy == true && auto {
+            obj.insert("steam_runtime_policy".into(), "Enabled".into());
+        }
+    }
+    changed
 }
 
 pub async fn save_user_configs(configs: &UserConfigStore) -> Result<()> {
@@ -853,5 +893,4 @@ pub async fn save_user_configs(configs: &UserConfigStore) -> Result<()> {
 }
 
 #[cfg(test)]
-#[path = "config_tests.rs"]
 mod tests;

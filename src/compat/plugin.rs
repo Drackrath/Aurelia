@@ -202,5 +202,4 @@ pub(crate) fn uninstall(spec: &PluginSpec) -> Result<bool> {
 }
 
 #[cfg(test)]
-#[path = "plugin_tests.rs"]
 mod tests;
