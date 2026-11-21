@@ -138,14 +138,14 @@ fn ratelimit_reset(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
     let reset = header_str(headers, "x-ratelimit-reset")?
         .parse::<u64>()
         .ok()?;
-    let now = crate::core::utils::since_unix_epoch().ok()?.as_secs();
+    let now = crate::core::time::since_unix_epoch().ok()?.as_secs();
     Some(Duration::from_secs(reset.saturating_sub(now).max(1)))
 }
 
 /// Exponential backoff with sub-second jitter.
 fn backoff(attempt: u32) -> Duration {
     let jitter_ms = u64::from(
-        crate::core::utils::since_unix_epoch()
+        crate::core::time::since_unix_epoch()
             .map(|d| d.subsec_nanos())
             .unwrap_or(0)
             % 250,

@@ -95,7 +95,7 @@ struct DaemonInfo {
 pub(crate) fn current_build_id() -> Option<String> {
     let exe = std::env::current_exe().ok()?;
     let meta = std::fs::metadata(exe).ok()?;
-    let mtime = aurelia::core::utils::unix_secs(meta.modified().ok()?)?;
+    let mtime = aurelia::core::time::unix_secs(meta.modified().ok()?)?;
     Some(format!("{mtime}-{}", meta.len()))
 }
 

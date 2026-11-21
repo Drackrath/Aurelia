@@ -1,4 +1,4 @@
-use super::{find_on_path, steam_client_installed};
+use super::super::{find_on_path, steam_client_installed};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 

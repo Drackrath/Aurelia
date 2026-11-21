@@ -1591,8 +1591,8 @@ impl LaunchPipeline {
                                 .map(|c| std::path::PathBuf::from(&c.steam_library_path))
                                 .unwrap_or_default();
                             let active_runner =
-                                crate::core::utils::resolve_runner(proton, &library_root);
-                            Some(crate::core::utils::derive_runner_root(&active_runner))
+                                crate::core::runner::resolve_runner(proton, &library_root);
+                            Some(crate::core::runner::derive_runner_root(&active_runner))
                         },
                     },
                     settings: EffectiveSettingsConfig {
@@ -1643,7 +1643,7 @@ impl LaunchPipeline {
         }
 
         if let Some(session) = &ctx.session {
-            let timestamp = crate::core::utils::now_unix();
+            let timestamp = crate::core::time::now_unix();
 
             let summary = crate::logging::LaunchSummary {
                 session_id: session.id.to_string(),

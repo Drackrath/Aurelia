@@ -80,7 +80,7 @@ pub fn insert_fake_steam_trap(
     let config_dir = crate::core::config::config_dir().map_err(|e| {
         LaunchError::new(LaunchErrorKind::Environment, "failed to get config dir").with_source(e)
     })?;
-    let fake_env = crate::core::utils::setup_fake_steam_trap(&config_dir).map_err(|e| {
+    let fake_env = crate::core::steam_host::setup_fake_steam_trap(&config_dir).map_err(|e| {
         LaunchError::new(
             LaunchErrorKind::Permission,
             "failed to setup fake steam trap",

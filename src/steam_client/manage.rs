@@ -33,7 +33,7 @@ impl SteamClient {
         let installdir = acf::parse_app_manifest(&raw)
             .install_dir
             .ok_or_else(|| anyhow!("appmanifest for {appid} has no installdir"))?;
-        if !crate::core::utils::is_safe_dir_name(&installdir) {
+        if !crate::core::paths::is_safe_dir_name(&installdir) {
             bail!("app {appid} has unsafe installdir {installdir:?}");
         }
 
@@ -78,7 +78,7 @@ impl SteamClient {
         // Never delete outside steamapps/common/<dir>.
         if let Some(dir) = installdir
             .as_deref()
-            .filter(|d| !crate::core::utils::is_safe_dir_name(d))
+            .filter(|d| !crate::core::paths::is_safe_dir_name(d))
         {
             bail!("refusing to uninstall app {appid}: unsafe installdir {dir:?}");
         }
@@ -370,7 +370,7 @@ impl SteamClient {
             .unwrap_or_else(|| format!("App {appid}"));
         let installdir = pics_installdir(pics_app_section(vdf.value()))
             .ok_or_else(|| anyhow!("PICS appinfo for {appid} has no installdir; cannot import"))?;
-        if !crate::core::utils::is_safe_dir_name(&installdir) {
+        if !crate::core::paths::is_safe_dir_name(&installdir) {
             bail!("PICS appinfo for {appid} has unsafe installdir {installdir:?}");
         }
 

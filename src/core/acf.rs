@@ -2,8 +2,6 @@
 
 use std::collections::HashMap;
 
-use crate::core::utils::extract_quoted_values;
-
 /// Top-level appmanifest fields, one pass.
 #[derive(Debug, Default)]
 pub struct AppManifest {
@@ -80,7 +78,7 @@ pub fn parse_app_manifest(raw: &str) -> AppManifest {
             "appid" if m.app_id.is_none() => m.app_id = value.parse().ok(),
             "installdir" if m.install_dir.is_none() => {
                 // Refuse names escaping steamapps/common.
-                if crate::core::utils::is_safe_dir_name(value) {
+                if crate::core::paths::is_safe_dir_name(value) {
                     m.install_dir = Some(value.to_string());
                 } else {
                     tracing::warn!("ignoring unsafe appmanifest installdir {value:?}");
@@ -190,6 +188,29 @@ pub fn rewrite_branch(raw: &str, branch: &str) -> String {
     // Assumes Steam wrote a UserConfig.
 
     out.join("\n")
+}
+
+/// Extract the double-quoted values from a single VDF/ACF-style line, in order.
+///
+/// e.g. `"installdir"  "Half-Life 2"` -> `["installdir", "Half-Life 2"]`. Shared by the
+/// appinfo/appmanifest/workshop-manifest parsers (see `steam_client`, `library`).
+pub fn extract_quoted_values(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut in_quote = false;
+    let mut current = String::new();
+    for ch in line.chars() {
+        if ch == '"' {
+            if in_quote {
+                out.push(std::mem::take(&mut current));
+            }
+            in_quote = !in_quote;
+            continue;
+        }
+        if in_quote {
+            current.push(ch);
+        }
+    }
+    out
 }
 
 #[cfg(test)]

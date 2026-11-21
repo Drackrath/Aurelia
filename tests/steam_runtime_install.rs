@@ -5,9 +5,12 @@
 //! driven through `proton run` — a wrapper that ignores the `WINEPREFIX` the caller
 //! sets and expects the Steam Linux Runtime container.
 
-use aurelia::core::utils::{
-    build_runner_command, find_steam_exe_in_prefix, resolve_runner_opt, resolve_steam_runtime_wine,
-    steam_runtime_runner_unset_msg,
+use aurelia::core::{
+    runner::{
+        build_runner_command, resolve_runner_opt, resolve_steam_runtime_wine,
+        steam_runtime_runner_unset_msg,
+    },
+    steam_host::find_steam_exe_in_prefix,
 };
 use aurelia::launch::is_valid_setup_exe;
 use std::fs;

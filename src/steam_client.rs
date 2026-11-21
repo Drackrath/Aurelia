@@ -1,3 +1,4 @@
+use crate::core::acf::extract_quoted_values;
 use crate::core::config::{
     delete_session, library_cache_path, load_launcher_config, load_library_cache, load_session,
     save_library_cache, save_session,
@@ -6,7 +7,6 @@ use crate::core::models::{
     DepotPlatform, DlcState, DownloadProgress, DownloadProgressState, LibraryGame,
     ManifestSelection, OwnedGame, QrEvent, SessionState, SteamGuardReq,
 };
-use crate::core::utils::extract_quoted_values;
 use crate::library::cloud_sync::{
     CloudClient, CloudPathResolver, UfsConfig, UfsRootOverride, UfsSaveSpec, default_cloud_root,
 };
@@ -598,7 +598,7 @@ pub fn sanitize_install_dir(name: &str) -> String {
         .collect();
     let sanitized = sanitized.trim().to_string();
     // Dot-only or empty names escape common/.
-    if crate::core::utils::is_safe_dir_name(&sanitized) {
+    if crate::core::paths::is_safe_dir_name(&sanitized) {
         sanitized
     } else {
         "_".to_string()

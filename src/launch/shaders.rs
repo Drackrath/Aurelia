@@ -137,7 +137,7 @@ pub fn host_steam_roots() -> Vec<PathBuf> {
 /// Size and mtime of `path`.
 fn stamp(path: &Path) -> Option<String> {
     let meta = std::fs::metadata(path).ok()?;
-    let mtime = crate::core::utils::unix_secs(meta.modified().ok()?)?;
+    let mtime = crate::core::time::unix_secs(meta.modified().ok()?)?;
     Some(format!("{}:{mtime}", meta.len()))
 }
 

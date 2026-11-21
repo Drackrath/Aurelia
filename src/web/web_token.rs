@@ -153,7 +153,7 @@ fn unescape_json_slashes(s: &str) -> String {
     s.trim().replace("\\/", "/")
 }
 
-pub use crate::core::utils::now_unix;
+pub use crate::core::time::now_unix;
 
 /// Decode a JWT's payload (claims) segment. No signature verification — Steam
 /// verifies the token server-side; we only read metadata out of it.

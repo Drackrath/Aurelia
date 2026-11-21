@@ -1,6 +1,6 @@
 #[test]
 fn test_version_parsing() {
-    use aurelia::core::utils::parse_short_version;
+    use aurelia::core::components::parse_short_version;
 
     assert_eq!(
         parse_short_version("dxvk (v2.7.1-404-g0bf876eb)"),
@@ -18,7 +18,7 @@ fn test_version_parsing() {
 
 #[test]
 fn test_path_discovery_roots() {
-    use aurelia::core::utils::{ComponentSource, detect_runner_components};
+    use aurelia::core::components::{ComponentSource, detect_runner_components};
     use std::fs;
     use tempfile::tempdir;
 
@@ -61,7 +61,7 @@ fn test_path_discovery_roots() {
 /// folders, not just the flat legacy dirs.
 #[test]
 fn test_unified_layout_detection() {
-    use aurelia::core::utils::{ComponentSource, detect_runner_components};
+    use aurelia::core::components::{ComponentSource, detect_runner_components};
     use std::fs;
     use tempfile::tempdir;
 
@@ -102,8 +102,8 @@ fn test_unified_layout_detection() {
 /// (which carries no `windows` marker and used to leak through the bitness filter).
 #[test]
 fn test_arch_specific_resolution_excludes_64bit_for_32bit_game() {
+    use aurelia::core::components::{ComponentInfo, ComponentSource, RunnerComponents};
     use aurelia::core::models::{D3D12ProviderPolicy, ExecutableArchitecture};
-    use aurelia::core::utils::{ComponentInfo, ComponentSource, RunnerComponents};
     use aurelia::launch::dll_provider_resolver::{
         DllProvider, DllProviderResolver, DllResolveRequest,
     };

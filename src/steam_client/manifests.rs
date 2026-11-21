@@ -340,7 +340,7 @@ impl SteamClient {
         // downgraded build in place against the official client's eager re-patching).
         let auto_update_behavior = if pin_updates { 1 } else { 0 };
         let bytes_have = if fully_installed { size_on_disk } else { 0 };
-        let last_updated = crate::core::utils::now_unix();
+        let last_updated = crate::core::time::now_unix();
 
         let mut content = format!(
             "\"AppState\"\n{{\n\
@@ -959,6 +959,6 @@ fn pics_section_installdir(section: &steam_vdf_parser::Value) -> Option<String> 
     section
         .get_str(&["config", "installdir"])
         .map(str::trim)
-        .filter(|d| crate::core::utils::is_safe_dir_name(d))
+        .filter(|d| crate::core::paths::is_safe_dir_name(d))
         .map(str::to_string)
 }

@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 
 fn config_with_library(library: &std::path::Path) -> crate::core::config::LauncherConfig {
     let mut config = crate::core::config::LauncherConfig::default();

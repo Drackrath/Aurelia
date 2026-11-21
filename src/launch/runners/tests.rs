@@ -214,11 +214,11 @@ mod tests {
         assert!(merged.contains("steamclient=n"), "merged: {merged}");
         assert!(merged.contains("lsteamclient="), "merged: {merged}");
         assert_eq!(
-            crate::core::utils::dll_override_mode(merged, "dxgi").as_deref(),
+            crate::core::dll_overrides::dll_override_mode(merged, "dxgi").as_deref(),
             Some("b")
         );
         assert_eq!(
-            crate::core::utils::dll_override_entries(merged)
+            crate::core::dll_overrides::dll_override_entries(merged)
                 .iter()
                 .filter(|(n, _)| n == "dxgi")
                 .count(),
@@ -244,12 +244,12 @@ mod tests {
         let merged = env.get("WINEDLLOVERRIDES").unwrap();
         // Computed stub wins; xlive added.
         assert_eq!(
-            crate::core::utils::dll_override_mode(merged, "steamclient").as_deref(),
+            crate::core::dll_overrides::dll_override_mode(merged, "steamclient").as_deref(),
             Some("n"),
             "{merged}"
         );
         assert_eq!(
-            crate::core::utils::dll_override_mode(merged, "xlive").as_deref(),
+            crate::core::dll_overrides::dll_override_mode(merged, "xlive").as_deref(),
             Some("n"),
             "{merged}"
         );
@@ -274,7 +274,7 @@ mod tests {
         }];
         let env = runner.build_env(&ctx).await.unwrap();
         let overrides = env.get("WINEDLLOVERRIDES").unwrap();
-        let d3d11: Vec<_> = crate::core::utils::dll_override_entries(overrides)
+        let d3d11: Vec<_> = crate::core::dll_overrides::dll_override_entries(overrides)
             .into_iter()
             .filter(|(n, _)| n == "d3d11")
             .collect();

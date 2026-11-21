@@ -105,7 +105,7 @@ const GE_RELEASES_PER_REPO: usize = 8;
 // Modern runners (Proton 11+, GE, Proton-CachyOS) use a unified layout where
 // graphics components live under `<lib-root>/wine/<component>/<arch>` alongside the
 // bare base dirs that hold the WOW64 unix-bridge `.so` libraries. These constants
-// are the single source of truth shared by `utils`, `dll_provider_resolver`, and the
+// are the single source of truth shared by `core::components`, `dll_provider_resolver`, and the
 // `wine_tkg` runner so discovery paths stay consistent and de-duplicated.
 
 /// Lib roots a runner may use. The `*/wine` roots host the arch-split component
@@ -190,7 +190,7 @@ pub fn compat_tools_dir() -> Result<PathBuf> {
 /// Installed runtimes across all Steam libraries.
 pub fn list_installed(steam_library_path: &Path) -> Vec<InstalledProton> {
     let tools = compat_tools_dir().ok();
-    let libraries = crate::core::utils::runner_library_roots(
+    let libraries = crate::core::runner::runner_library_roots(
         steam_library_path,
         &crate::library::steam_root_candidates(),
     );
@@ -521,7 +521,7 @@ pub async fn install_github_package(
         .await
         .with_context(|| format!("failed downloading {}", pkg.name))?;
 
-    if !crate::core::utils::is_safe_dir_name(&pkg.name) {
+    if !crate::core::paths::is_safe_dir_name(&pkg.name) {
         bail!("invalid runtime name {:?}", pkg.name);
     }
     // Extract into a staging dir, then install under the release name: the
@@ -655,7 +655,7 @@ fn unpack_guarded<R: std::io::Read>(reader: R, dest_parent: &Path) -> Result<()>
 /// Refuses to touch Steam-managed Proton under `steamapps/common` (uninstall those
 /// through Steam). Errors if the named runtime isn't an installed custom tool.
 pub fn remove(name: &str) -> Result<()> {
-    if !crate::core::utils::is_safe_dir_name(name) {
+    if !crate::core::paths::is_safe_dir_name(name) {
         bail!("invalid runtime name {name:?}");
     }
     let base = compat_tools_dir()?;

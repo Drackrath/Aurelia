@@ -9,7 +9,7 @@ pub struct LaunchSessionId(String);
 
 impl LaunchSessionId {
     pub fn generate() -> Self {
-        let now = crate::core::utils::since_unix_epoch()
+        let now = crate::core::time::since_unix_epoch()
             .expect("Time went backwards")
             .as_millis();
         let random: u32 = rand::random();

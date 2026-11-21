@@ -1,4 +1,4 @@
-use super::connection_log_logged_on;
+use super::super::connection_log_logged_on;
 
 // Log lines shaped like Steam's real connection_log.txt.
 const LOGGED_ON_TAIL: &str = "\

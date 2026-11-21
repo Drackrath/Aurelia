@@ -248,7 +248,7 @@ cargo add aurelia-steam
 ```
 
 ```rust
-use aurelia::core::utils::is_safe_dir_name;
+use aurelia::core::paths::is_safe_dir_name;
 
 assert!(!is_safe_dir_name("../x"));
 ```

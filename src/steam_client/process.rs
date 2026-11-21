@@ -75,7 +75,7 @@ impl SteamClient {
 
     #[cfg(target_os = "linux")]
     pub fn steam_is_running() -> bool {
-        crate::core::utils::is_steam_running()
+        crate::core::steam_host::is_steam_running()
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
@@ -127,9 +127,9 @@ impl SteamClient {
         if !SteamClient::steam_is_running() {
             return Ok(());
         }
-        crate::core::utils::start_steam_detached(&["-shutdown"])
+        crate::core::steam_host::start_steam_detached(&["-shutdown"])
             .context("failed to signal Steam shutdown")?;
-        let stopped = crate::core::utils::wait_until(
+        let stopped = crate::core::time::wait_until(
             || !SteamClient::steam_is_running(),
             std::time::Duration::from_secs(30),
             std::time::Duration::from_millis(250),
@@ -143,7 +143,7 @@ impl SteamClient {
     /// Start host Steam silently (Linux).
     #[cfg(target_os = "linux")]
     pub fn start_steam() -> Result<()> {
-        crate::core::utils::start_steam_detached(&["-silent"]).context("failed to start Steam")
+        crate::core::steam_host::start_steam_detached(&["-silent"]).context("failed to start Steam")
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
@@ -474,7 +474,7 @@ NoSavePersonalInfo=1
             .await?;
 
         // Standard Steam identity fallback so the game can resolve its app id.
-        crate::core::utils::ensure_steam_appid_logged(&game_working_dir, app.app_id);
+        crate::core::fsutil::ensure_steam_appid_logged(&game_working_dir, app.app_id);
 
         let mut cmd = Command::new(&executable);
         cmd.args(&args);
@@ -604,7 +604,7 @@ NoSavePersonalInfo=1
 
         match launch_info.target {
             LaunchTarget::NativeLinux => {
-                crate::core::utils::ensure_steam_appid_logged(&game_working_dir, app.app_id);
+                crate::core::fsutil::ensure_steam_appid_logged(&game_working_dir, app.app_id);
 
                 #[cfg(unix)]
                 {

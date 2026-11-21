@@ -1,5 +1,5 @@
+use aurelia::core::dll_symlinks::{cleanup_dll_symlinks, deploy_dll_symlinks};
 use aurelia::core::models::ExecutableArchitecture;
-use aurelia::core::utils::{cleanup_dll_symlinks, deploy_dll_symlinks};
 use aurelia::launch::dll_provider_resolver::{DllProvider, DllResolution};
 use std::fs;
 use tempfile::tempdir;

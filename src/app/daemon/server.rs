@@ -19,7 +19,7 @@ static INFLIGHT: AtomicUsize = AtomicUsize::new(0);
 static LAST_ACTIVITY: AtomicU64 = AtomicU64::new(0);
 
 fn touch_activity() {
-    LAST_ACTIVITY.store(aurelia::core::utils::now_unix(), Ordering::SeqCst);
+    LAST_ACTIVITY.store(aurelia::core::time::now_unix(), Ordering::SeqCst);
 }
 
 /// Increments [`INFLIGHT`] for its lifetime; decrements on drop (covers `?` early
@@ -115,7 +115,7 @@ async fn watch_for_idle(timeout: Duration) {
         }
         if idle_expired(
             LAST_ACTIVITY.load(Ordering::SeqCst),
-            aurelia::core::utils::now_unix(),
+            aurelia::core::time::now_unix(),
             timeout,
             busy,
         ) {

@@ -63,11 +63,11 @@ impl PipelineStage for ResolveDllProvidersStage {
             .as_ref()
             .map(|c| PathBuf::from(&c.steam_library_path))
             .unwrap_or_default();
-        let resolved_runner = crate::core::utils::resolve_runner(proton_path, &library_root);
+        let resolved_runner = crate::core::runner::resolve_runner(proton_path, &library_root);
 
         // Resolve WINEPREFIX for component detection
         let wineprefix = if let (Some(config), Some(app)) = (&ctx.launcher_config, &ctx.app) {
-            Some(crate::core::utils::wineprefix_for_game(
+            Some(crate::core::paths::wineprefix_for_game(
                 config,
                 app.app_id,
                 ctx.user_config.as_ref(),
@@ -77,8 +77,10 @@ impl PipelineStage for ResolveDllProvidersStage {
             None
         };
 
-        let components =
-            crate::core::utils::detect_runner_components(&resolved_runner, wineprefix.as_deref());
+        let components = crate::core::components::detect_runner_components(
+            &resolved_runner,
+            wineprefix.as_deref(),
+        );
         let d3d12_policy = ctx
             .user_config
             .as_ref()
@@ -98,7 +100,7 @@ impl PipelineStage for ResolveDllProvidersStage {
 
         // Detect architecture before resolution
         if exe_path.exists() {
-            ctx.target_architecture = crate::core::utils::detect_exe_architecture(&exe_path);
+            ctx.target_architecture = crate::core::sysinfo::detect_exe_architecture(&exe_path);
             // Pre-populate this so downstream stages can use it
             ctx.resolved_executable_path = Some(exe_path.clone());
 

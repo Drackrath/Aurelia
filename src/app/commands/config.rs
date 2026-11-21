@@ -247,7 +247,7 @@ pub(crate) async fn cmd_config_steam_runtime_runner(
     // no installed runtime — mirroring how `proton default` warns on an uninstalled pick.
     let library_root = PathBuf::from(&config.steam_library_path);
     let resolved = if configured {
-        aurelia::core::utils::resolve_steam_runtime_wine(&current, &library_root).ok()
+        aurelia::core::runner::resolve_steam_runtime_wine(&current, &library_root).ok()
     } else {
         None
     };
@@ -256,14 +256,14 @@ pub(crate) async fn cmd_config_steam_runtime_runner(
         print_json(&serde_json::json!({
             "steam_runtime_runner": configured.then(|| current.clone()),
             "resolved_wine": resolved.as_ref().map(|p: &PathBuf| p.display().to_string()),
-            "steam_runtime_supported": aurelia::core::utils::STEAM_RUNTIME_SUPPORTED,
+            "steam_runtime_supported": aurelia::core::runner::STEAM_RUNTIME_SUPPORTED,
         }));
         return Ok(());
     }
-    if !aurelia::core::utils::STEAM_RUNTIME_SUPPORTED {
+    if !aurelia::core::runner::STEAM_RUNTIME_SUPPORTED {
         cli_eprintln!(
             "Note: {}",
-            aurelia::core::utils::steam_runtime_unsupported_msg()
+            aurelia::core::runner::steam_runtime_unsupported_msg()
         );
     }
 
@@ -488,11 +488,11 @@ pub(crate) async fn cmd_config_steam_runtime_policy(
             cli_println!("Saved. Applies to games whose own policy is `auto`.");
         }
         if config.steam_runtime_policy == SteamRuntimePolicy::Enabled
-            && !aurelia::core::utils::STEAM_RUNTIME_SUPPORTED
+            && !aurelia::core::runner::STEAM_RUNTIME_SUPPORTED
         {
             cli_eprintln!(
                 "Note: {}",
-                aurelia::core::utils::steam_runtime_unsupported_msg()
+                aurelia::core::runner::steam_runtime_unsupported_msg()
             );
         }
     }
@@ -626,7 +626,7 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
     use aurelia::core::models::{SteamPrefixMode, SteamRuntimePolicy};
 
     // Saved anyway (a shared config may also be used on Linux), but say so.
-    if !json && !aurelia::core::utils::PROTON_SUPPORTED {
+    if !json && !aurelia::core::runner::PROTON_SUPPORTED {
         let linux_only: Vec<&str> = [
             (proton.is_some(), "--proton"),
             (

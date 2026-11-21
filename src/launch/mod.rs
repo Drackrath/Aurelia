@@ -20,7 +20,7 @@ mod game_process_tests;
 mod wait_tests;
 
 use crate::core::config::{LauncherConfig, config_dir};
-use crate::core::utils::MasterSteamConfig;
+use crate::core::steam_host::MasterSteamConfig;
 use crate::steam_client::SteamClient;
 use anyhow::{Context, Result, anyhow};
 use std::path::{Path, PathBuf};
@@ -35,10 +35,10 @@ fn stop_prefix_processes(wine_prefix: &Path) {
 
 /// Resolve the runner's wine binary, failing on platforms that can't run it.
 fn resolve_runtime_wine(config: &LauncherConfig) -> Result<PathBuf> {
-    crate::core::utils::ensure_steam_runtime_supported()?;
+    crate::core::runner::ensure_steam_runtime_supported()?;
     let runner_name = config.steam_runtime_runner.to_string_lossy();
     let library_root = PathBuf::from(&config.steam_library_path);
-    crate::core::utils::resolve_steam_runtime_wine(&runner_name, &library_root)
+    crate::core::runner::resolve_steam_runtime_wine(&runner_name, &library_root)
 }
 
 /// Installed `steam.exe` or install-first error.
@@ -63,7 +63,7 @@ fn require_steam_exe(steam_cfg: &MasterSteamConfig) -> Result<PathBuf> {
 ///    client and must not block the caller.
 pub async fn install_master_steam(config: &LauncherConfig) -> Result<()> {
     let base_dir = config_dir()?;
-    let steam_cfg = crate::core::utils::get_master_steam_config();
+    let steam_cfg = crate::core::steam_host::get_master_steam_config();
 
     // Resolve the runner FIRST: a misconfigured runner must fail before we spend a
     // download on an installer we have no way to execute.
@@ -88,7 +88,7 @@ pub async fn install_master_steam(config: &LauncherConfig) -> Result<()> {
 
     // Bare-wine prefixes miss the runner's dxvk/vkd3d PE libs the Steam CEF UI
     // needs (see ensure_steam_runtime_prefix_libs) — sync them before launching.
-    crate::core::utils::ensure_steam_runtime_prefix_libs(&wine, &steam_cfg.wine_prefix);
+    crate::core::runner::ensure_steam_runtime_prefix_libs(&wine, &steam_cfg.wine_prefix);
 
     launch_master_steam(&wine, &steam_exe, &steam_cfg, &base_dir)
 }
@@ -149,7 +149,7 @@ async fn run_steam_installer(
 
     // Re-probe rather than trusting the exit code: NSIS happily returns 0 when it
     // silently declines to install anything.
-    crate::core::utils::get_master_steam_config()
+    crate::core::steam_host::get_master_steam_config()
         .steam_exe
         .ok_or_else(|| {
             anyhow!(
@@ -206,7 +206,7 @@ fn apply_master_steam_env(
     cmd.env("STEAM_COMPAT_DATA_PATH", &steam_cfg.root_dir);
     cmd.env("WINEPATH", "C:\\Program Files (x86)\\Steam");
 
-    let fake_env = crate::core::utils::setup_fake_steam_trap(base_dir)?;
+    let fake_env = crate::core::steam_host::setup_fake_steam_trap(base_dir)?;
     cmd.env("STEAM_COMPAT_CLIENT_INSTALL_PATH", &fake_env);
     cmd.env("WINEDLLOVERRIDES", "vstdlib_s=n;tier0_s=n;steamclient=n;steamclient64=n;steam_api=n;steam_api64=n;lsteamclient=");
 
@@ -249,7 +249,7 @@ fn apply_install_diagnostics(cmd: &mut Command, base_dir: &Path) {
         );
         return;
     }
-    let stamp = crate::core::utils::now_unix();
+    let stamp = crate::core::time::now_unix();
     let log_path = logs_dir.join(format!("steam_runtime_install_{stamp}.log"));
     match std::fs::File::create(&log_path) {
         Ok(file) => {
@@ -280,15 +280,15 @@ fn apply_install_diagnostics(cmd: &mut Command, base_dir: &Path) {
 /// the destructive backup step never runs when the reinstall would fail anyway.
 pub async fn repair_master_steam(config: &LauncherConfig) -> Result<()> {
     // Before the backup: the reinstall can't run here, so don't move the prefix.
-    crate::core::utils::ensure_steam_runtime_supported()?;
+    crate::core::runner::ensure_steam_runtime_supported()?;
     if config.steam_runtime_runner.as_os_str().is_empty() {
         return Err(anyhow!(
             "{}",
-            crate::core::utils::steam_runtime_runner_unset_msg("repairing")
+            crate::core::runner::steam_runtime_runner_unset_msg("repairing")
         ));
     }
 
-    let steam_cfg = crate::core::utils::get_master_steam_config();
+    let steam_cfg = crate::core::steam_host::get_master_steam_config();
 
     // 1. Kill any master-Steam / game processes still holding the prefix so the
     //    directory can be moved safely. Reuse the existing prefix-scoped killers
@@ -303,7 +303,7 @@ pub async fn repair_master_steam(config: &LauncherConfig) -> Result<()> {
     // 2. Snapshot; never delete older backups.
     if steam_cfg.wine_prefix.exists() {
         let mut bak = steam_cfg.wine_prefix.clone().into_os_string();
-        bak.push(format!(".bak-{}", crate::core::utils::now_unix()));
+        bak.push(format!(".bak-{}", crate::core::time::now_unix()));
         let bak = PathBuf::from(bak);
         if bak.exists() {
             return Err(anyhow!(
@@ -334,7 +334,7 @@ pub async fn repair_master_steam(config: &LauncherConfig) -> Result<()> {
 /// `steam-runtime login` or one left running by a game launch. Returns whether a
 /// Steam client was actually running.
 pub fn stop_master_steam() -> bool {
-    let steam_cfg = crate::core::utils::get_master_steam_config();
+    let steam_cfg = crate::core::steam_host::get_master_steam_config();
     let was_running = SteamClient::is_steam_running_in_prefix(&steam_cfg.wine_prefix);
     stop_prefix_processes(&steam_cfg.wine_prefix);
     was_running
@@ -347,7 +347,7 @@ pub fn stop_master_steam() -> bool {
 /// installed. Unlike `repair`, this keeps no backup — it's the clean-slate path for a
 /// corrupted install.
 pub async fn uninstall_master_steam() -> Result<()> {
-    let steam_cfg = crate::core::utils::get_master_steam_config();
+    let steam_cfg = crate::core::steam_host::get_master_steam_config();
 
     stop_prefix_processes(&steam_cfg.wine_prefix);
     // Give the wineserver a moment to release open file handles before deletion.
@@ -374,7 +374,7 @@ pub async fn uninstall_master_steam() -> Result<()> {
 /// independent of `aurelia login`; this is how you refresh it without reinstalling.
 pub async fn relogin_master_steam(config: &LauncherConfig) -> Result<()> {
     let base_dir = config_dir()?;
-    let steam_cfg = crate::core::utils::get_master_steam_config();
+    let steam_cfg = crate::core::steam_host::get_master_steam_config();
 
     let steam_exe = require_steam_exe(&steam_cfg)?;
 
@@ -385,7 +385,7 @@ pub async fn relogin_master_steam(config: &LauncherConfig) -> Result<()> {
 
     // The CEF login UI needs the runner's dxvk/vkd3d PE libs in the prefix (a
     // bare-wine prefix misses them and the UI crash-loops invisibly).
-    crate::core::utils::ensure_steam_runtime_prefix_libs(&wine, &steam_cfg.wine_prefix);
+    crate::core::runner::ensure_steam_runtime_prefix_libs(&wine, &steam_cfg.wine_prefix);
 
     launch_master_steam(&wine, &steam_exe, &steam_cfg, &base_dir)
 }
@@ -413,14 +413,14 @@ pub async fn launch_game_via_master_steam(
     on_status: Option<&(dyn Fn(&str) + Send + Sync)>,
 ) -> Result<()> {
     let base_dir = config_dir()?;
-    let steam_cfg = crate::core::utils::get_master_steam_config();
+    let steam_cfg = crate::core::steam_host::get_master_steam_config();
     let steam_exe = require_steam_exe(&steam_cfg)?;
 
     let wine = resolve_runtime_wine(config)?;
 
     // The in-Wine Steam CEF UI and the game's DXVK both need the runner's PE libs in
     // the prefix (a bare-wine prefix misses them).
-    crate::core::utils::ensure_steam_runtime_prefix_libs(&wine, &steam_cfg.wine_prefix);
+    crate::core::runner::ensure_steam_runtime_prefix_libs(&wine, &steam_cfg.wine_prefix);
 
     // The in-Wine Steam client must be up to authorise the launch and serve DRM. If it
     // isn't, start it silently and wait for it to come up before dispatching.

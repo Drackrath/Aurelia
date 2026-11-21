@@ -113,7 +113,7 @@ pub(super) fn require_launch_option_installed(entry: &LaunchInfo, app: &LibraryG
 /// Windows manifests ignore path case.
 fn on_disk_path(app: &LibraryGame, rel: &str) -> Option<String> {
     let dir = std::path::Path::new(app.install_path.as_deref()?);
-    let found = crate::core::utils::resolve_path_ignore_case(dir, rel)?;
+    let found = crate::core::paths::resolve_path_ignore_case(dir, rel)?;
     let found = found
         .strip_prefix(dir)
         .map(|p| p.to_path_buf())
@@ -335,10 +335,10 @@ impl SteamClient {
         }
         #[cfg(target_os = "linux")]
         if steam_enabled {
-            crate::core::utils::ensure_steam_running();
+            crate::core::steam_host::ensure_steam_running();
             // Avoid racing a cold client.
             let timeout = std::time::Duration::from_secs(30);
-            if crate::core::utils::wait_for_steam_logged_on(timeout).await {
+            if crate::core::steam_host::wait_for_steam_logged_on(timeout).await {
                 tracing::info!("host Steam logged on; proceeding with launch");
             } else {
                 tracing::warn!(
@@ -428,7 +428,7 @@ impl SteamClient {
             let target_os = if runs_windows { "windows" } else { "linux" };
             // Native Linux builds have no prefix.
             let wine_prefix = chosen_proton_path.is_some().then(|| {
-                crate::core::utils::game_save_prefix(
+                crate::core::paths::game_save_prefix(
                     &launcher_config,
                     app.app_id,
                     &cloud_user_configs,
@@ -519,7 +519,7 @@ impl SteamClient {
             None
         } else {
             let user_configs = crate::core::config::load_user_configs().await?;
-            let pfx = crate::core::utils::steam_wineprefix_for_game(
+            let pfx = crate::core::paths::steam_wineprefix_for_game(
                 &launcher_config,
                 app.app_id,
                 &user_configs,

@@ -8,7 +8,7 @@
 //! integrator can `mod workshop_manifest;` in `steam_client.rs` without any
 //! build-order concerns.
 
-use crate::core::utils::extract_quoted_values;
+use crate::core::acf::extract_quoted_values;
 use anyhow::{Context, Result};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};

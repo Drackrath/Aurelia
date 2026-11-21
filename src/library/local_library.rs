@@ -17,9 +17,9 @@
 //! None of this requires network access or an Aurelia login. See
 //! `docs/linux-library-discovery.md` for the full rationale.
 
+use crate::core::acf::extract_quoted_values;
 use crate::core::config::detect_steam_path;
 use crate::core::models::OwnedGame;
-use crate::core::utils::extract_quoted_values;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 

@@ -45,7 +45,7 @@ impl EventLogger {
         metadata: HashMap<String, String>,
     ) -> Result<()> {
         let event = LogEvent {
-            timestamp: crate::core::utils::since_unix_epoch()?.as_secs(),
+            timestamp: crate::core::time::since_unix_epoch()?.as_secs(),
             level,
             event_type: event_type.to_string(),
             message,

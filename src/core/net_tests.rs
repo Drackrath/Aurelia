@@ -104,7 +104,7 @@ async fn transient_5xx_is_retried() {
 
 #[tokio::test]
 async fn github_secondary_limit_maps_reset_header() {
-    let reset = crate::core::utils::now_unix() + 60;
+    let reset = crate::core::time::now_unix() + 60;
     let (url, hits) = serve(vec![response(
         "403 Forbidden",
         &format!("X-RateLimit-Remaining: 0\r\nX-RateLimit-Reset: {reset}\r\n"),

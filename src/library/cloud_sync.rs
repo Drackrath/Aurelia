@@ -592,7 +592,7 @@ fn read_local_info(path: &Path) -> Option<LocalInfo> {
     let timestamp = meta
         .modified()
         .ok()
-        .and_then(crate::core::utils::unix_secs)
+        .and_then(crate::core::time::unix_secs)
         .unwrap_or_default();
     let hash = sha1_hex_of_file(path)?;
     Some(LocalInfo {

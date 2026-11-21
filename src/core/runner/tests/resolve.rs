@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 
 #[test]
 fn normalize_strips_punctuation_and_case() {

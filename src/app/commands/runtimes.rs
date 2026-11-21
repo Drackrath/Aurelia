@@ -15,10 +15,10 @@ pub(crate) async fn cmd_proton_list(installed_only: bool, json: bool) -> Result<
         aurelia::compat::proton::list_installed(std::path::Path::new(&cfg.steam_library_path));
     let default = cfg.proton_version;
     let is_installed = |name: &str| installed.iter().any(|i| i.name.eq_ignore_ascii_case(name));
-    if !json && !aurelia::core::utils::PROTON_SUPPORTED {
+    if !json && !aurelia::core::runner::PROTON_SUPPORTED {
         cli_eprintln!(
             "Note: {}",
-            aurelia::core::utils::linux_only_msg("Proton/Wine")
+            aurelia::core::runner::linux_only_msg("Proton/Wine")
         );
     }
 
@@ -171,10 +171,10 @@ pub(crate) async fn cmd_proton_mappings(json: bool) -> Result<()> {
 /// `proton install`: download/install a runtime and make it the global default.
 pub(crate) async fn cmd_proton_install(version: String, json: bool) -> Result<()> {
     // Before resolving: no download is useful where the runtime can't run.
-    if !aurelia::core::utils::PROTON_SUPPORTED {
+    if !aurelia::core::runner::PROTON_SUPPORTED {
         bail!(
             "{} Nothing to install.",
-            aurelia::core::utils::linux_only_msg("Proton/Wine")
+            aurelia::core::runner::linux_only_msg("Proton/Wine")
         );
     }
     let pkg = aurelia::compat::proton::resolve_package(&version).await?;
@@ -235,10 +235,10 @@ pub(crate) async fn cmd_proton_anticheat(
     kind: aurelia::compat::anticheat::AntiCheat,
     json: bool,
 ) -> Result<()> {
-    if !aurelia::core::utils::PROTON_SUPPORTED {
+    if !aurelia::core::runner::PROTON_SUPPORTED {
         bail!(
             "{} Nothing to install.",
-            aurelia::core::utils::linux_only_msg("Proton anti-cheat runtimes")
+            aurelia::core::runner::linux_only_msg("Proton anti-cheat runtimes")
         );
     }
     let app_id = kind.runtime_app_id();
@@ -341,10 +341,10 @@ pub(crate) async fn cmd_proton_default(version: String, json: bool) -> Result<()
         }));
     } else {
         cli_println!("Global default Proton set to {version}.");
-        if !aurelia::core::utils::PROTON_SUPPORTED {
+        if !aurelia::core::runner::PROTON_SUPPORTED {
             cli_eprintln!(
                 "Note: {}",
-                aurelia::core::utils::linux_only_msg("Proton/Wine")
+                aurelia::core::runner::linux_only_msg("Proton/Wine")
             );
         } else if !present {
             cli_eprintln!(
@@ -360,11 +360,11 @@ async fn steam_runtime_config(gerund: &str) -> Result<aurelia::core::config::Lau
     // A corrupt config is reported first; then the platform, since no runner
     // choice makes this work off Linux.
     let config = load_launcher_config().await?;
-    aurelia::core::utils::ensure_steam_runtime_supported()?;
+    aurelia::core::runner::ensure_steam_runtime_supported()?;
     if config.steam_runtime_runner.as_os_str().is_empty() {
         bail!(
             "{}",
-            aurelia::core::utils::steam_runtime_runner_unset_msg(gerund)
+            aurelia::core::runner::steam_runtime_runner_unset_msg(gerund)
         );
     }
     Ok(config)
@@ -385,7 +385,7 @@ pub(crate) async fn cmd_steam_runtime_install(reinstall: bool, json: bool) -> Re
     aurelia::launch::install_master_steam(&config).await?;
     // install_master_steam now waits for SteamSetup.exe and verifies steam.exe exists
     // before returning, so reaching this point means the install genuinely landed.
-    let steam_cfg = aurelia::core::utils::get_master_steam_config();
+    let steam_cfg = aurelia::core::steam_host::get_master_steam_config();
     if json {
         print_json(&serde_json::json!({
             "status": if reinstall { "reinstalled" } else { "installed" },
@@ -407,7 +407,7 @@ pub(crate) async fn cmd_steam_runtime_install(reinstall: bool, json: bool) -> Re
 
 /// `steam-runtime uninstall`: remove the master Windows Steam prefix entirely.
 pub(crate) async fn cmd_steam_runtime_uninstall(json: bool) -> Result<()> {
-    let steam_cfg = aurelia::core::utils::get_master_steam_config();
+    let steam_cfg = aurelia::core::steam_host::get_master_steam_config();
     let existed = steam_cfg.root_dir.exists();
     aurelia::launch::uninstall_master_steam().await?;
     if json {
@@ -431,7 +431,7 @@ pub(crate) async fn cmd_steam_runtime_uninstall(json: bool) -> Result<()> {
 pub(crate) async fn cmd_steam_runtime_repair(json: bool) -> Result<()> {
     let config = steam_runtime_config("repairing").await?;
     aurelia::launch::repair_master_steam(&config).await?;
-    let steam_cfg = aurelia::core::utils::get_master_steam_config();
+    let steam_cfg = aurelia::core::steam_host::get_master_steam_config();
     if json {
         print_json(&serde_json::json!({
             "status": "repaired",
@@ -448,7 +448,7 @@ pub(crate) async fn cmd_steam_runtime_repair(json: bool) -> Result<()> {
 pub(crate) async fn cmd_steam_runtime_login(json: bool) -> Result<()> {
     let config = steam_runtime_config("signing in").await?;
     aurelia::launch::relogin_master_steam(&config).await?;
-    let steam_cfg = aurelia::core::utils::get_master_steam_config();
+    let steam_cfg = aurelia::core::steam_host::get_master_steam_config();
     if json {
         print_json(&serde_json::json!({
             "status": "started",
@@ -481,7 +481,7 @@ pub(crate) async fn cmd_steam_runtime_stop(json: bool) -> Result<()> {
 /// `steam-runtime status`: report the resolved master prefix and configuration.
 pub(crate) async fn cmd_steam_runtime_status(json: bool) -> Result<()> {
     let config = load_launcher_config().await?;
-    let steam_cfg = aurelia::core::utils::get_master_steam_config();
+    let steam_cfg = aurelia::core::steam_host::get_master_steam_config();
     let steam_exe_present = steam_cfg.steam_exe.is_some();
     let runner = config.steam_runtime_runner.to_string_lossy().to_string();
     let runner_configured = !runner.is_empty();
@@ -495,13 +495,13 @@ pub(crate) async fn cmd_steam_runtime_status(json: bool) -> Result<()> {
             "steam_exe_present": steam_exe_present,
             "steam_runtime_runner": runner_configured.then_some(runner.clone()),
             "steam_runtime_runner_configured": runner_configured,
-            "supported": aurelia::core::utils::STEAM_RUNTIME_SUPPORTED,
+            "supported": aurelia::core::runner::STEAM_RUNTIME_SUPPORTED,
         }));
     } else {
-        if !aurelia::core::utils::STEAM_RUNTIME_SUPPORTED {
+        if !aurelia::core::runner::STEAM_RUNTIME_SUPPORTED {
             cli_println!(
                 "Supported here    : no — {}",
-                aurelia::core::utils::steam_runtime_unsupported_msg()
+                aurelia::core::runner::steam_runtime_unsupported_msg()
             );
         }
         cli_println!("Master Steam root : {}", steam_cfg.root_dir.display());

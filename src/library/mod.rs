@@ -5,9 +5,9 @@ pub mod depot_browser;
 pub mod local_library;
 pub mod relocate;
 
+use crate::core::acf::extract_quoted_values;
 use crate::core::config::load_launcher_config;
 use crate::core::models::{GameLibrary, LibraryGame, OwnedGame};
-use crate::core::utils::extract_quoted_values;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -87,7 +87,7 @@ pub async fn scan_installed_app_info() -> Result<HashMap<u32, InstalledAppInfo>>
     let mut installed = scan_libraries(&libraries).await;
 
     if config.is_some_and(|cfg| cfg.windows_steam_discovery_enabled) {
-        let master_steam = crate::core::utils::get_master_steam_config();
+        let master_steam = crate::core::steam_host::get_master_steam_config();
         if master_steam.wine_prefix.exists() {
             tracing::debug!(
                 "scanning Windows Steam root: {:?}",

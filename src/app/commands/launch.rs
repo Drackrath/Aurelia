@@ -193,16 +193,16 @@ pub(crate) async fn cmd_launch_targets(app_id: u32, steam: bool, json: bool) -> 
     let mut targets = aurelia::steam_client::launch_targets(
         &options,
         &game,
-        aurelia::core::utils::get_master_steam_config()
+        aurelia::core::steam_host::get_master_steam_config()
             .steam_exe
             .is_some(),
-        aurelia::core::utils::host_steam_client_path().is_some(),
+        aurelia::core::steam_host::host_steam_client_path().is_some(),
         steam,
         default_entry,
         default_mode,
     );
     // Off Linux neither the native Linux build nor the in-Wine runtime can run.
-    if !aurelia::core::utils::PROTON_SUPPORTED {
+    if !aurelia::core::runner::PROTON_SUPPORTED {
         targets.retain(|t| t.id != "linux" && t.id != "windows-runtime");
         if !targets.iter().any(|t| t.default) {
             if let Some(first) = targets.iter_mut().find(|t| t.available) {
@@ -272,11 +272,11 @@ pub(crate) async fn cmd_play(
         bail!("--platform linux runs the native Linux build, which only runs on Linux");
     }
     if matches!(target.steam_mode, Some(SteamModeArg::Runtime))
-        && !aurelia::core::utils::STEAM_RUNTIME_SUPPORTED
+        && !aurelia::core::runner::STEAM_RUNTIME_SUPPORTED
     {
         bail!(
             "--steam-mode runtime: {}",
-            aurelia::core::utils::steam_runtime_unsupported_msg()
+            aurelia::core::runner::steam_runtime_unsupported_msg()
         );
     }
     // `--windows` runs the executable directly with no Proton/Wine layer, which

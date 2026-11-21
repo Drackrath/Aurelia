@@ -1,4 +1,4 @@
-use super::resolve_path_ignore_case;
+use super::super::resolve_path_ignore_case;
 
 fn touch(path: &std::path::Path) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();

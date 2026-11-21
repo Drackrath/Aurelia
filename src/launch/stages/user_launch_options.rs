@@ -1,4 +1,4 @@
-use crate::core::utils::{dll_override_entries, merge_dll_overrides};
+use crate::core::dll_overrides::{dll_override_entries, merge_dll_overrides};
 use crate::launch::pipeline::{LaunchError, LaunchErrorKind, PipelineContext, PipelineStage};
 use crate::launch::runners::CommandSpec;
 use async_trait::async_trait;

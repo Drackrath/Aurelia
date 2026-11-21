@@ -1,4 +1,6 @@
-use super::{dll_override_entries, dll_override_mode, dll_override_names, merge_dll_overrides};
+use super::super::{
+    dll_override_entries, dll_override_mode, dll_override_names, merge_dll_overrides,
+};
 
 fn e(name: &str, mode: &str) -> (String, String) {
     (name.to_string(), mode.to_string())
@@ -57,12 +59,12 @@ fn mode_and_names_lookup() {
 
 #[test]
 fn fill_keeps_existing_and_adds_missing() {
-    let merged = super::fill_dll_overrides(
+    let merged = super::super::fill_dll_overrides(
         "d3d11,dxgi=n;steamclient=n",
         &[e("DXGI.dll", "b"), e("xlive", "b")],
     );
     assert_eq!(merged, "d3d11,dxgi=n;steamclient=n;xlive=b");
-    assert_eq!(super::fill_dll_overrides("", &[e("a", "n")]), "a=n");
+    assert_eq!(super::super::fill_dll_overrides("", &[e("a", "n")]), "a=n");
 }
 
 #[test]

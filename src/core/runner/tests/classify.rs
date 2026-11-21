@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 
 /// Create `dir/rel` as an empty marker file, creating parent dirs.
 fn touch(dir: &Path, rel: &str) {

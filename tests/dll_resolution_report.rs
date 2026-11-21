@@ -1,5 +1,5 @@
+use aurelia::core::components::RunnerComponents;
 use aurelia::core::models::D3D12ProviderPolicy;
-use aurelia::core::utils::RunnerComponents;
 use aurelia::launch::dll_provider_resolver::DllProviderResolver;
 use aurelia::launch::dll_provider_resolver::DllResolveRequest;
 use std::fs;
@@ -18,9 +18,9 @@ fn test_dll_resolution_report_includes_runner_candidates() {
     fs::write(&proton_script, "dummy").unwrap();
 
     let mut components = RunnerComponents::default();
-    components.dxvk = Some(aurelia::core::utils::ComponentInfo {
+    components.dxvk = Some(aurelia::core::components::ComponentInfo {
         version: "2.3".into(),
-        source: aurelia::core::utils::ComponentSource::BundledWithRunner,
+        source: aurelia::core::components::ComponentSource::BundledWithRunner,
         path: None,
     });
 

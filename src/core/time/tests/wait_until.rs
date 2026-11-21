@@ -1,4 +1,4 @@
-use super::wait_until;
+use super::super::wait_until;
 use std::time::Duration;
 
 #[test]

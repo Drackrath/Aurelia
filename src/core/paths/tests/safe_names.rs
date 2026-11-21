@@ -1,4 +1,4 @@
-use super::{is_safe_dir_name, resolves_within, safe_relative_path};
+use super::super::{is_safe_dir_name, resolves_within, safe_relative_path};
 use std::path::{Path, PathBuf};
 
 #[test]

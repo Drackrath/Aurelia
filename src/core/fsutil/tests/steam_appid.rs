@@ -1,4 +1,4 @@
-use super::{ensure_steam_appid, write_appid_or_remove};
+use super::super::{ensure_steam_appid, write_appid_or_remove};
 
 struct FailingWriter;
 

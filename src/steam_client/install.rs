@@ -247,7 +247,7 @@ impl SteamClient {
                     .join("steamapps")
                     .join("common")
                     .join(&dir);
-                if existing_dir.is_dir() && crate::core::utils::is_safe_dir_name(&dir) {
+                if existing_dir.is_dir() && crate::core::paths::is_safe_dir_name(&dir) {
                     existing_installdir = Some(dir);
                 }
             }

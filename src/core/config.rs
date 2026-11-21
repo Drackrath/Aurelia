@@ -755,7 +755,7 @@ fn info_cache_path(app_id: u32, language: &str, country: &str) -> Result<PathBuf
     Ok(info_cache_dir()?.join(format!("{app_id}.{lang}.{cc}.json")))
 }
 
-use crate::core::utils::now_unix;
+use crate::core::time::now_unix;
 
 /// Load a cached `info` record for `app_id` if one exists and is still within
 /// `ttl`. Returns `None` on a miss, a stale entry, or any read/parse error, so the

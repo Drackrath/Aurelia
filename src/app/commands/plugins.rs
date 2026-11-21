@@ -123,10 +123,10 @@ async fn plugin_toggle(p: &PluginCmd, enable: bool, json: bool) -> Result<()> {
 /// `<plugin> install|update`: download latest release.
 async fn plugin_install(p: &PluginCmd, json: bool) -> Result<()> {
     let cfg = load_launcher_config().await?;
-    if !aurelia::core::utils::PROTON_SUPPORTED {
+    if !aurelia::core::runner::PROTON_SUPPORTED {
         anyhow::bail!(
             "{} Nothing to install.",
-            aurelia::core::utils::linux_only_msg(p.project)
+            aurelia::core::runner::linux_only_msg(p.project)
         );
     }
     if let Some(path) = (p.path_of)(&cfg) {

@@ -1,4 +1,4 @@
-use super::{
+use super::super::{
     STEAM_FLATPAK_APP_ID, SteamLauncher, SteamRootKind, steam_launcher, steam_root_kind,
     steam_running_in,
 };

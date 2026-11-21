@@ -11,7 +11,7 @@ fn test_dll_priority_game_local() {
 
     let resolver = DllProviderResolver::new();
     let runner_path = Path::new("/tmp/fake_runner");
-    let components = crate::core::utils::RunnerComponents::default();
+    let components = crate::core::components::RunnerComponents::default();
     let d3d12_policy = crate::core::models::D3D12ProviderPolicy::Auto;
     let arch = crate::core::models::ExecutableArchitecture::X86_64;
     let (resolutions, _) = resolver.resolve(&DllResolveRequest {
@@ -39,7 +39,7 @@ fn test_dll_priority_system_fallback() {
 
     let resolver = DllProviderResolver::new();
     let runner_path = Path::new("/tmp/fake_runner");
-    let components = crate::core::utils::RunnerComponents::default();
+    let components = crate::core::components::RunnerComponents::default();
     let d3d12_policy = crate::core::models::D3D12ProviderPolicy::Auto;
     let arch = crate::core::models::ExecutableArchitecture::X86_64;
     let (resolutions, _) = resolver.resolve(&DllResolveRequest {
@@ -76,15 +76,15 @@ fn test_d3d12_provider_selection() {
     fs::write(&proton_dll, "proton").unwrap();
     fs::write(&wine_dll, "wine").unwrap();
 
-    let mut components = crate::core::utils::RunnerComponents::default();
-    components.vkd3d_proton = Some(crate::core::utils::ComponentInfo {
+    let mut components = crate::core::components::RunnerComponents::default();
+    components.vkd3d_proton = Some(crate::core::components::ComponentInfo {
         version: "2.10".into(),
-        source: crate::core::utils::ComponentSource::BundledWithRunner,
+        source: crate::core::components::ComponentSource::BundledWithRunner,
         path: None,
     });
-    components.vkd3d = Some(crate::core::utils::ComponentInfo {
+    components.vkd3d = Some(crate::core::components::ComponentInfo {
         version: "1.8".into(),
-        source: crate::core::utils::ComponentSource::BundledWithRunner,
+        source: crate::core::components::ComponentSource::BundledWithRunner,
         path: None,
     });
 
@@ -149,7 +149,7 @@ fn test_fallback_reason_populated() {
     let (res, _) = resolver.resolve(&DllResolveRequest {
         game_exe_dir: tmp.path(),
         runner_path: tmp.path(),
-        runner_components: &crate::core::utils::RunnerComponents::default(),
+        runner_components: &crate::core::components::RunnerComponents::default(),
         d3d12_policy: &crate::core::models::D3D12ProviderPolicy::Auto,
         target_arch: &arch,
         custom_dxvk_path: None,

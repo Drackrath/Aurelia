@@ -1,4 +1,4 @@
-use aurelia::core::utils::derive_runner_root;
+use aurelia::core::runner::derive_runner_root;
 use std::fs;
 use tempfile::tempdir;
 

@@ -132,7 +132,7 @@ pub fn bump_auto_attempts(app_id: u32) -> Result<Option<u32>> {
 pub(crate) fn bump_in(entries: &mut [BacklogEntry], app_id: u32) -> Option<u32> {
     let entry = entries.iter_mut().find(|e| e.app_id == app_id)?;
     entry.auto_attempts += 1;
-    entry.updated_at = crate::core::utils::now_unix();
+    entry.updated_at = crate::core::time::now_unix();
     Some(entry.auto_attempts)
 }
 
@@ -143,7 +143,7 @@ pub fn set_state(app_id: u32, state: BacklogState) -> Result<bool> {
             return false;
         };
         entry.state = state;
-        entry.updated_at = crate::core::utils::now_unix();
+        entry.updated_at = crate::core::time::now_unix();
         true
     })
 }
@@ -213,7 +213,7 @@ pub fn deletable_dir(entry: &BacklogEntry) -> Option<PathBuf> {
     let dir = entry.install_dir.as_ref()?;
     let common = Path::new(&entry.library).join("steamapps").join("common");
     let name = dir.file_name()?.to_str()?;
-    if dir.parent() != Some(common.as_path()) || !crate::core::utils::is_safe_dir_name(name) {
+    if dir.parent() != Some(common.as_path()) || !crate::core::paths::is_safe_dir_name(name) {
         return None;
     }
     let manifest = Path::new(&entry.library)

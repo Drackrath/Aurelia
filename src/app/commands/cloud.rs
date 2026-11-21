@@ -36,7 +36,7 @@ pub(crate) async fn cmd_cloud_sync(
     // Must be the prefix the game *runs* in, not the WINEPREFIX the launcher sets:
     // under Proton those differ, and syncing to the wrong one silently leaves the
     // game with no saves.
-    let wine_prefix = aurelia::core::utils::game_save_prefix(
+    let wine_prefix = aurelia::core::paths::game_save_prefix(
         &launcher_config,
         app_id,
         &user_configs,

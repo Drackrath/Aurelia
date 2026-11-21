@@ -1,4 +1,4 @@
-use aurelia::core::utils::build_dll_overrides;
+use aurelia::core::dll_overrides::build_dll_overrides;
 
 #[test]
 fn test_build_dll_overrides_baseline() {
