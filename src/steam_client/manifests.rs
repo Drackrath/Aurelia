@@ -309,6 +309,15 @@ impl SteamClient {
         let mounted_config = existing
             .as_deref()
             .and_then(|raw| top_level_block(raw, "MountedConfig"));
+        let kept = existing
+            .as_deref()
+            .map(|raw| kept_fields(raw, fully_installed))
+            .unwrap_or_default();
+        let old_depots = existing
+            .as_deref()
+            .and_then(|raw| top_level_block(raw, "InstalledDepots"))
+            .map(depot_entries)
+            .unwrap_or_default();
 
         // Strip characters that are structurally significant in VDF text so a name
         // cannot break out of its quoted value or inject extra keys/blocks.
@@ -344,13 +353,27 @@ impl SteamClient {
              \t\"AllowOtherDownloadsWhileRunning\"\t\t\"0\"\n\
              \t\"ScheduledAutoUpdate\"\t\t\"0\"\n"
         );
+        content.push_str(&kept.pairs);
 
-        if !installed_depots.is_empty() {
+        // DLC content stays on disk.
+        let carried: Vec<&DepotEntry> = old_depots
+            .iter()
+            .filter(|d| d.is_dlc() && !installed_depots.iter().any(|(id, ..)| *id == d.id))
+            .collect();
+        if !installed_depots.is_empty() || !carried.is_empty() {
             content.push_str("\t\"InstalledDepots\"\n\t{\n");
             for (depot_id, manifest_id, size) in installed_depots {
+                let extras = old_depots
+                    .iter()
+                    .find(|d| d.id == depot_id)
+                    .map(|d| d.extras.as_str())
+                    .unwrap_or("");
                 content.push_str(&format!(
-                    "\t\t\"{depot_id}\"\n\t\t{{\n\t\t\t\"manifest\"\t\t\"{manifest_id}\"\n\t\t\t\"size\"\t\t\"{size}\"\n\t\t}}\n"
+                    "\t\t\"{depot_id}\"\n\t\t{{\n\t\t\t\"manifest\"\t\t\"{manifest_id}\"\n\t\t\t\"size\"\t\t\"{size}\"\n{extras}\t\t}}\n"
                 ));
+            }
+            for depot in carried {
+                content.push_str(&format!("\t\t{}\n", depot.raw));
             }
             content.push_str("\t}\n");
         }
@@ -379,6 +402,7 @@ impl SteamClient {
             content.push_str(block);
             content.push('\n');
         }
+        content.push_str(&kept.blocks);
 
         content.push_str("}\n");
 
@@ -770,6 +794,112 @@ pub(crate) fn switch_language_in_manifest(
         }
     }
     out
+}
+
+/// Top-level keys `write_appmanifest` writes itself.
+const OWNED_KEYS: &[&str] = &[
+    "appid",
+    "universe",
+    "name",
+    "stateflags",
+    "installdir",
+    "lastupdated",
+    "sizeondisk",
+    "stagingsize",
+    "buildid",
+    "lastowner",
+    "updateresult",
+    "bytestodownload",
+    "bytesdownloaded",
+    "bytestostage",
+    "bytesstaged",
+    "autoupdatebehavior",
+    "allowotherdownloadswhilerunning",
+    "scheduledautoupdate",
+];
+
+/// Top-level blocks written separately.
+const OWNED_BLOCKS: &[&str] = &["installeddepots", "userconfig", "mountedconfig"];
+
+/// Existing Steam fields to carry over.
+#[derive(Default)]
+struct KeptFields {
+    /// Formatted `key value` lines.
+    pairs: String,
+    /// Formatted unknown blocks.
+    blocks: String,
+}
+
+/// Fields Aurelia doesn't own, verbatim.
+fn kept_fields(raw: &str, fully_installed: bool) -> KeptFields {
+    let owned = |key: &str| {
+        let key = key.to_ascii_lowercase();
+        // A finished install has no target.
+        OWNED_KEYS.contains(&key.as_str()) || (fully_installed && key == "targetbuildid")
+    };
+    let mut kept = KeptFields::default();
+    for (key, value) in block_pairs(raw) {
+        if !owned(key) {
+            kept.pairs
+                .push_str(&format!("\t\"{key}\"\t\t\"{value}\"\n"));
+        }
+    }
+    if fully_installed
+        && block_pairs(raw)
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("targetbuildid"))
+    {
+        kept.pairs.push_str("\t\"TargetBuildID\"\t\t\"0\"\n");
+    }
+    for (key, start, end) in child_blocks(raw) {
+        if !OWNED_BLOCKS.contains(&key.to_ascii_lowercase().as_str()) {
+            kept.blocks.push_str(&format!("\t{}\n", &raw[start..=end]));
+        }
+    }
+    kept
+}
+
+/// One existing `InstalledDepots` entry.
+struct DepotEntry {
+    id: u32,
+    /// Whole block text.
+    raw: String,
+    /// Lines besides manifest and size.
+    extras: String,
+    dlc: bool,
+}
+
+impl DepotEntry {
+    fn is_dlc(&self) -> bool {
+        self.dlc
+    }
+}
+
+/// Parse `InstalledDepots` entries.
+fn depot_entries(block: &str) -> Vec<DepotEntry> {
+    child_blocks(block)
+        .into_iter()
+        .filter_map(|(key, start, end)| {
+            let id = key.parse().ok()?;
+            let text = &block[start..=end];
+            let mut extras = String::new();
+            let mut dlc = false;
+            for (k, v) in block_pairs(text) {
+                let lower = k.to_ascii_lowercase();
+                if lower == "manifest" || lower == "size" {
+                    continue;
+                }
+                dlc |= lower == "dlcappid";
+                extras.push_str(&format!("\t\t\t\"{k}\"\t\t\"{v}\"\n"));
+            }
+            Some(DepotEntry {
+                id,
+                raw: text.to_string(),
+                extras,
+                dlc,
+            })
+        })
+        .collect()
 }
 
 /// Per-game `UserConfig/language`, if set.

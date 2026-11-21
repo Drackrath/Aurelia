@@ -1262,3 +1262,66 @@ fn write_appmanifest_records_language_on_fresh_install() {
         Some("german")
     );
 }
+
+#[test]
+fn write_appmanifest_keeps_steam_fields_and_dlc_tags() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("appmanifest_977950.acf");
+    let existing = "\"AppState\"\n{\n\t\"appid\"\t\t\"977950\"\n\t\"StateFlags\"\t\t\"6\"\n\
+        \t\"LastPlayed\"\t\t\"1781732299\"\n\t\"DownloadType\"\t\t\"2\"\n\
+        \t\"TargetBuildID\"\t\t\"26397875\"\n\t\"LastOwner\"\t\t\"76561198000000001\"\n\
+        \t\"InstalledDepots\"\n\t{\n\
+        \t\t\"977954\"\n\t\t{\n\t\t\t\"manifest\"\t\t\"1\"\n\t\t\t\"size\"\t\t\"10\"\n\t\t}\n\
+        \t\t\"1977574\"\n\t\t{\n\t\t\t\"manifest\"\t\t\"7\"\n\t\t\t\"size\"\t\t\"70\"\n\t\t\t\"dlcappid\"\t\t\"1977570\"\n\t\t}\n\
+        \t\t\"1977584\"\n\t\t{\n\t\t\t\"manifest\"\t\t\"8\"\n\t\t\t\"size\"\t\t\"80\"\n\t\t\t\"dlcappid\"\t\t\"1977580\"\n\t\t}\n\
+        \t}\n\
+        \t\"SharedDepots\"\n\t{\n\t\t\"228988\"\t\t\"228980\"\n\t}\n}\n";
+    std::fs::write(&path, existing).unwrap();
+
+    // 1977584 was not re-downloaded.
+    SteamClient::write_appmanifest(
+        &path,
+        977950,
+        "A Dance of Fire and Ice",
+        "A Dance of Fire and Ice",
+        vec![(977954, 2, 20), (1977574, 9, 90)],
+        Some("26397875"),
+        true,
+        false,
+        None,
+    )
+    .unwrap();
+
+    let raw = std::fs::read_to_string(&path).unwrap();
+    assert!(raw.contains("\"LastPlayed\"\t\t\"1781732299\""));
+    assert!(raw.contains("\"DownloadType\"\t\t\"2\""));
+    assert!(raw.contains("\"TargetBuildID\"\t\t\"0\""));
+    assert_eq!(raw.matches("TargetBuildID").count(), 1);
+    assert_eq!(raw.matches("LastOwner").count(), 1);
+    assert_eq!(raw.matches("StateFlags").count(), 1);
+    assert!(raw.contains("\"SharedDepots\""));
+    let depots = parse_installed_depots_from_acf(&raw);
+    assert_eq!(depots.get(&977954), Some(&2));
+    assert_eq!(depots.get(&1977574), Some(&9));
+    assert_eq!(depots.get(&1977584), Some(&8));
+    assert_eq!(
+        parse_installed_dlc_appids(&raw),
+        [1977570, 1977580].into_iter().collect()
+    );
+    assert!(manifest_is_fully_installed(&raw));
+}
+
+#[test]
+fn write_appmanifest_keeps_target_build_while_updating() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("appmanifest_1.acf");
+    std::fs::write(
+        &path,
+        "\"AppState\"\n{\n\t\"appid\"\t\t\"1\"\n\t\"TargetBuildID\"\t\t\"55\"\n}\n",
+    )
+    .unwrap();
+    SteamClient::write_appmanifest(&path, 1, "Game", "Game", vec![], None, false, false, None)
+        .unwrap();
+    let raw = std::fs::read_to_string(&path).unwrap();
+    assert!(raw.contains("\"TargetBuildID\"\t\t\"55\""));
+}
