@@ -636,14 +636,6 @@ pub struct LibraryCache {
     pub games: Vec<OwnedGame>,
 }
 
-/// Current shape or legacy bare array.
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum LibraryCacheFile {
-    Tagged(LibraryCache),
-    Legacy(Vec<OwnedGame>),
-}
-
 pub async fn save_library_cache(owned_games: &[OwnedGame], steam_id: Option<u64>) -> Result<()> {
     #[derive(Serialize)]
     struct Out<'a> {
@@ -659,23 +651,34 @@ pub async fn save_library_cache(owned_games: &[OwnedGame], steam_id: Option<u64>
 
 /// Cached library with its owner, if any.
 pub async fn read_library_cache() -> Result<LibraryCache> {
-    let path = library_cache_path()?;
+    read_library_cache_at(&library_cache_path()?).await
+}
+
+pub(crate) async fn read_library_cache_at(path: &Path) -> Result<LibraryCache> {
     if !path.exists() {
         return Ok(LibraryCache::default());
     }
-    Ok(read_json::<LibraryCacheFile>(&path).await?.into())
+    if let Some(cache) = convert_bare_library_cache(path).await {
+        return Ok(cache);
+    }
+    read_json(path).await
 }
 
-impl From<LibraryCacheFile> for LibraryCache {
-    fn from(file: LibraryCacheFile) -> Self {
-        match file {
-            LibraryCacheFile::Tagged(cache) => cache,
-            LibraryCacheFile::Legacy(games) => LibraryCache {
-                steam_id: None,
-                games,
-            },
-        }
+/// v0.2.5 bare array, owner unknown.
+async fn convert_bare_library_cache(path: &Path) -> Option<LibraryCache> {
+    let raw = fs::read_to_string(path).await.ok()?;
+    if !raw.trim_start().starts_with('[') {
+        return None;
     }
+    let games: Vec<OwnedGame> = serde_json::from_str(&raw).ok()?;
+    let cache = LibraryCache {
+        steam_id: None,
+        games,
+    };
+    if let Err(e) = write_json_pretty(path, &cache).await {
+        tracing::warn!("could not convert {}: {e:#}", path.display());
+    }
+    Some(cache)
 }
 
 impl LibraryCache {

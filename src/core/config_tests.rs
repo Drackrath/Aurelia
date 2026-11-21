@@ -206,9 +206,7 @@ async fn keyed_save_writes_an_envelope() {
 }
 
 fn parse_cache(raw: &str) -> LibraryCache {
-    serde_json::from_str::<LibraryCacheFile>(raw)
-        .unwrap()
-        .into()
+    serde_json::from_str::<LibraryCache>(raw).unwrap()
 }
 
 #[test]
@@ -224,13 +222,64 @@ fn library_cache_is_used_only_for_its_owner() {
     assert!(parse_cache(raw).games_for(None).is_empty());
 }
 
-#[test]
-fn legacy_library_cache_parses_with_unknown_owner() {
-    let raw = r#"[{"app_id": 10, "name": "CS", "playtime_forever_minutes": 0}]"#;
-    let cache = parse_cache(raw);
+/// `save_library_cache` output in v0.2.5.
+const V025_LIBRARY_CACHE: &str = r#"[
+  {
+    "app_id": 10,
+    "name": "Counter-Strike",
+    "playtime_forever_minutes": 12,
+    "local_manifest_ids": {
+      "11": 4242
+    },
+    "update_available": false
+  }
+]"#;
+
+/// `save_library_cache` output in v0.2.6.
+const V026_LIBRARY_CACHE: &str = r#"{
+  "steam_id": 76561198000000001,
+  "games": [
+    {
+      "app_id": 10,
+      "name": "Counter-Strike",
+      "playtime_forever_minutes": 12,
+      "local_manifest_ids": {},
+      "update_available": false
+    }
+  ]
+}"#;
+
+#[tokio::test]
+async fn v025_library_cache_converts_once_with_unknown_owner() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("library_cache.json");
+    std::fs::write(&path, V025_LIBRARY_CACHE).unwrap();
+
+    let cache = read_library_cache_at(&path).await.unwrap();
     assert_eq!(cache.steam_id, None);
     assert_eq!(cache.games.len(), 1);
+    assert_eq!(cache.games[0].local_manifest_ids.get(&11), Some(&4242));
     assert!(cache.games_for(Some(76561198000000001)).is_empty());
+
+    let on_disk: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(on_disk["steam_id"], serde_json::Value::Null);
+    assert_eq!(on_disk["games"][0]["app_id"], 10);
+    let again = read_library_cache_at(&path).await.unwrap();
+    assert_eq!(again.games.len(), 1);
+    assert_eq!(again.steam_id, None);
+}
+
+#[tokio::test]
+async fn v026_library_cache_reads_unchanged() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("library_cache.json");
+    std::fs::write(&path, V026_LIBRARY_CACHE).unwrap();
+
+    let cache = read_library_cache_at(&path).await.unwrap();
+    assert_eq!(cache.steam_id, Some(76561198000000001));
+    assert_eq!(cache.games_for(Some(76561198000000001)).len(), 1);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), V026_LIBRARY_CACHE);
 }
 
 #[test]
