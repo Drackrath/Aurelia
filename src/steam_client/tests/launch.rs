@@ -246,7 +246,7 @@ fn select_launch_entry_matches_executable_case_insensitively() {
 
 #[test]
 fn launch_targets_lists_installed_builds_and_steam_modes() {
-    use crate::launch::runners::SteamMode;
+    use crate::launch::runners::wine_tkg::steam_mode::SteamMode;
     let tmp = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(tmp.path().join("bin/x64")).unwrap();
     std::fs::write(tmp.path().join("bin/x64/factorio.exe"), "x").unwrap();

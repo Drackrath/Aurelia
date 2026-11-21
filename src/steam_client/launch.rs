@@ -161,9 +161,9 @@ pub fn launch_targets(
     host_installed: bool,
     steam_flag: bool,
     default_entry: Option<LaunchTarget>,
-    default_mode: crate::launch::runners::SteamMode,
+    default_mode: crate::launch::runners::wine_tkg::steam_mode::SteamMode,
 ) -> Vec<LaunchTargetChoice> {
-    use crate::launch::runners::SteamMode;
+    use crate::launch::runners::wine_tkg::steam_mode::SteamMode;
     let flags = |extra: &[&str]| extra.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     let offers = |target: LaunchTarget| launch_options.iter().any(|o| o.target == target);
     let mut targets = Vec::new();
