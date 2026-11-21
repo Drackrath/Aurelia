@@ -2,6 +2,7 @@
 //!
 //! Swaps language depots like Steam does.
 use super::*;
+use crate::core::acf;
 use steam_vdf_parser::{Obj, Value};
 
 /// What a language switch will change.
@@ -210,11 +211,11 @@ impl SteamClient {
         let manifest_path = self.appmanifest_path(appid).await?;
         let raw = std::fs::read_to_string(&manifest_path)
             .with_context(|| format!("app {appid} is not installed"))?;
-        let installed = parse_installed_depots_from_acf(&raw);
+        let installed = acf::installed_depots(&raw);
         if installed.is_empty() {
             bail!("app {appid} has no installed depots; install it first");
         }
-        let branch = parse_active_branch_from_acf(&raw);
+        let branch = acf::parse_app_manifest(&raw).active_branch;
         let install_root = self.install_root_for_app(appid).await?;
         let language = language.trim().to_ascii_lowercase();
         if language.is_empty() {
@@ -224,7 +225,9 @@ impl SteamClient {
         let resolved = depots::fetch(&connection, appid, None).await?;
         let manifests = resolved.manifest_ids(&branch);
         let plan = plan_language_switch(&resolved.rows, appid, &installed, &manifests, &language)?;
-        let game_name = parse_name_from_acf(&raw).unwrap_or_else(|| format!("App {appid}"));
+        let game_name = acf::parse_app_manifest(&raw)
+            .display_name()
+            .unwrap_or_else(|| format!("App {appid}"));
 
         let (tx, rx) = tokio::sync::mpsc::channel(128);
         let client = self.clone();

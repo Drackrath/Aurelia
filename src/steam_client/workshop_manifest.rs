@@ -191,10 +191,7 @@ fn write_item_block(buf: &mut String, published_file_id: u64, fields: impl FnOnc
 // Internal: parse
 // ---------------------------------------------------------------------------
 
-/// Extract all Workshop items from the raw ACF text.
-///
-/// The parser is a straightforward line-by-line state machine — the same style
-/// used by `parse_installed_depots_from_acf` in `manifests.rs`.
+/// Workshop items from raw ACF text.
 fn parse_installed_items(raw: &str) -> Vec<InstalledWorkshopItem> {
     #[derive(Debug, PartialEq)]
     enum Section {

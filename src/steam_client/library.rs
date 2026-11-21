@@ -3,6 +3,7 @@
 //! Split out of `steam_client.rs` for readability; the struct, shared imports
 //! and free helpers live in the parent module (in scope via `use super::*`).
 use super::*;
+use crate::core::acf;
 
 /// Owned games, free licences included.
 pub(crate) fn owned_games_request(steamid: u64) -> CPlayer_GetOwnedGames_Request {
@@ -172,8 +173,8 @@ impl SteamClient {
 
         let raw = std::fs::read_to_string(&manifest_path)
             .with_context(|| format!("failed reading {}", manifest_path.display()))?;
-        let manifests = parse_installed_depots_from_acf(&raw);
-        let parsed = crate::core::acf::parse_app_manifest(&raw);
+        let manifests = acf::installed_depots(&raw);
+        let parsed = acf::parse_app_manifest(&raw);
         let update_pending = parsed.update_pending();
         Ok((manifests, parsed.active_branch, update_pending))
     }
@@ -220,7 +221,7 @@ impl SteamClient {
         let manifest_path = self.appmanifest_path(appid).await?;
         let active_branch = if manifest_path.exists() {
             let raw = std::fs::read_to_string(&manifest_path).unwrap_or_default();
-            parse_active_branch_from_acf(&raw)
+            acf::parse_app_manifest(&raw).active_branch
         } else {
             "public".to_string()
         };

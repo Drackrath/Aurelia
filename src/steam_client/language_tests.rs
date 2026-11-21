@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::acf;
 
 const ROWS: &str = r#""depots"
 {
@@ -168,7 +169,7 @@ fn manifest_swap_keeps_everything_else() {
         &[(9998, 5555)].into_iter().collect(),
         "english",
     );
-    let depots = parse_installed_depots_from_acf(&out);
+    let depots = acf::installed_depots(&out);
     assert_eq!(depots.get(&2330359), Some(&1));
     assert_eq!(depots.get(&2378503), Some(&3));
     assert_eq!(depots.get(&5000), Some(&8));

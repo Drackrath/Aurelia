@@ -1,5 +1,7 @@
 //! Single-pass Steam appmanifest parsing.
 
+use std::collections::HashMap;
+
 use crate::core::utils::extract_quoted_values;
 
 /// Top-level appmanifest fields, one pass.
@@ -97,6 +99,97 @@ pub fn parse_app_manifest(raw: &str) -> AppManifest {
     }
 
     m
+}
+
+/// `InstalledDepots` depot to manifest map.
+pub fn installed_depots(raw: &str) -> HashMap<u64, u64> {
+    let mut manifests = HashMap::new();
+    let mut in_installed_depots = false;
+    let mut current_depot: Option<u64> = None;
+
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.contains("\"InstalledDepots\"") {
+            in_installed_depots = true;
+            continue;
+        }
+
+        if !in_installed_depots {
+            continue;
+        }
+
+        if trimmed == "}" {
+            if current_depot.is_some() {
+                current_depot = None;
+                continue;
+            }
+            break;
+        }
+
+        let quoted = extract_quoted_values(trimmed);
+        if quoted.len() == 1 {
+            if let Ok(depot_id) = quoted[0].parse::<u64>() {
+                current_depot = Some(depot_id);
+            }
+        } else if quoted.len() >= 2
+            && quoted[0] == "manifest"
+            && let (Some(depot), Ok(manifest)) = (current_depot, quoted[1].parse::<u64>())
+        {
+            manifests.insert(depot, manifest);
+        }
+    }
+
+    manifests
+}
+
+/// Set `UserConfig/BetaKey` to `branch`.
+pub fn rewrite_branch(raw: &str, branch: &str) -> String {
+    let mut out = Vec::new();
+    let mut in_user_config = false;
+    let mut branch_updated = false;
+
+    for line in raw.lines() {
+        let trimmed = line.trim();
+
+        if trimmed.eq_ignore_ascii_case("\"UserConfig\"") {
+            in_user_config = true;
+            out.push(line.to_string());
+            continue;
+        }
+
+        if in_user_config && trimmed == "{" {
+            out.push(line.to_string());
+            continue;
+        }
+
+        if in_user_config && trimmed == "}" {
+            if !branch_updated {
+                out.push(format!("\t\t\"BetaKey\"\t\t\"{branch}\""));
+            }
+            in_user_config = false;
+            out.push(line.to_string());
+            continue;
+        }
+
+        if in_user_config {
+            let quoted = extract_quoted_values(trimmed);
+            if !quoted.is_empty() && quoted[0].eq_ignore_ascii_case("betakey") {
+                let indent = line
+                    .chars()
+                    .take_while(|ch| ch.is_whitespace())
+                    .collect::<String>();
+                out.push(format!("{indent}\"BetaKey\"\t\t\"{branch}\""));
+                branch_updated = true;
+                continue;
+            }
+        }
+
+        out.push(line.to_string());
+    }
+
+    // Assumes Steam wrote a UserConfig.
+
+    out.join("\n")
 }
 
 #[cfg(test)]

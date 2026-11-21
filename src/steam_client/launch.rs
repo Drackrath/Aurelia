@@ -3,6 +3,7 @@
 //! Split out of `steam_client.rs` for readability; the struct, shared imports
 //! and free helpers live in the parent module (in scope via `use super::*`).
 use super::*;
+use crate::core::acf;
 
 /// Pick the launch entry to run.
 ///
@@ -623,7 +624,7 @@ impl SteamClient {
         let raw_manifest = std::fs::read_to_string(&manifest_path).ok();
         let update_pending = raw_manifest
             .as_deref()
-            .is_some_and(|raw| crate::core::acf::parse_app_manifest(raw).update_pending());
+            .is_some_and(|raw| acf::parse_app_manifest(raw).update_pending());
         let dlc_depots = raw_manifest
             .as_deref()
             .map(super::manifests::installed_dlc_depots)
@@ -634,7 +635,7 @@ impl SteamClient {
         // The name Steam already recorded for this copy.
         let recorded_name = std::fs::read_to_string(&manifest_path)
             .ok()
-            .and_then(|raw| parse_name_from_acf(&raw))
+            .and_then(|raw| acf::parse_app_manifest(&raw).display_name())
             .filter(|n| !n.starts_with("App "));
         let game_name = match recorded_name.clone() {
             Some(name) => name,

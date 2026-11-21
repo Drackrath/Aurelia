@@ -1,41 +1,5 @@
 use super::*;
-
-#[test]
-fn fully_installed_only_when_state_flag_set() {
-    // StateFlags 4 = StateFullyInstalled.
-    assert!(manifest_is_fully_installed(
-        "\"AppState\"\n{\n\t\"StateFlags\"\t\t\"4\"\n}"
-    ));
-    // 6 = StateFullyInstalled | StateUpdateRequired (installed, update pending).
-    assert!(manifest_is_fully_installed(
-        "\"AppState\"\n{\n\t\"StateFlags\"\t\t\"6\"\n}"
-    ));
-    // 2 = StateUpdateRequired only: an install that started but never finished
-    // (e.g. cancelled). Must NOT count as installed.
-    assert!(!manifest_is_fully_installed(
-        "\"AppState\"\n{\n\t\"StateFlags\"\t\t\"2\"\n}"
-    ));
-    // Missing StateFlags is treated as not installed.
-    assert!(!manifest_is_fully_installed("\"AppState\"\n{\n}"));
-}
-
-#[test]
-fn update_pending_when_update_required_flag_set() {
-    // 4 = StateFullyInstalled only: up to date, no update pending.
-    assert!(!manifest_update_pending(
-        "\"AppState\"\n{\n\t\"StateFlags\"\t\t\"4\"\n}"
-    ));
-    // 6 = StateFullyInstalled | StateUpdateRequired: installed, update pending.
-    assert!(manifest_update_pending(
-        "\"AppState\"\n{\n\t\"StateFlags\"\t\t\"6\"\n}"
-    ));
-    // 1046 = a partially-started update
-    assert!(manifest_update_pending(
-        "\"AppState\"\n{\n\t\"StateFlags\"\t\t\"1046\"\n}"
-    ));
-    // Missing StateFlags
-    assert!(!manifest_update_pending("\"AppState\"\n{\n}"));
-}
+use crate::core::acf;
 
 fn cats(pairs: &[(u32, &str)]) -> HashMap<String, String> {
     pairs
@@ -365,15 +329,6 @@ fn parses_ufs_root_overrides() {
 }
 
 #[test]
-fn acf_name_and_last_owner_parse() {
-    let raw = "\"AppState\"\n{\n\t\"appid\"\t\t\"960090\"\n\t\"name\"\t\t\"Bloons TD 6\"\n\t\"LastOwner\"\t\t\"76561198000000001\"\n}\n";
-    assert_eq!(parse_name_from_acf(raw).as_deref(), Some("Bloons TD 6"));
-    assert_eq!(parse_last_owner_from_acf(raw), Some(76561198000000001));
-    assert_eq!(parse_last_owner_from_acf("\"LastOwner\"\t\"0\""), None);
-    assert_eq!(parse_name_from_acf("\"name\"\t\"\""), None);
-}
-
-#[test]
 fn write_appmanifest_preserves_owner_and_branch() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("appmanifest_960090.acf");
@@ -396,16 +351,22 @@ fn write_appmanifest_preserves_owner_and_branch() {
     .unwrap();
 
     let raw = std::fs::read_to_string(&path).unwrap();
-    assert_eq!(parse_last_owner_from_acf(&raw), Some(76561198000000001));
-    assert_eq!(parse_active_branch_from_acf(&raw), "no-discord");
     assert_eq!(
-        parse_installdir_from_acf(&raw).as_deref(),
+        acf::parse_app_manifest(&raw).last_owner,
+        Some(76561198000000001)
+    );
+    assert_eq!(acf::parse_app_manifest(&raw).active_branch, "no-discord");
+    assert_eq!(
+        acf::parse_app_manifest(&raw).install_dir.as_deref(),
         Some("BloonsTD6")
     );
-    assert_eq!(parse_name_from_acf(&raw).as_deref(), Some("Bloons TD 6"));
-    assert!(manifest_is_fully_installed(&raw));
     assert_eq!(
-        parse_installed_depots_from_acf(&raw).get(&960091),
+        acf::parse_app_manifest(&raw).display_name().as_deref(),
+        Some("Bloons TD 6")
+    );
+    assert!(acf::parse_app_manifest(&raw).fully_installed());
+    assert_eq!(
+        acf::installed_depots(&raw).get(&960091),
         Some(&3975959124549939908)
     );
 }
@@ -417,8 +378,8 @@ fn write_appmanifest_fresh_has_no_owner_or_branch() {
     SteamClient::write_appmanifest(&path, 1, "Game", "Game", vec![], None, false, false, None)
         .unwrap();
     let raw = std::fs::read_to_string(&path).unwrap();
-    assert_eq!(parse_last_owner_from_acf(&raw), None);
-    assert_eq!(parse_active_branch_from_acf(&raw), "public");
+    assert_eq!(acf::parse_app_manifest(&raw).last_owner, None);
+    assert_eq!(acf::parse_app_manifest(&raw).active_branch, "public");
     assert!(!raw.contains("UserConfig"));
 }
 
@@ -1235,9 +1196,9 @@ fn write_appmanifest_keeps_user_and_mounted_config() {
         manifests::user_config_language(&raw).as_deref(),
         Some("german")
     );
-    assert_eq!(parse_active_branch_from_acf(&raw), "beta");
+    assert_eq!(acf::parse_app_manifest(&raw).active_branch, "beta");
     assert_eq!(raw.matches("\"UserConfig\"").count(), 1);
-    assert!(manifest_is_fully_installed(&raw));
+    assert!(acf::parse_app_manifest(&raw).fully_installed());
 }
 
 #[test]
@@ -1300,7 +1261,7 @@ fn write_appmanifest_keeps_steam_fields_and_dlc_tags() {
     assert_eq!(raw.matches("LastOwner").count(), 1);
     assert_eq!(raw.matches("StateFlags").count(), 1);
     assert!(raw.contains("\"SharedDepots\""));
-    let depots = parse_installed_depots_from_acf(&raw);
+    let depots = acf::installed_depots(&raw);
     assert_eq!(depots.get(&977954), Some(&2));
     assert_eq!(depots.get(&1977574), Some(&9));
     assert_eq!(depots.get(&1977584), Some(&8));
@@ -1310,7 +1271,7 @@ fn write_appmanifest_keeps_steam_fields_and_dlc_tags() {
         parse_installed_dlc_appids(&raw),
         [1977570, 1977580].into_iter().collect()
     );
-    assert!(manifest_is_fully_installed(&raw));
+    assert!(acf::parse_app_manifest(&raw).fully_installed());
 }
 
 #[test]

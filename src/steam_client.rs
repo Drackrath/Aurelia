@@ -18,7 +18,6 @@ use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -2208,125 +2207,6 @@ struct ProductLaunchEntry {
 struct ProductLaunchConfigInner {
     #[serde(default)]
     oslist: Option<String>,
-}
-
-fn parse_installdir_from_acf(raw: &str) -> Option<String> {
-    crate::core::acf::parse_app_manifest(raw).install_dir
-}
-
-/// Read the `name` value from an appmanifest, if present and non-empty.
-pub(crate) fn parse_name_from_acf(raw: &str) -> Option<String> {
-    crate::core::acf::parse_app_manifest(raw).display_name()
-}
-
-/// Read `LastOwner` (SteamID64) from an appmanifest; `None` when absent or `0`.
-#[cfg(test)]
-pub(crate) fn parse_last_owner_from_acf(raw: &str) -> Option<u64> {
-    crate::core::acf::parse_app_manifest(raw).last_owner
-}
-
-/// Download StateFlags
-pub(crate) fn manifest_is_fully_installed(raw: &str) -> bool {
-    crate::core::acf::parse_app_manifest(raw).fully_installed()
-}
-
-/// Fetch `StateUpdateRequired` flag
-#[cfg(test)]
-pub(crate) fn manifest_update_pending(raw: &str) -> bool {
-    crate::core::acf::parse_app_manifest(raw).update_pending()
-}
-
-fn parse_installed_depots_from_acf(raw: &str) -> HashMap<u64, u64> {
-    let mut manifests = HashMap::new();
-    let mut in_installed_depots = false;
-    let mut current_depot: Option<u64> = None;
-
-    for line in raw.lines() {
-        let trimmed = line.trim();
-        if trimmed.contains("\"InstalledDepots\"") {
-            in_installed_depots = true;
-            continue;
-        }
-
-        if !in_installed_depots {
-            continue;
-        }
-
-        if trimmed == "}" {
-            if current_depot.is_some() {
-                current_depot = None;
-                continue;
-            }
-            break;
-        }
-
-        let quoted = extract_quoted_values(trimmed);
-        if quoted.len() == 1 {
-            if let Ok(depot_id) = u64::from_str(&quoted[0]) {
-                current_depot = Some(depot_id);
-            }
-        } else if quoted.len() >= 2 && quoted[0] == "manifest" {
-            if let (Some(depot), Ok(manifest)) = (current_depot, u64::from_str(&quoted[1])) {
-                manifests.insert(depot, manifest);
-            }
-        }
-    }
-
-    manifests
-}
-
-fn parse_active_branch_from_acf(raw: &str) -> String {
-    crate::core::acf::parse_app_manifest(raw).active_branch
-}
-
-fn rewrite_app_branch(raw: &str, branch: &str) -> String {
-    let mut out = Vec::new();
-    let mut in_user_config = false;
-    let mut branch_updated = false;
-
-    for line in raw.lines() {
-        let trimmed = line.trim();
-
-        if trimmed.eq_ignore_ascii_case("\"UserConfig\"") {
-            in_user_config = true;
-            out.push(line.to_string());
-            continue;
-        }
-
-        if in_user_config && trimmed == "{" {
-            out.push(line.to_string());
-            continue;
-        }
-
-        if in_user_config && trimmed == "}" {
-            if !branch_updated {
-                out.push(format!("\t\t\"BetaKey\"\t\t\"{branch}\""));
-            }
-            in_user_config = false;
-            out.push(line.to_string());
-            continue;
-        }
-
-        if in_user_config {
-            let quoted = extract_quoted_values(trimmed);
-            if !quoted.is_empty() && quoted[0].eq_ignore_ascii_case("betakey") {
-                let indent = line
-                    .chars()
-                    .take_while(|ch| ch.is_whitespace())
-                    .collect::<String>();
-                out.push(format!("{indent}\"BetaKey\"\t\t\"{branch}\""));
-                branch_updated = true;
-                continue;
-            }
-        }
-
-        out.push(line.to_string());
-    }
-
-    // If UserConfig was never found, we might need to add it, but for simplicity
-    // we assume it exists in a valid Steam manifest.
-
-    out.join("\n")
 }
 
 #[cfg(test)]

@@ -3,6 +3,7 @@
 //! Split out of `steam_client.rs` for readability; the struct, shared imports
 //! and free helpers live in the parent module (in scope via `use super::*`).
 use super::*;
+use crate::core::acf;
 
 impl SteamClient {
     pub(crate) async fn appmanifest_path(&self, appid: u32) -> Result<PathBuf> {
@@ -34,8 +35,8 @@ impl SteamClient {
         }
         let raw = std::fs::read_to_string(&manifest_path)
             .with_context(|| format!("failed reading {}", manifest_path.display()))?;
-        let manifests = parse_installed_depots_from_acf(&raw);
-        let branch = parse_active_branch_from_acf(&raw);
+        let manifests = acf::installed_depots(&raw);
+        let branch = acf::parse_app_manifest(&raw).active_branch;
         Ok((manifests, branch))
     }
 
@@ -57,7 +58,7 @@ impl SteamClient {
         if manifest_path.exists() {
             let raw = std::fs::read_to_string(&manifest_path)
                 .with_context(|| format!("failed reading {}", manifest_path.display()))?;
-            if let Some(installdir) = parse_installdir_from_acf(&raw) {
+            if let Some(installdir) = acf::parse_app_manifest(&raw).install_dir {
                 let p = steamapps.join("common").join(&installdir);
                 if p.exists() {
                     return Ok(p);
@@ -295,7 +296,7 @@ impl SteamClient {
         let existing = std::fs::read_to_string(path).ok();
         let (last_owner, beta_key) = match existing.as_deref() {
             Some(existing) => {
-                let parsed = crate::core::acf::parse_app_manifest(existing);
+                let parsed = acf::parse_app_manifest(existing);
                 (
                     parsed.last_owner.unwrap_or(0),
                     Some(parsed.active_branch).filter(|b| b != "public"),
