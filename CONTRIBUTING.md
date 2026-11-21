@@ -58,10 +58,12 @@ A few expectations:
 - **Lints:** don't introduce new `clippy` warnings. The codebase has some pre-existing
   ones; you don't have to fix those, but don't add more.
 - **Tests:** add or update tests for behavior you change. Pure logic (parsers, VDF/ACF
-  handling, state derivation, etc.) should have unit tests; look at the `#[cfg(test)]`
-  modules in `src/` for the existing style. Network- or Steam-dependent code can't be
+  handling, state derivation, etc.) should have unit tests; look at the existing
+  `tests/` folders in `src/` for the style. Network- or Steam-dependent code can't be
   unit-tested directly, so factor the testable logic out into pure functions.
 - **Test layout:** unit tests live in `<module>/tests/<topic>.rs`, not inline, so source files stay small and readable.
+  Integration tests in the top-level `tests/` are prefixed by area (e.g. `launch_*`, `config_*`,
+  `compat_*`) and share helpers through `tests/common/`.
 
 ## Coding style
 

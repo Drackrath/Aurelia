@@ -4,9 +4,7 @@
 //! records which Workshop items the Steam client considers installed, along with
 //! their sizes, timestamps, and content manifest GIDs.
 //!
-//! This module is intentionally self-contained (no `use super::*;`) so the
-//! integrator can `mod workshop_manifest;` in `steam_client.rs` without any
-//! build-order concerns.
+//! Self-contained; no `use super::*`.
 
 use crate::core::acf::extract_quoted_values;
 use anyhow::{Context, Result};

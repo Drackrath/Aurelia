@@ -1,7 +1,6 @@
 //! `SteamClient` methods: lifecycle, connection, auth, login, account.
 //!
-//! Split out of `steam_client.rs` for readability; the struct, shared imports
-//! and free helpers live in the parent module (in scope via `use super::*`).
+//! Shares the parent's imports via `use super::*`.
 use super::*;
 use crate::core::error::{ErrorKind, TypedError};
 use steam_vent_proto::steammessages_clientserver_friends::CMsgClientPersonaState;
