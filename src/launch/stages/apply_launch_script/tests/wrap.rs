@@ -1,5 +1,6 @@
 use super::super::*;
 use crate::launch::runners::CommandSpec;
+use crate::test_support::EnvGuard;
 use std::path::Path;
 use tempfile::tempdir;
 
@@ -52,11 +53,8 @@ async fn missing_explicit_script_errors() {
 
 #[tokio::test]
 async fn no_script_is_noop() {
-    let _guard = crate::launch::launch_script::SCRIPT_DIR_ENV_LOCK
-        .lock()
-        .unwrap();
     let tmp = tempdir().unwrap();
-    unsafe { std::env::set_var("AURELIA_SCRIPT_DIR", tmp.path()) };
+    let _env = EnvGuard::set(&[("AURELIA_SCRIPT_DIR", Some(tmp.path().as_os_str()))]);
     let mut ctx = PipelineContext::new(555);
     let mut spec = CommandSpec::default();
     spec.program = PathBuf::from("/usr/bin/proton");
@@ -70,7 +68,6 @@ async fn no_script_is_noop() {
     assert_eq!(spec.program, Path::new("/usr/bin/proton"));
     assert_eq!(spec.args, vec!["run"]);
     assert!(!spec.env.contains_key("AURELIA_APP_ID"));
-    unsafe { std::env::remove_var("AURELIA_SCRIPT_DIR") };
 }
 
 #[tokio::test]

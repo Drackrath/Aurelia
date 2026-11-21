@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::test_support::write_libraryfolders;
 
 // Unlikely to exist on real libraries.
 const APP: u32 = 3_999_999_917;
@@ -15,20 +16,6 @@ fn write_manifest(library: &Path, app_id: u32) {
     let steamapps = library.join("steamapps");
     std::fs::create_dir_all(&steamapps).unwrap();
     std::fs::write(steamapps.join(format!("appmanifest_{app_id}.acf")), "").unwrap();
-}
-
-fn write_libraryfolders(root: &Path, libs: &[&Path]) {
-    let mut body = String::from("\"libraryfolders\"\n{\n");
-    for (i, lib) in libs.iter().enumerate() {
-        body.push_str(&format!(
-            "\t\"{i}\"\n\t{{\n\t\t\"path\"\t\t\"{}\"\n\t}}\n",
-            lib.display()
-        ));
-    }
-    body.push_str("}\n");
-    let steamapps = root.join("steamapps");
-    std::fs::create_dir_all(&steamapps).unwrap();
-    std::fs::write(steamapps.join("libraryfolders.vdf"), body).unwrap();
 }
 
 #[test]

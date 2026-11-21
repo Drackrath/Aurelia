@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::test_support::EnvGuard;
 
 fn touch(path: &Path, bytes: &[u8]) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -98,13 +99,16 @@ fn marker_tracks_databases_and_driver() {
 
 #[test]
 fn replayer_override_wins() {
-    // SAFETY: test-local variable.
-    unsafe { std::env::set_var("AURELIA_FOSSILIZE_REPLAY", "/opt/fossilize_replay") };
-    assert_eq!(
-        find_replayer(&[]),
-        Some(PathBuf::from("/opt/fossilize_replay"))
-    );
-    unsafe { std::env::remove_var("AURELIA_FOSSILIZE_REPLAY") };
+    {
+        let _env = EnvGuard::set(&[(
+            "AURELIA_FOSSILIZE_REPLAY",
+            Some(std::ffi::OsStr::new("/opt/fossilize_replay")),
+        )]);
+        assert_eq!(
+            find_replayer(&[]),
+            Some(PathBuf::from("/opt/fossilize_replay"))
+        );
+    }
     let tmp = tempfile::tempdir().unwrap();
     touch(&tmp.path().join("ubuntu12_64/fossilize_replay"), b"");
     assert_eq!(

@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::test_support::write_libraryfolders;
 
 #[test]
 fn normalize_strips_punctuation_and_case() {
@@ -52,19 +53,6 @@ fn steam_runtime_is_linux_only() {
         assert!(msg.contains("only supported on Linux"), "{msg}");
         assert!(msg.contains(std::env::consts::OS), "{msg}");
     }
-}
-
-fn write_libraryfolders(root: &std::path::Path, libs: &[&std::path::Path]) {
-    let mut body = String::from("\"libraryfolders\"\n{\n");
-    for (i, lib) in libs.iter().enumerate() {
-        body.push_str(&format!(
-            "\t\"{i}\"\n\t{{\n\t\t\"path\"\t\t\"{}\"\n\t}}\n",
-            lib.display()
-        ));
-    }
-    body.push_str("}\n");
-    std::fs::create_dir_all(root.join("steamapps")).unwrap();
-    std::fs::write(root.join("steamapps/libraryfolders.vdf"), body).unwrap();
 }
 
 #[test]

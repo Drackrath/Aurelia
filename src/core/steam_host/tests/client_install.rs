@@ -1,16 +1,7 @@
 use super::super::{find_on_path, steam_client_installed};
+use crate::test_support::make_exec;
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
-
-fn make_exec(path: &Path) {
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, "#!/bin/sh\n").unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-}
+use std::path::PathBuf;
 
 fn empty_path() -> OsString {
     OsString::new()

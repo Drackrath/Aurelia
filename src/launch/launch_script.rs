@@ -197,11 +197,6 @@ pub fn list_script_app_ids(config: Option<&LauncherConfig>) -> Vec<u32> {
     ids.into_iter().collect()
 }
 
-/// Serializes tests that mutate the process-global `AURELIA_SCRIPT_DIR` env var so
-/// they don't race each other (across this module and the apply-stage tests).
-#[cfg(test)]
-pub(crate) static SCRIPT_DIR_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 /// Delete the auto-detected dir-based script for `app_id`. Returns `Ok(true)` if a
 /// file was removed, `Ok(false)` if none existed.
 pub fn remove_dir_script(app_id: u32) -> std::io::Result<bool> {

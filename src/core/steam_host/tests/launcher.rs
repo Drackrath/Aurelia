@@ -2,14 +2,8 @@ use super::super::{
     STEAM_FLATPAK_APP_ID, SteamLauncher, SteamRootKind, steam_launcher, steam_root_kind,
     steam_running_in,
 };
+use crate::test_support::make_exec;
 use std::path::{Path, PathBuf};
-
-fn make_exec(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, "#!/bin/sh\n").unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
-}
 
 fn plain(program: PathBuf) -> Option<SteamLauncher> {
     Some(SteamLauncher {

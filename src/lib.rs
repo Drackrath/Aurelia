@@ -7,3 +7,6 @@ pub mod library;
 pub mod logging;
 pub mod steam_client;
 pub mod web;
+
+#[cfg(test)]
+mod test_support;
