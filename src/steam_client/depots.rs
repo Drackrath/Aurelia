@@ -153,6 +153,11 @@ pub(crate) fn depot_matches_language(value: &Value<'_>, language: &str) -> bool 
     depot_language(value).is_none_or(|l| l.eq_ignore_ascii_case(language))
 }
 
+/// DLC app owning a depot.
+pub(crate) fn dlc_app(value: &Value<'_>, app_id: u32) -> Option<u32> {
+    number(value.get("dlcappid")).filter(|&id| id != 0 && id != app_id)
+}
+
 pub(crate) fn required_depot(value: &Value<'_>, app_id: u32) -> bool {
     number(value.get("dlcappid")).is_none_or(|id| id == 0 || id == app_id)
 }

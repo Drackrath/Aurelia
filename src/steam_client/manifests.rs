@@ -738,14 +738,19 @@ pub(crate) fn switch_language_in_manifest(
     raw: &str,
     remove: &HashSet<u32>,
     add: &[(u32, u64, u64)],
+    dlc: &HashMap<u32, u32>,
     language: &str,
 ) -> String {
     let mut out = raw.to_string();
     let new_entries: String = add
         .iter()
         .map(|(depot, manifest, size)| {
+            let tag = dlc
+                .get(depot)
+                .map(|app| format!("\t\t\t\"dlcappid\"\t\t\"{app}\"\n"))
+                .unwrap_or_default();
             format!(
-                "\t\t\"{depot}\"\n\t\t{{\n\t\t\t\"manifest\"\t\t\"{manifest}\"\n\t\t\t\"size\"\t\t\"{size}\"\n\t\t}}\n"
+                "\t\t\"{depot}\"\n\t\t{{\n\t\t\t\"manifest\"\t\t\"{manifest}\"\n\t\t\t\"size\"\t\t\"{size}\"\n{tag}\t\t}}\n"
             )
         })
         .collect();
@@ -774,6 +779,20 @@ pub(crate) fn switch_language_in_manifest(
             );
         }
         None => {}
+    }
+
+    // Steam sums InstalledDepots sizes.
+    let size: u64 = top_level_block(&out, "InstalledDepots")
+        .map(depot_entries)
+        .unwrap_or_default()
+        .iter()
+        .map(|d| d.size)
+        .sum();
+    if block_pairs(&out)
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("SizeOnDisk"))
+    {
+        out = block_set_key(&out, "SizeOnDisk", &size.to_string());
     }
 
     match top_level_range(&out, "UserConfig") {
