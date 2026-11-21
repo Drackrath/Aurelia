@@ -21,11 +21,24 @@ impl std::fmt::Display for DepotKeyError {
 
 impl std::error::Error for DepotKeyError {}
 
-pub(crate) fn skip_denied_key(error: &anyhow::Error, is_override: bool) -> bool {
+/// Does a key failure skip it?
+///
+/// Access denied skips any automatic depot.
+/// Optional depots skip on any refusal.
+pub(crate) fn skip_key_failure(error: &anyhow::Error, is_override: bool, required: bool) -> bool {
     !is_override
         && error
             .downcast_ref::<DepotKeyError>()
-            .is_some_and(|e| e.eresult == 15)
+            .is_some_and(|e| e.eresult == 15 || !required)
+}
+
+/// Installed DLC depots are optional.
+pub(crate) fn mark_dlc_optional(selections: &mut [ManifestSelection], dlc_depots: &HashSet<u64>) {
+    for selection in selections {
+        if dlc_depots.contains(&(selection.depot_id as u64)) {
+            selection.required = false;
+        }
+    }
 }
 
 pub(crate) fn has_installable_content(

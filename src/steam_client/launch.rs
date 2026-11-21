@@ -620,9 +620,14 @@ impl SteamClient {
             .unwrap_or_else(|_| (HashMap::new(), "public".to_string()));
 
         // Steam's StateUpdateRequired flag.
-        let update_pending = std::fs::read_to_string(&manifest_path)
-            .map(|raw| crate::core::acf::parse_app_manifest(&raw).update_pending())
-            .unwrap_or(false);
+        let raw_manifest = std::fs::read_to_string(&manifest_path).ok();
+        let update_pending = raw_manifest
+            .as_deref()
+            .is_some_and(|raw| crate::core::acf::parse_app_manifest(raw).update_pending());
+        let dlc_depots = raw_manifest
+            .as_deref()
+            .map(super::manifests::installed_dlc_depots)
+            .unwrap_or_default();
 
         let client_clone = self.clone();
         let shared_state_clone = shared_state.clone();
@@ -670,7 +675,10 @@ impl SteamClient {
                         return;
                     }
                 };
-                resolved.download_selections(&local_manifests, &active_branch, verify_mode)
+                let mut selections =
+                    resolved.download_selections(&local_manifests, &active_branch, verify_mode);
+                depots::mark_dlc_optional(&mut selections, &dlc_depots);
+                selections
             };
 
             if selections.is_empty() {

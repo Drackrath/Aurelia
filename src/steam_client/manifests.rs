@@ -323,7 +323,16 @@ impl SteamClient {
         // cannot break out of its quoted value or inject extra keys/blocks.
         let game_name = game_name.replace(['"', '\n', '\r', '{', '}', '\\'], "");
         let buildid = buildid.unwrap_or("0");
-        let size_on_disk: u64 = installed_depots.iter().map(|(_, _, size)| *size).sum();
+        // DLC content stays on disk.
+        let carried: Vec<&DepotEntry> = old_depots
+            .iter()
+            .filter(|d| d.is_dlc() && !installed_depots.iter().any(|(id, ..)| *id == d.id))
+            .collect();
+        let size_on_disk: u64 = installed_depots
+            .iter()
+            .map(|(_, _, size)| *size)
+            .sum::<u64>()
+            + carried.iter().map(|d| d.size).sum::<u64>();
         // 4 = StateFullyInstalled, 2 = StateUpdateRequired.
         let state_flags = if fully_installed { 4 } else { 2 };
         // 0 = auto-update always, 1 = only update on launch (used to hold a pinned/
@@ -355,11 +364,6 @@ impl SteamClient {
         );
         content.push_str(&kept.pairs);
 
-        // DLC content stays on disk.
-        let carried: Vec<&DepotEntry> = old_depots
-            .iter()
-            .filter(|d| d.is_dlc() && !installed_depots.iter().any(|(id, ..)| *id == d.id))
-            .collect();
         if !installed_depots.is_empty() || !carried.is_empty() {
             content.push_str("\t\"InstalledDepots\"\n\t{\n");
             for (depot_id, manifest_id, size) in installed_depots {
@@ -867,6 +871,7 @@ struct DepotEntry {
     /// Lines besides manifest and size.
     extras: String,
     dlc: bool,
+    size: u64,
 }
 
 impl DepotEntry {
@@ -884,9 +889,14 @@ fn depot_entries(block: &str) -> Vec<DepotEntry> {
             let text = &block[start..=end];
             let mut extras = String::new();
             let mut dlc = false;
+            let mut size = 0;
             for (k, v) in block_pairs(text) {
                 let lower = k.to_ascii_lowercase();
-                if lower == "manifest" || lower == "size" {
+                if lower == "size" {
+                    size = v.parse().unwrap_or(0);
+                    continue;
+                }
+                if lower == "manifest" {
                     continue;
                 }
                 dlc |= lower == "dlcappid";
@@ -897,8 +907,20 @@ fn depot_entries(block: &str) -> Vec<DepotEntry> {
                 raw: text.to_string(),
                 extras,
                 dlc,
+                size,
             })
         })
+        .collect()
+}
+
+/// Installed depots tagged with `dlcappid`.
+pub(crate) fn installed_dlc_depots(raw: &str) -> HashSet<u64> {
+    top_level_block(raw, "InstalledDepots")
+        .map(depot_entries)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|d| d.is_dlc())
+        .map(|d| u64::from(d.id))
         .collect()
 }
 

@@ -1304,6 +1304,8 @@ fn write_appmanifest_keeps_steam_fields_and_dlc_tags() {
     assert_eq!(depots.get(&977954), Some(&2));
     assert_eq!(depots.get(&1977574), Some(&9));
     assert_eq!(depots.get(&1977584), Some(&8));
+    // 20 + 90 written, 80 kept.
+    assert!(raw.contains("\"SizeOnDisk\"\t\t\"190\""));
     assert_eq!(
         parse_installed_dlc_appids(&raw),
         [1977570, 1977580].into_iter().collect()
@@ -1324,4 +1326,16 @@ fn write_appmanifest_keeps_target_build_while_updating() {
         .unwrap();
     let raw = std::fs::read_to_string(&path).unwrap();
     assert!(raw.contains("\"TargetBuildID\"\t\t\"55\""));
+}
+
+#[test]
+fn installed_dlc_depots_reads_dlcappid_tags() {
+    let raw = "\"AppState\"\n{\n\t\"InstalledDepots\"\n\t{\n\
+        \t\t\"977954\"\n\t\t{\n\t\t\t\"manifest\"\t\t\"1\"\n\t\t}\n\
+        \t\t\"1977574\"\n\t\t{\n\t\t\t\"manifest\"\t\t\"7\"\n\t\t\t\"dlcappid\"\t\t\"1977570\"\n\t\t}\n\
+        \t}\n}\n";
+    assert_eq!(
+        manifests::installed_dlc_depots(raw),
+        [1977574u64].into_iter().collect()
+    );
 }
