@@ -93,6 +93,59 @@ fn assignments_set_and_override_environment() {
     assert_eq!(spec.env["WINEDLLOVERRIDES"], "dxgi=n");
 }
 
+fn overrides_after(computed: &str, line: &str) -> String {
+    let mut spec = proton_spec();
+    spec.env.insert("WINEDLLOVERRIDES".into(), computed.into());
+    wrap_command(&mut spec, &parse_launch_options(line).expect(line));
+    spec.env["WINEDLLOVERRIDES"].clone()
+}
+
+#[test]
+fn dll_overrides_merge_disjoint_dlls() {
+    let merged = overrides_after(
+        "steamclient=n;d3d11,dxgi=n",
+        "WINEDLLOVERRIDES=winmm=n,b %command%",
+    );
+    assert_eq!(merged, "steamclient=n;d3d11,dxgi=n;winmm=n,b");
+}
+
+#[test]
+fn dll_overrides_user_wins_same_dll() {
+    let merged = overrides_after(
+        "steamclient=n;dinput8=b",
+        r#"WINEDLLOVERRIDES="dinput8=n,b" %command%"#,
+    );
+    assert_eq!(merged, "steamclient=n;dinput8=n,b");
+}
+
+#[test]
+fn dll_overrides_split_grouped_entries() {
+    let merged = overrides_after(
+        "steamclient=n;d3d11,dxgi=n",
+        "WINEDLLOVERRIDES=dxgi=b %command%",
+    );
+    assert_eq!(merged, "steamclient=n;d3d11=n;dxgi=b");
+    let merged = overrides_after("d3d11=n", "WINEDLLOVERRIDES='d3d11,winmm=n,b' %command%");
+    assert_eq!(merged, "d3d11=n,b;winmm=n,b");
+}
+
+#[test]
+fn dll_overrides_empty_user_value_keeps_computed() {
+    let merged = overrides_after("steamclient=n;d3d11,dxgi=n", "WINEDLLOVERRIDES= %command%");
+    assert_eq!(merged, "steamclient=n;d3d11,dxgi=n");
+}
+
+#[test]
+fn dll_overrides_without_computed_value_are_set() {
+    let mut spec = proton_spec();
+    spec.env.remove("WINEDLLOVERRIDES");
+    wrap_command(
+        &mut spec,
+        &parse_launch_options("WINEDLLOVERRIDES=winmm=n,b %command%").unwrap(),
+    );
+    assert_eq!(spec.env["WINEDLLOVERRIDES"], "winmm=n,b");
+}
+
 #[test]
 fn assignment_after_wrapper_is_a_wrapper_argument() {
     let options = parse_launch_options("env A=1 %command%").unwrap();
