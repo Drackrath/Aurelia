@@ -68,7 +68,7 @@ fn move_dir_copies_all_files() {
     std::fs::write(src.join("a.bin"), vec![1u8; 100]).unwrap();
     std::fs::write(src.join("sub/b.bin"), vec![2u8; 200]).unwrap();
 
-    let total = dir_size(&src);
+    let total = crate::core::fsutil::dir_size(&src);
     assert_eq!(total, 300);
 
     let mut last = 0u64;

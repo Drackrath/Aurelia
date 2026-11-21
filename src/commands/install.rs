@@ -1313,7 +1313,7 @@ pub(crate) async fn cmd_duplicates(json: bool) -> Result<()> {
                         "manifest_path": s.manifest_path.to_string_lossy(),
                         "last_updated": s.last_updated,
                         "build_id": s.build_id,
-                        "size_bytes": dir_size(&s.install_path),
+                        "size_bytes": aurelia::core::fsutil::dir_size(&s.install_path),
                     })).collect::<Vec<_>>(),
                 })
             })
@@ -1348,7 +1348,7 @@ pub(crate) async fn cmd_duplicates(json: bool) -> Result<()> {
             d.live.build_id
         );
         for s in &d.stale {
-            let size = dir_size(&s.install_path);
+            let size = aurelia::core::fsutil::dir_size(&s.install_path);
             reclaimable += size;
             cli_println!(
                 "  remove  {}  (updated {}, build {}, {})",
@@ -1383,18 +1383,6 @@ pub(crate) async fn cmd_duplicates(json: bool) -> Result<()> {
          still advertises the copy, and discovery would keep finding it."
     );
     Ok(())
-}
-
-/// Total size of a directory tree, or 0 if it can't be read. Best-effort: this
-/// only sizes the report, so an unreadable subdirectory must not fail the command.
-fn dir_size(path: &std::path::Path) -> u64 {
-    walkdir::WalkDir::new(path)
-        .into_iter()
-        .filter_map(std::result::Result::ok)
-        .filter(|e| e.file_type().is_file())
-        .filter_map(|e| e.metadata().ok())
-        .map(|m| m.len())
-        .sum()
 }
 
 /// Single-quote a path for a POSIX shell so a copy-pasted `rm` is safe with

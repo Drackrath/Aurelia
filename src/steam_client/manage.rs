@@ -188,10 +188,10 @@ impl SteamClient {
             let result = (|| -> Result<()> {
                 let _ = tx.blocking_send(DownloadProgress::queued("sizing"));
 
-                let common_bytes = relocate::dir_size(&src_common);
+                let common_bytes = crate::core::fsutil::dir_size(&src_common);
                 let compat_bytes = src_compat
                     .as_ref()
-                    .map(|p| relocate::dir_size(p))
+                    .map(|p| crate::core::fsutil::dir_size(p))
                     .unwrap_or(0);
                 let total = common_bytes + compat_bytes;
 

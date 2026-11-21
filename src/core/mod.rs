@@ -2,6 +2,7 @@ pub mod acf;
 pub mod atomic;
 pub mod config;
 pub mod error;
+pub mod fsutil;
 pub mod locale;
 pub mod models;
 pub mod net;

@@ -1238,7 +1238,7 @@ async fn update_libraryfolders_for(from_lib: &Path, to_lib: &Path, appid: u32, i
         tracing::warn!("could not read libraryfolders.vdf");
         return;
     };
-    let size = crate::library::relocate::dir_size(install_dir);
+    let size = crate::core::fsutil::dir_size(install_dir);
     match crate::library::relocate::update_libraryfolders_apps(&text, appid, from_lib, to_lib, size)
     {
         Some(updated) => {
