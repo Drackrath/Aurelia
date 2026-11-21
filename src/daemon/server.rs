@@ -1,7 +1,7 @@
 //! Daemon server: accept forwarded commands and run them against the shared session.
 
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, Result};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
@@ -18,14 +18,8 @@ static INFLIGHT: AtomicUsize = AtomicUsize::new(0);
 /// Unix seconds of last request activity.
 static LAST_ACTIVITY: AtomicU64 = AtomicU64::new(0);
 
-fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
-}
-
 fn touch_activity() {
-    LAST_ACTIVITY.store(now_secs(), Ordering::SeqCst);
+    LAST_ACTIVITY.store(aurelia::core::utils::now_unix(), Ordering::SeqCst);
 }
 
 /// Increments [`INFLIGHT`] for its lifetime; decrements on drop (covers `?` early
@@ -121,7 +115,7 @@ async fn watch_for_idle(timeout: Duration) {
         }
         if idle_expired(
             LAST_ACTIVITY.load(Ordering::SeqCst),
-            now_secs(),
+            aurelia::core::utils::now_unix(),
             timeout,
             busy,
         ) {

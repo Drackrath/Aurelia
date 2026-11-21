@@ -3,7 +3,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use sha1::{Digest, Sha1};
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::Duration;
 use steam_vent::ConnectionTrait;
 use steam_vent::connection::Connection;
 use steam_vent_proto::steammessages_cloud_steamclient::{
@@ -592,8 +592,7 @@ fn read_local_info(path: &Path) -> Option<LocalInfo> {
     let timestamp = meta
         .modified()
         .ok()
-        .and_then(|m| m.duration_since(UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
+        .and_then(crate::core::utils::unix_secs)
         .unwrap_or_default();
     let hash = sha1_hex_of_file(path)?;
     Some(LocalInfo {

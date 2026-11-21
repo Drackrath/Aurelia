@@ -133,7 +133,7 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
 
     // Recorded first, so a crash stays resumable.
     let platform_name = format!("{platform:?}").to_lowercase();
-    let started = backlog::now();
+    let started = aurelia::core::utils::now_unix();
     let mut record = backlog::BacklogEntry {
         app_id,
         name: String::new(),
@@ -255,7 +255,7 @@ fn finish_backlog(
         record.total_bytes = s.total_bytes;
     }
     let kind = classify(&err).kind;
-    record.updated_at = backlog::now();
+    record.updated_at = aurelia::core::utils::now_unix();
     let err = if kind == ErrorKind::Cancelled {
         record.reason = None;
         record.error_type = None;

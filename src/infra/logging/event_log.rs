@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LogLevel {
@@ -46,7 +45,7 @@ impl EventLogger {
         metadata: HashMap<String, String>,
     ) -> Result<()> {
         let event = LogEvent {
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+            timestamp: crate::core::utils::since_unix_epoch()?.as_secs(),
             level,
             event_type: event_type.to_string(),
             message,

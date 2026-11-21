@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
@@ -9,8 +9,7 @@ pub struct LaunchSessionId(String);
 
 impl LaunchSessionId {
     pub fn generate() -> Self {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
+        let now = crate::core::utils::since_unix_epoch()
             .expect("Time went backwards")
             .as_millis();
         let random: u32 = rand::random();

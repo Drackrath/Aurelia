@@ -2,7 +2,6 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -91,14 +90,6 @@ struct BacklogFile {
 /// Serializes read-modify-write in-process.
 static LOCK: Mutex<()> = Mutex::new(());
 
-/// Seconds since the Unix epoch.
-pub fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
 /// `<config>/install_backlog.json`.
 pub fn backlog_path() -> Result<PathBuf> {
     Ok(config_dir()?.join("install_backlog.json"))
@@ -141,7 +132,7 @@ pub fn bump_auto_attempts(app_id: u32) -> Result<Option<u32>> {
 pub(crate) fn bump_in(entries: &mut [BacklogEntry], app_id: u32) -> Option<u32> {
     let entry = entries.iter_mut().find(|e| e.app_id == app_id)?;
     entry.auto_attempts += 1;
-    entry.updated_at = now();
+    entry.updated_at = crate::core::utils::now_unix();
     Some(entry.auto_attempts)
 }
 
@@ -152,7 +143,7 @@ pub fn set_state(app_id: u32, state: BacklogState) -> Result<bool> {
             return false;
         };
         entry.state = state;
-        entry.updated_at = now();
+        entry.updated_at = crate::core::utils::now_unix();
         true
     })
 }

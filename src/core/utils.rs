@@ -112,12 +112,21 @@ pub fn resolves_within(root: &Path, path: &Path) -> bool {
     }
 }
 
+/// Time elapsed since the Unix epoch.
+pub fn since_unix_epoch() -> Result<std::time::Duration, std::time::SystemTimeError> {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+}
+
 /// Current Unix time in seconds.
 pub fn now_unix() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    since_unix_epoch().map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// Unix seconds of `time`, if post-epoch.
+pub fn unix_secs(time: std::time::SystemTime) -> Option<u64> {
+    time.duration_since(std::time::UNIX_EPOCH)
+        .ok()
         .map(|d| d.as_secs())
-        .unwrap_or(0)
 }
 
 pub fn build_runner_command(runner_path: &Path) -> Result<Command> {
