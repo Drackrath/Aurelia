@@ -74,10 +74,6 @@ pub fn location_trusted() -> bool {
     imp::location_trusted()
 }
 
-#[cfg(all(unix, test))]
-#[path = "transport_tests.rs"]
-mod tests;
-
 #[cfg(unix)]
 mod imp {
     use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
@@ -292,3 +288,6 @@ mod imp {
 }
 
 pub use imp::{Listener, connect};
+
+#[cfg(test)]
+mod tests;

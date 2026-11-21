@@ -184,3 +184,6 @@ pub mod elevated {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;

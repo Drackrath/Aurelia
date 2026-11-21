@@ -809,5 +809,4 @@ pub(crate) fn report_session_status(status: &daemon::SessionStatus, via_daemon: 
 }
 
 #[cfg(test)]
-#[path = "auth_tests.rs"]
 mod tests;

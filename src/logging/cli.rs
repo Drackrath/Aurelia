@@ -196,5 +196,4 @@ fn default_directives(verbosity: u8) -> &'static str {
 }
 
 #[cfg(test)]
-#[path = "cli_tests.rs"]
 mod tests;

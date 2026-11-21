@@ -12,17 +12,6 @@ pub mod stages;
 pub mod summary;
 pub mod validators;
 
-#[cfg(test)]
-mod verification_tests;
-
-#[cfg(test)]
-#[path = "game_process_tests.rs"]
-mod game_process_tests;
-
-#[cfg(test)]
-#[path = "wait_tests.rs"]
-mod wait_tests;
-
 use crate::core::config::{LauncherConfig, config_dir};
 use crate::core::steam_host::MasterSteamConfig;
 use crate::steam_client::SteamClient;
@@ -600,3 +589,6 @@ async fn download_steam_setup(path: &Path) -> Result<()> {
     })?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

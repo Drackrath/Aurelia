@@ -101,5 +101,4 @@ pub fn uninstall() -> Result<bool> {
 }
 
 #[cfg(test)]
-#[path = "luxtorpeda_tests.rs"]
 mod tests;

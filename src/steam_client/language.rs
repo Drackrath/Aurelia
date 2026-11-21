@@ -358,5 +358,4 @@ impl SteamClient {
 }
 
 #[cfg(test)]
-#[path = "language_tests.rs"]
 mod tests;

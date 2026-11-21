@@ -221,5 +221,4 @@ pub fn reconcile(mut game: RunningGame) -> Option<RunningGame> {
 }
 
 #[cfg(test)]
-#[path = "running_tests.rs"]
 mod tests;

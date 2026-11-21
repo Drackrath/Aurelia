@@ -847,5 +847,4 @@ pub fn build_game_library(
 }
 
 #[cfg(test)]
-#[path = "library_tests.rs"]
 mod tests;

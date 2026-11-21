@@ -287,5 +287,4 @@ macro_rules! cli_eprint {
 }
 
 #[cfg(test)]
-#[path = "output_tests.rs"]
 mod tests;

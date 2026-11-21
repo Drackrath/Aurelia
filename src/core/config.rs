@@ -893,5 +893,4 @@ pub async fn save_user_configs(configs: &UserConfigStore) -> Result<()> {
 }
 
 #[cfg(test)]
-#[path = "config_tests.rs"]
 mod tests;

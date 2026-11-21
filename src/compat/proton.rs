@@ -691,5 +691,4 @@ pub fn valve_app_id(name: &str) -> Option<u32> {
 }
 
 #[cfg(test)]
-#[path = "proton_tests.rs"]
 mod tests;

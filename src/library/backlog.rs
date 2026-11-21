@@ -227,5 +227,4 @@ pub fn deletable_dir(entry: &BacklogEntry) -> Option<PathBuf> {
 }
 
 #[cfg(test)]
-#[path = "backlog_tests.rs"]
 mod tests;

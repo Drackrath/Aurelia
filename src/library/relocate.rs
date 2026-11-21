@@ -242,5 +242,4 @@ fn parse_kv(line: &str, key: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-#[path = "relocate_tests.rs"]
 mod tests;

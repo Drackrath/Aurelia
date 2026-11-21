@@ -444,5 +444,4 @@ fn read_cstr(buf: &[u8], pos: &mut usize) -> Option<String> {
 }
 
 #[cfg(test)]
-#[path = "local_library_tests.rs"]
 mod tests;

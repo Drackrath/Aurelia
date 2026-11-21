@@ -83,5 +83,4 @@ pub fn game_fixups(app_id: u32) -> GameFixups {
 }
 
 #[cfg(test)]
-#[path = "fixups_tests.rs"]
 mod tests;

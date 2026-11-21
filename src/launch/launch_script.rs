@@ -215,5 +215,4 @@ pub fn remove_dir_script(app_id: u32) -> std::io::Result<bool> {
 }
 
 #[cfg(test)]
-#[path = "launch_script_tests.rs"]
 mod tests;

@@ -530,5 +530,4 @@ fn installed_depots_need_update(local: &HashMap<u64, u64>, remote: &HashMap<u64,
 }
 
 #[cfg(test)]
-#[path = "library_update_detection_tests.rs"]
-mod update_detection_tests;
+mod tests;

@@ -119,5 +119,4 @@ impl PipelineStage for ApplyLaunchScriptStage {
 }
 
 #[cfg(test)]
-#[path = "apply_launch_script_tests.rs"]
 mod tests;

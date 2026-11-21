@@ -214,5 +214,4 @@ pub fn extract_quoted_values(line: &str) -> Vec<String> {
 }
 
 #[cfg(test)]
-#[path = "acf_tests.rs"]
 mod tests;

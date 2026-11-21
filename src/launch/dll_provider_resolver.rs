@@ -461,5 +461,4 @@ impl DllProviderResolver {
 }
 
 #[cfg(test)]
-#[path = "dll_provider_resolver_tests.rs"]
 mod tests;

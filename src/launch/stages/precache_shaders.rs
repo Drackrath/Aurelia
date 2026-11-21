@@ -75,5 +75,4 @@ fn emit(ctx: &PipelineContext, event: ShaderEvent) {
 }
 
 #[cfg(test)]
-#[path = "precache_shaders_tests.rs"]
 mod tests;

@@ -133,5 +133,4 @@ fn process_tree_pids(root: i32) -> Vec<i32> {
 }
 
 #[cfg(test)]
-#[path = "proc_admin_tests.rs"]
 mod tests;

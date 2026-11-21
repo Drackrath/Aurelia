@@ -195,5 +195,4 @@ pub(crate) fn b64url_decode(input: &str) -> Result<Vec<u8>> {
 }
 
 #[cfg(test)]
-#[path = "web_token_tests.rs"]
 mod tests;

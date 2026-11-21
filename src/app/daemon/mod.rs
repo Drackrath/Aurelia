@@ -603,5 +603,4 @@ async fn maybe_refresh_after(argv: &[String]) {
 }
 
 #[cfg(test)]
-#[path = "daemon_tests.rs"]
 mod tests;

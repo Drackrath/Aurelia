@@ -245,5 +245,4 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for RelayWriter {
 }
 
 #[cfg(test)]
-#[path = "relay_tests.rs"]
 mod tests;

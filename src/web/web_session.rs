@@ -270,5 +270,4 @@ fn random_sessionid() -> String {
 }
 
 #[cfg(test)]
-#[path = "web_session_tests.rs"]
 mod tests;

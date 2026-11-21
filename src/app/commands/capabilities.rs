@@ -423,5 +423,4 @@ fn long_flags(cmd: &clap::Command) -> Vec<String> {
 }
 
 #[cfg(test)]
-#[path = "capabilities_tests.rs"]
 mod tests;

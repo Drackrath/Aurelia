@@ -183,5 +183,4 @@ fn version_key(name: &str) -> Vec<u64> {
 }
 
 #[cfg(test)]
-#[path = "mapping_tests.rs"]
 mod tests;

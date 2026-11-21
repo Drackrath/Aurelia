@@ -532,5 +532,4 @@ impl SteamClient {
 }
 
 #[cfg(test)]
-#[path = "friends_tests.rs"]
 mod tests;

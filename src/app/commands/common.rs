@@ -939,5 +939,4 @@ pub(crate) fn prompt_line(prompt: &str) -> Result<String> {
 }
 
 #[cfg(test)]
-#[path = "common_tests.rs"]
 mod tests;

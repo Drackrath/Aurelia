@@ -214,5 +214,4 @@ impl PipelineStage for UserLaunchOptionsStage {
 }
 
 #[cfg(test)]
-#[path = "user_launch_options_tests.rs"]
 mod tests;

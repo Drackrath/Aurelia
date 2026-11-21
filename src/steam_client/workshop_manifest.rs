@@ -364,5 +364,4 @@ impl ItemDetails {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-#[path = "workshop_manifest_tests.rs"]
 mod tests;

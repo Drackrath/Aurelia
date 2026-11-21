@@ -300,5 +300,4 @@ pub async fn precache(
 }
 
 #[cfg(test)]
-#[path = "shaders_tests.rs"]
 mod tests;

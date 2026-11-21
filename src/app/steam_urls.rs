@@ -38,5 +38,4 @@ pub fn logo_url(app_id: u32) -> String {
 }
 
 #[cfg(test)]
-#[path = "steam_urls_tests.rs"]
 mod tests;

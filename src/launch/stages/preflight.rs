@@ -320,5 +320,4 @@ impl PipelineStage for PreflightStage {
 }
 
 #[cfg(test)]
-#[path = "preflight_tests.rs"]
 mod tests;
