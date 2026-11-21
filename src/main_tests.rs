@@ -330,3 +330,58 @@ fn relative_path_args_resolve_against_cwd() {
     assert_eq!(runner_of("GE-Proton9-20").as_deref(), Some("GE-Proton9-20"));
     assert_eq!(runner_of("").as_deref(), Some(""));
 }
+
+#[test]
+fn config_cloud_sync_takes_on_or_off() {
+    for (arg, want) in [
+        (None, None),
+        (Some("on"), Some(true)),
+        (Some("off"), Some(false)),
+    ] {
+        let mut argv = vec!["aurelia", "config", "cloud-sync"];
+        argv.extend(arg);
+        match parse(&argv).command {
+            Command::Config {
+                command: ConfigCommand::CloudSync { mode },
+            } => assert_eq!(mode.map(|m| matches!(m, OnOffArg::On)), want),
+            _ => panic!("expected config cloud-sync"),
+        }
+    }
+    assert!(Cli::try_parse_from(["aurelia", "config", "cloud-sync", "auto"]).is_err());
+}
+
+/// `config game` cloud-sync value, parsed.
+fn game_cloud_sync(extra: &[&str]) -> Option<CloudSyncArg> {
+    let mut argv = vec!["aurelia", "config", "game", "792100"];
+    argv.extend_from_slice(extra);
+    match parse(&argv).command {
+        Command::Config {
+            command: ConfigCommand::Game { args },
+        } => args.cloud_sync,
+        _ => panic!("expected config game"),
+    }
+}
+
+#[test]
+fn config_game_cloud_sync_parses_auto_on_off() {
+    assert_eq!(game_cloud_sync(&[]), None);
+    let on = game_cloud_sync(&["--cloud-sync", "on"]);
+    assert_eq!(on.and_then(CloudSyncArg::as_override), Some(true));
+    let off = game_cloud_sync(&["--cloud-sync", "off"]);
+    assert_eq!(off.and_then(CloudSyncArg::as_override), Some(false));
+    let auto = game_cloud_sync(&["--cloud-sync", "auto"]);
+    assert_eq!(auto, Some(CloudSyncArg::Auto));
+    assert_eq!(auto.and_then(CloudSyncArg::as_override), None);
+    let argv = ["aurelia", "config", "game", "1", "--cloud-sync", "maybe"];
+    assert!(Cli::try_parse_from(argv).is_err());
+    let argv = [
+        "aurelia",
+        "config",
+        "game",
+        "1",
+        "--clear",
+        "--cloud-sync",
+        "on",
+    ];
+    assert!(Cli::try_parse_from(argv).is_err());
+}

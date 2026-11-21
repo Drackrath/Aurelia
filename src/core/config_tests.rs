@@ -272,3 +272,54 @@ fn guard_data_is_precreated_private_without_legacy() {
     let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600);
 }
+
+fn with_game_sync(global: bool, game: Option<bool>) -> LauncherConfig {
+    let mut cfg = LauncherConfig {
+        enable_cloud_sync: global,
+        ..Default::default()
+    };
+    cfg.game_configs.insert(
+        7,
+        GameConfig {
+            cloud_sync: game,
+            ..Default::default()
+        },
+    );
+    cfg
+}
+
+#[test]
+fn cloud_sync_defaults_on() {
+    let cfg = LauncherConfig::default();
+    assert!(cfg.enable_cloud_sync);
+    assert!(cfg.cloud_sync_enabled(7));
+}
+
+#[test]
+fn cloud_sync_game_without_override_follows_global() {
+    assert!(with_game_sync(true, None).cloud_sync_enabled(7));
+    assert!(!with_game_sync(false, None).cloud_sync_enabled(7));
+    // Unconfigured games follow global too.
+    assert!(!with_game_sync(false, None).cloud_sync_enabled(8));
+}
+
+#[test]
+fn cloud_sync_game_override_beats_global() {
+    assert!(!with_game_sync(true, Some(false)).cloud_sync_enabled(7));
+    assert!(with_game_sync(false, Some(true)).cloud_sync_enabled(7));
+    assert!(!with_game_sync(false, Some(true)).cloud_sync_enabled(8));
+}
+
+#[test]
+fn cloud_sync_override_round_trips_and_is_optional() {
+    let legacy = r#"{ "forced_proton_version": null, "platform_preference": null }"#;
+    let cfg: GameConfig = serde_json::from_str(legacy).unwrap();
+    assert_eq!(cfg.cloud_sync, None);
+    assert!(!serde_json::to_string(&cfg).unwrap().contains("cloud_sync"));
+    let off = GameConfig {
+        cloud_sync: Some(false),
+        ..Default::default()
+    };
+    let back: GameConfig = serde_json::from_str(&serde_json::to_string(&off).unwrap()).unwrap();
+    assert_eq!(back.cloud_sync, Some(false));
+}

@@ -349,6 +349,39 @@ pub(crate) async fn cmd_config_hide_uninstalled_launch_options(
     Ok(())
 }
 
+/// `config cloud-sync [on|off]`.
+pub(crate) async fn cmd_config_cloud_sync(mode: Option<OnOffArg>, json: bool) -> Result<()> {
+    let (config, changed) = view_or_set(mode, |c, m| {
+        c.enable_cloud_sync = matches!(m, OnOffArg::On);
+    })
+    .await?;
+    let overrides: std::collections::BTreeMap<u32, bool> = config
+        .game_configs
+        .iter()
+        .filter_map(|(id, g)| g.cloud_sync.map(|on| (*id, on)))
+        .collect();
+    if json {
+        print_json(&serde_json::json!({
+            "enable_cloud_sync": config.enable_cloud_sync,
+            "game_overrides": overrides,
+        }));
+        return Ok(());
+    }
+    let label = if config.enable_cloud_sync {
+        "on (`play` syncs Steam Cloud saves down before and up after the game)"
+    } else {
+        "off (`play` leaves Steam Cloud alone; `cloud sync` still works)"
+    };
+    cli_println!("Cloud sync on play: {label}");
+    for (id, on) in &overrides {
+        cli_println!("  App {id}: {} (per-game)", if *on { "on" } else { "off" });
+    }
+    if changed {
+        cli_println!("Saved. Applies to the next launch.");
+    }
+    Ok(())
+}
+
 /// `config anticheat-auto-install [on|off]`.
 pub(crate) async fn cmd_config_anticheat_auto_install(
     mode: Option<OnOffArg>,
@@ -581,6 +614,7 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
         steam_prefix_mode,
         launch_options,
         no_launch_options,
+        cloud_sync,
     } = args;
     if let Some(line) = &launch_options {
         aurelia::launch::stages::user_launch_options::parse_launch_options(line)
@@ -693,6 +727,10 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
             entry.launch_script = Some(s.to_string_lossy().to_string());
             changed = true;
         }
+        if let Some(mode) = cloud_sync {
+            entry.cloud_sync = mode.as_override();
+            changed = true;
+        }
     }
     if changed {
         cfg.save().await.context("failed saving game config")?;
@@ -737,6 +775,12 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
         SteamRuntimePolicy::Enabled => "on".to_string(),
         SteamRuntimePolicy::Disabled => "off".to_string(),
     };
+    let cloud_sync_effective = cfg.cloud_sync_enabled(app_id);
+    let on_off = |on: bool| if on { "on" } else { "off" };
+    let cloud_sync_label = match entry.cloud_sync {
+        Some(on) => on_off(on).to_string(),
+        None => format!("auto ({}, from global)", on_off(cloud_sync_effective)),
+    };
     let prefix_mode_label = match ua.steam_prefix_mode {
         SteamPrefixMode::Shared => "shared",
         SteamPrefixMode::PerGame => "per-game",
@@ -751,6 +795,8 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
             "steam_runtime_policy": ua.steam_runtime_policy,
             "steam_prefix_mode": ua.steam_prefix_mode,
             "launch_options": ua.launch_options,
+            "cloud_sync": entry.cloud_sync,
+            "cloud_sync_effective": cloud_sync_effective,
         }));
     } else {
         cli_println!("App {app_id}:");
@@ -780,6 +826,7 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
         );
         cli_println!("  Steam runtime: {steam_runtime_label}");
         cli_println!("  Prefix mode  : {prefix_mode_label}");
+        cli_println!("  Cloud sync   : {cloud_sync_label}");
         cli_println!(
             "  Launch opts  : {}",
             if ua.launch_options.is_empty() {

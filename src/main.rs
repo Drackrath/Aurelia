@@ -588,6 +588,7 @@ async fn run(mut cli: Cli) -> Result<()> {
             ConfigCommand::HideUninstalledLaunchOptions { mode } => {
                 cmd_config_hide_uninstalled_launch_options(mode, json).await
             }
+            ConfigCommand::CloudSync { mode } => cmd_config_cloud_sync(mode, json).await,
             ConfigCommand::AnticheatAutoInstall { mode } => {
                 cmd_config_anticheat_auto_install(mode, json).await
             }

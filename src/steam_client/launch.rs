@@ -410,7 +410,7 @@ impl SteamClient {
             self.ensure_anticheat_runtimes(app).await;
         }
 
-        let cloud_enabled = launcher_config.enable_cloud_sync && !self.is_offline();
+        let cloud_enabled = launcher_config.cloud_sync_enabled(app.app_id) && !self.is_offline();
         let mut cloud_client = None;
         let mut cloud_resolver = None;
         let mut cloud_specs: Vec<crate::library::cloud_sync::UfsSaveSpec> = Vec::new();
