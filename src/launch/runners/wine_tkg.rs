@@ -1,5 +1,5 @@
-use crate::infra::runners::{CommandSpec, LaunchContext, Runner};
 use crate::launch::pipeline::{LaunchError, LaunchErrorKind};
+use crate::launch::runners::{CommandSpec, LaunchContext, Runner};
 use crate::steam_client::SteamClient;
 use anyhow::anyhow;
 use std::collections::HashMap;
@@ -783,7 +783,7 @@ impl Runner for WineTkgRunner {
         //   - Standalone    → the fake-Steam trap (no DRM).
         let fake_trap =
             |env: &mut HashMap<String, String>| -> std::result::Result<(), LaunchError> {
-                let fake_env = crate::infra::runners::insert_fake_steam_trap(env)?;
+                let fake_env = crate::launch::runners::insert_fake_steam_trap(env)?;
                 ctx.with_verification(|v| {
                     v.steam_client_install_path_exposed_to_game =
                         Some(fake_env.to_string_lossy().to_string());
@@ -1127,13 +1127,13 @@ impl Runner for WineTkgRunner {
             if let Ok(log_file) = std::fs::File::create(&path) {
                 cmd.stderr(log_file);
             } else {
-                cmd.stderr(crate::infra::logging::relay::child_stdio());
+                cmd.stderr(crate::logging::relay::child_stdio());
             }
         } else {
-            cmd.stderr(crate::infra::logging::relay::child_stdio());
+            cmd.stderr(crate::logging::relay::child_stdio());
         }
 
-        cmd.stdout(crate::infra::logging::relay::child_stdio());
+        cmd.stdout(crate::logging::relay::child_stdio());
 
         tracing::debug!(
             program = ?cmd.get_program(),
@@ -1142,12 +1142,10 @@ impl Runner for WineTkgRunner {
             "runner launch",
         );
 
-        cmd.spawn()
-            .map(crate::infra::logging::relay::attach)
-            .map_err(|e| {
-                LaunchError::new(LaunchErrorKind::Process, "failed to spawn runner process")
-                    .with_source(anyhow!(e))
-            })
+        cmd.spawn().map(crate::logging::relay::attach).map_err(|e| {
+            LaunchError::new(LaunchErrorKind::Process, "failed to spawn runner process")
+                .with_source(anyhow!(e))
+        })
     }
 }
 

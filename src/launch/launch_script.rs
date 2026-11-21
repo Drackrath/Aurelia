@@ -3,7 +3,7 @@
 //! A launch script is a user-supplied shell script (`<app_id>.sh` on unix,
 //! `<app_id>.bat` on Windows) that Aurelia runs as a **wrapper** around the
 //! fully-resolved launch command. When a script is active for an app the pipeline
-//! rewrites the resolved [`CommandSpec`](crate::infra::runners::CommandSpec) so the
+//! rewrites the resolved [`CommandSpec`](crate::launch::runners::CommandSpec) so the
 //! script becomes the program and the previously-resolved program + args are passed
 //! as its arguments (`"$@"`). A script that is just `exec "$@"` is therefore a
 //! transparent passthrough, while a custom one can prepend `gamemoderun` / `mangohud`

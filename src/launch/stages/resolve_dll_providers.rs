@@ -209,7 +209,7 @@ impl PipelineStage for ResolveDllProvidersStage {
 
         if scan_report.warnings.is_empty() && scan_report.scan_roots.is_empty() {
             ctx.log_event(
-                crate::infra::logging::LogLevel::Warn,
+                crate::logging::LogLevel::Warn,
                 "zero_runner_roots",
                 "Zero Runner roots derived from runner path".into(),
                 Some("ResolveDllProviders".into()),

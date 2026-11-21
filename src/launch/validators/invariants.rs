@@ -31,7 +31,7 @@ fn evidence_missing_suffix(meta: &EvidenceScanMetadata) -> &'static str {
 
 /// Shared Invariant B/C native-override check.
 fn check_unexpected_native(
-    spec: &crate::infra::runners::CommandSpec,
+    spec: &crate::launch::runners::CommandSpec,
     dlls: &[&str],
     path_needle: &str,
     code: &'static str,

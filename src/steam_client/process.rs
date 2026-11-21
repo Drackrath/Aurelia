@@ -487,8 +487,8 @@ NoSavePersonalInfo=1
             }
         }
 
-        cmd.stdout(crate::infra::logging::relay::child_stdio());
-        cmd.stderr(crate::infra::logging::relay::child_stdio());
+        cmd.stdout(crate::logging::relay::child_stdio());
+        cmd.stderr(crate::logging::relay::child_stdio());
 
         tracing::info!(
             "Launching game (Native Windows): {:?} with args {:?}",
@@ -496,7 +496,7 @@ NoSavePersonalInfo=1
             args
         );
         match cmd.spawn() {
-            Ok(child) => Ok(crate::infra::logging::relay::attach(child).into()),
+            Ok(child) => Ok(crate::logging::relay::attach(child).into()),
             #[cfg(windows)]
             Err(e) if crate::launch::game_process::needs_elevation(&e) => {
                 self.spawn_windows_elevated(app, executable, args, game_working_dir, user_config)
@@ -556,8 +556,8 @@ NoSavePersonalInfo=1
         steam_enabled: bool,
         shaders: crate::launch::shaders::ShaderLaunch,
     ) -> Result<std::process::Child> {
-        use crate::infra::logging::{EventLogger, LaunchSession};
         use crate::launch::pipeline::{LaunchPipeline, PipelineContext};
+        use crate::logging::{EventLogger, LaunchSession};
 
         let mut ctx = PipelineContext::new(app.app_id);
         ctx.app = Some(app.clone());
@@ -637,8 +637,8 @@ NoSavePersonalInfo=1
                     }
                 }
 
-                cmd.stdout(crate::infra::logging::relay::child_stdio());
-                cmd.stderr(crate::infra::logging::relay::child_stdio());
+                cmd.stdout(crate::logging::relay::child_stdio());
+                cmd.stderr(crate::logging::relay::child_stdio());
 
                 tracing::info!(
                     "Launching game (Native): {:?} with args {:?}",
@@ -646,7 +646,7 @@ NoSavePersonalInfo=1
                     args
                 );
                 cmd.spawn()
-                    .map(crate::infra::logging::relay::attach)
+                    .map(crate::logging::relay::attach)
                     .context("failed to spawn native linux game")
             }
             LaunchTarget::WindowsProton => {

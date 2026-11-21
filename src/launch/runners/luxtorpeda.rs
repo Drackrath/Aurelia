@@ -12,8 +12,8 @@ use std::process::Command;
 
 use anyhow::anyhow;
 
-use crate::infra::runners::{CommandSpec, LaunchContext, Runner};
 use crate::launch::pipeline::{LaunchError, LaunchErrorKind};
+use crate::launch::runners::{CommandSpec, LaunchContext, Runner};
 
 pub struct LuxtorpedaRunner;
 
@@ -61,7 +61,7 @@ impl Runner for LuxtorpedaRunner {
 
         // Luxtorpeda (like Proton) wants a Steam client install path. Reuse Aurelia's
         // fake-steam trap so it resolves without a running Steam client.
-        crate::infra::runners::insert_fake_steam_trap(&mut env)?;
+        crate::launch::runners::insert_fake_steam_trap(&mut env)?;
 
         // Pass through display/session so the engine picker and game can open a window.
         for var in ["DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR"] {
@@ -116,8 +116,8 @@ impl Runner for LuxtorpedaRunner {
             cmd.current_dir(cwd);
         }
         cmd.envs(&spec.env);
-        cmd.stdout(crate::infra::logging::relay::child_stdio());
-        cmd.stderr(crate::infra::logging::relay::child_stdio());
+        cmd.stdout(crate::logging::relay::child_stdio());
+        cmd.stderr(crate::logging::relay::child_stdio());
 
         tracing::debug!(
             program = ?cmd.get_program(),
@@ -125,15 +125,13 @@ impl Runner for LuxtorpedaRunner {
             "luxtorpeda launch",
         );
 
-        cmd.spawn()
-            .map(crate::infra::logging::relay::attach)
-            .map_err(|e| {
-                LaunchError::new(
-                    LaunchErrorKind::Process,
-                    "failed to spawn luxtorpeda process",
-                )
-                .with_source(anyhow!(e))
-            })
+        cmd.spawn().map(crate::logging::relay::attach).map_err(|e| {
+            LaunchError::new(
+                LaunchErrorKind::Process,
+                "failed to spawn luxtorpeda process",
+            )
+            .with_source(anyhow!(e))
+        })
     }
 }
 

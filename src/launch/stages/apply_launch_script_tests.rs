@@ -1,5 +1,5 @@
 use super::*;
-use crate::infra::runners::CommandSpec;
+use crate::launch::runners::CommandSpec;
 use std::path::Path;
 use tempfile::tempdir;
 

@@ -1,5 +1,5 @@
-use aurelia::infra::runners::CommandSpec;
 use aurelia::launch::pipeline::{LaunchPipeline, PipelineContext};
+use aurelia::launch::runners::CommandSpec;
 use aurelia::launch::stages::preflight::PreflightStage;
 use std::path::Path;
 
@@ -37,8 +37,8 @@ async fn test_pipeline_preflight_prevents_spawn() {
 
 #[tokio::test]
 async fn test_spawn_process_failure_diagnostics() {
-    use aurelia::infra::runners::CommandSpec;
     use aurelia::launch::pipeline::{LaunchErrorKind, LaunchPipeline, PipelineContext};
+    use aurelia::launch::runners::CommandSpec;
     use aurelia::launch::stages::spawn_process::SpawnProcessStage;
 
     let mut pipeline = LaunchPipeline::new();
@@ -52,26 +52,26 @@ async fn test_spawn_process_failure_diagnostics() {
     // We need a dummy runner that will actually try to launch
     struct FailingRunner;
     #[async_trait::async_trait]
-    impl aurelia::infra::runners::Runner for FailingRunner {
+    impl aurelia::launch::runners::Runner for FailingRunner {
         fn name(&self) -> &str {
             "FailingRunner"
         }
         async fn prepare_prefix(
             &self,
-            _: &aurelia::infra::runners::LaunchContext,
+            _: &aurelia::launch::runners::LaunchContext,
         ) -> Result<(), aurelia::launch::pipeline::LaunchError> {
             Ok(())
         }
         async fn build_env(
             &self,
-            _: &aurelia::infra::runners::LaunchContext,
+            _: &aurelia::launch::runners::LaunchContext,
         ) -> Result<std::collections::HashMap<String, String>, aurelia::launch::pipeline::LaunchError>
         {
             Ok(std::collections::HashMap::new())
         }
         async fn build_command(
             &self,
-            _: &aurelia::infra::runners::LaunchContext,
+            _: &aurelia::launch::runners::LaunchContext,
         ) -> Result<CommandSpec, aurelia::launch::pipeline::LaunchError> {
             Ok(CommandSpec::default())
         }
@@ -106,8 +106,8 @@ async fn test_spawn_process_failure_diagnostics() {
 
 #[tokio::test]
 async fn test_spawn_failure_with_synthetic_lock_shows_hint() {
-    use aurelia::infra::runners::CommandSpec;
     use aurelia::launch::pipeline::{LaunchErrorKind, LaunchPipeline, PipelineContext};
+    use aurelia::launch::runners::CommandSpec;
     use aurelia::launch::stages::spawn_process::SpawnProcessStage;
 
     let tmp = tempfile::tempdir().unwrap();
@@ -124,26 +124,26 @@ async fn test_spawn_failure_with_synthetic_lock_shows_hint() {
 
     struct FailingRunner;
     #[async_trait::async_trait]
-    impl aurelia::infra::runners::Runner for FailingRunner {
+    impl aurelia::launch::runners::Runner for FailingRunner {
         fn name(&self) -> &str {
             "FailingRunner"
         }
         async fn prepare_prefix(
             &self,
-            _: &aurelia::infra::runners::LaunchContext,
+            _: &aurelia::launch::runners::LaunchContext,
         ) -> Result<(), aurelia::launch::pipeline::LaunchError> {
             Ok(())
         }
         async fn build_env(
             &self,
-            _: &aurelia::infra::runners::LaunchContext,
+            _: &aurelia::launch::runners::LaunchContext,
         ) -> Result<std::collections::HashMap<String, String>, aurelia::launch::pipeline::LaunchError>
         {
             Ok(std::collections::HashMap::new())
         }
         async fn build_command(
             &self,
-            _: &aurelia::infra::runners::LaunchContext,
+            _: &aurelia::launch::runners::LaunchContext,
         ) -> Result<CommandSpec, aurelia::launch::pipeline::LaunchError> {
             Ok(CommandSpec::default())
         }
@@ -191,10 +191,10 @@ async fn test_spawn_failure_with_synthetic_lock_shows_hint() {
 
 #[tokio::test]
 async fn test_launch_artifacts_generation() {
-    use aurelia::infra::logging::LaunchSession;
-    use aurelia::infra::runners::CommandSpec;
     use aurelia::launch::pipeline::{LaunchPipeline, PipelineContext};
+    use aurelia::launch::runners::CommandSpec;
     use aurelia::launch::stages::preflight::PreflightStage;
+    use aurelia::logging::LaunchSession;
     use tempfile::tempdir;
 
     let tmp_logs = tempdir().unwrap();

@@ -3,8 +3,8 @@ use std::fmt;
 
 use crate::core::config::LauncherConfig;
 use crate::core::models::{LibraryGame, UserAppConfig};
-use crate::infra::logging::{EventLogger, LaunchSession};
-use crate::infra::runners::{CommandSpec, Runner};
+use crate::launch::runners::{CommandSpec, Runner};
+use crate::logging::{EventLogger, LaunchSession};
 use crate::steam_client::LaunchInfo;
 use std::collections::HashMap;
 
@@ -120,14 +120,14 @@ pub struct PipelineContext {
     /// Per-game auto-fixups resolved by `ResolveGameFixupsStage` and merged into the
     /// launch environment by the runner. Empty when the game has no registry entry.
     pub game_fixups: crate::launch::fixups::GameFixups,
-    pub verification: crate::infra::logging::LaunchVerification,
+    pub verification: crate::logging::LaunchVerification,
 }
 
 impl PipelineContext {
     /// Log to the session event log.
     pub fn log_event(
         &self,
-        level: crate::infra::logging::LogLevel,
+        level: crate::logging::LogLevel,
         event_type: &str,
         message: String,
         stage: Option<String>,
@@ -147,7 +147,7 @@ impl PipelineContext {
         metadata: HashMap<String, String>,
     ) {
         self.log_event(
-            crate::infra::logging::LogLevel::Info,
+            crate::logging::LogLevel::Info,
             event_type,
             message,
             stage,
@@ -164,7 +164,7 @@ impl PipelineContext {
         metadata: HashMap<String, String>,
     ) {
         self.log_event(
-            crate::infra::logging::LogLevel::Error,
+            crate::logging::LogLevel::Error,
             event_type,
             message,
             stage,
@@ -175,10 +175,10 @@ impl PipelineContext {
     /// Snapshot pipeline state for a runner.
     pub fn to_runner_context(
         &mut self,
-    ) -> std::result::Result<crate::infra::runners::LaunchContext, LaunchError> {
+    ) -> std::result::Result<crate::launch::runners::LaunchContext, LaunchError> {
         let missing =
             |field: &str| LaunchError::new(LaunchErrorKind::Validation, format!("{field} missing"));
-        Ok(crate::infra::runners::LaunchContext {
+        Ok(crate::launch::runners::LaunchContext {
             app: self.app.as_ref().ok_or_else(|| missing("app"))?.clone(),
             launch_info: self
                 .launch_info
@@ -232,7 +232,7 @@ impl PipelineContext {
             graphics_stack: GraphicsStackInfo::default(),
             dll_resolutions: Vec::new(),
             game_fixups: crate::launch::fixups::GameFixups::default(),
-            verification: crate::infra::logging::LaunchVerification::default(),
+            verification: crate::logging::LaunchVerification::default(),
         }
     }
 
@@ -247,7 +247,7 @@ impl PipelineContext {
         metadata.insert("warning_code".to_string(), warning.code.clone());
         metadata.insert("warning_message".to_string(), warning.message.clone());
         self.log_event(
-            crate::infra::logging::LogLevel::Warn,
+            crate::logging::LogLevel::Warn,
             "compatibility_warning",
             warning.message.clone(),
             None,
@@ -689,7 +689,7 @@ impl LaunchPipeline {
         // Actually, let's run validators twice: early and late.
         // Or just let stages populate the context.
 
-        use crate::infra::logging::LaunchResult;
+        use crate::logging::LaunchResult;
 
         let total_start = std::time::Instant::now();
         let mut stage_durations = HashMap::new();
@@ -1071,7 +1071,7 @@ impl LaunchPipeline {
                         .collect();
                 }
 
-                let mut max_milestone = crate::infra::logging::StartupMilestone::None;
+                let mut max_milestone = crate::logging::StartupMilestone::None;
 
                 // Derive component paths from dll resolutions
                 let mut component_paths = HashMap::new();
@@ -1123,14 +1123,13 @@ impl LaunchPipeline {
                     }
 
                     // Update Milestone
-                    if let Some(m) = crate::infra::logging::detect_startup_milestone(line) {
+                    if let Some(m) = crate::logging::detect_startup_milestone(line) {
                         if m > max_milestone {
                             max_milestone = m;
                         }
                     }
 
-                    if let Some(evidence) = crate::infra::logging::classify_graphics_evidence(line)
-                    {
+                    if let Some(evidence) = crate::logging::classify_graphics_evidence(line) {
                         if !ctx
                             .graphics_stack
                             .graphics_stack_evidence
@@ -1513,7 +1512,7 @@ impl LaunchPipeline {
     fn write_summary_if_possible(
         &self,
         ctx: &mut PipelineContext,
-        result: crate::infra::logging::LaunchResult,
+        result: crate::logging::LaunchResult,
         failing_stage: Option<String>,
         total_duration_ms: u128,
         stage_durations_ms: HashMap<String, u128>,
@@ -1525,13 +1524,13 @@ impl LaunchPipeline {
                 .map(|r| r.name().to_string())
                 .unwrap_or_else(|| "Unknown".to_string());
 
-            let warnings = crate::infra::logging::check_environment_sanity(
+            let warnings = crate::logging::check_environment_sanity(
                 &spec.env,
                 &runner_name,
                 ctx.user_config.as_ref(),
             );
 
-            let env_snapshot = crate::infra::logging::EffectiveEnv {
+            let env_snapshot = crate::logging::EffectiveEnv {
                 runner_name,
                 profile_id: ctx.launch_info.as_ref().map(|l| l.id.clone()),
                 profile_name: ctx.launch_info.as_ref().map(|l| l.description.clone()),
@@ -1560,7 +1559,7 @@ impl LaunchPipeline {
 
             // Write Effective Launch Config
             if let Some(spec) = &ctx.command_spec {
-                use crate::infra::logging::{
+                use crate::logging::{
                     EffectiveCommandConfig, EffectiveGameConfig, EffectiveLaunchConfig,
                     EffectiveRunnerConfig, EffectiveSettingsConfig,
                 };
@@ -1646,7 +1645,7 @@ impl LaunchPipeline {
         if let Some(session) = &ctx.session {
             let timestamp = crate::core::utils::now_unix();
 
-            let summary = crate::infra::logging::LaunchSummary {
+            let summary = crate::logging::LaunchSummary {
                 session_id: session.id.to_string(),
                 app_id: ctx.app_id,
                 app_name: ctx.app.as_ref().map(|a| a.name.clone()),

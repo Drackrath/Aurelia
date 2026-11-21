@@ -730,7 +730,7 @@ fn install_dir_prefers_existing_then_pics() {
 
 #[test]
 fn launch_targets_lists_installed_builds_and_steam_modes() {
-    use crate::infra::runners::SteamMode;
+    use crate::launch::runners::SteamMode;
     let tmp = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(tmp.path().join("bin/x64")).unwrap();
     std::fs::write(tmp.path().join("bin/x64/factorio.exe"), "x").unwrap();

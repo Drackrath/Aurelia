@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use tempfile::tempdir;
 
-use crate::infra::logging::{EventLogger, LaunchSession};
-use crate::infra::runners::{CommandSpec, LaunchContext, Runner};
 use crate::launch::pipeline::{LaunchError, LaunchErrorKind, LaunchPipeline, PipelineContext};
+use crate::launch::runners::{CommandSpec, LaunchContext, Runner};
+use crate::logging::{EventLogger, LaunchSession};
 
 struct MockRunner {
     exit_immediately: bool,
@@ -123,7 +123,7 @@ async fn test_launch_verification_success() {
 #[cfg(unix)]
 #[tokio::test]
 async fn test_background_steam_signal_then_exit_within_grace_is_early_exit() {
-    use crate::infra::runners::wine_tkg::{ReadinessGrace, reclassify_after_grace};
+    use crate::launch::runners::wine_tkg::{ReadinessGrace, reclassify_after_grace};
 
     // Stand-in for Steam: writes its "readiness" artifact, stays alive briefly,
     // then crashes with a non-zero code — all within the grace window.
@@ -151,7 +151,7 @@ async fn test_background_steam_signal_then_exit_within_grace_is_early_exit() {
 #[cfg(unix)]
 #[tokio::test]
 async fn test_background_steam_alive_after_grace_is_ready() {
-    use crate::infra::runners::wine_tkg::{ReadinessGrace, reclassify_after_grace};
+    use crate::launch::runners::wine_tkg::{ReadinessGrace, reclassify_after_grace};
 
     let mut child = std::process::Command::new("sh")
         .arg("-c")

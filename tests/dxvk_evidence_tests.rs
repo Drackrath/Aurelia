@@ -1,4 +1,4 @@
-use aurelia::infra::logging::wine_capture::classify_graphics_evidence;
+use aurelia::logging::wine_capture::classify_graphics_evidence;
 
 #[test]
 fn test_new_dxvk_patterns() {

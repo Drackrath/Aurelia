@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use aurelia::infra::logging::{LaunchResult, LaunchSession, load_launch_summary};
 use aurelia::launch::pipeline::{LaunchError, LaunchErrorKind, LaunchPipeline, PipelineContext};
+use aurelia::logging::{LaunchResult, LaunchSession, load_launch_summary};
 use tempfile::tempdir;
 
 struct MockSuccessStage(&'static str);

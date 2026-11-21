@@ -245,7 +245,7 @@ impl LaunchSession {
 
     pub fn write_command_artifact(
         &self,
-        spec: &crate::infra::runners::CommandSpec,
+        spec: &crate::launch::runners::CommandSpec,
     ) -> anyhow::Result<()> {
         std::fs::create_dir_all(&self.log_dir)?;
         let mut content = format!("Program: {}\n", spec.program.display());

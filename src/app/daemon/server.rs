@@ -339,8 +339,8 @@ fn watches_daemon(argv: &[String]) -> bool {
 fn output_relay(
     argv: &[String],
     out_tx: &mpsc::UnboundedSender<OutChunk>,
-) -> aurelia::infra::logging::relay::Relay {
-    use aurelia::infra::logging::relay::{Relay, RelayStream};
+) -> aurelia::logging::relay::Relay {
+    use aurelia::logging::relay::{Relay, RelayStream};
     use clap::Parser;
 
     let verbosity = crate::app::cli::Cli::try_parse_from(argv).map_or(0, |cli| cli.verbose);
@@ -394,7 +394,7 @@ where
     let relay = output_relay(&argv, &out_tx);
     // Held until this request ends (including the disconnect early return).
     let _daemon_watch =
-        watches_daemon(&argv).then(|| aurelia::infra::logging::relay::watch_daemon(relay.clone()));
+        watches_daemon(&argv).then(|| aurelia::logging::relay::watch_daemon(relay.clone()));
 
     // Run the command with IO routed to this connection. Dropping `ctx` when the
     // scope ends closes `out_tx`, which ends `writer_task`.
@@ -407,8 +407,7 @@ where
             None => crate::run_argv(run_argv).await,
         }
     };
-    let command =
-        crate::app::output::scoped(ctx, aurelia::infra::logging::relay::scoped(relay, run));
+    let command = crate::app::output::scoped(ctx, aurelia::logging::relay::scoped(relay, run));
     tokio::pin!(command);
 
     // Run the command, but if the client's connection drops abort the command

@@ -1,7 +1,7 @@
 use crate::launch::pipeline::{LaunchError, LaunchErrorKind, PipelineContext, PipelineStage};
 use async_trait::async_trait;
 
-use crate::infra::runners::{CommandSpec, LaunchContext, Runner};
+use crate::launch::runners::{CommandSpec, LaunchContext, Runner};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -98,7 +98,7 @@ impl Runner for NativeRunner {
                     cmd.stdout(file);
                 }
                 None => {
-                    cmd.stdout(crate::infra::logging::relay::child_stdio());
+                    cmd.stdout(crate::logging::relay::child_stdio());
                 }
             }
             match session_log_file(spec, "AURELIA_STDERR_LOG") {
@@ -106,10 +106,10 @@ impl Runner for NativeRunner {
                     cmd.stderr(file);
                 }
                 None => {
-                    cmd.stderr(crate::infra::logging::relay::child_stdio());
+                    cmd.stderr(crate::logging::relay::child_stdio());
                 }
             }
-            cmd.spawn().map(crate::infra::logging::relay::attach)
+            cmd.spawn().map(crate::logging::relay::attach)
         };
         #[allow(unused_mut)]
         let mut result = spawn(&spec.program, None);
@@ -237,7 +237,7 @@ impl PipelineStage for ResolveComponentsStage {
         "ResolveComponents"
     }
     async fn execute(&self, ctx: &mut PipelineContext) -> std::result::Result<(), LaunchError> {
-        use crate::infra::runners::{LuxtorpedaRunner, WineTkgRunner};
+        use crate::launch::runners::{LuxtorpedaRunner, WineTkgRunner};
         use crate::steam_client::LaunchTarget;
 
         if ctx.runner.is_none() {

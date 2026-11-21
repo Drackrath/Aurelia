@@ -25,7 +25,7 @@ pub struct LaunchContext {
     /// Auto-resolved per-game fixups (env + DLL overrides) merged into the launch
     /// environment. Explicit user/per-game settings win over these on conflict.
     pub game_fixups: crate::launch::fixups::GameFixups,
-    pub verification_ptr: *mut crate::infra::logging::LaunchVerification, // HACK: for Runner to write diagnostics
+    pub verification_ptr: *mut crate::logging::LaunchVerification, // HACK: for Runner to write diagnostics
 }
 
 unsafe impl Send for LaunchContext {}
@@ -33,10 +33,7 @@ unsafe impl Sync for LaunchContext {}
 
 impl LaunchContext {
     /// Run `f` on the verification record.
-    pub fn with_verification(
-        &self,
-        f: impl FnOnce(&mut crate::infra::logging::LaunchVerification),
-    ) {
+    pub fn with_verification(&self, f: impl FnOnce(&mut crate::logging::LaunchVerification)) {
         if self.verification_ptr.is_null() {
             return;
         }

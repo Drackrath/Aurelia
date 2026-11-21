@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::infra::logging::{EventLogger, LaunchSession, LaunchSessionId, LogEvent, LogLevel};
+    use crate::logging::{EventLogger, LaunchSession, LaunchSessionId, LogEvent, LogLevel};
     use std::collections::{HashMap, HashSet};
     use std::path::PathBuf;
     use tempfile::tempdir;
@@ -90,7 +90,7 @@ mod tests {
 
     #[test]
     fn test_effective_env_redaction() {
-        use crate::infra::logging::EffectiveEnv;
+        use crate::logging::EffectiveEnv;
         let mut env_vars = HashMap::new();
         env_vars.insert("STEAM_TOKEN".to_string(), "secret123".to_string());
         env_vars.insert("REFRESH_TOKEN".to_string(), "abc-def".to_string());
@@ -121,7 +121,7 @@ mod tests {
 
     #[test]
     fn test_graphics_evidence_classification() {
-        use crate::infra::logging::wine_capture::classify_graphics_evidence;
+        use crate::logging::wine_capture::classify_graphics_evidence;
 
         let dxvk_line = "info:  DXVK: v2.3.1";
         assert!(
@@ -151,7 +151,7 @@ mod tests {
     #[test]
     fn test_environment_sanity_checks() {
         use crate::core::models::{GraphicsLayerConfig, UserAppConfig};
-        use crate::infra::logging::check_environment_sanity;
+        use crate::logging::check_environment_sanity;
 
         // Case 1: Baseline with unexpected overrides
         let mut env = HashMap::new();

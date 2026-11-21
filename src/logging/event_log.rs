@@ -1,4 +1,4 @@
-use crate::infra::logging::LaunchSession;
+use crate::logging::LaunchSession;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

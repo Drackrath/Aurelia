@@ -185,7 +185,7 @@ pub(crate) async fn cmd_launch_targets(app_id: u32, steam: bool, json: bool) -> 
 
     let user_configs = load_user_configs().await?;
     let steam = steam || aurelia::steam_client::forced_steam_reason(&game).is_some();
-    let (default_mode, _) = aurelia::infra::runners::resolve_steam_mode_for(
+    let (default_mode, _) = aurelia::launch::runners::resolve_steam_mode_for(
         user_configs.get(&app_id),
         &launcher_config,
         steam,

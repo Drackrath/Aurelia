@@ -1,5 +1,5 @@
 use super::*;
-use crate::infra::runners::CommandSpec;
+use crate::launch::runners::CommandSpec;
 use std::sync::{Arc, Mutex};
 
 fn ctx_for(lib: &std::path::Path, mode: ShaderPrecache) -> PipelineContext {
