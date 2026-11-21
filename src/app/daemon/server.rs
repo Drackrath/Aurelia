@@ -404,7 +404,7 @@ where
     let run = async move {
         match refusal {
             Some(msg) => report_refusal(&run_argv, &msg),
-            None => crate::run_argv(run_argv).await,
+            None => crate::app::run::run_argv(run_argv).await,
         }
     };
     let command = crate::app::output::scoped(ctx, aurelia::logging::relay::scoped(relay, run));
