@@ -1,0 +1,2521 @@
+===== aurelia =====
+Aurelia CLI Steam launcher
+Version: <version>
+
+Usage: aurelia [OPTIONS] <COMMAND>
+
+Commands:
+  login           Authenticate with Steam and persist the session
+  capabilities    Describe this build for drivers: commands, flags, JSON events, error types and exit codes, and the `--json` schema version. Offline. Without `--json` it prints a PowerShell-style list and error table. Name a command path (e.g. `capabilities config game`) for its flags, values and help
+  list            List games in your library
+  info            Show detailed information about a game
+  price           Show a game's price, optionally across regions
+  search          Search the store by title
+  deals           Discounted and top-selling games in a region
+  players         Current player count for an app
+  events          Store-wide sales and events currently running
+  news            Recent news (storefront web; no CM equivalent)
+  reviews         User reviews, paged (storefront web, no CM equivalent)
+  user            Profile by SteamID64, /profiles/ URL, friend name, `me`
+  wishlist        Your wishlist, or a friend's
+  similar         Games similar to a given app
+  install         Download and install a game
+  libraries       List the Steam library folders games can be installed into (one per drive/location). Use `--json` for tooling
+  update          List installed games with an update available, or update one by app id
+  play            Launch a game and wait for it to exit
+  shaders         Pre-compile a game's Vulkan shaders from its Steam pipeline cache (`steamapps/shadercache/<appid>`), as Steam's "Processing Vulkan shaders" does. `play` does this automatically unless `config shader-precache off`
+  launch-targets  List the ways an installed game can be launched: each installed build (native Linux / Windows) and, for Windows, each available Steam mode, with the `play` flags selecting it and which one plain `play` would pick
+  stop            Stop a running game previously launched with `aurelia play`
+  running         List the games Aurelia is currently running
+  uninstall       Uninstall a game
+  verify          Verify the integrity of an installed game
+  duplicates      List games installed in more than one Steam library
+  available       Report whether a game is installed and its files are present on disk
+  drm             Verify a game's DRM tickets headlessly
+  account         Show account details for the logged-in user
+  dlc             List a game's DLC
+  enable          Enable an installed DLC for its base game
+  disable         Disable a DLC for its base game
+  achievements    Show the logged-in user's achievements for a game
+  image           Download a game's cover/header artwork to the local image cache
+  move            Move an installed game to a different Steam library folder
+  relink          Relink an install to a different Steam library
+  import          Register an existing on-disk install with Steam
+  branches        List available beta branches for a game
+  set-branch      Switch a game to a different branch
+  set-language    Swap an installed game's language depots
+  depots          List depots for a game
+  manifests       List each depot's current manifest id per branch (version discovery for `downgrade`). Steam only exposes current ids — older ones live on SteamDB
+  downgrade       Install a specific (usually older) depot manifest and pin it — a downgrade
+  pin             Pin a game to its currently-installed manifests, locking Aurelia's updates
+  unpin           Remove a game's version pin (unlock Aurelia's updates)
+  launch-options  List a game's launch options
+  cloud           Manage Steam Cloud saves for a game
+  workshop        Manage Steam Workshop items for a game
+  proton          Download and manage Proton/Wine runtimes
+  steam-runtime   Install, repair, or inspect the master Windows Steam runtime prefix
+  luxtorpeda      Manage the optional luxtorpeda native-engine plugin
+  umu             Manage the optional umu-launcher plugin (Proton via umu)
+  scripts         Manage per-game launch scripts
+  collections     Manage Steam library collections (categories/groups)
+  friends         List friends, search for a SteamID, or add/remove friends
+  chat            Send and read direct chat messages
+  inventory       View your Steam inventory for a game
+  wallet          Show your Steam Wallet balance
+  market          Steam Community Market: prices, search, and your listings
+  config          Inspect launcher configuration
+  logout          Clear the stored session
+  daemon          Run the background session daemon serving other commands over a local socket
+  kill            Kill all running aurelia processes, including the session daemon
+  help            Print this message or the help of the given subcommand(s)
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+  -V, --version     Print version
+
+===== aurelia account =====
+Show account details for the logged-in user
+
+Usage: aurelia account [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia achievements =====
+Show the logged-in user's achievements for a game
+
+Usage: aurelia achievements [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -l, --lang <LANG>  Steam API language name. Defaults to the `aurelia config language` setting, or English
+  -j, --json         Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...   Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help         Print help
+
+===== aurelia appinfo =====
+Dump raw PICS appinfo sections (maintainer tool)
+
+Usage: aurelia appinfo [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia available =====
+Report whether a game is installed and its files are present on disk
+
+Usage: aurelia available [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia branches =====
+List available beta branches for a game
+
+Usage: aurelia branches [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia capabilities =====
+Describe this build for drivers: commands, flags, JSON events, error types and exit codes, and the `--json` schema version. Offline. Without `--json` it prints a PowerShell-style list and error table. Name a command path (e.g. `capabilities config game`) for its flags, values and help
+
+Usage: aurelia capabilities [OPTIONS] [PATH]...
+
+Arguments:
+  [PATH]...  Command path to describe, e.g. `config game`
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia chat =====
+Send and read direct chat messages
+
+Usage: aurelia chat [OPTIONS] <COMMAND>
+
+Commands:
+  send     Send a direct message to a friend (by SteamID64)
+  invite   Invite a friend (by SteamID64) into your running game
+  history  Show recent messages exchanged with a friend (by SteamID64)
+  open     Open an interactive live chat with a friend: type lines to send, incoming messages stream in. End with Ctrl-D (Ctrl-Z on Windows). With `--json`, emits one JSON event per line and reads message text from stdin lines
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia chat history =====
+Show recent messages exchanged with a friend (by SteamID64)
+
+Usage: aurelia chat history [OPTIONS] <STEAMID>
+
+Arguments:
+  <STEAMID>  
+
+Options:
+  -n, --count <COUNT>  How many recent messages to fetch [default: 20]
+  -j, --json           Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...     Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help           Print help
+
+===== aurelia chat invite =====
+Invite a friend (by SteamID64) into your running game
+
+Usage: aurelia chat invite [OPTIONS] --app <APP_ID> <STEAMID>
+
+Arguments:
+  <STEAMID>  
+
+Options:
+  -a, --app <APP_ID>       App id to invite to
+  -c, --connect <CONNECT>  Optional game connect string
+  -j, --json               Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...         Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help               Print help
+
+===== aurelia chat open =====
+Open an interactive live chat with a friend: type lines to send, incoming messages stream in. End with Ctrl-D (Ctrl-Z on Windows). With `--json`, emits one JSON event per line and reads message text from stdin lines
+
+Usage: aurelia chat open [OPTIONS] <STEAMID>
+
+Arguments:
+  <STEAMID>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia chat send =====
+Send a direct message to a friend (by SteamID64)
+
+Usage: aurelia chat send [OPTIONS] <STEAMID> <MESSAGE>...
+
+Arguments:
+  <STEAMID>     
+  <MESSAGE>...  The message text (all remaining words are joined with spaces)
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia cloud =====
+Manage Steam Cloud saves for a game
+
+Usage: aurelia cloud [OPTIONS] <COMMAND>
+
+Commands:
+  sync  Sync a game's Steam Cloud saves with the local save directory. With neither flag it syncs down then up; `--down`/`--up` restrict the direction
+  list  List a game's Steam Cloud files (name, size, modified time)
+  help  Print this message or the help of the given subcommand(s)
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia cloud list =====
+List a game's Steam Cloud files (name, size, modified time)
+
+Usage: aurelia cloud list [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia cloud sync =====
+Sync a game's Steam Cloud saves with the local save directory. With neither flag it syncs down then up; `--down`/`--up` restrict the direction
+
+Usage: aurelia cloud sync [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>
+          
+
+Options:
+  -u, --up
+          Only upload local saves to Steam
+
+  -d, --down
+          Only download saves from Steam
+
+  -p, --path <PATH>
+          Local save directory. Defaults to Aurelia's managed cloud root
+
+  -r, --resolve <RESOLVE>
+          Resolve diverged saves by taking this side (`cloud` or `local`) instead of reporting them. Omit to only detect conflicts and leave both copies
+
+          Possible values:
+          - cloud: Overwrite the local copy with the cloud copy
+          - local: Overwrite the cloud copy with the local copy
+
+  -j, --json
+          Emit output (and errors) as JSON. Works with every command
+
+  -v, --verbose...
+          Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+===== aurelia collections =====
+Manage Steam library collections (categories/groups)
+
+Usage: aurelia collections [OPTIONS] <COMMAND>
+
+Commands:
+  list    List all collections and their game counts (offline)
+  show    Show a collection's games (offline). Accepts a name or id
+  create  Create a new (static) collection (offline)
+  delete  Delete a collection (offline). Built-in favorite/hidden can't be deleted
+  rename  Rename a collection (offline)
+  add     Add one or more app ids to a collection (offline)
+  remove  Remove one or more app ids from a collection (offline)
+  pull    Download collections from your Steam account and merge them in (needs login)
+  push    Upload your local collections to your Steam account (needs login). This changes your real Steam library — confirm or pass `--yes`
+  sync    Pull then push — reconcile local and Steam collections (needs login). This changes your real Steam library — confirm or pass `--yes`
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia collections add =====
+Add one or more app ids to a collection (offline)
+
+Usage: aurelia collections add [OPTIONS] <NAME> <APP_IDS>...
+
+Arguments:
+  <NAME>        
+  <APP_IDS>...  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia collections create =====
+Create a new (static) collection (offline)
+
+Usage: aurelia collections create [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia collections delete =====
+Delete a collection (offline). Built-in favorite/hidden can't be deleted
+
+Usage: aurelia collections delete [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia collections list =====
+List all collections and their game counts (offline)
+
+Usage: aurelia collections list [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia collections pull =====
+Download collections from your Steam account and merge them in (needs login)
+
+Usage: aurelia collections pull [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia collections push =====
+Upload your local collections to your Steam account (needs login). This changes your real Steam library — confirm or pass `--yes`
+
+Usage: aurelia collections push [OPTIONS]
+
+Options:
+  -y, --yes         Skip the confirmation prompt. Required in `--json` mode
+      --force       Push even if never pulled
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia collections remove =====
+Remove one or more app ids from a collection (offline)
+
+Usage: aurelia collections remove [OPTIONS] <NAME> <APP_IDS>...
+
+Arguments:
+  <NAME>        
+  <APP_IDS>...  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia collections rename =====
+Rename a collection (offline)
+
+Usage: aurelia collections rename [OPTIONS] <NAME> <NEW_NAME>
+
+Arguments:
+  <NAME>      
+  <NEW_NAME>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia collections show =====
+Show a collection's games (offline). Accepts a name or id
+
+Usage: aurelia collections show [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia collections sync =====
+Pull then push — reconcile local and Steam collections (needs login). This changes your real Steam library — confirm or pass `--yes`
+
+Usage: aurelia collections sync [OPTIONS]
+
+Options:
+  -y, --yes         Skip the confirmation prompt. Required in `--json` mode
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia config =====
+Inspect launcher configuration
+
+Usage: aurelia config [OPTIONS] <COMMAND>
+
+Commands:
+  show                             Print the current launcher configuration as JSON
+  protons                          List detected Proton/Wine runtimes
+  presence                         View or set the Steam presence the daemon announces for friends/chat
+  language                         View or set the default Steam API language
+  persona-wait                     View or set `user` status wait
+  country                          View or set the price country
+  experimental                     View or set the experimental-features gate
+  steam-runtime-runner             View or set the Wine/Proton runner that hosts the Windows Steam runtime
+  steam-runtime-policy             View or set the global default Steam-integration policy for launches
+  install-resume                   View or set whether the daemon resumes interrupted installs when it starts. `manual` (default) waits for `install resume`; `auto` resumes `interrupted` backlog entries, never paused or stopped ones
+  download-limit                   View or set the global download limit
+  shader-precache                  View or set Vulkan shader pre-caching before `play` (Linux). `auto` (default) replays the game's Steam pipeline cache with `fossilize_replay` and points the driver caches at `steamapps/shadercache/<appid>`, like Steam; `off` leaves shaders to the game
+  hide-uninstalled-launch-options  View or set whether `launch-options` hides entries whose executable isn't installed, for installed games. `on` (default) lists only entries `play` can start; `off` lists every entry, with `installed` in `--json`
+  cloud-sync                       Steam Cloud sync around `play`
+  anticheat-auto-install           View or set whether `play` auto-installs a missing Proton anti-cheat runtime (EasyAntiCheat / BattlEye) for a game that ships one. `on` (default) downloads it before the Proton launch, like Steam; `off` never downloads (install manually with `aurelia proton anticheat`)
+  proxy                            View or set the network proxy used for all HTTP(S) communication
+  game                             View or set per-game launch settings (Proton version, platform)
+  clear-games                      Reset the per-game settings of ALL games to defaults (both stores)
+  help                             Print this message or the help of the given subcommand(s)
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia config anticheat-auto-install =====
+View or set whether `play` auto-installs a missing Proton anti-cheat runtime (EasyAntiCheat / BattlEye) for a game that ships one. `on` (default) downloads it before the Proton launch, like Steam; `off` never downloads (install manually with `aurelia proton anticheat`)
+
+Usage: aurelia config anticheat-auto-install [OPTIONS] [MODE]
+
+Arguments:
+  [MODE]
+          `on` or `off`. Omit to print the current setting
+
+          Possible values:
+          - on:  Enable the setting
+          - off: Disable the setting
+
+Options:
+  -j, --json
+          Emit output (and errors) as JSON. Works with every command
+
+  -v, --verbose...
+          Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+===== aurelia config clear-games =====
+Reset the per-game settings of ALL games to defaults (both stores)
+
+Usage: aurelia config clear-games [OPTIONS]
+
+Options:
+  -y, --yes         Skip the confirmation prompt
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia config cloud-sync =====
+Steam Cloud sync around `play`
+
+Usage: aurelia config cloud-sync [OPTIONS] [MODE]
+
+Arguments:
+  [MODE]
+          `on` or `off`; omit to print
+
+          Possible values:
+          - on:  Enable the setting
+          - off: Disable the setting
+
+Options:
+  -j, --json
+          Emit output (and errors) as JSON. Works with every command
+
+  -v, --verbose...
+          Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+===== aurelia config country =====
+View or set the price country
+
+Usage: aurelia config country [OPTIONS] [COUNTRY]
+
+Arguments:
+  [COUNTRY]  Two-letter ISO code; empty clears, omitted prints
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia config download-limit =====
+View or set the global download limit.
+
+Caps all game downloads together, in kbit/s (8000 = 1 MB/s). `0` or `off` removes the limit. Running downloads pick up a change within seconds.
+
+Usage: aurelia config download-limit [OPTIONS] [KBIT]
+
+Arguments:
+  [KBIT]
+          kbit/s, or `off`. Omit to print
+
+Options:
+  -j, --json
+          Emit output (and errors) as JSON. Works with every command
+
+  -v, --verbose...
+          Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+===== aurelia config experimental =====
+View or set the experimental-features gate.
+
+When enabled, unlocks experimental commands — currently `login --openid` (browser identity check) and `login --web-token` (web-surface auth). These prove identity or enable web-only commands (inventory/wallet/market) but cannot create the full client session that library/install/launch need. The `AURELIA_EXPERIMENTAL=1` environment variable enables them for a single run without persisting this setting. Omit the value to print it.
+
+Usage: aurelia config experimental [OPTIONS] [ENABLED]
+
+Arguments:
+  [ENABLED]
+          `true` or `false`. Omit to print the current setting
+          
+          [possible values: true, false]
+
+Options:
+  -j, --json
+          Emit output (and errors) as JSON. Works with every command
+
+  -v, --verbose...
+          Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+===== aurelia config game =====
+View or set per-game launch settings (Proton version, platform)
+
+Usage: aurelia config game [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>
+          
+
+Options:
+  -p, --proton <PROTON>
+          Set the Proton/Wine version this game launches with. Use a name from `aurelia proton list` (installed). Overrides the global default
+
+  -P, --clear-proton
+          Clear the per-game Proton version (fall back to the global default)
+
+  -t, --platform <PLATFORM>
+          Force the game's platform target (`windows` runs through Proton on Linux)
+          
+          [possible values: windows, linux]
+
+  -T, --no-platform
+          Clear the platform preference (back to auto-detection)
+
+      --clear
+          Reset ALL of this game's per-game settings to defaults (both stores)
+
+  -n, --native-engine
+          Route this game through the luxtorpeda native-engine plugin (Linux only; requires `aurelia luxtorpeda enable`)
+
+  -N, --no-native-engine
+          Clear the luxtorpeda routing (back to Aurelia's normal native/Proton selection)
+
+  -u, --umu
+          Route this game through the umu-launcher plugin (Proton via umu; Linux only; requires `aurelia umu enable`)
+
+  -U, --no-umu
+          Clear the umu routing (back to Aurelia's normal native/Proton selection)
+
+  -s, --launch-script <PATH>
+          Set a per-game launch script that wraps the resolved launch command. See `aurelia scripts`. Overrides the auto-detected `<script_dir>/<app_id>.sh`
+
+  -S, --no-launch-script
+          Clear the per-game launch script (falls back to the auto-detected script)
+
+  -r, --steam-runtime <auto|on|off>
+          Use the self-contained Windows Steam runtime for this game: `on` starts the master Steam client in Wine to satisfy Steamworks/DRM handshakes without the host Steam client. Requires `aurelia config steam-runtime-runner` and `aurelia steam-runtime install`. `auto` is the default (off)
+
+          Possible values:
+          - auto: Default behavior (currently off)
+          - on:   Start the master Steam client in Wine for this game's Steamworks/DRM handshake
+          - off:  Never use the master Steam runtime for this game
+
+  -m, --steam-prefix-mode <shared|per-game>
+          How the master Steam prefix backs this game: `shared` runs it in the master prefix directly; `per-game` copies Steam into the game's own prefix
+
+          Possible values:
+          - shared:   Run the game in the master Steam prefix directly
+          - per-game: Copy/symlink Steam into the game's own prefix
+
+      --launch-options <LINE>
+          Steam-style launch options for this game, e.g. `"PROTON_LOG=1 nice -n 5 %command% -windowed"`: leading `VAR=value` set the environment, words before `%command%` wrap the game, words after it (or all words without it) are game arguments
+
+      --no-launch-options
+          Clear this game's launch options
+
+      --cloud-sync <auto|on|off>
+          Per-game Steam Cloud sync on `play`
+
+          Possible values:
+          - auto: Follow `config cloud-sync`
+          - on:   Sync around `play`
+          - off:  Never sync around `play`
+
+  -j, --json
+          Emit output (and errors) as JSON. Works with every command
+
+  -v, --verbose...
+          Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+===== aurelia config hide-uninstalled-launch-options =====
+View or set whether `launch-options` hides entries whose executable isn't installed, for installed games. `on` (default) lists only entries `play` can start; `off` lists every entry, with `installed` in `--json`
+
+Usage: aurelia config hide-uninstalled-launch-options [OPTIONS] [MODE]
+
+Arguments:
+  [MODE]
+          `on` or `off`. Omit to print the current setting
+
+          Possible values:
+          - on:  Enable the setting
+          - off: Disable the setting
+
+Options:
+  -j, --json
+          Emit output (and errors) as JSON. Works with every command
+
+  -v, --verbose...
+          Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+===== aurelia config install-resume =====
+View or set whether the daemon resumes interrupted installs when it starts. `manual` (default) waits for `install resume`; `auto` resumes `interrupted` backlog entries, never paused or stopped ones
+
+Usage: aurelia config install-resume [OPTIONS] [MODE]
+
+Arguments:
+  [MODE]
+          `manual` or `auto`. Omit to print the current setting
+
+          Possible values:
+          - manual: Wait for `install resume`
+          - auto:   Daemon resumes interrupted installs
+
+Options:
+  -j, --json
+          Emit output (and errors) as JSON. Works with every command
+
+  -v, --verbose...
+          Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+===== aurelia config language =====
+View or set the default Steam API language
+
+Usage: aurelia config language [OPTIONS] [LANG]
+
+Arguments:
+  [LANG]  The default Steam API language name (e.g. `german`, `french`, `schinese`) used by `aurelia achievements` when `--lang` is not given. Omit the value to print the current setting
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia config persona-wait =====
+View or set `user` status wait
+
+Usage: aurelia config persona-wait [OPTIONS] [SECONDS]
+
+Arguments:
+  [SECONDS]  Seconds (1-300); omit to print
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia config presence =====
+View or set the Steam presence the daemon announces for friends/chat
+
+Usage: aurelia config presence [OPTIONS] [MODE]
+
+Arguments:
+  [MODE]  `online`, or `offline` (invisible: you appear offline but still sync friends and receive chat). Omit to print the current setting [possible values: online, offline]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia config protons =====
+List detected Proton/Wine runtimes
+
+Usage: aurelia config protons [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia config proxy =====
+View or set the network proxy used for all HTTP(S) communication.
+
+Applies to the Steam web endpoints, depot downloads, and Proton/plugin release lookups. Takes effect on the next command (and requires restarting the session daemon). An explicit `HTTP(S)_PROXY`/`ALL_PROXY` environment variable still overrides this. The Steam CM connection is not proxied.
+
+Usage: aurelia config proxy [OPTIONS] [URL]
+
+Arguments:
+  [URL]
+          Proxy URL, e.g. `http://host:8080`, `http://user:pass@host:8080`, or `socks5://host:1080`. Omit to print the current setting
+
+Options:
+  -n, --no-proxy <LIST>
+          Comma-separated hosts/domains that bypass the proxy (`NO_PROXY`), e.g. `localhost,127.0.0.1,.internal`
+
+  -c, --clear
+          Clear the configured proxy (revert to a direct connection)
+
+  -j, --json
+          Emit output (and errors) as JSON. Works with every command
+
+  -v, --verbose...
+          Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+===== aurelia config shader-precache =====
+View or set Vulkan shader pre-caching before `play` (Linux). `auto` (default) replays the game's Steam pipeline cache with `fossilize_replay` and points the driver caches at `steamapps/shadercache/<appid>`, like Steam; `off` leaves shaders to the game
+
+Usage: aurelia config shader-precache [OPTIONS] [MODE]
+
+Arguments:
+  [MODE]
+          `auto` or `off`. Omit to print the current setting
+
+          Possible values:
+          - auto: Replay pipelines before launch
+          - off:  Leave shaders to the game
+
+Options:
+  -j, --json
+          Emit output (and errors) as JSON. Works with every command
+
+  -v, --verbose...
+          Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+===== aurelia config show =====
+Print the current launcher configuration as JSON
+
+Usage: aurelia config show [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia config steam-runtime-policy =====
+View or set the global default Steam-integration policy for launches.
+
+Applied when a game's own policy (`config game <id> --steam-runtime …`) is `auto`. Controls how `aurelia play --steam` provides Steam DRM / Steamworks: `auto` prefers the host Steam client and falls back to the in-Wine Steam runtime when no host Steam is installed; `on` always uses the in-Wine runtime; `off` never does (host Steam only). Omit the value to print the current setting.
+
+Usage: aurelia config steam-runtime-policy [OPTIONS] [POLICY]
+
+Arguments:
+  [POLICY]
+          `auto`, `on`, or `off`. Omit to print the current setting
+
+          Possible values:
+          - auto: Default behavior (currently off)
+          - on:   Start the master Steam client in Wine for this game's Steamworks/DRM handshake
+          - off:  Never use the master Steam runtime for this game
+
+Options:
+  -j, --json
+          Emit output (and errors) as JSON. Works with every command
+
+  -v, --verbose...
+          Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+===== aurelia config steam-runtime-runner =====
+View or set the Wine/Proton runner that hosts the Windows Steam runtime.
+
+Used by `steam-runtime install`/`repair` to drive `SteamSetup.exe` and the background Steam client under a bare Wine. Accepts an installed runtime name (see `aurelia proton list`) such as `GE-Proton9-20` or `experimental`, or an absolute path to a Wine build. A Proton tree is fine — its bundled bare Wine is used automatically. Pass an empty value to clear it.
+
+Usage: aurelia config steam-runtime-runner [OPTIONS] [RUNNER]
+
+Arguments:
+  [RUNNER]
+          Installed runtime name or absolute Wine path. Omit to print the current setting; pass `""` to clear it
+
+Options:
+  -j, --json
+          Emit output (and errors) as JSON. Works with every command
+
+  -v, --verbose...
+          Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+===== aurelia daemon =====
+Run the background session daemon serving other commands over a local socket
+
+Usage: aurelia daemon [OPTIONS] [COMMAND]
+
+Commands:
+  stop  Stop running aurelia daemon(s). With a PID, stop only that daemon
+  list  List running aurelia daemon(s) with their PID
+  help  Print this message or the help of the given subcommand(s)
+
+Options:
+  -s, --socket <SOCKET>  Override the socket/pipe path (also settable via `AURELIA_DAEMON_SOCKET`)
+  -j, --json             Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...       Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help             Print help
+
+===== aurelia daemon list =====
+List running aurelia daemon(s) with their PID
+
+Usage: aurelia daemon list [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia daemon stop =====
+Stop running aurelia daemon(s). With a PID, stop only that daemon
+
+Usage: aurelia daemon stop [OPTIONS] [PID]
+
+Arguments:
+  [PID]  The daemon PID to stop (from `aurelia daemon list`). Omit to stop all
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia deals =====
+Discounted and top-selling games in a region
+
+Usage: aurelia deals [OPTIONS]
+
+Options:
+  -s, --scope <SCOPE>
+          Which slice of the store to list
+
+          Possible values:
+          - discounted-top-sellers: Discounted items among regional top sellers
+          - top-sellers:            Regional top sellers, discounted or not
+          - specials:               Anything discounted at least `--min-discount`
+          
+          [default: discounted-top-sellers]
+
+  -m, --min-discount <MIN_DISCOUNT>
+          Minimum discount percent for specials
+          
+          [default: 1]
+
+  -n, --count <COUNT>
+          Maximum results
+          
+          [default: 20]
+
+  -o, --start <START>
+          Result offset for paging
+          
+          [default: 0]
+
+  -c, --country <COUNTRY>
+          Country code for prices
+
+  -l, --lang <LANG>
+          Steam API language name for names
+
+  -j, --json
+          Emit output (and errors) as JSON. Works with every command
+
+  -v, --verbose...
+          Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+===== aurelia depots =====
+List depots for a game
+
+Usage: aurelia depots [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia disable =====
+Disable a DLC for its base game
+
+Usage: aurelia disable [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -r, --restart-steam  Stop Steam while applying the change, then restart it (Windows and Linux)
+  -j, --json           Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...     Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help           Print help
+
+===== aurelia dlc =====
+List a game's DLC
+
+Usage: aurelia dlc [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia downgrade =====
+Install a specific (usually older) depot manifest and pin it — a downgrade
+
+Usage: aurelia downgrade [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  App id to downgrade
+
+Options:
+  -d, --depot <DEPOT_ID>
+          Target depot id (repeatable). Paired by position with a bare `--manifest`
+  -m, --manifest <MANIFEST_ID>
+          Target manifest id (repeatable). Either a bare id (paired by position with `--depot`) or the combined `<depot>:<manifest>` form
+  -b, --branch <BRANCH>
+          Branch whose build id to record in the appmanifest (default: public)
+  -w, --branch-password <BRANCH_PASSWORD>
+          Password for a protected branch (recorded only; see the downgrade docs)
+  -l, --library <LIBRARY>
+          Steam library folder (drive/location) to install into
+  -V, --verify
+          Verify the install after downloading (integrity pass)
+  -N, --no-pin
+          Don't pin after downgrading (Aurelia's update commands may re-upgrade it)
+  -j, --json
+          Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...
+          Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help
+          Print help
+
+===== aurelia drm =====
+Verify a game's DRM tickets headlessly
+
+Usage: aurelia drm [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia duplicates =====
+List games installed in more than one Steam library.
+
+A duplicate leaves two appmanifests disagreeing about what is installed, which makes the game report an available update on every check. Prints the redundant copies and the commands to remove them; deletes nothing itself.
+
+Usage: aurelia duplicates [OPTIONS]
+
+Options:
+  -j, --json
+          Emit output (and errors) as JSON. Works with every command
+
+  -v, --verbose...
+          Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+===== aurelia enable =====
+Enable an installed DLC for its base game
+
+Usage: aurelia enable [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -r, --restart-steam  Stop Steam while applying the change, then restart it, so the running client picks it up (Windows and Linux). Steam reads DLC state only at startup
+  -j, --json           Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...     Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help           Print help
+
+===== aurelia events =====
+Store-wide sales and events currently running
+
+Usage: aurelia events [OPTIONS]
+
+Options:
+  -c, --country <COUNTRY>  Country code the events apply to
+  -j, --json               Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...         Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help               Print help
+
+===== aurelia friends =====
+List friends, search for a SteamID, or add/remove friends
+
+Usage: aurelia friends [OPTIONS] [COMMAND]
+
+Commands:
+  list    List your friends (the default when no subcommand is given)
+  search  Show a user by id, URL, name
+  add     Send a friend request (same identifiers as search)
+  remove  Remove a friend, or cancel/decline a pending request (by SteamID64)
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia friends add =====
+Send a friend request (same identifiers as search)
+
+Usage: aurelia friends add [OPTIONS] <QUERY>
+
+Arguments:
+  <QUERY>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia friends list =====
+List your friends (the default when no subcommand is given)
+
+Usage: aurelia friends list [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia friends remove =====
+Remove a friend, or cancel/decline a pending request (by SteamID64)
+
+Usage: aurelia friends remove [OPTIONS] <STEAMID>
+
+Arguments:
+  <STEAMID>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia friends search =====
+Show a user by id, URL, name
+
+Usage: aurelia friends search [OPTIONS] <QUERY>
+
+Arguments:
+  <QUERY>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia image =====
+Download a game's cover/header artwork to the local image cache
+
+Usage: aurelia image [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -o, --output <OUTPUT>  Write the image to this path instead of the cache directory
+  -f, --force            Re-download even if a cached copy already exists
+  -l, --list             List every store asset URL instead of downloading
+  -p, --probe            With `--list`: HEAD-check each URL
+  -j, --json             Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...       Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help             Print help
+
+===== aurelia import =====
+Register an existing on-disk install with Steam
+
+Usage: aurelia import [OPTIONS] <APP_ID> <LIBRARY>
+
+Arguments:
+  <APP_ID>   
+  <LIBRARY>  Steam library root whose `steamapps/common/<installdir>` holds the files
+
+Options:
+  -p, --platform <PLATFORM>  Depot platform whose files are present. Defaults to the current OS [possible values: windows, linux]
+  -r, --restart-steam        Stop Steam for the duration and restart it afterward
+  -j, --json                 Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...           Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help                 Print help
+
+===== aurelia info =====
+Show detailed information about a game
+
+Usage: aurelia info [OPTIONS] <APP_IDS>...
+
+Arguments:
+  <APP_IDS>...  One or more app ids. Multiple ids are fetched over a *single* Steam logon (one batched StoreBrowse call) — far cheaper than running `info` once per id. With `--json`, one id yields an object and several yield an array
+
+Options:
+  -e, --extended           Also show storefront-only fields that have no CM-protocol source: system requirements, Metacritic, website and store genres/categories. One extra HTTPS request per app
+  -n, --no-cache           Bypass the local metadata cache and fetch fresh data from Steam. By default `info` serves cached store metadata (TTL via `AURELIA_INFO_CACHE_TTL`, default 6h) to avoid a Steam logon per call
+  -l, --lang <LANG>        Steam API language name for store text (descriptions, requirements). Defaults to the `aurelia config language` setting, or English
+  -c, --country <COUNTRY>  Price country code; defaults to config, locale, US
+  -j, --json               Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...         Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help               Print help
+
+===== aurelia install =====
+Download and install a game
+
+Usage: aurelia install [OPTIONS] [APP_ID]
+       aurelia install <COMMAND>
+
+Commands:
+  list    List running installs and the backlog (paused, aborted, interrupted)
+  stop    Stop a running install by app id. It stays in the backlog as `aborted`
+  pause   Pause a running install, keeping what's on disk. Resume it with `install resume`; automatic resume never picks it up
+  resume  Resume a backlog install with the options it was started with, reusing the files already on disk
+  forget  Remove an install from the backlog
+  help    Print this message or the help of the given subcommand(s)
+
+Arguments:
+  [APP_ID]  App id to install. Auto-detected platform unless --platform given
+
+Options:
+  -p, --platform <PLATFORM>  Depot platform to install. Auto-detected if omitted [possible values: windows, linux]
+  -r, --restart-steam        When installing a DLC, restart the Steam client afterward so the running client picks up the change (Windows and Linux). Without this it only warns
+  -d, --dry-run              Don't install — just report the estimated download and on-disk size (from PICS, no files fetched). Pair with `--json` for tooling
+  -l, --library <LIBRARY>    Steam library folder (drive/location) to install into. A library root containing a `steamapps` directory, as listed by `aurelia libraries`. Defaults to the configured `steam_library_path`
+  -j, --json                 Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...           Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help                 Print help
+
+===== aurelia install forget =====
+Remove an install from the backlog
+
+Usage: aurelia install forget [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -d, --delete-files  Also delete its partial files (never a DLC's or a finished game's folder)
+  -j, --json          Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...    Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help          Print help
+
+===== aurelia install list =====
+List running installs and the backlog (paused, aborted, interrupted)
+
+Usage: aurelia install list [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia install pause =====
+Pause a running install, keeping what's on disk. Resume it with `install resume`; automatic resume never picks it up
+
+Usage: aurelia install pause [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia install resume =====
+Resume a backlog install with the options it was started with, reusing the files already on disk
+
+Usage: aurelia install resume [OPTIONS] [APP_ID]
+
+Arguments:
+  [APP_ID]  App id to resume
+
+Options:
+  -a, --all         Resume every backlog entry, one after another
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia install stop =====
+Stop a running install by app id. It stays in the backlog as `aborted`
+
+Usage: aurelia install stop [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia inventory =====
+View your Steam inventory for a game
+
+Usage: aurelia inventory [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -c, --context <CONTEXT>  Inventory context id (default 2; Steam community items use 6) [default: 2]
+  -j, --json               Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...         Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help               Print help
+
+===== aurelia kill =====
+Kill all running aurelia processes, including the session daemon
+
+Usage: aurelia kill [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia launch-options =====
+List a game's launch options
+
+Usage: aurelia launch-options [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia launch-targets =====
+List the ways an installed game can be launched: each installed build (native Linux / Windows) and, for Windows, each available Steam mode, with the `play` flags selecting it and which one plain `play` would pick
+
+Usage: aurelia launch-targets [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -s, --steam       Compute the default as for `play --steam`
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia libraries =====
+List the Steam library folders games can be installed into (one per drive/location). Use `--json` for tooling
+
+Usage: aurelia libraries [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia list =====
+List games in your library
+
+Usage: aurelia list [OPTIONS]
+
+Options:
+  -i, --installed                Only show installed games
+  -s, --search <SEARCH>          Filter by case-insensitive substring of the game name
+  -c, --collection <COLLECTION>  Only show games in the named collection (by name or id). Static collections only — dynamic (filter-based) ones can't be resolved offline
+  -o, --online                   Show an ONLINE column indicating whether each game appears to require an online connection (inferred from Steam store categories). This fetches PICS appinfo per game, so it is slower than a plain listing
+  -u, --check-updates            Compute `update_available` for installed games by comparing local and remote depot manifests (applies to owned *and* Family-Shared games). Requires a connection and a manifest fetch per game, so it is slower than a plain listing; off by default
+  -j, --json                     Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...               Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help                     Print help
+
+===== aurelia login =====
+Authenticate with Steam and persist the session
+
+Usage: aurelia login [OPTIONS]
+
+Options:
+  -u, --username <USERNAME>  Steam account name (prompted if omitted)
+  -p, --password <PASSWORD>  Password (prompted, or AURELIA_PASSWORD)
+  -g, --guard <GUARD>        Steam Guard code, if known
+  -q, --qr                   Log in via Steam Mobile QR code
+  -t, --timeout <SECS>       With `--qr`: give up after this many seconds without approval (default 600). With `--json`, a `cancel` line or EOF on stdin also ends the wait
+  -c, --code                 Type the Guard code instead of app approval [aliases: --pin]
+  -H, --health               Report session health without logging in
+  -r, --reconnect            Re-establish the daemon session (daemon required)
+  -j, --json                 Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...           Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help                 Print help
+
+===== aurelia logout =====
+Clear the stored session
+
+Usage: aurelia logout [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia luxtorpeda =====
+Manage the optional luxtorpeda native-engine plugin
+
+Usage: aurelia luxtorpeda [OPTIONS] <COMMAND>
+
+Commands:
+  enable     Enable the plugin (sets the master toggle; games still opt in per-game)
+  disable    Disable the plugin. Games pinned to it fall back to normal native/Proton launch
+  install    Download (or re-download) the latest luxtorpeda client into Aurelia's data dir
+  update     Re-fetch the latest luxtorpeda client, replacing the installed payload
+  status     Show whether the plugin is enabled and which version (if any) is installed
+  path       Use an externally-managed luxtorpeda install instead of the managed download. Pass a directory to set it (disables downloading), omit args to show the current value, or `--clear` to revert to the managed download
+  uninstall  Remove the downloaded luxtorpeda payload from disk
+  help       Print this message or the help of the given subcommand(s)
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia luxtorpeda disable =====
+Disable the plugin. Games pinned to it fall back to normal native/Proton launch
+
+Usage: aurelia luxtorpeda disable [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia luxtorpeda enable =====
+Enable the plugin (sets the master toggle; games still opt in per-game)
+
+Usage: aurelia luxtorpeda enable [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia luxtorpeda install =====
+Download (or re-download) the latest luxtorpeda client into Aurelia's data dir
+
+Usage: aurelia luxtorpeda install [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia luxtorpeda path =====
+Use an externally-managed luxtorpeda install instead of the managed download. Pass a directory to set it (disables downloading), omit args to show the current value, or `--clear` to revert to the managed download
+
+Usage: aurelia luxtorpeda path [OPTIONS] [PATH]
+
+Arguments:
+  [PATH]  Directory of an existing luxtorpeda install (contains `toolmanifest.vdf`)
+
+Options:
+  -c, --clear       Clear the custom path and use Aurelia's managed download instead
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia luxtorpeda status =====
+Show whether the plugin is enabled and which version (if any) is installed
+
+Usage: aurelia luxtorpeda status [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia luxtorpeda uninstall =====
+Remove the downloaded luxtorpeda payload from disk
+
+Usage: aurelia luxtorpeda uninstall [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia luxtorpeda update =====
+Re-fetch the latest luxtorpeda client, replacing the installed payload
+
+Usage: aurelia luxtorpeda update [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia manifests =====
+List each depot's current manifest id per branch (version discovery for `downgrade`). Steam only exposes current ids — older ones live on SteamDB
+
+Usage: aurelia manifests [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -d, --depot <DEPOT>  Only show this depot
+  -j, --json           Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...     Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help           Print help
+
+===== aurelia market =====
+Steam Community Market: prices, search, and your listings
+
+Usage: aurelia market [OPTIONS] <COMMAND>
+
+Commands:
+  price     Item price (community web; no CM equivalent)
+  search    Search the market (community web; no CM equivalent)
+  listings  Show your active market listings and open buy orders
+  help      Print this message or the help of the given subcommand(s)
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia market listings =====
+Show your active market listings and open buy orders
+
+Usage: aurelia market listings [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia market price =====
+Item price (community web; no CM equivalent)
+
+Usage: aurelia market price [OPTIONS] <APP_ID> <NAME>
+
+Arguments:
+  <APP_ID>  
+  <NAME>    Exact market hash name (case-sensitive), e.g. "Mann Co. Supply Crate Key"
+
+Options:
+  -c, --currency <CURRENCY>  Steam currency id (1=USD, 2=GBP, 3=EUR, …) [default: 1]
+  -j, --json                 Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...           Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help                 Print help
+
+===== aurelia market search =====
+Search the market (community web; no CM equivalent)
+
+Usage: aurelia market search [OPTIONS] [QUERY]
+
+Arguments:
+  [QUERY]  Free-text query (optional)
+
+Options:
+  -a, --app-id <APP_ID>  Restrict to one game by app id
+  -n, --count <COUNT>    Maximum results to return [default: 20]
+  -j, --json             Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...       Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help             Print help
+
+===== aurelia move =====
+Move an installed game to a different Steam library folder
+
+Usage: aurelia move [OPTIONS] <APP_ID> <LIBRARY>
+
+Arguments:
+  <APP_ID>   
+  <LIBRARY>  Destination Steam library folder (its root, containing `steamapps/`), e.g. `D:\SteamLibrary`. Must already be a Steam library
+
+Options:
+  -r, --restart-steam  Stop Steam for the duration of the move and restart it afterward. Steam overwrites its data files on exit, so moving while it runs is unsafe; without this, the move refuses to run while Steam is open
+  -j, --json           Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...     Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help           Print help
+
+===== aurelia news =====
+Recent news (storefront web; no CM equivalent)
+
+Usage: aurelia news [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -n, --count <COUNT>            Maximum items [default: 10]
+  -m, --max-length <MAX_LENGTH>  Characters of body text to keep [default: 300]
+  -j, --json                     Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...               Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help                     Print help
+
+===== aurelia pin =====
+Pin a game to its currently-installed manifests, locking Aurelia's updates
+
+Usage: aurelia pin [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia play =====
+Launch a game and wait for it to exit
+
+Usage: aurelia play [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>
+          
+
+Options:
+  -p, --proton <PROTON>
+          Force a specific Proton/Wine runner (Linux only; implies Windows target)
+
+  -w, --windows
+          Run the Windows executable directly with no Proton/Wine layer. Always implied when running on Windows
+
+  -n, --native-engine
+          Route this launch through the luxtorpeda native-engine plugin (Linux only). Installs the plugin on first use; see `aurelia luxtorpeda`
+
+  -u, --umu
+          Wrap this launch through the umu-launcher plugin (Proton via `umu-run`, Linux only). Installs the plugin on first use; see `aurelia umu`. Combine with `--proton` to pick the Proton build umu runs
+
+  -x, --script <PATH>
+          Wrap this launch with a specific launch script, overriding the per-game config and the auto-detected `<script_dir>/<app_id>.sh`. The script runs with the resolved launch command as its arguments. See `aurelia scripts`
+
+  -X, --no-script
+          Bypass all launch scripts for this launch (ignore the per-game config and any auto-detected script)
+
+  -s, --steam
+          Run with real Steam integration instead of standalone mode: bridge to the host Steam client (started silently if not running) so Steamworks online features work. Implied for Family-Shared games, which require it
+
+  -t, --platform <PLATFORM>
+          Run this installed build (`linux` native or `windows` via Proton), overriding auto-detection for this launch. See `aurelia launch-targets`
+          
+          [possible values: windows, linux]
+
+  -m, --steam-mode <STEAM_MODE>
+          Steam integration for a Windows build, for this launch only: `runtime` (in-Wine Steam), `host` (bridge to host Steam) or `none` (standalone). Overrides the configured Steam-runtime policy
+
+          Possible values:
+          - runtime: The in-Wine Steam runtime
+          - host:    Bridge to the host Steam client
+          - none:    Standalone, no Steam client
+
+      --launch-option <ID>
+          Start this entry from `aurelia launch-options`, by its id, instead of the default one
+
+  -N, --no-update
+          Skip the automatic update check and install before launching
+
+  -k, --skip-shaders
+          Launch without pre-compiling Vulkan shaders first (like Steam's "Skip"). Shaders then compile while the game runs
+
+  -L, --launch-timeout <SECS>
+          How long to wait for a game started through the in-Wine Steam to appear, in seconds (default 300). Time Steam spends processing Vulkan shaders doesn't count
+
+  -j, --json
+          Emit output (and errors) as JSON. Works with every command
+
+  -v, --verbose...
+          Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+===== aurelia players =====
+Current player count for an app
+
+Usage: aurelia players [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia price =====
+Show a game's price, optionally across regions
+
+Usage: aurelia price [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -r, --compare <COMPARE>  Country codes to compare, comma-separated
+  -c, --country <COUNTRY>  Country code for a single-region lookup
+  -l, --lang <LANG>        Steam API language name for the game's name
+  -j, --json               Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...         Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help               Print help
+
+===== aurelia proton =====
+Download and manage Proton/Wine runtimes
+
+Usage: aurelia proton [OPTIONS] <COMMAND>
+
+Commands:
+  list       List installable runtimes (Valve + GE) and what's already installed
+  install    Download and install a runtime by name (from `proton list`)
+  uninstall  Uninstall an installed custom (GE) runtime from compatibilitytools.d
+  default    Set the global default Proton/Wine version (used when a game has none set)
+  mappings   Find Steam mappings to missing tools
+  anticheat  Install a Proton anti-cheat runtime
+  help       Print this message or the help of the given subcommand(s)
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia proton anticheat =====
+Install a Proton anti-cheat runtime
+
+Usage: aurelia proton anticheat [OPTIONS] <RUNTIME>
+
+Arguments:
+  <RUNTIME>
+          Which runtime to install
+
+          Possible values:
+          - eac:      Proton EasyAntiCheat Runtime
+          - battleye: Proton BattlEye Runtime
+
+Options:
+  -j, --json
+          Emit output (and errors) as JSON. Works with every command
+
+  -v, --verbose...
+          Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+===== aurelia proton default =====
+Set the global default Proton/Wine version (used when a game has none set)
+
+Usage: aurelia proton default [OPTIONS] <VERSION>
+
+Arguments:
+  <VERSION>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia proton install =====
+Download and install a runtime by name (from `proton list`)
+
+Usage: aurelia proton install [OPTIONS] <VERSION>
+
+Arguments:
+  <VERSION>  Runtime name, e.g. `GE-Proton9-20` or `Proton 9.0`
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia proton list =====
+List installable runtimes (Valve + GE) and what's already installed
+
+Usage: aurelia proton list [OPTIONS]
+
+Options:
+  -i, --installed   Only show what's installed on disk (skips the GitHub/Valve lookup)
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia proton mappings =====
+Find Steam mappings to missing tools
+
+Usage: aurelia proton mappings [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia proton uninstall =====
+Uninstall an installed custom (GE) runtime from compatibilitytools.d
+
+Usage: aurelia proton uninstall [OPTIONS] <VERSION>
+
+Arguments:
+  <VERSION>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia relink =====
+Relink an install to a different Steam library
+
+Usage: aurelia relink [OPTIONS] <APP_ID> <LIBRARY>
+
+Arguments:
+  <APP_ID>   
+  <LIBRARY>  Destination Steam library root (containing `steamapps/`)
+
+Options:
+  -r, --restart-steam  Stop Steam for the duration and restart it afterward
+  -j, --json           Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...     Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help           Print help
+
+===== aurelia reviews =====
+User reviews, paged (storefront web, no CM equivalent)
+
+Usage: aurelia reviews [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -f, --filter <FILTER>      `recent`, `updated` or `all` (score-weighted) [default: recent]
+  -t, --type <REVIEW_TYPE>   `all`, `positive` or `negative` [default: all]
+  -p, --purchase <PURCHASE>  `all`, `steam` or `non_steam_purchase` [default: all]
+  -n, --count <COUNT>        Maximum reviews per page (up to 100) [default: 10]
+  -u, --cursor <CURSOR>      Cursor from a previous page's JSON
+  -l, --lang <LANG>          Steam API language name, or `all`
+  -j, --json                 Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...           Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help                 Print help
+
+===== aurelia running =====
+List the games Aurelia is currently running
+
+Usage: aurelia running [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia scripts =====
+Manage per-game launch scripts
+
+Usage: aurelia scripts [OPTIONS] <COMMAND>
+
+Commands:
+  dir     Print the resolved launch-script directory (`AURELIA_SCRIPT_DIR` or `<config_dir>/scripts`)
+  list    List app ids that have a launch script (dir-based and config-pinned) and their resolved paths
+  new     Scaffold a launch script for a game at `<script_dir>/<app_id>.sh` (or `.bat` on Windows). Errors if one already exists unless `--force`
+  show    Print the resolved launch-script path for a game and its contents
+  remove  Delete the dir-based launch script for a game
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia scripts dir =====
+Print the resolved launch-script directory (`AURELIA_SCRIPT_DIR` or `<config_dir>/scripts`)
+
+Usage: aurelia scripts dir [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia scripts list =====
+List app ids that have a launch script (dir-based and config-pinned) and their resolved paths
+
+Usage: aurelia scripts list [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia scripts new =====
+Scaffold a launch script for a game at `<script_dir>/<app_id>.sh` (or `.bat` on Windows). Errors if one already exists unless `--force`
+
+Usage: aurelia scripts new [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -f, --force       Overwrite an existing script
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia scripts remove =====
+Delete the dir-based launch script for a game
+
+Usage: aurelia scripts remove [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia scripts show =====
+Print the resolved launch-script path for a game and its contents
+
+Usage: aurelia scripts show [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia search =====
+Search the store by title
+
+Usage: aurelia search [OPTIONS] <TERM>
+
+Arguments:
+  <TERM>  
+
+Options:
+  -n, --count <COUNT>      Maximum results [default: 20]
+  -c, --country <COUNTRY>  Country code for prices
+  -l, --lang <LANG>        Steam API language name for names
+  -j, --json               Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...         Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help               Print help
+
+===== aurelia set-branch =====
+Switch a game to a different branch
+
+Usage: aurelia set-branch [OPTIONS] <APP_ID> <BRANCH>
+
+Arguments:
+  <APP_ID>  
+  <BRANCH>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia set-language =====
+Swap an installed game's language depots
+
+Usage: aurelia set-language [OPTIONS] <APP_ID> <LANGUAGE>
+
+Arguments:
+  <APP_ID>    
+  <LANGUAGE>  Steam language name, e.g. `german`
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia shaders =====
+Pre-compile a game's Vulkan shaders from its Steam pipeline cache (`steamapps/shadercache/<appid>`), as Steam's "Processing Vulkan shaders" does. `play` does this automatically unless `config shader-precache off`
+
+Usage: aurelia shaders [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -f, --force       Replay again even if nothing changed since the last run
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia similar =====
+Games similar to a given app
+
+Usage: aurelia similar [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -n, --count <COUNT>      Maximum results [default: 10]
+  -c, --country <COUNTRY>  Country code for prices
+  -l, --lang <LANG>        Steam API language name for names
+  -j, --json               Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...         Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help               Print help
+
+===== aurelia steam-runtime =====
+Install, repair, or inspect the master Windows Steam runtime prefix
+
+Usage: aurelia steam-runtime [OPTIONS] <COMMAND>
+
+Commands:
+  install    Download SteamSetup.exe (if needed) and install Steam into the master prefix. Requires `steam_runtime_runner` to be configured
+  repair     Stop Steam, back up the master prefix (timestamped `.bak-*`), then reinstall. Requires `steam_runtime_runner` to be configured
+  uninstall  Remove the master Windows Steam prefix entirely (uninstall the runtime). Stops any Steam running in it first, then deletes the whole master prefix (including any `.bak-*`). Reinstall later with `steam-runtime install`
+  login      (Re-)start the in-Wine Steam client interactively so you can sign in — use after the runtime's Steam session expired, or to switch accounts. Does NOT reinstall. The in-Wine Steam keeps its own login (separate from `aurelia login`). Requires `steam_runtime_runner` and an installed runtime [aliases: relogin]
+  stop       Stop the in-Wine Steam client running in the master prefix (kills its Wine session), without uninstalling. Use to shut down a Steam started by `login` or one left running after a game launch
+  status     Show the resolved master prefix, layout, whether steam.exe is present, and whether a Steam-runtime runner is configured
+  help       Print this message or the help of the given subcommand(s)
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia steam-runtime install =====
+Download SteamSetup.exe (if needed) and install Steam into the master prefix. Requires `steam_runtime_runner` to be configured
+
+Usage: aurelia steam-runtime install [OPTIONS]
+
+Options:
+  -r, --reinstall   Remove the existing master Steam prefix first, then install a fresh copy. Use when Steam reports a corrupted install ("please reinstall"). Unlike `repair` (which keeps a `.bak`), this deletes the old prefix outright
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia steam-runtime login =====
+(Re-)start the in-Wine Steam client interactively so you can sign in — use after the runtime's Steam session expired, or to switch accounts. Does NOT reinstall. The in-Wine Steam keeps its own login (separate from `aurelia login`). Requires `steam_runtime_runner` and an installed runtime
+
+Usage: aurelia steam-runtime login [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia steam-runtime repair =====
+Stop Steam, back up the master prefix (timestamped `.bak-*`), then reinstall. Requires `steam_runtime_runner` to be configured
+
+Usage: aurelia steam-runtime repair [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia steam-runtime status =====
+Show the resolved master prefix, layout, whether steam.exe is present, and whether a Steam-runtime runner is configured
+
+Usage: aurelia steam-runtime status [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia steam-runtime stop =====
+Stop the in-Wine Steam client running in the master prefix (kills its Wine session), without uninstalling. Use to shut down a Steam started by `login` or one left running after a game launch
+
+Usage: aurelia steam-runtime stop [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia steam-runtime uninstall =====
+Remove the master Windows Steam prefix entirely (uninstall the runtime). Stops any Steam running in it first, then deletes the whole master prefix (including any `.bak-*`). Reinstall later with `steam-runtime install`
+
+Usage: aurelia steam-runtime uninstall [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia stop =====
+Stop a running game previously launched with `aurelia play`
+
+Usage: aurelia stop [OPTIONS] [APP_ID]
+
+Arguments:
+  [APP_ID]  App id to stop. Omit to list the games Aurelia is tracking as running
+
+Options:
+  -f, --force       Force-kill the game immediately (SIGKILL) instead of asking it to exit gracefully first. Use when a game is hung and ignores a normal stop
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia tags =====
+Dump the store tag vocabulary (maintainer tool)
+
+Usage: aurelia tags [OPTIONS]
+
+Options:
+  -d, --dump        Print Rust source for `tags_table.rs`
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia umu =====
+Manage the optional umu-launcher plugin (Proton via umu)
+
+Usage: aurelia umu [OPTIONS] <COMMAND>
+
+Commands:
+  enable     Enable the plugin (sets the master toggle; games still opt in per-game)
+  disable    Disable the plugin. Games pinned to it fall back to normal native/Proton launch
+  install    Download (or re-download) the latest umu-launcher into Aurelia's data dir
+  update     Re-fetch the latest umu-launcher, replacing the installed payload
+  status     Show whether the plugin is enabled and which version (if any) is installed
+  path       Use an externally-managed umu install instead of the managed download. Pass a directory (or the `umu-run` binary) to set it (disables downloading), omit args to show the current value, or `--clear` to revert to the managed download
+  uninstall  Remove the downloaded umu-launcher payload from disk
+  help       Print this message or the help of the given subcommand(s)
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia umu disable =====
+Disable the plugin. Games pinned to it fall back to normal native/Proton launch
+
+Usage: aurelia umu disable [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia umu enable =====
+Enable the plugin (sets the master toggle; games still opt in per-game)
+
+Usage: aurelia umu enable [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia umu install =====
+Download (or re-download) the latest umu-launcher into Aurelia's data dir
+
+Usage: aurelia umu install [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia umu path =====
+Use an externally-managed umu install instead of the managed download. Pass a directory (or the `umu-run` binary) to set it (disables downloading), omit args to show the current value, or `--clear` to revert to the managed download
+
+Usage: aurelia umu path [OPTIONS] [PATH]
+
+Arguments:
+  [PATH]  Directory of an existing umu install (contains `umu-run`), or the `umu-run` binary
+
+Options:
+  -c, --clear       Clear the custom path and use Aurelia's managed download instead
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia umu status =====
+Show whether the plugin is enabled and which version (if any) is installed
+
+Usage: aurelia umu status [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia umu uninstall =====
+Remove the downloaded umu-launcher payload from disk
+
+Usage: aurelia umu uninstall [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia umu update =====
+Re-fetch the latest umu-launcher, replacing the installed payload
+
+Usage: aurelia umu update [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia uninstall =====
+Uninstall a game
+
+Usage: aurelia uninstall [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -d, --delete-prefix  Also delete the game's Wine prefix / compat data
+  -j, --json           Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...     Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help           Print help
+
+===== aurelia unpin =====
+Remove a game's version pin (unlock Aurelia's updates)
+
+Usage: aurelia unpin [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia update =====
+List installed games with an update available, or update one by app id
+
+Usage: aurelia update [OPTIONS] [APP_ID]
+
+Arguments:
+  [APP_ID]  Game to update. Omit to list every installed game that needs an update
+
+Options:
+  -f, --force       Update even if the game is pinned (see `aurelia pin`), overriding the lock
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia user =====
+Profile by SteamID64, /profiles/ URL, friend name, `me`
+
+Usage: aurelia user [OPTIONS] <USER>
+
+Arguments:
+  <USER>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia verify =====
+Verify the integrity of an installed game
+
+Usage: aurelia verify [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia wallet =====
+Show your Steam Wallet balance
+
+Usage: aurelia wallet [OPTIONS]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia wishlist =====
+Your wishlist, or a friend's
+
+Usage: aurelia wishlist [OPTIONS] [USER]
+       aurelia wishlist <COMMAND>
+
+Commands:
+  add     Add an app to your wishlist
+  remove  Remove an app from your wishlist
+  help    Print this message or the help of the given subcommand(s)
+
+Arguments:
+  [USER]  Whose wishlist; defaults to yours
+
+Options:
+  -n, --count <COUNT>      Maximum items [default: 50]
+  -o, --offset <OFFSET>    Skip this many items first [default: 0]
+  -c, --country <COUNTRY>  Country code for prices
+  -l, --lang <LANG>        Steam API language name for names
+  -j, --json               Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...         Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help               Print help
+
+===== aurelia wishlist add =====
+Add an app to your wishlist
+
+Usage: aurelia wishlist add [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia wishlist remove =====
+Remove an app from your wishlist
+
+Usage: aurelia wishlist remove [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia workshop =====
+Manage Steam Workshop items for a game
+
+Usage: aurelia workshop [OPTIONS] <COMMAND>
+
+Commands:
+  browse       Browse/search a game's Workshop to discover items to subscribe to or install
+  info         Show metadata for one or more Workshop items (or collections)
+  list         List the Workshop items you're subscribed to for a game
+  install      Download one or more Workshop items (or collections) and register them
+  uninstall    Remove one or more installed Workshop items (or collections)
+  subscribe    Subscribe to one or more Workshop items (or collections)
+  unsubscribe  Unsubscribe from one or more Workshop items (or collections)
+  status       Show installed vs subscribed Workshop items for a game
+  rate         Rate a Workshop item thumbs-up or thumbs-down
+  comments     Read the comments on a Workshop item
+  comment      Post a comment to a Workshop item
+  help         Print this message or the help of the given subcommand(s)
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia workshop browse =====
+Browse/search a game's Workshop to discover items to subscribe to or install
+
+Usage: aurelia workshop browse [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>
+          
+
+Options:
+  -s, --search <SEARCH>
+          Filter by search text (free-text match on title/description)
+
+  -o, --sort <SORT>
+          Sort order
+
+          Possible values:
+          - trend:         Trending now (default)
+          - popular:       Highest rated overall
+          - recent:        Most recently published
+          - updated:       Most recently updated
+          - subscriptions: Most subscribed
+          - text:          Best text-search relevance (use with `--search`)
+          
+          [default: trend]
+
+  -n, --count <COUNT>
+          Number of results per page (1–100)
+          
+          [default: 20]
+
+  -c, --cursor <CURSOR>
+          Pagination cursor; use a previous page's `next_cursor` (`*` = first page)
+          
+          [default: *]
+
+  -t, --tag <TAGS>
+          Only items carrying this tag (repeatable)
+
+  -j, --json
+          Emit output (and errors) as JSON. Works with every command
+
+  -v, --verbose...
+          Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+===== aurelia workshop comment =====
+Post a comment to a Workshop item
+
+Usage: aurelia workshop comment [OPTIONS] <ID> <TEXT>
+
+Arguments:
+  <ID>    The Workshop published-file id
+  <TEXT>  The comment text
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia workshop comments =====
+Read the comments on a Workshop item
+
+Usage: aurelia workshop comments [OPTIONS] <ID>
+
+Arguments:
+  <ID>  The Workshop published-file id
+
+Options:
+  -n, --count <COUNT>  How many comments to fetch (1–100) [default: 20]
+  -s, --start <START>  Index of the first comment to fetch (for paging) [default: 0]
+  -j, --json           Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...     Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help           Print help
+
+===== aurelia workshop info =====
+Show metadata for one or more Workshop items (or collections)
+
+Usage: aurelia workshop info [OPTIONS] <IDS>...
+
+Arguments:
+  <IDS>...  One or more Workshop published-file ids
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia workshop install =====
+Download one or more Workshop items (or collections) and register them
+
+Usage: aurelia workshop install [OPTIONS] <IDS>...
+
+Arguments:
+  <IDS>...  
+
+Options:
+  -R, --no-recurse  Install only the given ids; do not expand collections to their members
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia workshop list =====
+List the Workshop items you're subscribed to for a game
+
+Usage: aurelia workshop list [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia workshop rate =====
+Rate a Workshop item thumbs-up or thumbs-down
+
+Usage: aurelia workshop rate [OPTIONS] <ID> <VOTE>
+
+Arguments:
+  <ID>    The Workshop published-file id
+  <VOTE>  `up` or `down` [possible values: up, down]
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia workshop status =====
+Show installed vs subscribed Workshop items for a game
+
+Usage: aurelia workshop status [OPTIONS] <APP_ID>
+
+Arguments:
+  <APP_ID>  
+
+Options:
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia workshop subscribe =====
+Subscribe to one or more Workshop items (or collections)
+
+Usage: aurelia workshop subscribe [OPTIONS] <IDS>...
+
+Arguments:
+  <IDS>...  
+
+Options:
+  -i, --install     Also download the content after subscribing
+  -R, --no-recurse  Subscribe only to the given ids; do not expand collections to their members
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia workshop uninstall =====
+Remove one or more installed Workshop items (or collections)
+
+Usage: aurelia workshop uninstall [OPTIONS] <IDS>...
+
+Arguments:
+  <IDS>...  
+
+Options:
+  -R, --no-recurse  Uninstall only the given ids; do not expand collections to their members
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+
+===== aurelia workshop unsubscribe =====
+Unsubscribe from one or more Workshop items (or collections)
+
+Usage: aurelia workshop unsubscribe [OPTIONS] <IDS>...
+
+Arguments:
+  <IDS>...  
+
+Options:
+  -R, --no-recurse  Unsubscribe only from the given ids; do not expand collections
+  -j, --json        Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help        Print help
+

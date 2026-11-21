@@ -139,6 +139,28 @@ fn apply_steam_mode(cfg: &mut aurelia::core::models::UserAppConfig, mode: SteamM
     };
 }
 
+/// `launch-targets --json` payload.
+pub(crate) fn launch_targets_json(
+    app_id: u32,
+    targets: &[aurelia::steam_client::LaunchTargetChoice],
+) -> serde_json::Value {
+    let arr: Vec<_> = targets
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "id": t.id,
+                "platform": t.platform,
+                "steam_mode": t.steam_mode,
+                "flags": t.flags,
+                "available": t.available,
+                "missing": t.missing,
+                "default": t.default,
+            })
+        })
+        .collect();
+    serde_json::json!({ "app_id": app_id, "targets": arr })
+}
+
 pub(crate) async fn cmd_launch_targets(app_id: u32, steam: bool, json: bool) -> Result<()> {
     let mut client = authed_client().await?;
     let game = find_game(&mut client, app_id).await?;
@@ -191,21 +213,7 @@ pub(crate) async fn cmd_launch_targets(app_id: u32, steam: bool, json: bool) -> 
     }
 
     if json {
-        let arr: Vec<_> = targets
-            .iter()
-            .map(|t| {
-                serde_json::json!({
-                    "id": t.id,
-                    "platform": t.platform,
-                    "steam_mode": t.steam_mode,
-                    "flags": t.flags,
-                    "available": t.available,
-                    "missing": t.missing,
-                    "default": t.default,
-                })
-            })
-            .collect();
-        print_json(&serde_json::json!({ "app_id": app_id, "targets": arr }));
+        print_json(&launch_targets_json(app_id, &targets));
         return Ok(());
     }
 

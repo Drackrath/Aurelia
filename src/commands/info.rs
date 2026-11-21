@@ -838,6 +838,31 @@ pub(crate) async fn cmd_depots(app_id: u32, json: bool) -> Result<()> {
     Ok(())
 }
 
+/// `launch-options --json` payload.
+pub(crate) fn launch_options_json(
+    app_id: u32,
+    options: &[aurelia::steam_client::LaunchOptionInfo],
+    installed: impl Fn(&aurelia::steam_client::LaunchOptionInfo) -> bool,
+) -> serde_json::Value {
+    let arr: Vec<_> = options
+        .iter()
+        .map(|o| {
+            serde_json::json!({
+                "id": o.id,
+                "description": o.description,
+                "executable": o.executable,
+                "arguments": o.arguments,
+                "working_dir": o.working_dir,
+                "oslist": o.oslist,
+                "osarch": o.osarch,
+                "type": o.launch_type,
+                "installed": installed(o),
+            })
+        })
+        .collect();
+    serde_json::json!({ "app_id": app_id, "launch_options": arr })
+}
+
 pub(crate) async fn cmd_launch_options(app_id: u32, json: bool) -> Result<()> {
     let mut client = authed_client().await?;
     let mut options = client
@@ -856,26 +881,11 @@ pub(crate) async fn cmd_launch_options(app_id: u32, json: bool) -> Result<()> {
     }
 
     if json {
-        let arr: Vec<_> = options
-            .iter()
-            .map(|o| {
-                let installed = game.as_ref().is_some_and(|g| {
-                    aurelia::steam_client::launch_executable_installed(g, &o.executable)
-                });
-                serde_json::json!({
-                    "id": o.id,
-                    "description": o.description,
-                    "executable": o.executable,
-                    "arguments": o.arguments,
-                    "working_dir": o.working_dir,
-                    "oslist": o.oslist,
-                    "osarch": o.osarch,
-                    "type": o.launch_type,
-                    "installed": installed,
-                })
+        print_json(&launch_options_json(app_id, &options, |o| {
+            game.as_ref().is_some_and(|g| {
+                aurelia::steam_client::launch_executable_installed(g, &o.executable)
             })
-            .collect();
-        print_json(&serde_json::json!({ "app_id": app_id, "launch_options": arr }));
+        }));
         return Ok(());
     }
 
