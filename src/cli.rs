@@ -620,6 +620,11 @@ pub(crate) enum ConfigCommand {
         /// `on` or `off`. Omit to print the current setting.
         mode: Option<OnOffArg>,
     },
+    /// Steam Cloud sync around `play`.
+    CloudSync {
+        /// `on` or `off`; omit to print.
+        mode: Option<OnOffArg>,
+    },
     /// View or set whether `play` auto-installs a missing Proton anti-cheat
     /// runtime (EasyAntiCheat / BattlEye) for a game that ships one. `on`
     /// (default) downloads it before the Proton launch, like Steam; `off` never
@@ -1280,6 +1285,28 @@ impl From<SteamRuntimeArg> for aurelia::core::models::SteamRuntimePolicy {
     }
 }
 
+/// `config game --cloud-sync` choices.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub(crate) enum CloudSyncArg {
+    /// Follow `config cloud-sync`.
+    Auto,
+    /// Sync around `play`.
+    On,
+    /// Never sync around `play`.
+    Off,
+}
+
+impl CloudSyncArg {
+    /// Per-game override; `None` follows global.
+    pub(crate) fn as_override(self) -> Option<bool> {
+        match self {
+            CloudSyncArg::Auto => None,
+            CloudSyncArg::On => Some(true),
+            CloudSyncArg::Off => Some(false),
+        }
+    }
+}
+
 /// `--steam-prefix-mode shared|per-game`: how the master Steam prefix backs a game.
 #[derive(Clone, Copy, ValueEnum)]
 pub(crate) enum SteamPrefixModeArg {
@@ -1419,7 +1446,7 @@ pub(crate) struct GameConfigArgs {
     #[arg(long, conflicts_with_all = ["proton", "clear_proton", "platform", "no_platform",
         "native_engine", "no_native_engine", "umu", "no_umu", "launch_script",
         "no_launch_script", "steam_runtime", "steam_prefix_mode", "launch_options",
-        "no_launch_options"])]
+        "no_launch_options", "cloud_sync"])]
     pub(crate) clear: bool,
     /// Route this game through the luxtorpeda native-engine plugin (Linux only;
     /// requires `aurelia luxtorpeda enable`).
@@ -1461,4 +1488,7 @@ pub(crate) struct GameConfigArgs {
     /// Clear this game's launch options.
     #[arg(long, conflicts_with = "launch_options")]
     pub(crate) no_launch_options: bool,
+    /// Per-game Steam Cloud sync on `play`.
+    #[arg(long, value_name = "auto|on|off")]
+    pub(crate) cloud_sync: Option<CloudSyncArg>,
 }

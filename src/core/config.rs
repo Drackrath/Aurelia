@@ -53,6 +53,9 @@ pub struct GameConfig {
     /// not upgraded by `update` / `check-updates` (which report it as pinned).
     #[serde(default)]
     pub pinned: bool,
+    /// Overrides `enable_cloud_sync` for `play`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud_sync: Option<bool>,
 }
 
 /// Per-game launch backend selection.
@@ -203,6 +206,14 @@ fn default_persona_wait_secs() -> u64 {
 }
 
 impl LauncherConfig {
+    /// Whether `play` syncs this game.
+    pub fn cloud_sync_enabled(&self, app_id: u32) -> bool {
+        self.game_configs
+            .get(&app_id)
+            .and_then(|g| g.cloud_sync)
+            .unwrap_or(self.enable_cloud_sync)
+    }
+
     /// Download limit in bytes/s; 0 is unlimited.
     pub fn download_limit_bytes(&self) -> u64 {
         kbit_to_bytes(self.download_limit_kbit)
