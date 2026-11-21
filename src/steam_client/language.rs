@@ -13,6 +13,8 @@ pub(crate) struct LanguagePlan {
     pub add: Vec<(u32, u64)>,
     /// Installed depots that stay.
     pub keep: Vec<(u32, u64)>,
+    /// Added depot to its DLC app.
+    pub dlc: HashMap<u32, u32>,
 }
 
 /// Platform of the installed depots.
@@ -73,13 +75,45 @@ pub(crate) fn plan_language_switch(
         );
     }
 
+    let on_platform = |row: &Value<'_>| {
+        let oslist = row
+            .get_obj(&["config"])
+            .and_then(|c| c.get("oslist"))
+            .and_then(|o| o.as_str());
+        should_keep_depot(oslist, platform)
+    };
+    let owner = |row: &Value<'_>| depots::dlc_app(row, app_id).unwrap_or(app_id);
+    // Base game plus installed DLC.
+    let mut owners: HashSet<u32> = installed
+        .keys()
+        .filter_map(|depot| rows.get(&depot.to_string()))
+        .map(owner)
+        .collect();
+    owners.insert(app_id);
+    // Owners with target or untagged depots.
+    let mut has_target = HashSet::new();
+    let mut has_base = HashSet::new();
+    let depot_rows = rows
+        .iter()
+        .filter(|(key, row)| key.parse::<u32>().is_ok() && on_platform(row));
+    for (_, row) in depot_rows {
+        match depots::depot_language(row) {
+            Some(l) if l.eq_ignore_ascii_case(&language) => has_target.insert(owner(row)),
+            Some(_) => false,
+            None => has_base.insert(owner(row)),
+        };
+    }
+
     let mut plan = LanguagePlan::default();
     for (&depot, &manifest) in installed {
-        let row = rows.get(&depot.to_string());
-        let other_language = row.is_some_and(|row| {
-            depots::depot_language(row).is_some_and(|l| !l.eq_ignore_ascii_case(&language))
+        // Drop only replaceable language depots.
+        let drop = rows.get(&depot.to_string()).is_some_and(|row| {
+            let id = owner(row);
+            on_platform(row)
+                && depots::depot_language(row).is_some_and(|l| !l.eq_ignore_ascii_case(&language))
+                && (has_target.contains(&id) || has_base.contains(&id))
         });
-        if other_language {
+        if drop {
             plan.remove.push((depot as u32, manifest));
         } else {
             plan.keep.push((depot as u32, manifest));
@@ -89,14 +123,17 @@ pub(crate) fn plan_language_switch(
         let Ok(depot) = key.parse::<u64>() else {
             continue;
         };
-        if installed.contains_key(&depot)
-            || !is_language_row(row, app_id, platform)
-            || !depots::depot_matches_language(row, &language)
-        {
+        let wanted = on_platform(row)
+            && owners.contains(&owner(row))
+            && depots::depot_language(row).is_some_and(|l| l.eq_ignore_ascii_case(&language));
+        if installed.contains_key(&depot) || !wanted {
             continue;
         }
         if let Some(&manifest) = manifests.get(&depot) {
             plan.add.push((depot as u32, manifest));
+            if let Some(dlc) = depots::dlc_app(row, app_id) {
+                plan.dlc.insert(depot as u32, dlc);
+            }
         }
     }
     plan.remove.sort_unstable();
@@ -300,7 +337,7 @@ impl SteamClient {
                 .with_context(|| format!("reading {}", manifest_path.display()))
                 .and_then(|raw| {
                     let updated = super::manifests::switch_language_in_manifest(
-                        &raw, &remove, &added, &language,
+                        &raw, &remove, &added, &plan.dlc, &language,
                     );
                     crate::core::atomic::write_atomic(&manifest_path, updated.as_bytes())
                 });

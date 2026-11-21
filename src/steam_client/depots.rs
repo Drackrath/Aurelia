@@ -128,8 +128,15 @@ pub(crate) fn depot_language<'a>(value: &'a Value<'_>) -> Option<&'a str> {
         .filter(|l| !l.is_empty())
 }
 
-/// `wanted` if available, else English.
-pub(crate) fn effective_language(rows: &Obj<'_>, platform: DepotPlatform, wanted: &str) -> String {
+/// Language for `UserConfig`, like Steam.
+///
+/// Only a real language depot choice;
+/// else Steam's client language applies.
+pub(crate) fn recorded_language(
+    rows: &Obj<'_>,
+    platform: DepotPlatform,
+    wanted: &str,
+) -> Option<String> {
     let available = rows.values().any(|row| {
         let oslist = row
             .get_obj(&["config"])
@@ -138,16 +145,17 @@ pub(crate) fn effective_language(rows: &Obj<'_>, platform: DepotPlatform, wanted
         should_keep_depot(oslist, platform)
             && depot_language(row).is_some_and(|l| l.eq_ignore_ascii_case(wanted))
     });
-    if available {
-        wanted.to_ascii_lowercase()
-    } else {
-        "english".to_string()
-    }
+    available.then(|| wanted.to_ascii_lowercase())
 }
 
 /// Whether a depot serves `language`.
 pub(crate) fn depot_matches_language(value: &Value<'_>, language: &str) -> bool {
     depot_language(value).is_none_or(|l| l.eq_ignore_ascii_case(language))
+}
+
+/// DLC app owning a depot.
+pub(crate) fn dlc_app(value: &Value<'_>, app_id: u32) -> Option<u32> {
+    number(value.get("dlcappid")).filter(|&id| id != 0 && id != app_id)
 }
 
 pub(crate) fn required_depot(value: &Value<'_>, app_id: u32) -> bool {

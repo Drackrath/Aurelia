@@ -352,8 +352,8 @@ impl SteamClient {
             // Sum of all selected depots' max (uncompressed) sizes — the whole-app total
             // used to report overall download progress across depots.
             let mut grand_total_bytes: u64 = 0;
-            // Language recorded in UserConfig.
-            let mut language = wanted_language.clone();
+            // UserConfig language, if chosen.
+            let mut recorded_language = None;
 
             let mut has_windows = false;
             if find_vdf_in_pics(appinfo_vdf_bytes).is_ok() {
@@ -367,8 +367,12 @@ impl SteamClient {
                     };
                     let resolved_value = steam_vdf_parser::Value::Obj(resolved.rows.clone());
                     let depots_val = Some(&resolved_value);
-                    language =
-                        depots::effective_language(&resolved.rows, platform, &wanted_language);
+                    recorded_language =
+                        depots::recorded_language(&resolved.rows, platform, &wanted_language);
+                    // Depot filter language.
+                    let language = recorded_language
+                        .clone()
+                        .unwrap_or_else(|| "english".to_string());
                     if language != wanted_language {
                         tracing::info!(
                             "app {appid} has no {wanted_language} depots; installing {language}"
@@ -515,7 +519,7 @@ impl SteamClient {
                     build_id.as_deref(),
                     false,
                     pin_updates,
-                    Some(&language),
+                    recorded_language.as_deref(),
                 ) {
                     tracing::warn!("failed writing initial appmanifest for app {appid}: {e}");
                 } else {
@@ -582,7 +586,7 @@ impl SteamClient {
                     build_id.as_deref(),
                     true,
                     pin_updates,
-                    Some(&language),
+                    recorded_language.as_deref(),
                 )
             };
             if let Err(err) = manifest_result {

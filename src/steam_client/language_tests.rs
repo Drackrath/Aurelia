@@ -9,6 +9,8 @@ const ROWS: &str = r#""depots"
 	"2378507" { "config" { "oslist" "linux" "language" "french" } }
 	"1086944" { "config" { "oslist" "windows" "language" "german" } }
 	"9999" { "config" { "oslist" "linux" "language" "german" } "dlcappid" "5555" }
+	"9998" { "config" { "oslist" "linux" "language" "english" } "dlcappid" "5555" }
+	"7001" { "config" { "oslist" "linux" "language" "german" } "dlcappid" "7000" }
 }
 "#;
 
@@ -29,6 +31,8 @@ fn remote() -> HashMap<u64, u64> {
         (2378507, 7),
         (1086944, 44),
         (9999, 99),
+        (9998, 98),
+        (7001, 71),
     ])
 }
 
@@ -51,6 +55,60 @@ fn other_platform_and_dlc_depots_are_ignored() {
     let plan = plan_language_switch(rows, 1086940, &installed, &remote(), "german").unwrap();
     assert_eq!(plan.add, vec![(2378505, 5)]);
     assert_eq!(plan.remove, vec![(2378503, 3)]);
+}
+
+#[test]
+fn installed_dlc_language_depots_are_swapped() {
+    let vdf = rows();
+    let rows = vdf.as_obj().unwrap();
+    let installed = map(&[(2330359, 1), (2378505, 5), (9999, 99)]);
+    let plan = plan_language_switch(rows, 1086940, &installed, &remote(), "english").unwrap();
+    assert_eq!(plan.remove, vec![(9999, 99), (2378505, 5)]);
+    assert_eq!(plan.add, vec![(9998, 98), (2378503, 3)]);
+    assert_eq!(plan.keep, vec![(2330359, 1)]);
+    assert_eq!(plan.dlc, [(9998, 5555)].into_iter().collect());
+
+    // And back again.
+    let installed = map(&[(2330359, 1), (2378503, 3), (9998, 98)]);
+    let plan = plan_language_switch(rows, 1086940, &installed, &remote(), "german").unwrap();
+    assert_eq!(plan.remove, vec![(9998, 98), (2378503, 3)]);
+    assert_eq!(plan.add, vec![(9999, 99), (2378505, 5)]);
+}
+
+#[test]
+fn language_depot_without_replacement_stays() {
+    let vdf = rows();
+    let rows = vdf.as_obj().unwrap();
+    // DLC 7000 ships German only.
+    let installed = map(&[(2330359, 1), (2378505, 5), (7001, 71)]);
+    let plan = plan_language_switch(rows, 1086940, &installed, &remote(), "french").unwrap();
+    assert_eq!(plan.remove, vec![(2378505, 5)]);
+    assert_eq!(plan.add, vec![(2378507, 7)]);
+    assert_eq!(plan.keep, vec![(7001, 71), (2330359, 1)]);
+    assert!(plan.dlc.is_empty());
+}
+
+#[test]
+fn pure_language_depot_goes_without_english_depot() {
+    // Half-Life: English lives in base depots.
+    let vdf = steam_vdf_parser::parse_text(
+        r#""depots" {
+            "1" { "config" { "language" "" } }
+            "8" { "config" { "oslist" "linux" } }
+            "74" { "config" { "language" "german" } }
+            "72" { "config" { "language" "french" } }
+            "branches" { "public" { "buildid" "1" } }
+        }"#,
+    )
+    .unwrap()
+    .into_owned();
+    let rows = vdf.as_obj().unwrap();
+    let remote = map(&[(1, 1), (8, 8), (74, 74), (72, 72)]);
+    let installed = map(&[(1, 1), (8, 8), (74, 74)]);
+    let plan = plan_language_switch(rows, 70, &installed, &remote, "english").unwrap();
+    assert_eq!(plan.remove, vec![(74, 74)]);
+    assert!(plan.add.is_empty());
+    assert_eq!(plan.keep, vec![(1, 1), (8, 8)]);
 }
 
 #[test]
@@ -94,6 +152,7 @@ fn delete_refuses_paths_outside_the_install() {
 #[test]
 fn manifest_swap_keeps_everything_else() {
     let raw = "\"AppState\"\n{\n\t\"appid\"\t\t\"1086940\"\n\t\"StateFlags\"\t\t\"4\"\n\
+        \t\"SizeOnDisk\"\t\t\"61\"\n\
         \t\"InstalledDepots\"\n\t{\n\
         \t\t\"2330359\"\n\t\t{\n\t\t\t\"manifest\"\t\t\"1\"\n\t\t\t\"size\"\t\t\"10\"\n\t\t}\n\
         \t\t\"2378505\"\n\t\t{\n\t\t\t\"manifest\"\t\t\"5\"\n\t\t\t\"size\"\t\t\"50\"\n\t\t}\n\
@@ -105,7 +164,8 @@ fn manifest_swap_keeps_everything_else() {
     let out = super::super::manifests::switch_language_in_manifest(
         raw,
         &remove,
-        &[(2378503, 3, 30)],
+        &[(2378503, 3, 30), (9998, 9, 4)],
+        &[(9998, 5555)].into_iter().collect(),
         "english",
     );
     let depots = parse_installed_depots_from_acf(&out);
@@ -114,6 +174,10 @@ fn manifest_swap_keeps_everything_else() {
     assert_eq!(depots.get(&5000), Some(&8));
     assert!(!depots.contains_key(&2378505));
     assert!(out.contains("\"dlcappid\"\t\t\"5001\""));
+    assert_eq!(depots.get(&9998), Some(&9));
+    assert!(out.contains("\"9998\"\n\t\t{\n\t\t\t\"manifest\"\t\t\"9\"\n\t\t\t\"size\"\t\t\"4\"\n\t\t\t\"dlcappid\"\t\t\"5555\""));
+    // 10 + 30 + 1 + 4.
+    assert!(out.contains("\"SizeOnDisk\"\t\t\"45\""), "{out}");
     assert!(out.contains("\"DisabledDLC\"\t\t\"5002\""));
     assert!(out.contains("\"StateFlags\"\t\t\"4\""));
     assert_eq!(
@@ -126,8 +190,13 @@ fn manifest_swap_keeps_everything_else() {
 #[test]
 fn manifest_swap_adds_missing_user_config() {
     let raw = "\"AppState\"\n{\n\t\"appid\"\t\t\"1\"\n}\n";
-    let out =
-        super::super::manifests::switch_language_in_manifest(raw, &HashSet::new(), &[], "german");
+    let out = super::super::manifests::switch_language_in_manifest(
+        raw,
+        &HashSet::new(),
+        &[],
+        &HashMap::new(),
+        "german",
+    );
     assert_eq!(
         super::super::manifests::user_config_language(&out).as_deref(),
         Some("german")
