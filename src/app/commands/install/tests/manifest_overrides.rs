@@ -1,4 +1,4 @@
-use super::parse_manifest_overrides;
+use super::super::parse_manifest_overrides;
 
 #[test]
 fn parallel_lists_pair_by_position() {
