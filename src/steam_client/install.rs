@@ -301,6 +301,16 @@ impl SteamClient {
             (dir, mp, installdir)
         };
 
+        // Same language source order as Steam.
+        let manifest_language = std::fs::read_to_string(&manifest_path)
+            .ok()
+            .and_then(|raw| super::manifests::user_config_language(&raw));
+        let wanted_language = crate::core::locale::pick_install_language(
+            manifest_language.as_deref(),
+            crate::core::locale::steam_client_language().as_deref(),
+            cfg.language.as_deref(),
+        );
+
         std::fs::create_dir_all(&install_dir)
             .with_context(|| format!("failed creating {}", install_dir.display()))?;
         if let Ok(mut state) = shared_state.write() {
@@ -342,6 +352,8 @@ impl SteamClient {
             // Sum of all selected depots' max (uncompressed) sizes — the whole-app total
             // used to report overall download progress across depots.
             let mut grand_total_bytes: u64 = 0;
+            // Language recorded in UserConfig.
+            let mut language = wanted_language.clone();
 
             let mut has_windows = false;
             if find_vdf_in_pics(appinfo_vdf_bytes).is_ok() {
@@ -355,6 +367,13 @@ impl SteamClient {
                     };
                     let resolved_value = steam_vdf_parser::Value::Obj(resolved.rows.clone());
                     let depots_val = Some(&resolved_value);
+                    language =
+                        depots::effective_language(&resolved.rows, platform, &wanted_language);
+                    if language != wanted_language {
+                        tracing::info!(
+                            "app {appid} has no {wanted_language} depots; installing {language}"
+                        );
+                    }
 
                     // depots -> branches -> public -> buildid
                     build_id = depots_val
@@ -386,20 +405,8 @@ impl SteamClient {
                                 let manifest_id = if let Some(mid) = override_mid {
                                     Some(mid)
                                 } else {
-                                    let mut match_os = should_keep_depot(oslist, platform);
-
-                                    if match_os {
-                                        // 1. LANGUAGE CHECK
-                                        let lang = value
-                                            .get_obj(&["config"])
-                                            .and_then(|c| c.get("language"))
-                                            .and_then(|l| l.as_str());
-                                        if let Some(lang) = lang {
-                                            if lang != "english" && !lang.is_empty() {
-                                                match_os = false;
-                                            }
-                                        }
-                                    }
+                                    let match_os = should_keep_depot(oslist, platform)
+                                        && depots::depot_matches_language(value, &language);
 
                                     let depot_id_u64 = d_id as u64;
                                     let is_allowed = filter_depots
@@ -508,6 +515,7 @@ impl SteamClient {
                     build_id.as_deref(),
                     false,
                     pin_updates,
+                    Some(&language),
                 ) {
                     tracing::warn!("failed writing initial appmanifest for app {appid}: {e}");
                 } else {
@@ -574,6 +582,7 @@ impl SteamClient {
                     build_id.as_deref(),
                     true,
                     pin_updates,
+                    Some(&language),
                 )
             };
             if let Err(err) = manifest_result {

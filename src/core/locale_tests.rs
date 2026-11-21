@@ -45,3 +45,30 @@ fn country_normalization() {
     assert_eq!(normalize_country("usa"), None);
     assert_eq!(normalize_country("u1"), None);
 }
+
+#[test]
+fn registry_language_reads_hkcu_steam() {
+    let raw = "\"Registry\"\n{\n\t\"HKLM\"\n\t{\n\t}\n\t\"HKCU\"\n\t{\n\t\t\"Software\"\n\t\t{\n\
+        \t\t\t\"Valve\"\n\t\t\t{\n\t\t\t\t\"Steam\"\n\t\t\t\t{\n\
+        \t\t\t\t\t\"steamglobal\"\n\t\t\t\t\t{\n\t\t\t\t\t\t\"language\"\t\t\"french\"\n\t\t\t\t\t}\n\
+        \t\t\t\t\t\"language\"\t\t\"German\"\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t}\n}\n";
+    assert_eq!(registry_steam_language(raw).as_deref(), Some("german"));
+    assert_eq!(registry_steam_language("\"Registry\"\n{\n}\n"), None);
+}
+
+#[test]
+fn install_language_follows_steam_order() {
+    assert_eq!(
+        pick_install_language(Some("german"), Some("english"), Some("french")),
+        "german"
+    );
+    assert_eq!(
+        pick_install_language(None, Some("english"), Some("french")),
+        "english"
+    );
+    assert_eq!(
+        pick_install_language(Some(" "), None, Some("French")),
+        "french"
+    );
+    assert_eq!(pick_install_language(None, None, None), "english");
+}

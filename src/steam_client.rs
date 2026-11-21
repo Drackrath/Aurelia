@@ -544,6 +544,7 @@ pub use install::InstallOptions;
 mod content;
 mod depots;
 pub(crate) use content::ContentHost;
+mod language;
 mod launch;
 mod library;
 mod manage;

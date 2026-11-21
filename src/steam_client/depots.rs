@@ -94,6 +94,49 @@ impl ResolvedDepots {
     }
 }
 
+/// Every selected manifest is already installed.
+pub(crate) fn selections_match_installed(
+    selections: &[ManifestSelection],
+    installed: &HashMap<u64, u64>,
+) -> bool {
+    !selections.is_empty()
+        && selections
+            .iter()
+            .all(|s| installed.get(&(s.depot_id as u64)) == Some(&s.manifest_id))
+}
+
+/// A depot row's `config/language`, if set.
+pub(crate) fn depot_language<'a>(value: &'a Value<'_>) -> Option<&'a str> {
+    value
+        .get_obj(&["config"])
+        .and_then(|c| c.get("language"))
+        .and_then(|l| l.as_str())
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+}
+
+/// `wanted` if available, else English.
+pub(crate) fn effective_language(rows: &Obj<'_>, platform: DepotPlatform, wanted: &str) -> String {
+    let available = rows.values().any(|row| {
+        let oslist = row
+            .get_obj(&["config"])
+            .and_then(|c| c.get("oslist"))
+            .and_then(|o| o.as_str());
+        should_keep_depot(oslist, platform)
+            && depot_language(row).is_some_and(|l| l.eq_ignore_ascii_case(wanted))
+    });
+    if available {
+        wanted.to_ascii_lowercase()
+    } else {
+        "english".to_string()
+    }
+}
+
+/// Whether a depot serves `language`.
+pub(crate) fn depot_matches_language(value: &Value<'_>, language: &str) -> bool {
+    depot_language(value).is_none_or(|l| l.eq_ignore_ascii_case(language))
+}
+
 pub(crate) fn required_depot(value: &Value<'_>, app_id: u32) -> bool {
     number(value.get("dlcappid")).is_none_or(|id| id == 0 || id == app_id)
 }

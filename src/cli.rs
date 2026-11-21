@@ -404,6 +404,12 @@ pub(crate) enum Command {
     Branches { app_id: u32 },
     /// Switch a game to a different branch.
     SetBranch { app_id: u32, branch: String },
+    /// Swap an installed game's language depots.
+    SetLanguage {
+        app_id: u32,
+        /// Steam language name, e.g. `german`.
+        language: String,
+    },
     /// List depots for a game.
     Depots { app_id: u32 },
     /// List each depot's current manifest id per branch (version discovery for
@@ -670,6 +676,8 @@ pub(crate) enum ProtonCommand {
     Uninstall { version: String },
     /// Set the global default Proton/Wine version (used when a game has none set).
     Default { version: String },
+    /// Find Steam mappings to missing tools.
+    Mappings,
     /// Install a Proton anti-cheat runtime.
     Anticheat {
         /// Which runtime to install.

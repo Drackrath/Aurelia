@@ -271,6 +271,10 @@ impl SteamClient {
     /// `pin_updates` writes `AutoUpdateBehavior "1"` ("only update on launch") instead
     /// of the default `"0"`, so the official Steam client won't eagerly re-patch a
     /// downgraded/pinned install out from under Aurelia. Normal installs pass `false`.
+    ///
+    /// Existing `UserConfig`/`MountedConfig` are copied verbatim.
+    /// `language` fills a missing `UserConfig` language.
+    #[allow(clippy::too_many_arguments)]
     pub fn write_appmanifest(
         path: &Path,
         appid: u32,
@@ -280,6 +284,7 @@ impl SteamClient {
         buildid: Option<&str>,
         fully_installed: bool,
         pin_updates: bool,
+        language: Option<&str>,
     ) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -287,16 +292,23 @@ impl SteamClient {
         }
 
         // Preserve existing manifest
-        let (last_owner, beta_key) = match std::fs::read_to_string(path) {
-            Ok(existing) => {
-                let parsed = crate::core::acf::parse_app_manifest(&existing);
+        let existing = std::fs::read_to_string(path).ok();
+        let (last_owner, beta_key) = match existing.as_deref() {
+            Some(existing) => {
+                let parsed = crate::core::acf::parse_app_manifest(existing);
                 (
                     parsed.last_owner.unwrap_or(0),
                     Some(parsed.active_branch).filter(|b| b != "public"),
                 )
             }
-            Err(_) => (0, None),
+            None => (0, None),
         };
+        let old_user_config = existing
+            .as_deref()
+            .and_then(|raw| top_level_block(raw, "UserConfig"));
+        let mounted_config = existing
+            .as_deref()
+            .and_then(|raw| top_level_block(raw, "MountedConfig"));
 
         // Strip characters that are structurally significant in VDF text so a name
         // cannot break out of its quoted value or inject extra keys/blocks.
@@ -343,11 +355,29 @@ impl SteamClient {
             content.push_str("\t}\n");
         }
 
-        if let Some(branch) = beta_key {
-            let branch = branch.replace(['"', '\n', '\r', '{', '}', '\\'], "");
-            content.push_str(&format!(
-                "\t\"UserConfig\"\n\t{{\n\t\t\"betakey\"\t\t\"{branch}\"\n\t}}\n"
-            ));
+        let clean = |s: &str| s.replace(['"', '\n', '\r', '{', '}', '\\'], "");
+        let user_config = match old_user_config {
+            Some(block) => Some(block.to_string()),
+            None => {
+                let mut entries = String::new();
+                if let Some(branch) = beta_key {
+                    entries.push_str(&format!("\t\t\"betakey\"\t\t\"{}\"\n", clean(&branch)));
+                }
+                (!entries.is_empty()).then(|| format!("\"UserConfig\"\n\t{{\n{entries}\t}}"))
+            }
+        };
+        let language = language.map(clean).filter(|l| !l.is_empty());
+        let user_config = match (user_config, language) {
+            (Some(block), Some(lang)) => Some(block_with_key(&block, "language", &lang)),
+            (None, Some(lang)) => Some(format!(
+                "\"UserConfig\"\n\t{{\n\t\t\"language\"\t\t\"{lang}\"\n\t}}"
+            )),
+            (block, None) => block,
+        };
+        for block in user_config.iter().map(String::as_str).chain(mounted_config) {
+            content.push('\t');
+            content.push_str(block);
+            content.push('\n');
         }
 
         content.push_str("}\n");
@@ -488,6 +518,268 @@ impl SteamClient {
         }
         Ok(out)
     }
+}
+
+/// One lexical token of VDF text.
+#[derive(Clone, Copy)]
+enum Tok<'a> {
+    /// Quoted string, with its start offset.
+    Str(usize, &'a str),
+    Open,
+    /// Closing brace offset.
+    Close(usize),
+}
+
+/// Lex quoted strings and braces.
+fn vdf_tokens(raw: &str) -> Vec<Tok<'_>> {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' => {
+                let start = i;
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'"' {
+                    // Skip escaped characters.
+                    if bytes[i] == b'\\' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+                let end = i.min(bytes.len());
+                out.push(Tok::Str(start, raw.get(start + 1..end).unwrap_or("")));
+            }
+            b'{' => out.push(Tok::Open),
+            b'}' => out.push(Tok::Close(i)),
+            _ => {}
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Raw top-level `name` block text.
+pub(crate) fn top_level_block<'a>(raw: &'a str, name: &str) -> Option<&'a str> {
+    let toks = vdf_tokens(raw);
+    let mut depth = 0usize;
+    let mut start = None;
+    for (idx, tok) in toks.iter().enumerate() {
+        match *tok {
+            Tok::Open => {
+                if depth == 1
+                    && start.is_none()
+                    && let Some(Tok::Str(s, key)) = idx.checked_sub(1).map(|p| toks[p])
+                    && key.eq_ignore_ascii_case(name)
+                {
+                    start = Some(s);
+                }
+                depth += 1;
+            }
+            Tok::Close(pos) => {
+                depth = depth.checked_sub(1)?;
+                if depth == 1
+                    && let Some(s) = start
+                {
+                    return raw.get(s..=pos);
+                }
+            }
+            Tok::Str(..) => {}
+        }
+    }
+    None
+}
+
+/// A block's direct string pairs.
+fn block_pairs(block: &str) -> Vec<(&str, &str)> {
+    let toks = vdf_tokens(block);
+    let mut pairs = Vec::new();
+    let mut depth = 0usize;
+    let mut i = 0;
+    while i < toks.len() {
+        match toks[i] {
+            Tok::Open => depth += 1,
+            Tok::Close(_) => depth = depth.saturating_sub(1),
+            Tok::Str(_, key) if depth == 1 => {
+                if let Some(Tok::Str(_, value)) = toks.get(i + 1) {
+                    pairs.push((key, *value));
+                    i += 1;
+                }
+            }
+            Tok::Str(..) => {}
+        }
+        i += 1;
+    }
+    pairs
+}
+
+/// Add `key` unless already present.
+fn block_with_key(block: &str, key: &str, value: &str) -> String {
+    if block_pairs(block)
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case(key))
+    {
+        return block.to_string();
+    }
+    let Some(close) = block.rfind('}') else {
+        return block.to_string();
+    };
+    let line = format!("\t\t\"{key}\"\t\t\"{value}\"\n");
+    let mut out = block.to_string();
+    match block[..close].rfind('\n') {
+        Some(nl) => out.insert_str(nl + 1, &line),
+        None => out.insert_str(close, &format!("\n{line}\t")),
+    }
+    out
+}
+
+/// Child blocks as `(key, start, end)`.
+fn child_blocks(block: &str) -> Vec<(&str, usize, usize)> {
+    let toks = vdf_tokens(block);
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut open: Option<(&str, usize)> = None;
+    for (idx, tok) in toks.iter().enumerate() {
+        match *tok {
+            Tok::Open => {
+                if depth == 1
+                    && let Some(Tok::Str(s, key)) = idx.checked_sub(1).map(|p| toks[p])
+                {
+                    open = Some((key, s));
+                }
+                depth += 1;
+            }
+            Tok::Close(pos) => {
+                depth = depth.saturating_sub(1);
+                if depth == 1
+                    && let Some((key, s)) = open.take()
+                {
+                    out.push((key, s, pos));
+                }
+            }
+            Tok::Str(..) => {}
+        }
+    }
+    out
+}
+
+/// Set or add a direct `key`.
+fn block_set_key(block: &str, key: &str, value: &str) -> String {
+    let toks = vdf_tokens(block);
+    let mut depth = 0usize;
+    let mut i = 0;
+    while i < toks.len() {
+        match toks[i] {
+            Tok::Open => depth += 1,
+            Tok::Close(_) => depth = depth.saturating_sub(1),
+            Tok::Str(_, k) if depth == 1 => {
+                if let Some(Tok::Str(vs, old)) = toks.get(i + 1) {
+                    if k.eq_ignore_ascii_case(key) {
+                        let mut out = block.to_string();
+                        out.replace_range(*vs..vs + old.len() + 2, &format!("\"{value}\""));
+                        return out;
+                    }
+                    i += 1;
+                }
+            }
+            Tok::Str(..) => {}
+        }
+        i += 1;
+    }
+    block_with_key(block, key, value)
+}
+
+/// Byte range of a top-level block.
+fn top_level_range(raw: &str, name: &str) -> Option<std::ops::Range<usize>> {
+    let block = top_level_block(raw, name)?;
+    let start = block.as_ptr() as usize - raw.as_ptr() as usize;
+    Some(start..start + block.len())
+}
+
+/// Append a top-level block.
+fn push_top_level(raw: &mut String, block: &str) {
+    if let Some(last) = raw.rfind('}') {
+        raw.insert_str(last, &format!("\t{block}\n"));
+    }
+}
+
+/// Swap language depots and record `language`.
+///
+/// In-place text edit; keeps the rest.
+pub(crate) fn switch_language_in_manifest(
+    raw: &str,
+    remove: &HashSet<u32>,
+    add: &[(u32, u64, u64)],
+    language: &str,
+) -> String {
+    let mut out = raw.to_string();
+    let new_entries: String = add
+        .iter()
+        .map(|(depot, manifest, size)| {
+            format!(
+                "\t\t\"{depot}\"\n\t\t{{\n\t\t\t\"manifest\"\t\t\"{manifest}\"\n\t\t\t\"size\"\t\t\"{size}\"\n\t\t}}\n"
+            )
+        })
+        .collect();
+
+    match top_level_range(&out, "InstalledDepots") {
+        Some(range) => {
+            let block = &out[range.clone()];
+            let mut rebuilt = String::from("\"InstalledDepots\"\n\t{\n");
+            for (key, s, e) in child_blocks(block) {
+                let added = add.iter().any(|(d, ..)| d.to_string() == key);
+                if key.parse::<u32>().is_ok_and(|d| remove.contains(&d)) || added {
+                    continue;
+                }
+                rebuilt.push_str("\t\t");
+                rebuilt.push_str(&block[s..=e]);
+                rebuilt.push('\n');
+            }
+            rebuilt.push_str(&new_entries);
+            rebuilt.push_str("\t}");
+            out.replace_range(range, &rebuilt);
+        }
+        None if !add.is_empty() => {
+            push_top_level(
+                &mut out,
+                &format!("\"InstalledDepots\"\n\t{{\n{new_entries}\t}}"),
+            );
+        }
+        None => {}
+    }
+
+    match top_level_range(&out, "UserConfig") {
+        Some(range) => {
+            let updated = block_set_key(&out[range.clone()], "language", language);
+            out.replace_range(range, &updated);
+        }
+        None => push_top_level(
+            &mut out,
+            &format!("\"UserConfig\"\n\t{{\n\t\t\"language\"\t\t\"{language}\"\n\t}}"),
+        ),
+    }
+
+    if let Some(range) = top_level_range(&out, "MountedConfig") {
+        let block = &out[range.clone()];
+        if block_pairs(block)
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("language"))
+        {
+            let updated = block_set_key(block, "language", language);
+            out.replace_range(range, &updated);
+        }
+    }
+    out
+}
+
+/// Per-game `UserConfig/language`, if set.
+pub(crate) fn user_config_language(raw: &str) -> Option<String> {
+    let block = top_level_block(raw, "UserConfig")?;
+    block_pairs(block)
+        .into_iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("language"))
+        .map(|(_, v)| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 /// Safe `config/installdir` from PICS section.

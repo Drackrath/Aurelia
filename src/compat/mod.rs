@@ -1,5 +1,6 @@
 pub mod anticheat;
 pub mod luxtorpeda;
+pub mod mapping;
 pub mod plugin;
 pub mod proton;
 pub mod running;
