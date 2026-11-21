@@ -338,6 +338,7 @@ pub(crate) fn merge_family_shared(games: &mut Vec<LibraryGame>, shared: Vec<Shar
             online_required: None,
             platform: None,
             from_windows_steam: false,
+            size_on_disk: None,
         });
     }
 }

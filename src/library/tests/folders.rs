@@ -191,6 +191,7 @@ fn copy_at(path: &str, last_updated: u64, build_id: u64) -> InstalledAppInfo {
         manifest_path: PathBuf::from(path).join("appmanifest.acf"),
         last_updated,
         build_id,
+        size_on_disk: 0,
     }
 }
 
@@ -301,4 +302,43 @@ async fn matching_installdir_is_used_without_probe() {
     .unwrap();
     let (_, info) = parse_app_manifest_info(&manifest).await.unwrap().unwrap();
     assert_eq!(info.install_path, real);
+}
+
+#[test]
+fn installed_games_carry_their_size() {
+    let owned = vec![
+        OwnedGame {
+            app_id: 620,
+            name: "Portal 2".to_string(),
+            playtime_forever_minutes: 0,
+            local_manifest_ids: HashMap::new(),
+            update_available: false,
+        },
+        OwnedGame {
+            app_id: 400,
+            name: "Portal".to_string(),
+            playtime_forever_minutes: 0,
+            local_manifest_ids: HashMap::new(),
+            update_available: false,
+        },
+    ];
+    let mut installed = HashMap::new();
+    let mut portal2 = copy_at("/lib/steamapps/common/Portal 2", 1, 1);
+    portal2.size_on_disk = 12_345;
+    installed.insert(620, portal2);
+    let mut shared = copy_at("/lib/steamapps/common/Shared", 1, 1);
+    shared.size_on_disk = 99;
+    installed.insert(70, shared);
+
+    let lib = build_game_library(owned, installed, None);
+    let size = |id| {
+        lib.games
+            .iter()
+            .find(|g| g.app_id == id)
+            .unwrap()
+            .size_on_disk
+    };
+    assert_eq!(size(620), Some(12_345));
+    assert_eq!(size(400), None);
+    assert_eq!(size(70), Some(99));
 }

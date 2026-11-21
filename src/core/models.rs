@@ -209,6 +209,9 @@ pub struct LibraryGame {
     /// pipeline. Defaults to `false`.
     #[serde(default)]
     pub from_windows_steam: bool,
+    /// Installed bytes (`SizeOnDisk`); `None` when not installed.
+    #[serde(default)]
+    pub size_on_disk: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

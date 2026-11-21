@@ -16,6 +16,8 @@ pub struct AppManifest {
     pub build_id: u64,
     /// `UserConfig/BetaKey`, defaulting to `public`.
     pub active_branch: String,
+    /// `SizeOnDisk` in bytes; 0 when absent.
+    pub size_on_disk: u64,
 }
 
 impl AppManifest {
@@ -92,6 +94,7 @@ pub fn parse_app_manifest(raw: &str) -> AppManifest {
             "stateflags" if m.state_flags.is_none() => m.state_flags = value.parse().ok(),
             "lastupdated" => m.last_updated = value.parse().unwrap_or(0),
             "buildid" => m.build_id = value.parse().unwrap_or(0),
+            "sizeondisk" => m.size_on_disk = value.parse().unwrap_or(0),
             _ => {}
         }
     }
