@@ -324,6 +324,54 @@ where
     }
 }
 
+/// Current manifest per depot and branch.
+pub(crate) fn manifest_infos(rows: &Obj<'_>) -> Vec<DepotManifestInfo> {
+    // Quoted string or raw u64.
+    fn parse_gid(v: &Value) -> Option<u64> {
+        if let Some(s) = v.as_str() {
+            return s.parse::<u64>().ok();
+        }
+        v.as_u64()
+    }
+
+    let mut out = Vec::new();
+    for (key, value) in rows.iter() {
+        let Ok(depot_id) = key.parse::<u32>() else {
+            continue;
+        };
+        let Some(obj) = value.as_obj() else { continue };
+        let depot_name = obj.get("name").and_then(|v| v.as_str()).map(str::to_string);
+
+        let Some(manifests) = obj.get("manifests").and_then(|v| v.as_obj()) else {
+            continue;
+        };
+        for (branch, entry) in manifests.iter() {
+            // Object, or bare gid string.
+            let (manifest_id, size) = match entry.as_obj() {
+                Some(bo) => (
+                    bo.get("gid").and_then(parse_gid),
+                    bo.get("size")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| s.parse::<u64>().ok())
+                        .unwrap_or(0),
+                ),
+                None => (parse_gid(entry), 0),
+            };
+            if let Some(manifest_id) = manifest_id {
+                out.push(DepotManifestInfo {
+                    depot_id,
+                    depot_name: depot_name.clone(),
+                    branch: branch.to_string(),
+                    manifest_id,
+                    size,
+                });
+            }
+        }
+    }
+    out.sort_by(|a, b| a.depot_id.cmp(&b.depot_id).then(a.branch.cmp(&b.branch)));
+    out
+}
+
 impl SteamClient {
     pub async fn get_depot_list(&self, app_id: u32) -> Result<Vec<DepotInfo>> {
         let buffer = self
@@ -388,71 +436,23 @@ impl SteamClient {
     /// appinfo `depots -> <depot> -> manifests -> <branch> -> gid/size` walk the
     /// install pipeline reads.
     pub async fn list_depot_manifests(&self, app_id: u32) -> Result<Vec<DepotManifestInfo>> {
+        Ok(manifest_infos(&self.resolved_depots(app_id).await?.rows))
+    }
+
+    /// Depot rows with shared depots resolved.
+    pub(crate) async fn resolved_depots(&self, app_id: u32) -> Result<ResolvedDepots> {
         let buffer = self
             .pics_buffer(
                 app_id,
                 "failed requesting appinfo product info for manifests",
             )
             .await?;
-
-        // Parse a gid value that may be encoded as a quoted string or a raw u64.
-        fn parse_gid(v: &steam_vdf_parser::Value) -> Option<u64> {
-            if let Some(s) = v.as_str() {
-                return s.parse::<u64>().ok();
-            }
-            v.as_u64()
-        }
-
-        let resolved = depots::resolve(
+        depots::resolve(
             self.require_connection()?,
             app_id,
             find_vdf_in_pics(&buffer)?,
         )
-        .await?;
-        let resolved_value = steam_vdf_parser::Value::Obj(resolved.rows);
-        let mut out = Vec::new();
-        {
-            let depots_val = Some(&resolved_value);
-            if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
-                for (key, value) in depots.iter() {
-                    let Ok(depot_id) = key.parse::<u32>() else {
-                        continue;
-                    };
-                    let Some(obj) = value.as_obj() else { continue };
-                    let depot_name = obj.get("name").and_then(|v| v.as_str()).map(str::to_string);
-
-                    let Some(manifests) = obj.get("manifests").and_then(|v| v.as_obj()) else {
-                        continue;
-                    };
-                    for (branch, entry) in manifests.iter() {
-                        // A branch entry is either an object ({ gid, size, download })
-                        // or, on older appinfo, a bare gid string.
-                        let (manifest_id, size) = match entry.as_obj() {
-                            Some(bo) => (
-                                bo.get("gid").and_then(parse_gid),
-                                bo.get("size")
-                                    .and_then(|v| v.as_str())
-                                    .and_then(|s| s.parse::<u64>().ok())
-                                    .unwrap_or(0),
-                            ),
-                            None => (parse_gid(entry), 0),
-                        };
-                        if let Some(manifest_id) = manifest_id {
-                            out.push(DepotManifestInfo {
-                                depot_id,
-                                depot_name: depot_name.clone(),
-                                branch: branch.to_string(),
-                                manifest_id,
-                                size,
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        out.sort_by(|a, b| a.depot_id.cmp(&b.depot_id).then(a.branch.cmp(&b.branch)));
-        Ok(out)
+        .await
     }
 
     /// Estimate the download and on-disk size of installing `app_id` on `platform`,
@@ -527,47 +527,6 @@ impl SteamClient {
         }
 
         Ok(response.depot_encryption_key().to_vec())
-    }
-
-    pub async fn fetch_depots(&self, appid: u32) -> Result<Vec<BrowserDepotInfo>> {
-        let connection = self.require_connection()?;
-        depot_browser::fetch_depots(connection, appid).await
-    }
-
-    pub async fn fetch_manifest_files(
-        &self,
-        appid: u32,
-        depot_id: u32,
-        manifest_ref: &str,
-    ) -> Result<Vec<ManifestFileEntry>> {
-        let connection = self.require_connection()?;
-        let cdn = self.browser_cdn_client(appid, depot_id).await?;
-        depot_browser::fetch_manifest_files(connection, &cdn, appid, depot_id, manifest_ref).await
-    }
-
-    pub fn download_single_file(
-        &self,
-        appid: u32,
-        depot_id: u32,
-        manifest_ref: &str,
-        file_path: &str,
-        output_dir: &Path,
-    ) -> Result<()> {
-        let connection = self.require_connection()?;
-        let runtime = tokio::runtime::Runtime::new()?;
-        let cdn = runtime.block_on(self.browser_cdn_client(appid, depot_id))?;
-        depot_browser::download_single_file(
-            &runtime,
-            connection,
-            &cdn,
-            depot_browser::DepotFileRef {
-                appid,
-                depot_id,
-                manifest_ref,
-                file_path,
-            },
-            output_dir,
-        )
     }
 }
 

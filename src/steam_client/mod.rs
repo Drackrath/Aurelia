@@ -10,7 +10,7 @@ use crate::core::models::{
 use crate::library::cloud_sync::{
     CloudClient, CloudPathResolver, UfsConfig, UfsRootOverride, UfsSaveSpec, default_cloud_root,
 };
-use crate::library::depot_browser::{self, DepotInfo as BrowserDepotInfo, ManifestFileEntry};
+use crate::library::depot_browser::ManifestFileEntry;
 use crate::web::cm_list::get_cm_endpoints;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
@@ -120,6 +120,8 @@ pub use install::InstallOptions;
 mod content;
 
 mod depots;
+
+mod depot_files;
 
 pub(crate) use content::ContentHost;
 

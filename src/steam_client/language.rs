@@ -247,11 +247,7 @@ impl SteamClient {
             let mut remaining_files = Vec::new();
             for (depot, manifest) in &plan.remove {
                 match client
-                    .fetch_manifest_files(
-                        resolved.source_app(*depot),
-                        *depot,
-                        &manifest.to_string(),
-                    )
+                    .fetch_manifest_files(resolved.source_app(*depot), *depot, *manifest)
                     .await
                 {
                     Ok(files) => {
@@ -266,11 +262,7 @@ impl SteamClient {
             if !plan.remove.is_empty() {
                 for (depot, manifest) in plan.keep.iter().chain(&plan.add) {
                     match client
-                        .fetch_manifest_files(
-                            resolved.source_app(*depot),
-                            *depot,
-                            &manifest.to_string(),
-                        )
+                        .fetch_manifest_files(resolved.source_app(*depot), *depot, *manifest)
                         .await
                     {
                         Ok(files) => {

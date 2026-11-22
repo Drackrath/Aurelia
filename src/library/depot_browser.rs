@@ -1,246 +1,362 @@
+//! Depot browser: offline manifest helpers.
+
 use anyhow::{Context, Result, anyhow, bail};
-use serde::Deserialize;
 use sha1::Digest;
-use std::collections::HashMap;
-use std::path::Path;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 
-use steam_cdn::CDNClient;
-use steam_vent::connection::Connection;
+use crate::steam_client::DepotManifestInfo;
 
-#[derive(Debug, Clone)]
-pub struct DepotInfo {
-    pub depot_id: u32,
-    pub name: String,
-    pub max_size: u64,
-    pub public_manifest_id: Option<u64>,
+/// Steam `EDepotFileFlag::Executable`.
+pub const FLAG_EXECUTABLE: u32 = 32;
+/// Steam `EDepotFileFlag::Directory`.
+pub const FLAG_DIRECTORY: u32 = 64;
+/// Steam `EDepotFileFlag::Symlink`.
+pub const FLAG_SYMLINK: u32 = 512;
+
+/// What a manifest entry is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EntryKind {
+    File,
+    Directory,
+    Symlink,
 }
 
-#[derive(Debug, Clone)]
+/// One entry of a depot manifest.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ManifestFileEntry {
+    /// Path inside the depot, `/`-separated.
     pub filename: String,
+    pub kind: EntryKind,
+    /// Uncompressed size in bytes.
     pub size: u64,
-    pub sha_hash: String,
+    /// Content SHA-1 hex; dirs empty.
+    pub sha1: String,
+    pub chunks: usize,
+    pub executable: bool,
+    /// Symlink target, when given.
+    pub link_target: Option<String>,
+}
+
+/// Raw manifest fields of one entry.
+#[derive(Debug, Clone, Default)]
+pub struct RawEntry {
+    pub path: String,
+    pub flags: u32,
+    pub link_target: String,
+    pub size: u64,
+    pub sha_content: Vec<u8>,
     pub chunks: usize,
 }
 
-#[derive(Debug, Deserialize)]
-struct AppInfoRoot {
-    #[serde(default)]
-    appinfo: Option<AppInfoNode>,
-    #[serde(default)]
-    depots: HashMap<String, DepotNode>,
-}
-
-#[derive(Debug, Deserialize)]
-struct AppInfoNode {
-    #[serde(default)]
-    depots: HashMap<String, DepotNode>,
-}
-
-#[derive(Debug, Deserialize)]
-struct DepotNode {
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
-    maxsize: Option<String>,
-    #[serde(default)]
-    manifests: Option<DepotManifests>,
-}
-
-#[derive(Debug, Deserialize)]
-struct DepotManifests {
-    #[serde(default)]
-    public: Option<String>,
-}
-
-pub async fn fetch_depots(connection: &Connection, appid: u32) -> Result<Vec<DepotInfo>> {
-    let parsed = fetch_appinfo(connection, appid).await?;
-    let depots = parsed.appinfo.map(|n| n.depots).unwrap_or(parsed.depots);
-
-    let mut out = Vec::new();
-    for (depot_id, node) in depots {
-        if !depot_id.chars().all(|c| c.is_ascii_digit()) {
-            continue;
-        }
-        let depot_id = depot_id.parse::<u32>()?;
-        let max_size = node
-            .maxsize
-            .as_deref()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or_default();
-        let public_manifest_id = node
-            .manifests
-            .and_then(|m| m.public)
-            .and_then(|v| v.parse::<u64>().ok());
-
-        out.push(DepotInfo {
-            depot_id,
-            name: node.name.unwrap_or_else(|| format!("Depot {depot_id}")),
-            max_size,
-            public_manifest_id,
-        });
+/// Kind from flags and target.
+pub fn entry_kind(flags: u32, link_target: &str) -> EntryKind {
+    if flags & FLAG_DIRECTORY != 0 {
+        EntryKind::Directory
+    } else if !link_target.is_empty() || flags & FLAG_SYMLINK != 0 {
+        EntryKind::Symlink
+    } else {
+        EntryKind::File
     }
-
-    out.sort_by_key(|d| d.depot_id);
-    Ok(out)
 }
 
-pub async fn fetch_manifest_files(
-    connection: &Connection,
-    cdn_client: &CDNClient,
-    appid: u32,
-    depot_id: u32,
-    manifest_ref: &str,
-) -> Result<Vec<ManifestFileEntry>> {
-    let manifest_id = resolve_manifest_id(connection, appid, depot_id, manifest_ref).await?;
-    let key = cdn_client
-        .get_depot_decryption_key(appid, depot_id)
-        .await
-        .ok()
-        .flatten();
-    let code = request_code(cdn_client, appid, depot_id, manifest_id).await;
-    let manifest = cdn_client
-        .get_manifest(appid, depot_id, manifest_id, code, key)
-        .await
-        .map_err(|e| anyhow!("failed to get manifest: {e}"))?;
-
-    let mut files = Vec::new();
-    for file in manifest.files() {
-        let filename = file.full_path();
-        if filename.is_empty() {
-            continue;
+impl ManifestFileEntry {
+    /// Row for one raw manifest entry.
+    pub fn from_raw(raw: RawEntry) -> Self {
+        let kind = entry_kind(raw.flags, &raw.link_target);
+        Self {
+            filename: raw.path,
+            kind,
+            size: raw.size,
+            sha1: if kind == EntryKind::Directory {
+                String::new()
+            } else {
+                hex::encode(&raw.sha_content)
+            },
+            chunks: raw.chunks,
+            executable: raw.flags & FLAG_EXECUTABLE != 0,
+            link_target: (!raw.link_target.is_empty()).then(|| raw.link_target.replace('\\', "/")),
         }
-
-        let mut hasher = sha1::Sha1::new();
-        for chunk in file.chunks() {
-            hasher.update(chunk.sha());
-        }
-        let sha_hash = hex::encode(hasher.finalize());
-
-        files.push(ManifestFileEntry {
-            filename,
-            size: file.size(),
-            sha_hash,
-            chunks: file.chunks().len(),
-        });
     }
-
-    files.sort_by(|a, b| a.filename.cmp(&b.filename));
-    Ok(files)
 }
 
-/// One file inside a depot manifest.
-#[derive(Clone, Copy, Debug)]
-pub struct DepotFileRef<'a> {
-    pub appid: u32,
-    pub depot_id: u32,
-    /// Manifest id or branch name.
-    pub manifest_ref: &'a str,
-    pub file_path: &'a str,
+/// Sorted rows, without depot root.
+pub fn entries(raw: impl IntoIterator<Item = RawEntry>) -> Vec<ManifestFileEntry> {
+    let mut out: Vec<_> = raw
+        .into_iter()
+        .map(ManifestFileEntry::from_raw)
+        .filter(|e| !e.filename.is_empty())
+        .collect();
+    out.sort_by(|a, b| a.filename.cmp(&b.filename));
+    out
 }
 
-pub fn download_single_file(
-    runtime: &tokio::runtime::Runtime,
-    connection: &Connection,
-    cdn_client: &CDNClient,
-    file: DepotFileRef<'_>,
-    output_dir: &Path,
-) -> Result<()> {
-    let DepotFileRef {
-        appid,
-        depot_id,
-        manifest_ref,
-        file_path,
-    } = file;
-    let manifest_id = runtime.block_on(resolve_manifest_id(
-        connection,
-        appid,
-        depot_id,
-        manifest_ref,
-    ))?;
-
-    let depot_key = runtime
-        .block_on(cdn_client.get_depot_decryption_key(appid, depot_id))
-        .map_err(|e| anyhow!("failed to get depot key: {e}"))?
-        .ok_or_else(|| anyhow!("no decryption key for depot {depot_id}"))?;
-
-    let code = runtime.block_on(request_code(cdn_client, appid, depot_id, manifest_id));
-    let manifest = runtime
-        .block_on(cdn_client.get_manifest(appid, depot_id, manifest_id, code, Some(depot_key)))
-        .map_err(|e| anyhow!("failed to get manifest: {e}"))?;
-
-    let file = manifest
-        .files()
+/// Total size of the regular files.
+pub fn total_size(files: &[ManifestFileEntry]) -> u64 {
+    files
         .iter()
-        .find(|f| f.full_path() == file_path)
-        .ok_or_else(|| anyhow!("file not found in manifest: {file_path}"))?;
+        .filter(|f| f.kind == EntryKind::File)
+        .map(|f| f.size)
+        .sum()
+}
 
-    let relative = crate::core::paths::safe_relative_path(&file.full_path())
-        .ok_or_else(|| anyhow!("unsafe path in manifest: {:?}", file.full_path()))?;
+/// Case-insensitive `*`/`?` glob match.
+pub fn glob_match(pattern: &str, path: &str) -> bool {
+    let pattern: Vec<char> = pattern.to_lowercase().chars().collect();
+    let path: Vec<char> = path.to_lowercase().chars().collect();
+    let (mut p, mut s) = (0, 0);
+    // Last star and its match end.
+    let mut star: Option<(usize, usize)> = None;
+    while s < path.len() {
+        if p < pattern.len() && (pattern[p] == '?' || pattern[p] == path[s]) {
+            p += 1;
+            s += 1;
+        } else if p < pattern.len() && pattern[p] == '*' {
+            star = Some((p, s));
+            p += 1;
+        } else if let Some((star_p, star_s)) = star {
+            p = star_p + 1;
+            s = star_s + 1;
+            star = Some((star_p, star_s + 1));
+        } else {
+            return false;
+        }
+    }
+    pattern[p..].iter().all(|&c| c == '*')
+}
 
-    std::fs::create_dir_all(output_dir)
-        .with_context(|| format!("failed creating {}", output_dir.display()))?;
-    let root = output_dir
+/// Which manifest of a depot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ManifestRef {
+    /// The current manifest on this branch.
+    Branch(String),
+    /// A specific manifest id.
+    Id(u64),
+}
+
+impl Default for ManifestRef {
+    fn default() -> Self {
+        Self::Branch("public".to_string())
+    }
+}
+
+impl ManifestRef {
+    /// Id, else branch, else `public`.
+    pub fn from_options(manifest: Option<u64>, branch: Option<&str>) -> Self {
+        match (manifest, branch) {
+            (Some(id), _) => Self::Id(id),
+            (None, Some(branch)) => Self::Branch(branch.to_string()),
+            (None, None) => Self::default(),
+        }
+    }
+}
+
+/// Manifest id for `reference`.
+pub fn pick_manifest(
+    manifests: &[DepotManifestInfo],
+    depot_id: u32,
+    reference: &ManifestRef,
+) -> Result<u64> {
+    let branch = match reference {
+        ManifestRef::Id(id) => return Ok(*id),
+        ManifestRef::Branch(branch) => branch,
+    };
+    let depot: Vec<_> = manifests
+        .iter()
+        .filter(|m| m.depot_id == depot_id)
+        .collect();
+    if depot.is_empty() {
+        bail!(
+            "depot {depot_id} has no manifests in this app (check `aurelia depots` for its depots)"
+        );
+    }
+    depot
+        .iter()
+        .find(|m| m.branch.eq_ignore_ascii_case(branch))
+        .map(|m| m.manifest_id)
+        .ok_or_else(|| {
+            let branches: Vec<_> = depot.iter().map(|m| m.branch.as_str()).collect();
+            anyhow!(
+                "depot {depot_id} has no manifest on branch {branch:?} (branches: {})",
+                branches.join(", ")
+            )
+        })
+}
+
+/// One depot file to download.
+#[derive(Debug, Clone)]
+pub struct DepotFileDownload {
+    pub app_id: u32,
+    pub depot_id: u32,
+    pub manifest: ManifestRef,
+    /// Path inside the depot.
+    pub path: String,
+    /// Created if missing.
+    pub out_dir: PathBuf,
+    /// Replace an existing file.
+    pub force: bool,
+}
+
+/// A finished single-file download.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DownloadedFile {
+    pub manifest_id: u64,
+    pub path: PathBuf,
+    pub size: u64,
+}
+
+/// Request path in manifest form.
+pub fn normalize_request(path: &str) -> String {
+    let path = path.trim().replace('\\', "/");
+    let mut path = path.as_str();
+    loop {
+        if let Some(rest) = path.strip_prefix("./") {
+            path = rest;
+        } else if let Some(rest) = path.strip_prefix('/') {
+            path = rest;
+        } else {
+            break;
+        }
+    }
+    path.to_string()
+}
+
+/// Only regular files can be downloaded.
+pub fn ensure_file(path: &str, kind: EntryKind) -> Result<()> {
+    match kind {
+        EntryKind::File => Ok(()),
+        EntryKind::Directory => bail!("{path} is a directory; download its files one by one"),
+        EntryKind::Symlink => bail!("{path} is a symlink, not a file"),
+    }
+}
+
+/// Confined `out_dir/<file name>` target.
+pub fn download_target(out_dir: &Path, depot_path: &str) -> Result<PathBuf> {
+    let relative = crate::core::paths::safe_relative_path(&normalize_request(depot_path))
+        .ok_or_else(|| anyhow!("unsafe depot path: {depot_path:?}"))?;
+    let name = relative
+        .file_name()
+        .ok_or_else(|| anyhow!("{depot_path:?} has no file name"))?;
+    std::fs::create_dir_all(out_dir)
+        .with_context(|| format!("failed creating {}", out_dir.display()))?;
+    let root = out_dir
         .canonicalize()
-        .with_context(|| format!("failed resolving {}", output_dir.display()))?;
-
-    let full_path = root.join(&relative);
-    if !crate::core::paths::resolves_within(&root, &full_path) {
-        bail!("{} leaves {}", relative.display(), root.display());
+        .with_context(|| format!("failed resolving {}", out_dir.display()))?;
+    let dest = root.join(name);
+    if !crate::core::paths::resolves_within(&root, &dest) {
+        bail!("{} leaves {}", dest.display(), root.display());
     }
-    if let Some(parent) = full_path.parent() {
-        std::fs::create_dir_all(parent).context("failed creating directory for file")?;
-    }
-    // Never write through a symlink.
-    if std::fs::symlink_metadata(&full_path).is_ok_and(|m| m.file_type().is_symlink()) {
-        std::fs::remove_file(&full_path).context("failed removing symlink")?;
-    }
+    Ok(dest)
+}
 
-    runtime
-        .block_on(file.download(depot_key, &full_path, false, None, None, None))
-        .map_err(|e| anyhow!("failed to download file: {e}"))?;
+/// Partial file next to `dest`.
+pub fn part_path(dest: &Path) -> PathBuf {
+    let name = dest
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    dest.with_file_name(format!("{name}.part"))
+}
 
+/// Hex SHA-1 of a file.
+pub fn sha1_file(path: &Path) -> Result<String> {
+    let mut reader =
+        std::fs::File::open(path).with_context(|| format!("failed opening {}", path.display()))?;
+    let mut hasher = sha1::Sha1::new();
+    let mut buffer = vec![0u8; 1 << 20];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Refuse an existing `dest` unless `force`.
+pub fn check_dest(dest: &Path, force: bool) -> Result<()> {
+    if dest.is_dir() {
+        bail!("{} is a directory", dest.display());
+    }
+    if !force && dest.symlink_metadata().is_ok() {
+        bail!(
+            "{} already exists (use --force to overwrite)",
+            dest.display()
+        );
+    }
     Ok(())
 }
 
-/// Request code; newer manifests need it.
-async fn request_code(cdn_client: &CDNClient, appid: u32, depot_id: u32, id: u64) -> Option<u64> {
-    cdn_client
-        .get_manifest_request_code(appid, depot_id, id)
-        .await
-        .ok()
-}
-
-async fn resolve_manifest_id(
-    connection: &Connection,
-    appid: u32,
-    depot_id: u32,
-    manifest_ref: &str,
-) -> Result<u64> {
-    let trimmed = manifest_ref.trim();
-    if let Ok(id) = trimmed.parse::<u64>() {
-        return Ok(id);
+/// Fresh empty partial for `dest`.
+pub fn create_part(dest: &Path) -> Result<PathBuf> {
+    let part = part_path(dest);
+    match std::fs::remove_file(&part) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e).with_context(|| format!("failed removing {}", part.display())),
     }
+    // Never follows a planted link.
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&part)
+        .with_context(|| format!("failed creating {}", part.display()))?;
+    Ok(part)
+}
 
-    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("public") {
-        let depots = fetch_depots(connection, appid).await?;
-        return depots
-            .into_iter()
-            .find(|d| d.depot_id == depot_id)
-            .and_then(|d| d.public_manifest_id)
-            .ok_or_else(|| anyhow!("missing public manifest for depot {depot_id}"));
+/// What the finished `.part` must match.
+#[derive(Debug, Clone, Copy)]
+pub struct PlaceCheck<'a> {
+    /// Manifest SHA-1 hex; empty skips.
+    pub sha1: &'a str,
+    pub size: u64,
+    pub force: bool,
+}
+
+/// Verify, then move; failure removes `part`.
+pub fn place(part: &Path, dest: &Path, check: PlaceCheck<'_>) -> Result<()> {
+    let result = verify_and_move(part, dest, check);
+    if result.is_err() {
+        let _ = std::fs::remove_file(part);
     }
-
-    bail!("unsupported manifest reference '{manifest_ref}', expected numeric id or 'public'")
+    result
 }
 
-async fn fetch_appinfo(connection: &Connection, appid: u32) -> Result<AppInfoRoot> {
-    let buffer = crate::steam_client::pics::pics_app_buffer(
-        connection,
-        appid,
-        "failed requesting appinfo product info",
-    )
-    .await?;
-    let raw_vdf = String::from_utf8_lossy(&buffer);
-    keyvalues_serde::from_str(&raw_vdf).context("failed parsing appinfo VDF")
+fn verify_and_move(part: &Path, dest: &Path, check: PlaceCheck<'_>) -> Result<()> {
+    if !check.sha1.is_empty() && check.size > 0 {
+        let actual = sha1_file(part)?;
+        if !actual.eq_ignore_ascii_case(check.sha1) {
+            bail!(
+                "{} failed its checksum (expected SHA-1 {}, got {actual})",
+                dest.display(),
+                check.sha1
+            );
+        }
+    }
+    if check.force {
+        return std::fs::rename(part, dest)
+            .with_context(|| format!("failed moving the download to {}", dest.display()));
+    }
+    // Hard link fails if dest appeared.
+    match std::fs::hard_link(part, dest) {
+        Ok(()) => {
+            let _ = std::fs::remove_file(part);
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => bail!(
+            "{} already exists (use --force to overwrite)",
+            dest.display()
+        ),
+        // No hard links here; recheck.
+        Err(_) => {
+            check_dest(dest, false)?;
+            std::fs::rename(part, dest)
+                .with_context(|| format!("failed moving the download to {}", dest.display()))
+        }
+    }
 }
+
+#[cfg(test)]
+mod tests;
