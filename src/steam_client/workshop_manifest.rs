@@ -171,7 +171,7 @@ fn write_workshop_manifest(
     }
     content.push_str("\t}\n}\n");
 
-    std::fs::write(path, content)
+    crate::core::atomic::write_atomic(path, content.as_bytes())
         .with_context(|| format!("failed writing workshop manifest {}", path.display()))?;
     Ok(())
 }

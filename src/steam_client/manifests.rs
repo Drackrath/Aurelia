@@ -422,8 +422,7 @@ impl SteamClient {
 
         content.push_str("}\n");
 
-        std::fs::write(path, content)
-            .with_context(|| format!("failed writing {}", path.display()))?;
+        crate::core::atomic::write_atomic(path, content.as_bytes())?;
         Ok(())
     }
 
@@ -484,8 +483,7 @@ impl SteamClient {
         }
 
         if changed {
-            std::fs::write(base_manifest, &content)
-                .with_context(|| format!("failed writing {}", base_manifest.display()))?;
+            crate::core::atomic::write_atomic(base_manifest, content.as_bytes())?;
             tracing::info!("Enabled DLC {dlc_appid} in {}", base_manifest.display());
         } else {
             tracing::info!(
@@ -515,8 +513,7 @@ impl SteamClient {
             .with_context(|| format!("failed reading {}", manifest.display()))?;
         let updated = apply_dlc_disabled(&content, dlc_appid, !enabled);
         if updated != content {
-            std::fs::write(&manifest, &updated)
-                .with_context(|| format!("failed writing {}", manifest.display()))?;
+            crate::core::atomic::write_atomic(&manifest, updated.as_bytes())?;
         }
         tracing::info!(
             "{} DLC {dlc_appid} in {}",

@@ -250,7 +250,7 @@ async fn update_libraryfolders_for(from_lib: &Path, to_lib: &Path, appid: u32, i
     match crate::library::relocate::update_libraryfolders_apps(&text, appid, from_lib, to_lib, size)
     {
         Some(updated) => {
-            if let Err(e) = std::fs::write(&vdf_path, updated) {
+            if let Err(e) = crate::core::atomic::write_atomic(&vdf_path, updated.as_bytes()) {
                 tracing::warn!("could not write libraryfolders.vdf: {e}");
             }
         }

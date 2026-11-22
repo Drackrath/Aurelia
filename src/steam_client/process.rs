@@ -416,7 +416,7 @@ BootStrapperForceSelfUpdate=disable
 SteamDefaultDialog=Friends
 NoSavePersonalInfo=1
 ";
-        let _ = std::fs::write(&cfg_path, content);
+        let _ = crate::core::atomic::write_atomic(&cfg_path, content.as_bytes());
     }
 
     /// Launch a Windows game's executable directly, with no Proton/Wine layer.

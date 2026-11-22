@@ -41,6 +41,9 @@ fn write_with_mode(path: &Path, bytes: &[u8], private: bool) -> Result<()> {
     }
     let tmp = temp_path(path);
     let result = write_temp(&tmp, bytes, private).and_then(|()| {
+        if !private {
+            keep_metadata(path, &tmp);
+        }
         std::fs::rename(&tmp, path).with_context(|| format!("failed replacing {}", path.display()))
     });
     if result.is_err() {
@@ -48,6 +51,20 @@ fn write_with_mode(path: &Path, bytes: &[u8], private: bool) -> Result<()> {
     }
     result
 }
+
+/// Copy mode and owner, best effort.
+#[cfg(unix)]
+fn keep_metadata(path: &Path, tmp: &Path) {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(meta) = std::fs::metadata(path) else {
+        return;
+    };
+    let _ = std::fs::set_permissions(tmp, meta.permissions());
+    let _ = std::os::unix::fs::chown(tmp, Some(meta.uid()), Some(meta.gid()));
+}
+
+#[cfg(not(unix))]
+fn keep_metadata(_path: &Path, _tmp: &Path) {}
 
 fn write_temp(tmp: &Path, bytes: &[u8], private: bool) -> Result<()> {
     let mut options = std::fs::OpenOptions::new();
