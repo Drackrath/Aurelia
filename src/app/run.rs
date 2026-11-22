@@ -394,11 +394,14 @@ async fn run(mut cli: Cli) -> Result<()> {
                     bail!("an app id is required, e.g. `aurelia install 945360`");
                 };
                 cmd_install(
-                    app_id,
-                    args.platform,
-                    args.restart_steam,
-                    args.dry_run,
-                    args.library,
+                    InstallCommand {
+                        app_id,
+                        platform: args.platform,
+                        restart_steam: args.restart_steam,
+                        dry_run: args.dry_run,
+                        library: args.library,
+                        language: args.language,
+                    },
                     json,
                 )
                 .await

@@ -94,6 +94,8 @@ pub struct InstallOptions {
     pub manifest_overrides: Option<std::collections::HashMap<u32, u64>>,
     /// Branch for the recorded build id.
     pub branch: Option<String>,
+    /// Chosen language, already validated.
+    pub language: Option<String>,
 }
 
 /// One depot to download or verify.
@@ -236,6 +238,7 @@ impl SteamClient {
             library_override,
             manifest_overrides,
             branch,
+            language: chosen_language,
         } = opts;
         let connection = self.require_connection_owned()?;
 
@@ -320,11 +323,14 @@ impl SteamClient {
         let manifest_language = std::fs::read_to_string(&manifest_path)
             .ok()
             .and_then(|raw| super::manifests::user_config_language(&raw));
-        let wanted_language = crate::core::locale::pick_install_language(
-            manifest_language.as_deref(),
-            crate::core::locale::steam_client_language().as_deref(),
-            cfg.language.as_deref(),
-        );
+        let explicit_language = chosen_language.is_some();
+        let wanted_language = chosen_language.unwrap_or_else(|| {
+            crate::core::locale::pick_install_language(
+                manifest_language.as_deref(),
+                crate::core::locale::steam_client_language().as_deref(),
+                cfg.language.as_deref(),
+            )
+        });
 
         std::fs::create_dir_all(&install_dir)
             .with_context(|| format!("failed creating {}", install_dir.display()))?;
@@ -382,8 +388,13 @@ impl SteamClient {
                     };
                     let resolved_value = steam_vdf_parser::Value::Obj(resolved.rows.clone());
                     let depots_val = Some(&resolved_value);
-                    recorded_language =
-                        depots::recorded_language(&resolved.rows, platform, &wanted_language);
+                    recorded_language = super::language::recorded_language(
+                        &resolved.rows,
+                        appid,
+                        platform,
+                        &wanted_language,
+                        explicit_language,
+                    );
                     // Depot filter language.
                     let language = recorded_language
                         .clone()

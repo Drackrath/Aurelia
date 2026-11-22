@@ -49,8 +49,7 @@ impl SteamClient {
             .with_context(|| format!("failed reading {}", manifest_path.display()))?;
 
         let rewritten = acf::rewrite_branch(&raw, branch);
-        std::fs::write(&manifest_path, rewritten)
-            .with_context(|| format!("failed writing {}", manifest_path.display()))?;
+        crate::core::atomic::write_atomic(&manifest_path, rewritten.as_bytes())?;
 
         Ok(())
     }
@@ -247,7 +246,10 @@ impl SteamClient {
                                 common_bytes,
                             ) {
                                 Some(updated) => {
-                                    if let Err(e) = std::fs::write(vdf_path, updated) {
+                                    if let Err(e) = crate::core::atomic::write_atomic(
+                                        vdf_path,
+                                        updated.as_bytes(),
+                                    ) {
                                         tracing::warn!(
                                             "moved game but could not write libraryfolders.vdf: {e}"
                                         );

@@ -16,14 +16,26 @@ pub(super) fn auto_select_platform(platforms: &[DepotPlatform]) -> DepotPlatform
         .unwrap_or(DepotPlatform::Windows)
 }
 
-pub(crate) async fn cmd_install(
-    app_id: u32,
-    platform: Option<PlatformArg>,
-    restart_steam: bool,
-    dry_run: bool,
-    library: Option<String>,
-    json: bool,
-) -> Result<()> {
+/// `aurelia install <app>` options.
+pub(crate) struct InstallCommand {
+    pub(crate) app_id: u32,
+    pub(crate) platform: Option<PlatformArg>,
+    pub(crate) restart_steam: bool,
+    pub(crate) dry_run: bool,
+    pub(crate) library: Option<String>,
+    /// Explicit `--language`, unvalidated.
+    pub(crate) language: Option<String>,
+}
+
+pub(crate) async fn cmd_install(command: InstallCommand, json: bool) -> Result<()> {
+    let InstallCommand {
+        app_id,
+        platform,
+        restart_steam,
+        dry_run,
+        library,
+        language,
+    } = command;
     // `--dry-run` reports the size estimate and stops — it never touches Steam or
     // downloads anything.
     if dry_run {
@@ -37,6 +49,7 @@ pub(crate) async fn cmd_install(
         library,
         on_disk: 0,
         auto_attempts: 0,
+        language,
     };
     run_install(request, json).await
 }
@@ -50,6 +63,8 @@ pub(crate) struct InstallRequest {
     /// Bytes a resume already has.
     pub(crate) on_disk: u64,
     pub(crate) auto_attempts: u32,
+    /// Explicit `--language`, unvalidated.
+    pub(crate) language: Option<String>,
 }
 
 /// Install, keeping the backlog in step.
@@ -61,6 +76,7 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
         library,
         on_disk,
         auto_attempts,
+        language,
     } = request;
     let mut client = authed_client().await?;
 
@@ -80,6 +96,26 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
             }
             (chosen, Some(buffer))
         }
+    };
+
+    // Fail before any download.
+    let language = match language {
+        Some(_) if is_dlc => {
+            return Err(TypedError::new(
+                ErrorKind::InvalidInput,
+                format!(
+                    "--language does not apply to DLC {app_id}; it follows the base game \
+                     (use `aurelia set-language` on the base game)"
+                ),
+            )
+            .into());
+        }
+        Some(wanted) => Some(
+            client
+                .check_install_language(app_id, platform, &wanted)
+                .await?,
+        ),
+        None => None,
     };
 
     // Refuse to start if the target drive can't hold the game. (DLC installs go
@@ -149,6 +185,7 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
             InstallOptions {
                 cached_vdf,
                 library_override: Some(library_root.clone()),
+                language,
                 ..Default::default()
             },
             Arc::clone(&state),
@@ -293,27 +330,48 @@ pub(crate) async fn cmd_install_dry_run(
         }
     };
 
-    let est = client
-        .estimate_install_size(app_id, platform)
+    let preview = client
+        .install_preview(app_id, platform)
         .await
         .with_context(|| format!("failed to estimate install size for app {app_id}"))?;
+    let est = &preview.estimate;
 
     let platform_str = format!("{platform:?}").to_lowercase();
     if json {
-        print_json(&serde_json::json!({
-            "app_id": app_id,
-            "platform": platform_str,
-            "download_size": est.download_size,
-            "disk_size": est.disk_size,
-            "depot_count": est.depot_count,
-        }));
+        print_json(&dry_run_json(app_id, &platform_str, &preview));
     } else {
         cli_println!("Install estimate for app {app_id} ({platform_str}):");
         cli_println!("  Download size: {}", human_bytes(est.download_size));
         cli_println!("  Disk size    : {}", human_bytes(est.disk_size));
         cli_println!("  Depots       : {}", est.depot_count);
+        cli_println!("  Languages    : {}", preview.languages.join(", "));
+        if let Some(lang) = &preview.default_language {
+            cli_println!("  Default      : {lang}");
+        }
+        if let Some(lang) = &preview.installed_language {
+            cli_println!("  Installed    : {lang}");
+        }
     }
     Ok(())
+}
+
+/// The `install --dry-run --json` object.
+pub(crate) fn dry_run_json(
+    app_id: u32,
+    platform: &str,
+    preview: &aurelia::steam_client::InstallPreview,
+) -> serde_json::Value {
+    let est = &preview.estimate;
+    serde_json::json!({
+        "app_id": app_id,
+        "platform": platform,
+        "download_size": est.download_size,
+        "disk_size": est.disk_size,
+        "depot_count": est.depot_count,
+        "languages": preview.languages,
+        "default_language": preview.default_language,
+        "installed_language": preview.installed_language,
+    })
 }
 
 /// `aurelia install resume <app_id>|--all`.
@@ -388,6 +446,8 @@ pub(crate) async fn resume_entries(ids: &[u32], auto: bool, json: bool) -> Resul
             library: Some(entry.library.clone()),
             on_disk: entry.downloaded_bytes,
             auto_attempts,
+            // Manifest keeps the earlier choice.
+            language: None,
         };
         if let Err(e) = run_install(request, json).await {
             if ids.len() == 1 {
