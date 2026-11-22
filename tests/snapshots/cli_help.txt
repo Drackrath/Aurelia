@@ -959,6 +959,12 @@ Options:
 List depots for a game
 
 Usage: aurelia depots [OPTIONS] <APP_ID>
+       aurelia depots <COMMAND>
+
+Commands:
+  files     List a depot manifest's files
+  download  Download one depot manifest file
+  help      Print this message or the help of the given subcommand(s)
 
 Arguments:
   <APP_ID>  
@@ -967,6 +973,42 @@ Options:
   -j, --json        Emit output (and errors) as JSON. Works with every command
   -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
   -h, --help        Print help
+
+===== aurelia depots download =====
+Download one depot manifest file
+
+Usage: aurelia depots download [OPTIONS] <APP_ID> <DEPOT_ID> <PATH>
+
+Arguments:
+  <APP_ID>    
+  <DEPOT_ID>  
+  <PATH>      File path inside the depot
+
+Options:
+  -m, --manifest <MANIFEST>  Manifest id (default: branch's current)
+  -b, --branch <BRANCH>      Branch to read (default: public)
+  -o, --output <OUTPUT>      Save directory (default: current directory)
+  -f, --force                Overwrite an existing file
+  -j, --json                 Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...           Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help                 Print help
+
+===== aurelia depots files =====
+List a depot manifest's files
+
+Usage: aurelia depots files [OPTIONS] <APP_ID> <DEPOT_ID>
+
+Arguments:
+  <APP_ID>    
+  <DEPOT_ID>  
+
+Options:
+  -m, --manifest <MANIFEST>  Manifest id (default: branch's current)
+  -b, --branch <BRANCH>      Branch to read (default: public)
+  -f, --filter <FILTER>      Glob filter (`*`, `?`, case-insensitive)
+  -j, --json                 Emit output (and errors) as JSON. Works with every command
+  -v, --verbose...           Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+  -h, --help                 Print help
 
 ===== aurelia disable =====
 Disable a DLC for its base game

@@ -278,7 +278,11 @@ pub(crate) fn absolutize_path_args(command: &mut Command) {
             proton(p);
             opt_path(script);
         }
-        Command::Image { output, .. } => opt_path(output),
+        Command::Image { output, .. }
+        | Command::Depots(DepotsArgs {
+            command: Some(DepotsCommand::Download { output, .. }),
+            ..
+        }) => opt_path(output),
         Command::Move { library, .. }
         | Command::Relink { library, .. }
         | Command::Import { library, .. } => path(library),
@@ -540,7 +544,11 @@ async fn run(mut cli: Cli) -> Result<()> {
         Command::Reviews(args) => cmd_reviews(args, json).await,
         Command::Dlc { app_id } => cmd_dlc(app_id, json).await,
         Command::Achievements { app_id, lang } => cmd_achievements(app_id, lang, json).await,
-        Command::Depots { app_id } => cmd_depots(app_id, json).await,
+        Command::Depots(args) => match (args.command, args.app_id) {
+            (Some(command), _) => cmd_depots_command(command, json).await,
+            (None, Some(app_id)) => cmd_depots(app_id, json).await,
+            (None, None) => bail!("an app id is required, e.g. `aurelia depots 1245620`"),
+        },
         Command::LaunchOptions { app_id } => cmd_launch_options(app_id, json).await,
         Command::Image {
             app_id,

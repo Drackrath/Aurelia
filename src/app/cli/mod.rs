@@ -8,6 +8,7 @@ mod args;
 mod cloud;
 mod compat;
 mod config;
+mod depots;
 mod install;
 mod library;
 mod social;
@@ -17,6 +18,7 @@ pub(crate) use args::*;
 pub(crate) use cloud::*;
 pub(crate) use compat::*;
 pub(crate) use config::*;
+pub(crate) use depots::*;
 pub(crate) use install::*;
 pub(crate) use library::*;
 pub(crate) use social::*;
@@ -427,7 +429,7 @@ pub(crate) enum Command {
         language: String,
     },
     /// List depots for a game.
-    Depots { app_id: u32 },
+    Depots(DepotsArgs),
     /// List each depot's current manifest id per branch (version discovery for
     /// `downgrade`). Steam only exposes current ids — older ones live on SteamDB.
     Manifests {

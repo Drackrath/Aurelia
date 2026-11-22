@@ -338,6 +338,8 @@ aurelia branches 1245620             # list beta branches
 aurelia set-branch 1245620 beta      # switch branch
 aurelia set-language 1086940 german  # swap language depots (download new, drop old-only files)
 aurelia depots 1245620               # list depots
+aurelia depots files 1245620 1245621 -f '*.exe'   # list a depot's files (`-m` id or `-b` branch; dir/, exe*, link ->)
+aurelia depots download 1245620 1245621 bin/game.exe -o out   # fetch one file, SHA-1 checked (`--force` overwrites)
 aurelia launch-options 1245620       # list Steam launch configs (exe, args, platform; `--json` adds `installed`)
 
 # Launch

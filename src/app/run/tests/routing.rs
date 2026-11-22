@@ -108,4 +108,17 @@ fn relative_path_args_resolve_against_cwd() {
         panic!("expected config game");
     };
     assert_eq!(args.prefix, Some(cwd.join("rel")));
+
+    // Depot downloads land in client cwd.
+    let mut cli =
+        Cli::try_parse_from(["aurelia", "depots", "download", "1", "2", "a", "-o", "out"]).unwrap();
+    absolutize_path_args(&mut cli.command);
+    let Command::Depots(DepotsArgs {
+        command: Some(DepotsCommand::Download { output, .. }),
+        ..
+    }) = cli.command
+    else {
+        panic!("expected depots download");
+    };
+    assert_eq!(output, Some(cwd.join("out")));
 }

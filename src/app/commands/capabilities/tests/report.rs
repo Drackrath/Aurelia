@@ -71,6 +71,8 @@ fn commands_carry_flags_args_and_subcommands() {
     assert!(!flags.contains(&"--openid".into()));
     assert_eq!(r["commands"]["play"]["args"], json!(["app_id"]));
     assert!(r["commands"]["install"]["subcommands"]["stop"].is_object());
+    assert!(r["commands"]["depots"]["subcommands"]["files"].is_object());
+    assert!(r["commands"]["depots"]["subcommands"]["download"].is_object());
     // Globals aren't repeated per command.
     assert!(!flags.contains(&"--json".into()));
 }

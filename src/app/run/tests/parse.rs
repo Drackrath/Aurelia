@@ -211,3 +211,63 @@ fn config_game_cloud_sync_parses_auto_on_off() {
     ];
     assert!(Cli::try_parse_from(argv).is_err());
 }
+
+#[test]
+fn depots_positional_and_subcommands_coexist() {
+    // Heroic depends on this form.
+    match parse(&["aurelia", "depots", "570"]).command {
+        Command::Depots(args) => {
+            assert!(args.command.is_none());
+            assert_eq!(args.app_id, Some(570));
+        }
+        _ => panic!("expected Depots"),
+    }
+    assert!(Cli::try_parse_from(["aurelia", "depots"]).is_err());
+    match parse(&[
+        "aurelia", "depots", "files", "570", "573", "-b", "beta", "-f", "*.exe",
+    ])
+    .command
+    {
+        Command::Depots(DepotsArgs {
+            command:
+                Some(DepotsCommand::Files {
+                    app_id: 570,
+                    depot_id: 573,
+                    manifest,
+                    filter,
+                }),
+            ..
+        }) => {
+            assert_eq!(manifest.branch.as_deref(), Some("beta"));
+            assert_eq!(manifest.manifest, None);
+            assert_eq!(filter.as_deref(), Some("*.exe"));
+        }
+        _ => panic!("expected depots files"),
+    }
+    match parse(&[
+        "aurelia", "depots", "download", "570", "573", "bin/x", "-m", "42", "--force",
+    ])
+    .command
+    {
+        Command::Depots(DepotsArgs {
+            command:
+                Some(DepotsCommand::Download {
+                    path,
+                    manifest,
+                    force: true,
+                    output: None,
+                    ..
+                }),
+            ..
+        }) => {
+            assert_eq!(path, "bin/x");
+            assert_eq!(manifest.manifest, Some(42));
+        }
+        _ => panic!("expected depots download"),
+    }
+    // Id and branch are exclusive.
+    assert!(
+        Cli::try_parse_from(["aurelia", "depots", "files", "1", "2", "-m", "3", "-b", "x"])
+            .is_err()
+    );
+}

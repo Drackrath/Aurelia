@@ -10,6 +10,7 @@ mod launch_legacy;
 mod licences;
 mod login;
 mod pics;
+mod pools;
 mod registry;
 mod store_mapping;
 mod ticket;
