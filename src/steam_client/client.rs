@@ -341,10 +341,6 @@ impl SteamClient {
         Ok(false)
     }
 
-    pub fn active_cm(&self) -> Option<SocketAddr> {
-        self.active_cm
-    }
-
     pub async fn restore_session(&mut self) -> Result<SessionState> {
         let persisted = load_session().await?;
         let account_name = persisted

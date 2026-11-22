@@ -98,12 +98,6 @@ impl SyncOutcome {
         !self.failed.is_empty()
     }
 
-    /// True when some file did not end up in the state the sync intended — the
-    /// transfer counts alone can't be read as success.
-    pub fn is_incomplete(&self) -> bool {
-        self.has_failures() || self.has_skips()
-    }
-
     pub(super) fn record_failure(
         &mut self,
         filename: &str,

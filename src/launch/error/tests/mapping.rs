@@ -1,21 +1,6 @@
 use super::super::*;
 
 #[test]
-fn test_map_anyhow_error() {
-    let err = anyhow::anyhow!("Permission denied: /tmp/pfx");
-    let mapped = map_anyhow_error(err);
-    assert_eq!(mapped.kind, LaunchErrorKind::Permission);
-
-    let err = anyhow::anyhow!("file not found");
-    let mapped = map_anyhow_error(err);
-    assert_eq!(mapped.kind, LaunchErrorKind::GameData);
-
-    let err = anyhow::anyhow!("random error");
-    let mapped = map_anyhow_error(err);
-    assert_eq!(mapped.kind, LaunchErrorKind::Unknown);
-}
-
-#[test]
 fn test_map_io_error_not_found() {
     let err = std::io::Error::new(std::io::ErrorKind::NotFound, "not found");
     let mapped = map_io_error(&err, None);

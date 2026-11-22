@@ -2,29 +2,6 @@
 
 use super::*;
 
-/// Steam wraps the entire VDF in a top-level key that is the numeric app ID.
-/// This wrapper accepts that outer key transparently.
-#[derive(Debug, serde::Deserialize)]
-pub struct AppInfoEnvelope(pub HashMap<String, crate::core::models::AppInfoRoot>);
-
-impl AppInfoEnvelope {
-    /// Extract the inner AppInfoRoot regardless of the outer key name.
-    pub fn into_inner(self) -> Option<crate::core::models::AppInfoRoot> {
-        self.0.into_values().next()
-    }
-}
-
-pub fn parse_appinfo(vdf: &str) -> Result<crate::core::models::AppInfoRoot> {
-    // Try direct parse first (in case steam-vent already strips the wrapper)
-    if let Ok(parsed) = keyvalues_serde::from_str::<crate::core::models::AppInfoRoot>(vdf) {
-        return Ok(parsed);
-    }
-    // Fall back to envelope parse
-    let envelope: AppInfoEnvelope =
-        keyvalues_serde::from_str(vdf).context("failed parsing appinfo VDF (envelope)")?;
-    envelope.into_inner().context("appinfo envelope was empty")
-}
-
 /// Platform-matched non-DLC depot rows.
 pub(crate) fn platform_depot_rows<'a, 'text>(
     depots: &'a steam_vdf_parser::Obj<'text>,
