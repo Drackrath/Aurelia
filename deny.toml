@@ -1,0 +1,48 @@
+[graph]
+all-features = true
+
+[licenses]
+# Compatible with GPL-3.0-or-later.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "GPL-3.0-or-later",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.8
+# aws-lc-sys bundles OpenSSL-licensed code.
+exceptions = [{ allow = ["OpenSSL"], crate = "aws-lc-sys" }]
+
+[advisories]
+# Each ignore names why it can't be reached.
+ignore = [
+    # zip 2.x, pinned by aurelia-steam-cdn. Both crates only
+    # read one entry via ZipArchive::by_index: no extract,
+    # no ZipStreamReader, no AES decryption.
+    { id = "RUSTSEC-2026-0367", reason = "zip extract unused" },
+    { id = "RUSTSEC-2026-0368", reason = "zip extract unused" },
+    { id = "RUSTSEC-2026-0369", reason = "zip extract unused" },
+    { id = "RUSTSEC-2026-0429", reason = "zip extract unused" },
+    { id = "RUSTSEC-2026-0545", reason = "zip AES decryption unused" },
+    { id = "RUSTSEC-2026-0548", reason = "ZipStreamReader unused" },
+    # Reachable via CDN chunks; needs an aurelia-steam-cdn
+    # release with ruzstd >= 0.9.1 (ticket T-264).
+    { id = "RUSTSEC-2026-0344", reason = "pinned by aurelia-steam-cdn, T-264" },
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

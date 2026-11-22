@@ -77,9 +77,9 @@ impl SteamClient {
     ) -> Result<u64> {
         let connection = self.require_connection()?;
 
-        let mut nd = CCloudConfigStore_NamespaceData::new();
-        nd.set_enamespace(COLLECTIONS_NAMESPACE);
-        nd.set_version(version);
+        let mut ns_data = CCloudConfigStore_NamespaceData::new();
+        ns_data.set_enamespace(COLLECTIONS_NAMESPACE);
+        ns_data.set_version(version);
         for (key, value) in entries {
             let mut entry = CCloudConfigStore_Entry::new();
             entry.set_key(key);
@@ -87,11 +87,11 @@ impl SteamClient {
                 Some(v) => entry.set_value(v),
                 None => entry.set_is_deleted(true),
             }
-            nd.entries.push(entry);
+            ns_data.entries.push(entry);
         }
 
         let mut req = CCloudConfigStore_Upload_Request::new();
-        req.data.push(nd);
+        req.data.push(ns_data);
 
         let resp = connection
             .service_method(req)
