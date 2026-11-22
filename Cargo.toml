@@ -47,7 +47,7 @@ sha1 = "0.10"
 flate2 = "1"
 xz2 = "0.1"
 cbc = "0.1"
-aes = "0.8"
+aes = "0.9"
 steam-cdn = { package = "aurelia-steam-cdn", version = "4.1.0" } # Fork on aurelia-steam-vent 0.8
 libc = "0.2"
 regex = "1"
