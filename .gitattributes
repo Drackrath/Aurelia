@@ -1,2 +1,4 @@
 # Shell scripts run under bash (WSL/Linux) and break with CRLF.
 *.sh text eol=lf
+# Snapshots compare byte-for-byte; keep LF on Windows.
+tests/snapshots/* text eol=lf
