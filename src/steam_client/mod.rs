@@ -304,12 +304,12 @@ impl SteamClient {
         if let Ok(output) = std::process::Command::new("ldconfig").args(["-p"]).output() {
             let text = String::from_utf8_lossy(&output.stdout);
             for line in text.lines() {
-                if line.contains("libMangoHud") {
-                    if let Some(path) = line.split("=>").nth(1) {
-                        let p = PathBuf::from(path.trim());
-                        if p.exists() {
-                            return Some(p);
-                        }
+                if line.contains("libMangoHud")
+                    && let Some(path) = line.split("=>").nth(1)
+                {
+                    let p = PathBuf::from(path.trim());
+                    if p.exists() {
+                        return Some(p);
                     }
                 }
             }

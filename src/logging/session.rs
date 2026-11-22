@@ -376,14 +376,14 @@ pub fn check_environment_sanity(
                     [],
                 ));
             }
-            if let Some(overrides) = env_vars.get("WINEDLLOVERRIDES") {
-                if !overrides.contains("d3d12=n") {
-                    warnings.push(sanity_warning(
+            if let Some(overrides) = env_vars.get("WINEDLLOVERRIDES")
+                && !overrides.contains("d3d12=n")
+            {
+                warnings.push(sanity_warning(
                         "SANITY_MISSING_VKD3D_OVERRIDE",
                         "VKD3D is enabled but WINEDLLOVERRIDES does not appear to contain native overrides for D3D12.".to_string(),
                         [("overrides".to_string(), overrides.clone())],
                     ));
-                }
             }
         }
     }

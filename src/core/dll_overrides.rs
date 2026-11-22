@@ -109,6 +109,7 @@ pub fn dll_override_entries(overrides: &str) -> Vec<(String, String)> {
 }
 
 /// Returns the WINEDLLOVERRIDES string needed to activate installed layers.
+#[expect(clippy::too_many_arguments, reason = "one switch per graphics layer")]
 pub fn build_dll_overrides(
     dxvk_active: bool,
     vkd3d_proton_active: bool,

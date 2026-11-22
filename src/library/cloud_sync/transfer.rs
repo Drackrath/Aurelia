@@ -92,7 +92,7 @@ impl CloudClient {
     /// Reconcile a game's Steam Cloud saves with their on-disk copies.
     ///
     /// For each save it compares the **content hash** of the cloud and local copies
-    /// against a persisted [`SyncBaseline`] (the last state at which the two agreed):
+    /// against a persisted `SyncBaseline` (the last state at which the two agreed):
     ///
     /// - identical content → nothing to do;
     /// - only one side changed since the baseline → move it the obvious way

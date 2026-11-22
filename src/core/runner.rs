@@ -362,8 +362,8 @@ pub fn steam_runtime_runner_unset_msg(action: &str) -> String {
 /// counts. `proton run` derives its own prefix from `STEAM_COMPAT_DATA_PATH` and
 /// silently ignores the `WINEPREFIX` the caller set, and it expects to be inside the
 /// Steam Linux Runtime container. When the configured runner is a Proton tree we use
-/// the bare wine it bundles instead — the invariant [`proton_bundled_bare_wine`] and
-/// [`validate_steam_runtime_runner_path`] already document.
+/// the bare wine it bundles instead — the invariant `proton_bundled_bare_wine` and
+/// `validate_steam_runtime_runner_path` already document.
 pub fn resolve_steam_runtime_wine(runner_name: &str, library_root: &Path) -> Result<PathBuf> {
     if runner_name.trim().is_empty() {
         bail!("No Steam Runtime Runner selected in Global Settings");
@@ -427,6 +427,7 @@ pub fn resolve_steam_runtime_wine(runner_name: &str, library_root: &Path) -> Res
 /// Copies into `system32` (and `syswow64` when present):
 ///   - the runner's DXVK `dxgi`/`d3d11`/… (self-contained, Vulkan-backed), and
 ///   - the runner's `libvkd3d-*` PE libs (so Wine's own `wined3d` chain also loads).
+///
 /// Handles both runner layouts (Proton 9: `lib64/…` + `lib/…`; Proton 10:
 /// `lib/wine/dxvk/<arch>-windows`). Best-effort and idempotent: existing files are
 /// overwritten so a stale copy from a different Wine can't wedge the prefix.

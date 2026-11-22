@@ -5,8 +5,10 @@ use std::sync::{Arc, Mutex};
 fn ctx_for(lib: &std::path::Path, mode: ShaderPrecache) -> PipelineContext {
     let mut ctx = PipelineContext::new(400);
     ctx.resolved_install_dir = Some(lib.join("steamapps/common/Portal"));
-    let mut config = crate::core::config::LauncherConfig::default();
-    config.shader_precache = mode;
+    let config = crate::core::config::LauncherConfig {
+        shader_precache: mode,
+        ..Default::default()
+    };
     ctx.launcher_config = Some(config);
     ctx.command_spec = Some(CommandSpec {
         program: "game".into(),

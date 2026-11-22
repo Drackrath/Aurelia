@@ -20,7 +20,7 @@ const FORMAT: &str = "aurelia-session-v1";
 /// Encrypted `session.json` on-disk form.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EncryptedSession {
-    /// Format tag; see [`FORMAT`].
+    /// Format tag; see `FORMAT`.
     pub format: String,
     /// Plaintext display-name hint (persona, else account).
     ///

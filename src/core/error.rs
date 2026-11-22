@@ -164,29 +164,29 @@ pub fn classify(err: &anyhow::Error) -> Classified {
                 retry_after: t.retry_after,
             };
         }
-        if let Some(n) = cause.downcast_ref::<NetworkError>() {
-            if let Some(kind) = network_kind(n) {
-                return Classified {
-                    kind,
-                    retry_after: None,
-                };
-            }
+        if let Some(n) = cause.downcast_ref::<NetworkError>()
+            && let Some(kind) = network_kind(n)
+        {
+            return Classified {
+                kind,
+                retry_after: None,
+            };
         }
-        if let Some(l) = cause.downcast_ref::<LoginError>() {
-            if let Some(kind) = login_kind(l) {
-                return Classified {
-                    kind,
-                    retry_after: None,
-                };
-            }
+        if let Some(l) = cause.downcast_ref::<LoginError>()
+            && let Some(kind) = login_kind(l)
+        {
+            return Classified {
+                kind,
+                retry_after: None,
+            };
         }
-        if let Some(r) = cause.downcast_ref::<reqwest::Error>() {
-            if r.is_timeout() || r.is_connect() {
-                return Classified {
-                    kind: reqwest_kind(r),
-                    retry_after: None,
-                };
-            }
+        if let Some(r) = cause.downcast_ref::<reqwest::Error>()
+            && (r.is_timeout() || r.is_connect())
+        {
+            return Classified {
+                kind: reqwest_kind(r),
+                retry_after: None,
+            };
         }
         if let Some(kind) = cause.downcast_ref::<std::io::Error>().and_then(io_kind) {
             return Classified {

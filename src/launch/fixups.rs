@@ -3,7 +3,7 @@
 //! Aurelia deliberately does NOT embed a scripting engine (e.g. `rhai`) for
 //! per-game workarounds — the project keeps strict binary-size discipline. Instead
 //! fixups are a static, const table keyed by Steam `app_id`. Adding a game is a
-//! one-line data edit in [`FIXUPS`]; no code changes, no runtime download, no extra
+//! one-line data edit in `FIXUPS`; no code changes, no runtime download, no extra
 //! dependency.
 //!
 //! A fixup carries two fragments that the launch pipeline merges into the game's

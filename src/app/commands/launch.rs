@@ -204,10 +204,10 @@ pub(crate) async fn cmd_launch_targets(app_id: u32, steam: bool, json: bool) -> 
     // Off Linux neither the native Linux build nor the in-Wine runtime can run.
     if !aurelia::core::runner::PROTON_SUPPORTED {
         targets.retain(|t| t.id != "linux" && t.id != "windows-runtime");
-        if !targets.iter().any(|t| t.default) {
-            if let Some(first) = targets.iter_mut().find(|t| t.available) {
-                first.default = true;
-            }
+        if !targets.iter().any(|t| t.default)
+            && let Some(first) = targets.iter_mut().find(|t| t.available)
+        {
+            first.default = true;
         }
     }
 
@@ -235,6 +235,7 @@ pub(crate) async fn cmd_launch_targets(app_id: u32, steam: bool, json: bool) -> 
     Ok(())
 }
 
+#[expect(clippy::too_many_arguments, reason = "one parameter per play CLI flag")]
 pub(crate) async fn cmd_play(
     app_id: u32,
     proton: Option<String>,

@@ -169,14 +169,13 @@ pub fn list_script_app_ids(config: Option<&LauncherConfig>) -> Vec<u32> {
                 path.extension().and_then(|e| e.to_str()),
                 Some("sh") | Some("bat")
             );
-            if is_script {
-                if let Some(id) = path
+            if is_script
+                && let Some(id) = path
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .and_then(|s| s.parse::<u32>().ok())
-                {
-                    ids.insert(id);
-                }
+            {
+                ids.insert(id);
             }
         }
     }

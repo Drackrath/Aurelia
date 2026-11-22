@@ -59,8 +59,8 @@ async fn relayed_at(verbosity: u8, f: impl FnOnce()) -> String {
     let subscriber = tracing_subscriber::registry().with(relay_layers());
     let _guard = tracing::subscriber::set_default(subscriber);
     super::super::super::relay::scoped(relay, async { f() }).await;
-    let out = String::from_utf8_lossy(&seen.lock().unwrap()).into_owned();
-    out
+
+    String::from_utf8_lossy(&seen.lock().unwrap()).into_owned()
 }
 
 // The only test touching the global watcher registry, so it can't race another.

@@ -55,13 +55,13 @@ impl LaunchValidator for OverrideConflictValidator {
             for (dll, mode) in parse() {
                 let dll_trimmed = dll.trim().to_lowercase();
                 let mode_trimmed = mode.trim().to_lowercase();
-                if let Some(prev_mode) = seen_dlls.get(&dll_trimmed) {
-                    if prev_mode != &mode_trimmed {
-                        warnings.push((
+                if let Some(prev_mode) = seen_dlls.get(&dll_trimmed)
+                    && prev_mode != &mode_trimmed
+                {
+                    warnings.push((
                             "OVERRIDE_CONTRADICTION",
                             format!("Contradictory overrides for '{dll}': '{prev_mode}' and '{mode_trimmed}'."),
                         ));
-                    }
                 }
                 seen_dlls.insert(dll_trimmed, mode_trimmed);
             }

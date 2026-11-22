@@ -6,8 +6,10 @@ use tempfile::tempdir;
 
 fn config_with_script(app_id: u32, script: Option<&str>) -> LauncherConfig {
     let mut cfg = LauncherConfig::default();
-    let mut gc = GameConfig::default();
-    gc.launch_script = script.map(|s| s.to_string());
+    let gc = GameConfig {
+        launch_script: script.map(|s| s.to_string()),
+        ..Default::default()
+    };
     let mut map = HashMap::new();
     map.insert(app_id, gc);
     cfg.game_configs = map;

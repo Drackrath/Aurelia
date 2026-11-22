@@ -85,14 +85,14 @@ pub(crate) async fn cmd_check_updates(json: bool) -> Result<()> {
         .iter()
         .filter(|g| g.update_available && !is_pinned(g.app_id))
         .collect();
-    updates.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    updates.sort_by_key(|a| a.name.to_lowercase());
 
     let mut pinned: Vec<&LibraryGame> = games.iter().filter(|g| is_pinned(g.app_id)).collect();
-    pinned.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    pinned.sort_by_key(|a| a.name.to_lowercase());
 
     let mut mismatched: Vec<&LibraryGame> =
         games.iter().filter(|g| g.steam_config_mismatch).collect();
-    mismatched.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    mismatched.sort_by_key(|a| a.name.to_lowercase());
 
     if json {
         let arr: Vec<_> = updates

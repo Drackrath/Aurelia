@@ -70,6 +70,10 @@ pub(crate) async fn fetch_content_hosts(
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "shared by install, update and verify"
+)]
 pub(crate) async fn run_depot_loop(
     client: &SteamClient,
     connection: &Connection,

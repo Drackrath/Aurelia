@@ -306,7 +306,7 @@ pub fn detect_steam_path() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     {
         let candidates = [PathBuf::from(r"C:\Program Files (x86)\Steam")];
-        return candidates.into_iter().find(|path| path.exists());
+        candidates.into_iter().find(|path| path.exists())
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -385,7 +385,7 @@ pub fn config_dir() -> Result<PathBuf> {
     {
         static TEST_DIR: std::sync::LazyLock<PathBuf> =
             std::sync::LazyLock::new(|| tempfile::tempdir().expect("test config dir").keep());
-        return Ok(TEST_DIR.clone());
+        Ok(TEST_DIR.clone())
     }
     // Joined per component so Windows paths don't mix separators.
     #[cfg(not(test))]
@@ -445,10 +445,10 @@ pub async fn load_session() -> Result<SessionState> {
 /// already an encrypted envelope — an existing encrypted session is never
 /// silently rewritten as plaintext.
 async fn session_encryption_active(session_path: &Path) -> bool {
-    if let Ok(config) = load_launcher_config().await {
-        if config.encrypt_session {
-            return true;
-        }
+    if let Ok(config) = load_launcher_config().await
+        && config.encrypt_session
+    {
+        return true;
     }
     session_file_encrypted(session_path).await
 }
@@ -729,7 +729,7 @@ pub async fn load_library_cache_for(steam_id: Option<u64>) -> Vec<OwnedGame> {
 /// with `AURELIA_INFO_CACHE_TTL` — `0` disables the cache.
 const INFO_CACHE_DEFAULT_TTL_SECS: u64 = 6 * 60 * 60;
 
-/// The configured `info` cache TTL ([`INFO_CACHE_DEFAULT_TTL_SECS`] unless
+/// The configured `info` cache TTL (`INFO_CACHE_DEFAULT_TTL_SECS` unless
 /// `AURELIA_INFO_CACHE_TTL` overrides it).
 pub fn info_cache_ttl() -> std::time::Duration {
     let secs = std::env::var("AURELIA_INFO_CACHE_TTL")

@@ -104,8 +104,10 @@ async fn test_wine_tkg_runner_graphics_policy_autodetect() {
         size_on_disk: None,
     };
 
-    let mut config = LauncherConfig::default();
-    config.steam_library_path = lib.to_string_lossy().to_string();
+    let config = LauncherConfig {
+        steam_library_path: lib.to_string_lossy().to_string(),
+        ..Default::default()
+    };
 
     let mut user_config = UserAppConfig::default();
     user_config.graphics_layers.graphics_backend_policy = GraphicsBackendPolicy::Auto;

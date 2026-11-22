@@ -73,7 +73,7 @@ pub fn list_available_gpus() -> Vec<DetectedGpu> {
         });
     }
 
-    gpus.sort_by(|a, b| b.is_discrete.cmp(&a.is_discrete));
+    gpus.sort_by_key(|g| std::cmp::Reverse(g.is_discrete));
     gpus
 }
 

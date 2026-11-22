@@ -226,14 +226,13 @@ impl SteamClient {
             }
         }
 
-        if display_name.starts_with("App ") {
-            if let Ok(games) = load_library_cache().await {
-                if let Some(game) = games.iter().find(|g| g.app_id == appid) {
-                    if !game.name.is_empty() && !game.name.starts_with("App ") {
-                        display_name = game.name.clone();
-                    }
-                }
-            }
+        if display_name.starts_with("App ")
+            && let Ok(games) = load_library_cache().await
+            && let Some(game) = games.iter().find(|g| g.app_id == appid)
+            && !game.name.is_empty()
+            && !game.name.starts_with("App ")
+        {
+            display_name = game.name.clone();
         }
 
         (display_name, installdir)

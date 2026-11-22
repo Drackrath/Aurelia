@@ -4,6 +4,9 @@
 use super::*;
 use crate::core::acf;
 
+/// Called with the resolved launch target.
+pub type TargetCallback = dyn Fn(Option<&str>) + Send + Sync;
+
 /// Pick the launch entry to run.
 ///
 /// Only one platform's depot is installed, so a launch entry is only usable if its
@@ -222,10 +225,10 @@ pub fn launch_targets(
     }
 
     // Fallback default: first available.
-    if !targets.iter().any(|t| t.default) {
-        if let Some(first) = targets.iter_mut().find(|t| t.available) {
-            first.default = true;
-        }
+    if !targets.iter().any(|t| t.default)
+        && let Some(first) = targets.iter_mut().find(|t| t.available)
+    {
+        first.default = true;
     }
     targets
 }
@@ -246,13 +249,12 @@ fn pick_launch_entry(
     });
 
     // Explicit per-game preference beats the manifest.
-    if prefer_native_target {
-        if let Some(entry) = launch_options
+    if prefer_native_target
+        && let Some(entry) = launch_options
             .iter()
             .find(|o| o.target == LaunchTarget::NativeLinux && exe_exists(o))
-        {
-            return Some(entry.clone());
-        }
+    {
+        return Some(entry.clone());
     }
 
     if prefer_windows_target {
@@ -296,6 +298,7 @@ pub fn forced_steam_reason(app: &LibraryGame) -> Option<&'static str> {
 }
 
 impl SteamClient {
+    #[expect(clippy::too_many_arguments, reason = "one parameter per play option")]
     pub async fn play_game(
         &mut self,
         app: &LibraryGame,
@@ -309,7 +312,7 @@ impl SteamClient {
         steam_enabled: bool,
         prefer_native_target: bool,
         launch_option: Option<&str>,
-        on_target_resolved: Option<&(dyn Fn(Option<&str>) + Send + Sync)>,
+        on_target_resolved: Option<&TargetCallback>,
         shaders: crate::launch::shaders::ShaderLaunch,
     ) -> Result<LaunchInfo> {
         let steam_enabled = steam_enabled || forced_steam_reason(app).is_some();
@@ -560,25 +563,24 @@ impl SteamClient {
         crate::compat::running::clear(app.app_id);
         wait_result?;
 
-        if cloud_enabled {
-            if let (Some(client), Some(resolver)) = (cloud_client.as_ref(), cloud_resolver.as_ref())
-            {
-                // The game has already run and exited, so a cloud-upload failure must not
-                // be surfaced as a launch failure. Log it and continue (this mirrors the
-                // best-effort sync_down before launch).
-                match client.sync_up(app.app_id, resolver, &cloud_specs).await {
-                    Ok(outcome) if outcome.has_conflicts() => tracing::warn!(
+        if cloud_enabled
+            && let (Some(client), Some(resolver)) = (cloud_client.as_ref(), cloud_resolver.as_ref())
+        {
+            // The game has already run and exited, so a cloud-upload failure must not
+            // be surfaced as a launch failure. Log it and continue (this mirrors the
+            // best-effort sync_down before launch).
+            match client.sync_up(app.app_id, resolver, &cloud_specs).await {
+                Ok(outcome) if outcome.has_conflicts() => tracing::warn!(
+                    appid = app.app_id,
+                    "{} Cloud save(s) diverged on upload — left untouched; resolve with `aurelia cloud sync`",
+                    outcome.conflicts.len()
+                ),
+                Ok(_) => tracing::info!(appid = app.app_id, "Upload Complete"),
+                Err(e) => {
+                    tracing::warn!(
                         appid = app.app_id,
-                        "{} Cloud save(s) diverged on upload — left untouched; resolve with `aurelia cloud sync`",
-                        outcome.conflicts.len()
-                    ),
-                    Ok(_) => tracing::info!(appid = app.app_id, "Upload Complete"),
-                    Err(e) => {
-                        tracing::warn!(
-                            appid = app.app_id,
-                            "Cloud upload failed (continuing): {e:#}"
-                        )
-                    }
+                        "Cloud upload failed (continuing): {e:#}"
+                    )
                 }
             }
         }

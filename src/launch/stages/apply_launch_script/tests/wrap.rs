@@ -11,9 +11,11 @@ async fn wraps_spec_with_override_script() {
     std::fs::write(&script, "exec \"$@\"\n").unwrap();
 
     let mut ctx = PipelineContext::new(555);
-    let mut spec = CommandSpec::default();
-    spec.program = PathBuf::from("/usr/bin/proton");
-    spec.args = vec!["run".to_string(), "game.exe".to_string()];
+    let spec = CommandSpec {
+        program: PathBuf::from("/usr/bin/proton"),
+        args: vec!["run".to_string(), "game.exe".to_string()],
+        ..Default::default()
+    };
     ctx.command_spec = Some(spec);
     ctx.launch_script_override = Some(script.clone());
 
@@ -40,8 +42,10 @@ async fn wraps_spec_with_override_script() {
 #[tokio::test]
 async fn missing_explicit_script_errors() {
     let mut ctx = PipelineContext::new(555);
-    let mut spec = CommandSpec::default();
-    spec.program = PathBuf::from("/usr/bin/proton");
+    let spec = CommandSpec {
+        program: PathBuf::from("/usr/bin/proton"),
+        ..Default::default()
+    };
     ctx.command_spec = Some(spec);
     ctx.launch_script_override = Some(PathBuf::from("/no/such/script.sh"));
 
@@ -56,9 +60,11 @@ async fn no_script_is_noop() {
     let tmp = tempdir().unwrap();
     let _env = EnvGuard::set(&[("AURELIA_SCRIPT_DIR", Some(tmp.path().as_os_str()))]);
     let mut ctx = PipelineContext::new(555);
-    let mut spec = CommandSpec::default();
-    spec.program = PathBuf::from("/usr/bin/proton");
-    spec.args = vec!["run".to_string()];
+    let spec = CommandSpec {
+        program: PathBuf::from("/usr/bin/proton"),
+        args: vec!["run".to_string()],
+        ..Default::default()
+    };
     ctx.command_spec = Some(spec);
 
     let stage = ApplyLaunchScriptStage;
@@ -77,8 +83,10 @@ async fn disabled_skips_wrapping() {
     std::fs::write(&script, "exec \"$@\"\n").unwrap();
 
     let mut ctx = PipelineContext::new(555);
-    let mut spec = CommandSpec::default();
-    spec.program = PathBuf::from("/usr/bin/proton");
+    let spec = CommandSpec {
+        program: PathBuf::from("/usr/bin/proton"),
+        ..Default::default()
+    };
     ctx.command_spec = Some(spec);
     ctx.launch_script_override = Some(script);
     ctx.disable_launch_script = true;

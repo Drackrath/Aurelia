@@ -1,8 +1,10 @@
 use super::super::*;
 
 fn config_with_library(library: &std::path::Path) -> crate::core::config::LauncherConfig {
-    let mut config = crate::core::config::LauncherConfig::default();
-    config.steam_library_path = library.to_string_lossy().into_owned();
+    let mut config = crate::core::config::LauncherConfig {
+        steam_library_path: library.to_string_lossy().into_owned(),
+        ..Default::default()
+    };
     // Default `Shared` mode: the launcher points WINEPREFIX at the master prefix
     // while Proton still runs the game out of compatdata. That split is the bug
     // this function exists to close.

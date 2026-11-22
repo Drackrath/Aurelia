@@ -156,10 +156,10 @@ pub fn update_libraryfolders_apps(
         let trimmed = line.trim();
 
         // Capture a folder's "path" so we know which library this block describes.
-        if in_apps_of.is_none() {
-            if let Some(path_val) = parse_kv(trimmed, "path") {
-                current_path = Some(normalize_path(&path_val));
-            }
+        if in_apps_of.is_none()
+            && let Some(path_val) = parse_kv(trimmed, "path")
+        {
+            current_path = Some(normalize_path(&path_val));
         }
 
         // The "apps" key precedes its own `{` on the next line.

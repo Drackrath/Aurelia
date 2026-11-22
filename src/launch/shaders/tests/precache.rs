@@ -160,5 +160,5 @@ async fn replays_a_real_cache() {
         second,
         ShaderEvent::Skipped("shaders already processed".into())
     );
-    println!("replayed {done}/{total}; events {}", seen.len());
+    eprintln!("replayed {done}/{total}; events {}", seen.len());
 }

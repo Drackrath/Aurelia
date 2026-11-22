@@ -307,11 +307,11 @@ pub(crate) fn render_report(report: &Value, width: usize) -> String {
         };
         out.push_str(&wrap_field(&format!("{label:<pad$} : "), &value, width));
     }
-    out.push_str("\n");
+    out.push('\n');
     out.push_str(&error_table(
         report["errors"].as_array().map_or(&[][..], Vec::as_slice),
     ));
-    out.push_str("\n");
+    out.push('\n');
     out
 }
 

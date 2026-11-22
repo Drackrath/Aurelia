@@ -197,10 +197,10 @@ impl SteamClient {
         };
 
         // Attempt to populate from persistent session info
-        if let Ok(session) = load_session().await {
-            if let Some(name) = session.account_name {
-                data.account_name = name;
-            }
+        if let Ok(session) = load_session().await
+            && let Some(name) = session.account_name
+        {
+            data.account_name = name;
         }
 
         if data.account_name.is_empty() {
@@ -505,7 +505,7 @@ impl SteamClient {
     /// [`QrEvent::Scanned`] once the user scans the code, so the caller can swap the
     /// QR for a "waiting for approval" spinner.
     ///
-    /// Fails typed: see [`qr_poll_step`].
+    /// Fails typed: see `qr_poll_step`.
     pub async fn login_qr<F>(&mut self, timeout: Duration, mut on_event: F) -> Result<SessionState>
     where
         F: FnMut(QrEvent),

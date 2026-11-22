@@ -158,18 +158,20 @@ fn test_environment_sanity_checks() {
         "d3d11=n,b;dxgi=n,b".to_string(),
     );
 
-    let mut config = UserAppConfig::default();
-    config.graphics_layers = GraphicsLayerConfig {
-        dxvk_enabled: false,
-        vkd3d_proton_enabled: false,
-        vkd3d_enabled: false,
-        nvapi_enabled: true,
-        graphics_backend_policy: crate::core::models::GraphicsBackendPolicy::WineD3D,
-        d3d12_policy: crate::core::models::D3D12ProviderPolicy::Auto,
-        use_symlinks_in_prefix: false,
-        custom_dxvk_path: None,
-        custom_vkd3d_path: None,
-        custom_vkd3d_proton_path: None,
+    let config = UserAppConfig {
+        graphics_layers: GraphicsLayerConfig {
+            dxvk_enabled: false,
+            vkd3d_proton_enabled: false,
+            vkd3d_enabled: false,
+            nvapi_enabled: true,
+            graphics_backend_policy: crate::core::models::GraphicsBackendPolicy::WineD3D,
+            d3d12_policy: crate::core::models::D3D12ProviderPolicy::Auto,
+            use_symlinks_in_prefix: false,
+            custom_dxvk_path: None,
+            custom_vkd3d_path: None,
+            custom_vkd3d_proton_path: None,
+        },
+        ..Default::default()
     };
 
     let warnings = check_environment_sanity(&env, "Wine", Some(&config));

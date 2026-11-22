@@ -54,6 +54,8 @@ impl Runner for NativeRunner {
             .map(str::to_string)
             .collect();
         let program = PathBuf::from(install_path).join(&exe_rel);
+        // Only mutated on Linux.
+        #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
         let mut env = self.build_env(ctx).await?;
 
         // 32-bit natives need scout runtime libraries.
@@ -157,7 +159,7 @@ fn needs_scout_libs(program: &std::path::Path, install_dir: &std::path::Path) ->
     if is_elf32(program) {
         return true;
     }
-    if !file_head(program, 2).is_some_and(|h| h == *b"#!") {
+    if file_head(program, 2).is_none_or(|h| h != *b"#!") {
         return false;
     }
     std::fs::read_dir(install_dir)

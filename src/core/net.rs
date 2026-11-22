@@ -69,11 +69,11 @@ pub fn install_proxy_env(config: &ProxyConfig) {
         .as_deref()
         .map(str::trim)
         .filter(|n| !n.is_empty())
+        && std::env::var_os("NO_PROXY").is_none()
+        && std::env::var_os("no_proxy").is_none()
     {
-        if std::env::var_os("NO_PROXY").is_none() && std::env::var_os("no_proxy").is_none() {
-            // SAFETY: as above — single-threaded startup.
-            unsafe { std::env::set_var("NO_PROXY", no_proxy) };
-        }
+        // SAFETY: as above — single-threaded startup.
+        unsafe { std::env::set_var("NO_PROXY", no_proxy) };
     }
 }
 

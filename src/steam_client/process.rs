@@ -264,11 +264,11 @@ impl SteamClient {
     #[cfg(unix)]
     fn sweep_proc_pids(signal: i32, mut pred: impl FnMut(&Path) -> bool) {
         Self::scan_proc_pids(|pid_path, pid_str| {
-            if pred(pid_path) {
-                if let Ok(pid) = pid_str.parse::<i32>() {
-                    unsafe {
-                        libc::kill(pid, signal);
-                    }
+            if pred(pid_path)
+                && let Ok(pid) = pid_str.parse::<i32>()
+            {
+                unsafe {
+                    libc::kill(pid, signal);
                 }
             }
             // Never short-circuit: sweep every matching process.
@@ -541,6 +541,7 @@ NoSavePersonalInfo=1
         Ok(crate::launch::game_process::GameProcess::Elevated(process))
     }
 
+    #[expect(clippy::too_many_arguments, reason = "resolved launch inputs")]
     pub(crate) async fn spawn_game_process(
         &self,
         app: &LibraryGame,

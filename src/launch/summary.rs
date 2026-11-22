@@ -183,10 +183,10 @@ impl LaunchPipeline {
                     "arch".to_string(),
                     format!("{:?}", ctx.target_architecture).to_lowercase(),
                 );
-                if let Some(spec) = &ctx.command_spec {
-                    if let Some(overrides) = spec.env.get("WINEDLLOVERRIDES") {
-                        metadata.insert("overrides".to_string(), overrides.clone());
-                    }
+                if let Some(spec) = &ctx.command_spec
+                    && let Some(overrides) = spec.env.get("WINEDLLOVERRIDES")
+                {
+                    metadata.insert("overrides".to_string(), overrides.clone());
                 }
                 metadata.insert(
                     "validation_passed".to_string(),
@@ -197,10 +197,10 @@ impl LaunchPipeline {
                     (!ctx.graphics_stack.fallback_reasons.is_empty()).to_string(),
                 );
 
-                if let Some(spec) = &ctx.command_spec {
-                    if let Some(prefix) = spec.env.get("WINEPREFIX") {
-                        metadata.insert("prefix".to_string(), prefix.clone());
-                    }
+                if let Some(spec) = &ctx.command_spec
+                    && let Some(prefix) = spec.env.get("WINEPREFIX")
+                {
+                    metadata.insert("prefix".to_string(), prefix.clone());
                 }
                 if let Some(config) = &ctx.launcher_config {
                     metadata.insert(

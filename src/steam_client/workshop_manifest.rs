@@ -153,9 +153,9 @@ fn write_workshop_manifest(
     content.push_str("\t\"WorkshopItemsInstalled\"\n\t{\n");
     for item in items {
         write_item_block(&mut content, item.published_file_id, |buf| {
-            let _ = write!(buf, "\t\t\t\"size\"\t\t\"{}\"\n", item.size);
-            let _ = write!(buf, "\t\t\t\"timeupdated\"\t\t\"{}\"\n", item.time_updated);
-            let _ = write!(buf, "\t\t\t\"manifest\"\t\t\"{}\"\n", item.manifest_id);
+            let _ = writeln!(buf, "\t\t\t\"size\"\t\t\"{}\"", item.size);
+            let _ = writeln!(buf, "\t\t\t\"timeupdated\"\t\t\"{}\"", item.time_updated);
+            let _ = writeln!(buf, "\t\t\t\"manifest\"\t\t\"{}\"", item.manifest_id);
         });
     }
     content.push_str("\t}\n");
@@ -164,9 +164,9 @@ fn write_workshop_manifest(
     content.push_str("\t\"WorkshopItemDetails\"\n\t{\n");
     for item in items {
         write_item_block(&mut content, item.published_file_id, |buf| {
-            let _ = write!(buf, "\t\t\t\"manifest\"\t\t\"{}\"\n", item.manifest_id);
-            let _ = write!(buf, "\t\t\t\"timeupdated\"\t\t\"{}\"\n", item.time_updated);
-            let _ = write!(buf, "\t\t\t\"timetouched\"\t\t\"{}\"\n", item.time_updated);
+            let _ = writeln!(buf, "\t\t\t\"manifest\"\t\t\"{}\"", item.manifest_id);
+            let _ = writeln!(buf, "\t\t\t\"timeupdated\"\t\t\"{}\"", item.time_updated);
+            let _ = writeln!(buf, "\t\t\t\"timetouched\"\t\t\"{}\"", item.time_updated);
         });
     }
     content.push_str("\t}\n}\n");

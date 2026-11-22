@@ -6,8 +6,10 @@ use tempfile::tempdir;
 #[tokio::test]
 async fn test_preflight_missing_exe() {
     let mut ctx = PipelineContext::new(123);
-    let mut spec = CommandSpec::default();
-    spec.program = Path::new("/tmp/nonexistent_exe_12345").to_path_buf();
+    let spec = CommandSpec {
+        program: Path::new("/tmp/nonexistent_exe_12345").to_path_buf(),
+        ..Default::default()
+    };
     ctx.command_spec = Some(spec);
 
     let stage = PreflightStage;
@@ -26,9 +28,11 @@ async fn test_preflight_missing_cwd() {
     fs::write(&exe, "dummy").unwrap();
 
     let mut ctx = PipelineContext::new(123);
-    let mut spec = CommandSpec::default();
-    spec.program = exe;
-    spec.cwd = Some(tmp.path().join("missing_dir"));
+    let spec = CommandSpec {
+        program: exe,
+        cwd: Some(tmp.path().join("missing_dir")),
+        ..Default::default()
+    };
     ctx.command_spec = Some(spec);
 
     let stage = PreflightStage;
@@ -46,8 +50,10 @@ async fn test_preflight_missing_prefix() {
     fs::write(&exe, "dummy").unwrap();
 
     let mut ctx = PipelineContext::new(123);
-    let mut spec = CommandSpec::default();
-    spec.program = exe;
+    let mut spec = CommandSpec {
+        program: exe,
+        ..Default::default()
+    };
     spec.env.insert(
         "WINEPREFIX".to_string(),
         tmp.path().join("missing_pfx").to_string_lossy().to_string(),
@@ -71,9 +77,11 @@ async fn test_preflight_is_not_directory() {
     fs::write(&not_a_dir, "dummy").unwrap();
 
     let mut ctx = PipelineContext::new(123);
-    let mut spec = CommandSpec::default();
-    spec.program = exe;
-    spec.cwd = Some(not_a_dir);
+    let spec = CommandSpec {
+        program: exe,
+        cwd: Some(not_a_dir),
+        ..Default::default()
+    };
     ctx.command_spec = Some(spec);
 
     let stage = PreflightStage;
@@ -100,8 +108,10 @@ async fn test_preflight_umu_run_allowed() {
     }
 
     let mut ctx = PipelineContext::new(123);
-    let mut spec = CommandSpec::default();
-    spec.program = umu_run;
+    let spec = CommandSpec {
+        program: umu_run,
+        ..Default::default()
+    };
     ctx.command_spec = Some(spec);
 
     let stage = PreflightStage;
@@ -118,8 +128,10 @@ async fn test_preflight_umu_run_allowed() {
 async fn test_preflight_bogus_relative_runner_fails() {
     // A bogus relative, non-existent runner path must fail preflight.
     let mut ctx = PipelineContext::new(123);
-    let mut spec = CommandSpec::default();
-    spec.program = Path::new("umu-run").to_path_buf();
+    let spec = CommandSpec {
+        program: Path::new("umu-run").to_path_buf(),
+        ..Default::default()
+    };
     ctx.command_spec = Some(spec);
 
     let stage = PreflightStage;
@@ -170,8 +182,10 @@ async fn test_preflight_native_game_self_heals_exec_bit() {
         workingdir: None,
         target: LaunchTarget::NativeLinux,
     });
-    let mut spec = CommandSpec::default();
-    spec.program = exe.clone();
+    let spec = CommandSpec {
+        program: exe.clone(),
+        ..Default::default()
+    };
     ctx.command_spec = Some(spec);
 
     let stage = PreflightStage;
@@ -226,9 +240,11 @@ async fn test_preflight_native_ignores_path_like_argument() {
         workingdir: None,
         target: LaunchTarget::NativeLinux,
     });
-    let mut spec = CommandSpec::default();
-    spec.program = exe.clone();
-    spec.args = vec!["data/missing.ini".to_string()];
+    let spec = CommandSpec {
+        program: exe.clone(),
+        args: vec!["data/missing.ini".to_string()],
+        ..Default::default()
+    };
     ctx.command_spec = Some(spec);
 
     let stage = PreflightStage;
@@ -255,8 +271,10 @@ async fn test_preflight_not_executable() {
     fs::set_permissions(&exe, perms).unwrap();
 
     let mut ctx = PipelineContext::new(123);
-    let mut spec = CommandSpec::default();
-    spec.program = exe;
+    let spec = CommandSpec {
+        program: exe,
+        ..Default::default()
+    };
     ctx.command_spec = Some(spec);
 
     let stage = PreflightStage;

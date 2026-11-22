@@ -250,10 +250,10 @@ impl SteamClient {
                     existing_installdir = Some(dir);
                 }
             }
-            if game_name.starts_with("App ") {
-                if let Some(name) = parsed.display_name().filter(|n| !n.starts_with("App ")) {
-                    game_name = name;
-                }
+            if game_name.starts_with("App ")
+                && let Some(name) = parsed.display_name().filter(|n| !n.starts_with("App "))
+            {
+                game_name = name;
             }
         }
 
@@ -481,12 +481,11 @@ impl SteamClient {
 
             // For a downgrade against a named branch, record that branch's build id in
             // the appmanifest instead of the appinfo-derived (public) one.
-            if let Some(branch_name) = branch.as_deref() {
-                if let Some(bid) =
+            if let Some(branch_name) = branch.as_deref()
+                && let Some(bid) =
                     SteamClient::remote_buildid_static(&connection, appid, branch_name).await
-                {
-                    build_id = Some(bid);
-                }
+            {
+                build_id = Some(bid);
             }
 
             let _ = tx
@@ -656,6 +655,7 @@ impl SteamClient {
     ///
     /// `grand_total_bytes`: the sum of all selected depots' sizes (0 when unknown),
     /// used to decide whether to add this depot's size to `state.total_bytes`.
+    #[expect(clippy::too_many_arguments, reason = "per-depot download inputs")]
     pub(crate) async fn download_depot_to_with_hosts(
         &self,
         app_id: u32,

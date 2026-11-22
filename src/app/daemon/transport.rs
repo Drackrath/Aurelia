@@ -161,10 +161,10 @@ mod imp {
     impl Listener {
         pub async fn bind() -> std::io::Result<Self> {
             let path = PathBuf::from(endpoint());
-            if std::env::var_os("AURELIA_DAEMON_SOCKET").is_none() {
-                if let Some(parent) = path.parent() {
-                    ensure_private_dir(parent)?;
-                }
+            if std::env::var_os("AURELIA_DAEMON_SOCKET").is_none()
+                && let Some(parent) = path.parent()
+            {
+                ensure_private_dir(parent)?;
             }
             // Only clear our own stale socket.
             if let Ok(meta) = std::fs::symlink_metadata(&path) {

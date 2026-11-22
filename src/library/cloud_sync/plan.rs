@@ -41,11 +41,11 @@ impl SyncBaseline {
         let Ok(path) = Self::path_for(appid) else {
             return;
         };
-        if let Some(parent) = path.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                tracing::warn!("could not create cloud-sync state dir: {e}");
-                return;
-            }
+        if let Some(parent) = path.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            tracing::warn!("could not create cloud-sync state dir: {e}");
+            return;
         }
         match serde_json::to_string_pretty(self) {
             Ok(raw) => {

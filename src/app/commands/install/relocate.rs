@@ -38,6 +38,10 @@ pub(crate) async fn cmd_move(
 }
 
 /// Steam-guarded relink/import shared body.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "mirrors the relink/import CLI flags"
+)]
 pub(super) async fn steam_guarded_relocate<F, Fut>(
     app_id: u32,
     library: PathBuf,

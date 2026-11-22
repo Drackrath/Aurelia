@@ -24,8 +24,10 @@ async fn test_pipeline_preflight_prevents_spawn() {
     pipeline.add_stage(Box::new(SpawnShouldNotBeReached));
 
     let mut ctx = PipelineContext::new(123);
-    let mut spec = CommandSpec::default();
-    spec.program = Path::new("/nonexistent/exe/that/fails/preflight").to_path_buf();
+    let spec = CommandSpec {
+        program: Path::new("/nonexistent/exe/that/fails/preflight").to_path_buf(),
+        ..Default::default()
+    };
     ctx.command_spec = Some(spec);
 
     let result = pipeline.run(&mut ctx).await;
@@ -47,9 +49,11 @@ async fn test_spawn_process_failure_diagnostics() {
     pipeline.add_stage(Box::new(SpawnProcessStage));
 
     let mut ctx = PipelineContext::new(123);
-    let mut spec = CommandSpec::default();
-    // Use an absolute path that is guaranteed not to exist for a reliable NotFound error
-    spec.program = std::path::Path::new("/bin/nonexistent_utility_123456789").to_path_buf();
+    // Absolute path that never exists.
+    let spec = CommandSpec {
+        program: std::path::Path::new("/bin/nonexistent_utility_123456789").to_path_buf(),
+        ..Default::default()
+    };
 
     // We need a dummy runner that will actually try to launch
     struct FailingRunner;
@@ -122,9 +126,12 @@ async fn test_spawn_failure_with_synthetic_lock_shows_hint() {
     pipeline.add_stage(Box::new(SpawnProcessStage));
 
     let mut ctx = PipelineContext::new(123);
-    let mut spec = CommandSpec::default();
-    spec.program = std::path::Path::new("/bin/ls").to_path_buf(); // valid exe
-    spec.cwd = Some(tmp.path().to_path_buf());
+    let spec = CommandSpec {
+        // Valid executable.
+        program: std::path::Path::new("/bin/ls").to_path_buf(),
+        cwd: Some(tmp.path().to_path_buf()),
+        ..Default::default()
+    };
 
     struct FailingRunner;
     #[async_trait::async_trait]
@@ -160,8 +167,7 @@ async fn test_spawn_failure_with_synthetic_lock_shows_hint() {
                 LaunchErrorKind::Process,
                 "generic spawn failure",
             )
-            .with_source(anyhow::anyhow!(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            .with_source(anyhow::anyhow!(std::io::Error::other(
                 "something went wrong"
             ))))
         }
@@ -208,8 +214,10 @@ async fn test_launch_artifacts_generation() {
     pipeline.add_stage(Box::new(PreflightStage));
 
     let mut ctx = PipelineContext::new(123);
-    let mut spec = CommandSpec::default();
-    spec.program = std::path::Path::new("/bin/ls").to_path_buf();
+    let mut spec = CommandSpec {
+        program: std::path::Path::new("/bin/ls").to_path_buf(),
+        ..Default::default()
+    };
     spec.env
         .insert("WINEPREFIX".to_string(), "/tmp/fake_pfx".to_string());
     ctx.command_spec = Some(spec);

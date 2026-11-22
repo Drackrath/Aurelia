@@ -10,26 +10,26 @@ mod prefix;
 pub fn detect_duplicate_instance(ctx: &PipelineContext) -> DuplicateInstanceInfo {
     if let Some(spec) = &ctx.command_spec {
         // 1. Check for explicit lockfile in the game directory or prefix
-        if let Some(cwd) = &spec.cwd {
-            if cwd.join(".aurelia_launch.lock").exists() {
-                return DuplicateInstanceInfo {
-                    detected: true,
-                    source: "lockfile".to_string(),
-                };
-            }
+        if let Some(cwd) = &spec.cwd
+            && cwd.join(".aurelia_launch.lock").exists()
+        {
+            return DuplicateInstanceInfo {
+                detected: true,
+                source: "lockfile".to_string(),
+            };
         }
 
         // 2. Check for tracked PID if we had a mechanism to store it
         // For now, check if steam.pid exists in the prefix (if applicable)
-        if let Some(prefix) = spec.env.get("WINEPREFIX") {
-            if std::path::Path::new(prefix).join("steam.pid").exists() {
-                // Note: Ideally we'd check if the PID is still alive,
-                // but existence of the file in WINEPREFIX is a strong hint.
-                return DuplicateInstanceInfo {
-                    detected: true,
-                    source: "pid".to_string(),
-                };
-            }
+        if let Some(prefix) = spec.env.get("WINEPREFIX")
+            && std::path::Path::new(prefix).join("steam.pid").exists()
+        {
+            // Note: Ideally we'd check if the PID is still alive,
+            // but existence of the file in WINEPREFIX is a strong hint.
+            return DuplicateInstanceInfo {
+                detected: true,
+                source: "pid".to_string(),
+            };
         }
     }
 

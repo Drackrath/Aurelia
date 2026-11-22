@@ -123,10 +123,10 @@ fn cachyos_release_labels_v3_selection() {
     };
     // Only meaningful on an AVX2 host; otherwise choose_asset would skip the v3
     // asset. Assert the label reflects whatever asset was actually chosen.
-    if let Some(pkg) = release_to_package(src, rel) {
-        if pkg.size == 200 {
-            assert!(pkg.label.contains("x86_64_v3"), "label was {}", pkg.label);
-        }
+    if let Some(pkg) = release_to_package(src, rel)
+        && pkg.size == 200
+    {
+        assert!(pkg.label.contains("x86_64_v3"), "label was {}", pkg.label);
     }
 }
 

@@ -20,10 +20,10 @@ fn source_events(dir: &Path, found: &mut BTreeSet<String>) {
         let text = std::fs::read_to_string(&path).unwrap();
         for (at, _) in text.match_indices("\"event\":") {
             let rest = text[at + "\"event\":".len()..].trim_start();
-            if let Some(quoted) = rest.strip_prefix('"') {
-                if let Some(end) = quoted.find('"') {
-                    found.insert(quoted[..end].to_string());
-                }
+            if let Some(quoted) = rest.strip_prefix('"')
+                && let Some(end) = quoted.find('"')
+            {
+                found.insert(quoted[..end].to_string());
             }
         }
     }
