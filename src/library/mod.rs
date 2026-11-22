@@ -185,6 +185,15 @@ pub async fn scan_library_info(root_path: &Path) -> Result<HashMap<u32, Installe
 /// root itself, every library its `libraryfolders.vdf` files register, and a
 /// probe of the connected drives for libraries Steam never registered.
 async fn expand_library_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
+    expand_library_roots_with(roots, |p: &Path| std::fs::canonicalize(p)).await
+}
+
+/// `expand_library_roots` with the symlink resolver injected, so tests can
+/// simulate Windows' verbatim-prefixed canonical paths on any platform.
+async fn expand_library_roots_with(
+    roots: &[PathBuf],
+    canonicalize: impl Fn(&Path) -> std::io::Result<PathBuf>,
+) -> Vec<PathBuf> {
     let mut libraries: Vec<PathBuf> = roots.to_vec();
 
     for root in roots {
@@ -207,12 +216,38 @@ async fn expand_library_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
     // three times, and every game in it looks installed in three libraries.
     libraries = libraries
         .into_iter()
-        .map(|p| std::fs::canonicalize(&p).unwrap_or(p))
+        .map(|p| strip_verbatim_prefix(canonicalize(p.as_path()).unwrap_or(p)))
         .collect();
 
     libraries.sort();
     libraries.dedup();
     libraries
+}
+
+/// On Windows, `canonicalize` returns extended-length paths (`\\?\C:\...`, or
+/// `\\?\UNC\server\share`). Steam and user-entered paths use the plain form, so
+/// the prefix is removed to keep the two comparable and printable.
+///
+/// Only drive-letter and UNC forms are rewritten. A volume without a drive letter
+/// canonicalizes to `\\?\Volume{GUID}\...`; stripping that prefix would leave a
+/// relative path that no longer resolves, so it is returned unchanged.
+fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let Some(s) = path.to_str() else {
+        return path;
+    };
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) if is_drive_path(rest) => PathBuf::from(rest),
+        _ => path,
+    }
+}
+
+/// True for a path that starts with a drive letter and root, such as `C:\`.
+fn is_drive_path(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\'
 }
 
 /// The places a Steam data root keeps its `libraryfolders.vdf`. Steam maintains

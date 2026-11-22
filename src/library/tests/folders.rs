@@ -1,6 +1,58 @@
 use super::super::*;
 
 #[test]
+fn verbatim_prefix_is_removed_from_library_paths() {
+    assert_eq!(
+        strip_verbatim_prefix(PathBuf::from(r"\\?\C:\Program Files (x86)\Steam")),
+        PathBuf::from(r"C:\Program Files (x86)\Steam")
+    );
+    assert_eq!(
+        strip_verbatim_prefix(PathBuf::from(r"\\?\F:\SteamLibrary")),
+        PathBuf::from(r"F:\SteamLibrary")
+    );
+    assert_eq!(
+        strip_verbatim_prefix(PathBuf::from(r"\\?\UNC\nas\games")),
+        PathBuf::from(r"\\nas\games")
+    );
+    assert_eq!(
+        strip_verbatim_prefix(PathBuf::from("/home/user/Steam")),
+        PathBuf::from("/home/user/Steam")
+    );
+    // A drive-less volume must keep its verbatim form, or it becomes a relative path.
+    assert_eq!(
+        strip_verbatim_prefix(PathBuf::from(r"\\?\Volume{1234-abcd}\SteamLibrary")),
+        PathBuf::from(r"\\?\Volume{1234-abcd}\SteamLibrary")
+    );
+}
+
+#[tokio::test]
+async fn expanded_library_paths_have_no_verbatim_prefix() {
+    // Simulates Windows canonicalize: every root comes back verbatim-prefixed.
+    let roots = [PathBuf::from(r"C:\Games\Steam")];
+    let libraries =
+        expand_library_roots_with(&roots, |_| Ok(PathBuf::from(r"\\?\C:\Games\Steam"))).await;
+    assert!(
+        libraries.contains(&PathBuf::from(r"C:\Games\Steam")),
+        "expected plain path, got {libraries:?}"
+    );
+    assert!(
+        libraries
+            .iter()
+            .all(|p| !p.to_string_lossy().starts_with(r"\\?\")),
+        "no library may keep the verbatim prefix, got {libraries:?}"
+    );
+
+    let volume = expand_library_roots_with(&roots, |_| {
+        Ok(PathBuf::from(r"\\?\Volume{1234-abcd}\SteamLibrary"))
+    })
+    .await;
+    assert!(
+        volume.contains(&PathBuf::from(r"\\?\Volume{1234-abcd}\SteamLibrary")),
+        "drive-less volume must keep its verbatim form, got {volume:?}"
+    );
+}
+
+#[test]
 fn ignores_tooling_by_app_id() {
     assert!(is_ignored_steam_app(
         228980,
