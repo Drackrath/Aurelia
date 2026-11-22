@@ -62,6 +62,8 @@ A few expectations:
   `tests/` folders in `src/` for the style. Network- or Steam-dependent code can't be
   unit-tested directly, so factor the testable logic out into pure functions.
 - **Test layout:** unit tests live in `<module>/tests/<topic>.rs`, not inline, so source files stay small and readable.
+  Lib unit tests get a throwaway `config_dir()`; tests under `src/app/` (the binary crate)
+  don't, so they must not load or save config.
   Integration tests in the top-level `tests/` are prefixed by area (e.g. `launch_*`, `config_*`,
   `compat_*`) and share helpers through `tests/common/`.
 

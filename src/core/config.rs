@@ -380,7 +380,15 @@ pub fn config_dir() -> Result<PathBuf> {
     if let Some(dir) = std::env::var_os("AURELIA_CONFIG_DIR").filter(|v| !v.is_empty()) {
         return Ok(PathBuf::from(dir));
     }
+    // Lib tests: throwaway dir. Bin tests excluded.
+    #[cfg(test)]
+    {
+        static TEST_DIR: std::sync::LazyLock<PathBuf> =
+            std::sync::LazyLock::new(|| tempfile::tempdir().expect("test config dir").keep());
+        return Ok(TEST_DIR.clone());
+    }
     // Joined per component so Windows paths don't mix separators.
+    #[cfg(not(test))]
     Ok(home_dir()?.join(".config").join("Aurelia"))
 }
 
