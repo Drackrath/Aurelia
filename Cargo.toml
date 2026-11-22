@@ -51,7 +51,7 @@ aes = "0.8"
 steam-cdn = { package = "aurelia-steam-cdn", version = "4.1.0" } # Fork on aurelia-steam-vent 0.8
 libc = "0.2"
 regex = "1"
-sysinfo = { version = "0.33", default-features = false, features = ["system", "disk"] } # Enumerate/kill aurelia processes for `kill`/`daemon`; `disk` for library free-space checks
+sysinfo = { version = "0.40", default-features = false, features = ["system", "disk"] } # Enumerate/kill aurelia processes for `kill`/`daemon`; `disk` for library free-space checks
 qrcode = { version = "0.14", default-features = false } # Terminal QR rendering for `login --qr`
 chacha20poly1305 = "0.10"
 argon2 = "0.5"
