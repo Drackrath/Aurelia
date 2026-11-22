@@ -80,6 +80,11 @@
             pkgs.zstd
           ];
 
+          # nixpkgs sets AWS_LC_SYS_USE_SYSTEM=1; build bundled.
+          preBuild = ''
+            export AWS_LC_SYS_USE_SYSTEM=0
+          '';
+
           # Matches the cargo matrix jobs, which also only build. The suite reads
           # the real Steam directories under $HOME, which the sandbox does not have.
           doCheck = false;
