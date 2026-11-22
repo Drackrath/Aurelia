@@ -170,6 +170,7 @@ fn test_environment_sanity_checks() {
             custom_dxvk_path: None,
             custom_vkd3d_path: None,
             custom_vkd3d_proton_path: None,
+            ..Default::default()
         },
         ..Default::default()
     };

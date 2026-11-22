@@ -1,4 +1,4 @@
-use crate::core::models::{OwnedGame, SessionState, SteamPrefixMode, UserConfigStore};
+use crate::core::models::{ExtraKeys, OwnedGame, SessionState, SteamPrefixMode, UserConfigStore};
 use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -59,6 +59,9 @@ pub struct GameConfig {
     /// Custom compatdata folder; prefix is `<dir>/pfx`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix_dir: Option<PathBuf>,
+    /// Unknown keys, kept on save.
+    #[serde(flatten)]
+    pub extra: ExtraKeys,
 }
 
 /// Per-game launch backend selection.
@@ -88,6 +91,9 @@ pub struct ProxyConfig {
     /// e.g. `localhost,127.0.0.1,.internal`. `None` = no exceptions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub no_proxy: Option<String>,
+    /// Unknown keys, kept on save.
+    #[serde(flatten)]
+    pub extra: ExtraKeys,
 }
 
 /// Steam presence the session daemon
@@ -194,6 +200,9 @@ pub struct LauncherConfig {
     /// Global download limit in kbit/s; 0 is unlimited.
     #[serde(default)]
     pub download_limit_kbit: u64,
+    /// Unknown keys, kept on save.
+    #[serde(flatten)]
+    pub extra: ExtraKeys,
 }
 
 /// kbit/s to bytes/s.
@@ -277,6 +286,7 @@ impl Default for LauncherConfig {
             encrypt_session: false,
             persona_wait_secs: DEFAULT_PERSONA_WAIT_SECS,
             download_limit_kbit: 0,
+            extra: ExtraKeys::new(),
         }
     }
 }
