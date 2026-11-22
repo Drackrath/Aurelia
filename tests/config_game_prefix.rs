@@ -46,3 +46,22 @@ fn prefix_conflicts_with_no_prefix() {
     );
     assert!(!o.status.success(), "{}", out(&o));
 }
+
+#[test]
+fn clearing_unset_values_writes_nothing() {
+    let tmp = sandbox();
+    let before = fs::read(tmp.path().join("config.json")).unwrap();
+    game_json(&tmp, &["--no-prefix", "--no-launch-options"]);
+    assert_eq!(fs::read(tmp.path().join("config.json")).unwrap(), before);
+    assert!(!tmp.path().join("user_apps.json").exists());
+}
+
+#[test]
+fn set_then_clear_leaves_no_entry() {
+    let tmp = sandbox();
+    game_json(&tmp, &["--prefix", "/p"]);
+    game_json(&tmp, &["--no-prefix"]);
+    let cfg: serde_json::Value =
+        serde_json::from_slice(&fs::read(tmp.path().join("config.json")).unwrap()).unwrap();
+    assert!(cfg["game_configs"].get("570").is_none(), "{cfg}");
+}

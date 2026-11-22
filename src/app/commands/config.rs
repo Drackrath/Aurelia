@@ -621,6 +621,18 @@ fn absolute_prefix_dir(dir: std::path::PathBuf) -> Result<std::path::PathBuf> {
     Ok(out)
 }
 
+/// Drop all-default entries; report real changes.
+fn settle_entry<T: Default + PartialEq>(
+    store: &mut std::collections::HashMap<u32, T>,
+    app_id: u32,
+    before: Option<T>,
+) -> bool {
+    if store.get(&app_id).is_some_and(|e| *e == T::default()) {
+        store.remove(&app_id);
+    }
+    store.get(&app_id) != before.as_ref()
+}
+
 /// `config game`: view or set a game's per-game launch settings.
 pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<()> {
     let GameConfigArgs {
@@ -684,27 +696,24 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
     // The Steam-runtime knobs live in a separate per-game store (user_apps.json) from the
     // GameConfig fields above (config.json). Update whichever store each flag targets.
     let mut user_configs = aurelia::core::config::load_user_configs().await?;
-    let mut user_changed = false;
+    let user_before = user_configs.get(&app_id).cloned();
     if clear {
-        user_changed = user_configs.remove(&app_id).is_some();
+        user_configs.remove(&app_id);
     } else {
         let ua = user_configs.entry(app_id).or_default();
         if let Some(sr) = steam_runtime {
             ua.steam_runtime_policy = sr.into();
-            user_changed = true;
         }
         if let Some(pm) = steam_prefix_mode {
             ua.steam_prefix_mode = pm.into();
-            user_changed = true;
         }
         if no_launch_options {
             ua.launch_options.clear();
-            user_changed = true;
         } else if let Some(line) = launch_options {
             ua.launch_options = line.trim().to_string();
-            user_changed = true;
         }
     }
+    let user_changed = settle_entry(&mut user_configs, app_id, user_before);
     if user_changed {
         aurelia::core::config::save_user_configs(&user_configs)
             .await
@@ -712,21 +721,18 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
     }
 
     let mut cfg = load_launcher_config().await?;
-    let mut changed = false;
+    let before = cfg.game_configs.get(&app_id).cloned();
     if clear {
-        changed = cfg.game_configs.remove(&app_id).is_some();
+        cfg.game_configs.remove(&app_id);
     } else {
         let entry = cfg.game_configs.entry(app_id).or_default();
         if clear_proton {
             entry.forced_proton_version = None;
-            changed = true;
         } else if let Some(p) = proton {
             entry.forced_proton_version = Some(p);
-            changed = true;
         }
         if no_platform {
             entry.platform_preference = None;
-            changed = true;
         } else if let Some(pl) = platform {
             entry.platform_preference = Some(
                 match pl {
@@ -735,40 +741,31 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
                 }
                 .to_string(),
             );
-            changed = true;
         }
         if native_engine {
             entry.runner = GameRunner::Luxtorpeda;
-            changed = true;
         } else if no_native_engine {
             entry.runner = GameRunner::Auto;
-            changed = true;
         } else if umu {
             entry.runner = GameRunner::Umu;
-            changed = true;
         } else if no_umu {
             entry.runner = GameRunner::Auto;
-            changed = true;
         }
         if no_launch_script {
             entry.launch_script = None;
-            changed = true;
         } else if let Some(s) = launch_script {
             entry.launch_script = Some(s.to_string_lossy().to_string());
-            changed = true;
         }
         if let Some(mode) = cloud_sync {
             entry.cloud_sync = mode.as_override();
-            changed = true;
         }
         if no_prefix {
             entry.prefix_dir = None;
-            changed = true;
         } else if let Some(dir) = prefix {
             entry.prefix_dir = Some(dir);
-            changed = true;
         }
     }
+    let changed = settle_entry(&mut cfg.game_configs, app_id, before);
     if changed {
         cfg.save().await.context("failed saving game config")?;
     }
