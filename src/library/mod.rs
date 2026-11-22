@@ -292,7 +292,7 @@ fn pick_live_copy(copies: Vec<InstalledAppInfo>) -> Option<InstalledAppInfo> {
 }
 
 /// Every install of every app across `libraries`, including duplicates. Backs both
-/// [`scan_libraries`] and duplicate reporting.
+/// `scan_libraries` and duplicate reporting.
 pub async fn scan_libraries_all(libraries: &[PathBuf]) -> HashMap<u32, Vec<InstalledAppInfo>> {
     let mut installed: HashMap<u32, Vec<InstalledAppInfo>> = HashMap::new();
 
@@ -744,10 +744,10 @@ pub fn probe_install_dir_by_appid(steamapps: &Path, appid: u32) -> Option<PathBu
         if !path.is_dir() {
             continue;
         }
-        if let Ok(content) = std::fs::read_to_string(path.join("steam_appid.txt")) {
-            if content.trim() == appid_str {
-                return Some(path);
-            }
+        if let Ok(content) = std::fs::read_to_string(path.join("steam_appid.txt"))
+            && content.trim() == appid_str
+        {
+            return Some(path);
         }
     }
     None
@@ -775,14 +775,14 @@ async fn parse_app_manifest_info(path: &Path) -> Result<Option<(u32, InstalledAp
     let steamapps = path.parent().map(Path::to_path_buf).unwrap_or_default();
     let mut install_path = steamapps.join("common").join(&dir);
     // A manifest whose `installdir` no longer matches the folder on disk
-    if !install_path.is_dir() {
-        if let Some(found) = probe_install_dir_by_appid(&steamapps, id) {
-            tracing::debug!(
-                "app {id}: installdir {dir:?} missing, using {} instead",
-                found.display()
-            );
-            install_path = found;
-        }
+    if !install_path.is_dir()
+        && let Some(found) = probe_install_dir_by_appid(&steamapps, id)
+    {
+        tracing::debug!(
+            "app {id}: installdir {dir:?} missing, using {} instead",
+            found.display()
+        );
+        install_path = found;
     }
     Ok(Some((
         id,

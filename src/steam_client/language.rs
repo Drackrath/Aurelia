@@ -307,10 +307,12 @@ impl SteamClient {
                     DownloadProgressState::Downloading,
                 );
                 let Some(done) = run_depot_loop(
-                    &client,
-                    &connection,
-                    &tx,
-                    &shared_state,
+                    &DepotLoopCtx {
+                        client: &client,
+                        connection: &connection,
+                        tx: &tx,
+                        shared_state: &shared_state,
+                    },
                     appid,
                     selections,
                     &install_root,

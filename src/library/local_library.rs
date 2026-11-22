@@ -198,10 +198,10 @@ fn parse_localconfig_apps(text: &str) -> HashMap<u32, u32> {
         if line == "{" {
             let key = pending_key.take().unwrap_or_default();
             // An app id is any direct child key of an "apps" object.
-            if path.last().is_some_and(|p| p.eq_ignore_ascii_case("apps")) {
-                if let Ok(id) = key.parse::<u32>() {
-                    result.entry(id).or_insert(0);
-                }
+            if path.last().is_some_and(|p| p.eq_ignore_ascii_case("apps"))
+                && let Ok(id) = key.parse::<u32>()
+            {
+                result.entry(id).or_insert(0);
             }
             path.push(key);
             continue;
@@ -221,12 +221,10 @@ fn parse_localconfig_apps(text: &str) -> HashMap<u32, u32> {
                 if key.eq_ignore_ascii_case("Playtime")
                     && path.len() >= 2
                     && path[path.len() - 2].eq_ignore_ascii_case("apps")
-                {
-                    if let (Ok(app_id), Ok(minutes)) =
+                    && let (Ok(app_id), Ok(minutes)) =
                         (path[path.len() - 1].parse::<u32>(), value.parse::<u32>())
-                    {
-                        result.insert(app_id, minutes);
-                    }
+                {
+                    result.insert(app_id, minutes);
                 }
             }
             _ => {}
@@ -277,10 +275,7 @@ fn parse_appinfo(bytes: &[u8]) -> HashMap<u32, AppMeta> {
     // token(8) sha1(20) changeNumber(4) [+ vdf sha1(20)].
     let header_tail = 4 + 4 + 8 + 20 + 4 + if has_vdf_sha { 20 } else { 0 };
 
-    loop {
-        let Some(app_id) = read_u32(bytes, &mut pos) else {
-            break;
-        };
+    while let Some(app_id) = read_u32(bytes, &mut pos) {
         if app_id == 0 {
             break; // sentinel terminating the app list
         }
@@ -293,12 +288,11 @@ fn parse_appinfo(bytes: &[u8]) -> HashMap<u32, AppMeta> {
         let record_end = record_start.saturating_add(size).min(bytes.len());
         let kv_start = record_start.saturating_add(header_tail);
 
-        if kv_start <= record_end {
-            if let Some(meta) =
+        if kv_start <= record_end
+            && let Some(meta) =
                 parse_app_common(&bytes[kv_start..record_end], string_table.as_deref())
-            {
-                out.insert(app_id, meta);
-            }
+        {
+            out.insert(app_id, meta);
         }
 
         // Advance to the next record using the declared size (robust to any

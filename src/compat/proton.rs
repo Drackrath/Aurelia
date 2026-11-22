@@ -400,10 +400,10 @@ fn choose_asset_for_host(
     }
 
     if let Some(arch) = microarch {
-        if arch == "x86_64_v3" {
-            if let Some(i) = matching.iter().position(|a| a.name.contains("x86_64_v3")) {
-                return Some(matching.swap_remove(i));
-            }
+        if arch == "x86_64_v3"
+            && let Some(i) = matching.iter().position(|a| a.name.contains("x86_64_v3"))
+        {
+            return Some(matching.swap_remove(i));
         }
         // Baseline host (or no v3 asset): pick the generic x86_64 build, never a
         // higher microarch level the CPU may not support.

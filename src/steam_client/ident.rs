@@ -34,10 +34,10 @@ pub fn parse_ident(input: &str) -> Result<Ident, TypedError> {
     if q.eq_ignore_ascii_case("me") {
         return Ok(Ident::Me);
     }
-    if let Some(c) = RE_PROFILE_ID.captures(q) {
-        if let Ok(id) = c[1].parse::<u64>() {
-            return Ok(Ident::SteamId(id));
-        }
+    if let Some(c) = RE_PROFILE_ID.captures(q)
+        && let Ok(id) = c[1].parse::<u64>()
+    {
+        return Ok(Ident::SteamId(id));
     }
     if let Some(c) = RE_VANITY.captures(q) {
         return Err(vanity_unsupported(&c[1]));

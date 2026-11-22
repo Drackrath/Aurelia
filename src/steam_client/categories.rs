@@ -30,10 +30,10 @@ impl SteamClient {
             .filter(|c| c.categoryid() != 0 && !c.display_name().is_empty())
             .map(|c| (c.categoryid(), c.display_name().to_string()))
             .collect();
-        if !names.is_empty() {
-            if let Err(e) = save_tag_name_cache(&cache_key(language), &names).await {
-                tracing::debug!("could not cache category names: {e:#}");
-            }
+        if !names.is_empty()
+            && let Err(e) = save_tag_name_cache(&cache_key(language), &names).await
+        {
+            tracing::debug!("could not cache category names: {e:#}");
         }
         Ok(names)
     }

@@ -1,0 +1,4 @@
+[toolchain]
+# Keep in sync with CI and rust-version.
+channel = "1.100.0"
+components = ["rustfmt", "clippy"]

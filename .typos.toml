@@ -1,0 +1,22 @@
+[default.extend-words]
+# Steam/Valve spellings we don't control
+# `.sav` save-game files
+sav = "sav"
+# Steam proto/KeyValues field
+packageid = "packageid"
+# sic, Valve proto field `unvailable_for_country_restriction`
+unvailable = "unvailable"
+# the game title, in test fixtures
+dota = "dota"
+# valid spelling variant
+unparseable = "unparseable"
+# deliberate test data: invalid JSON, base64 input
+tru = "tru"
+fo = "fo"
+
+[files]
+extend-exclude = [
+    "target/",
+    # Valve's protos, vendored as-is
+    "proto/",
+]

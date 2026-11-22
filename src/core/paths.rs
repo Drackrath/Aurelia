@@ -197,7 +197,7 @@ pub fn compat_data_dir(library_root: &Path, app_id: u32) -> PathBuf {
 /// the launcher sets, but a Proton launch ignores it: `proton run` derives its prefix
 /// from `STEAM_COMPAT_DATA_PATH`, which is always `<library>/steamapps/compatdata/
 /// <appid>` regardless of prefix mode (the same asymmetry documented on
-/// [`resolve_steam_runtime_wine`]). In the default `Shared` mode the two therefore
+/// [`resolve_steam_runtime_wine`](crate::core::runner::resolve_steam_runtime_wine)). In the default `Shared` mode the two therefore
 /// disagree: the launcher points `WINEPREFIX` at the master prefix while the game
 /// runs — and writes its saves — in compatdata.
 ///

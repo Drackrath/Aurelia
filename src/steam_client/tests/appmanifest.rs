@@ -12,14 +12,16 @@ fn write_appmanifest_preserves_owner_and_branch() {
 
     SteamClient::write_appmanifest(
         &path,
-        960090,
-        "Bloons TD 6",
-        "BloonsTD6",
-        vec![(960091, 3975959124549939908, 2805466046)],
-        Some("24771151"),
-        true,
-        false,
-        None,
+        AppManifestSpec {
+            appid: 960090,
+            game_name: "Bloons TD 6",
+            installdir: "BloonsTD6",
+            installed_depots: vec![(960091, 3975959124549939908, 2805466046)],
+            buildid: Some("24771151"),
+            fully_installed: true,
+            pin_updates: false,
+            language: None,
+        },
     )
     .unwrap();
 
@@ -48,8 +50,20 @@ fn write_appmanifest_preserves_owner_and_branch() {
 fn write_appmanifest_fresh_has_no_owner_or_branch() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("appmanifest_1.acf");
-    SteamClient::write_appmanifest(&path, 1, "Game", "Game", vec![], None, false, false, None)
-        .unwrap();
+    SteamClient::write_appmanifest(
+        &path,
+        AppManifestSpec {
+            appid: 1,
+            game_name: "Game",
+            installdir: "Game",
+            installed_depots: vec![],
+            buildid: None,
+            fully_installed: false,
+            pin_updates: false,
+            language: None,
+        },
+    )
+    .unwrap();
     let raw = std::fs::read_to_string(&path).unwrap();
     assert_eq!(acf::parse_app_manifest(&raw).last_owner, None);
     assert_eq!(acf::parse_app_manifest(&raw).active_branch, "public");
@@ -69,14 +83,16 @@ fn write_appmanifest_keeps_user_and_mounted_config() {
 
     SteamClient::write_appmanifest(
         &path,
-        1086940,
-        "Baldur's Gate 3",
-        "Baldurs Gate 3",
-        vec![(2378505, 5, 50)],
-        Some("1"),
-        true,
-        false,
-        Some("english"),
+        AppManifestSpec {
+            appid: 1086940,
+            game_name: "Baldur's Gate 3",
+            installdir: "Baldurs Gate 3",
+            installed_depots: vec![(2378505, 5, 50)],
+            buildid: Some("1"),
+            fully_installed: true,
+            pin_updates: false,
+            language: Some("english"),
+        },
     )
     .unwrap();
 
@@ -101,14 +117,16 @@ fn write_appmanifest_records_language_on_fresh_install() {
     let path = dir.path().join("appmanifest_1.acf");
     SteamClient::write_appmanifest(
         &path,
-        1,
-        "Game",
-        "Game",
-        vec![],
-        None,
-        true,
-        false,
-        Some("german"),
+        AppManifestSpec {
+            appid: 1,
+            game_name: "Game",
+            installdir: "Game",
+            installed_depots: vec![],
+            buildid: None,
+            fully_installed: true,
+            pin_updates: false,
+            language: Some("german"),
+        },
     )
     .unwrap();
     let raw = std::fs::read_to_string(&path).unwrap();
@@ -136,14 +154,16 @@ fn write_appmanifest_keeps_steam_fields_and_dlc_tags() {
     // 1977584 was not re-downloaded.
     SteamClient::write_appmanifest(
         &path,
-        977950,
-        "A Dance of Fire and Ice",
-        "A Dance of Fire and Ice",
-        vec![(977954, 2, 20), (1977574, 9, 90)],
-        Some("26397875"),
-        true,
-        false,
-        None,
+        AppManifestSpec {
+            appid: 977950,
+            game_name: "A Dance of Fire and Ice",
+            installdir: "A Dance of Fire and Ice",
+            installed_depots: vec![(977954, 2, 20), (1977574, 9, 90)],
+            buildid: Some("26397875"),
+            fully_installed: true,
+            pin_updates: false,
+            language: None,
+        },
     )
     .unwrap();
 
@@ -177,8 +197,20 @@ fn write_appmanifest_keeps_target_build_while_updating() {
         "\"AppState\"\n{\n\t\"appid\"\t\t\"1\"\n\t\"TargetBuildID\"\t\t\"55\"\n}\n",
     )
     .unwrap();
-    SteamClient::write_appmanifest(&path, 1, "Game", "Game", vec![], None, false, false, None)
-        .unwrap();
+    SteamClient::write_appmanifest(
+        &path,
+        AppManifestSpec {
+            appid: 1,
+            game_name: "Game",
+            installdir: "Game",
+            installed_depots: vec![],
+            buildid: None,
+            fully_installed: false,
+            pin_updates: false,
+            language: None,
+        },
+    )
+    .unwrap();
     let raw = std::fs::read_to_string(&path).unwrap();
     assert!(raw.contains("\"TargetBuildID\"\t\t\"55\""));
 }

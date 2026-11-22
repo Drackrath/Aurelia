@@ -48,7 +48,7 @@ fn a_failed_transfer_is_recorded_and_marks_the_run_incomplete() {
     );
 
     assert!(outcome.has_failures());
-    assert!(outcome.is_incomplete());
+    assert!(outcome.has_failures() || outcome.has_skips());
     assert_eq!(outcome.failed[0].direction, "down");
     assert!(outcome.failed[0].error.contains("timed out"));
     // The successful transfer is still reported — partial progress is kept.
@@ -56,11 +56,11 @@ fn a_failed_transfer_is_recorded_and_marks_the_run_incomplete() {
 }
 
 #[test]
-fn a_clean_run_is_not_incomplete() {
+fn a_clean_run_has_no_failures_or_skips() {
     let outcome = SyncOutcome {
         downloaded: vec!["a.sav".to_string()],
         ..Default::default()
     };
-    assert!(!outcome.is_incomplete());
+    assert!(!outcome.has_skips());
     assert!(!outcome.has_failures());
 }

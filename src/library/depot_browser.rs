@@ -129,17 +129,29 @@ pub async fn fetch_manifest_files(
     Ok(files)
 }
 
-#[allow(clippy::too_many_arguments)]
+/// One file inside a depot manifest.
+#[derive(Clone, Copy, Debug)]
+pub struct DepotFileRef<'a> {
+    pub appid: u32,
+    pub depot_id: u32,
+    /// Manifest id or branch name.
+    pub manifest_ref: &'a str,
+    pub file_path: &'a str,
+}
+
 pub fn download_single_file(
     runtime: &tokio::runtime::Runtime,
     connection: &Connection,
     cdn_client: &CDNClient,
-    appid: u32,
-    depot_id: u32,
-    manifest_ref: &str,
-    file_path: &str,
+    file: DepotFileRef<'_>,
     output_dir: &Path,
 ) -> Result<()> {
+    let DepotFileRef {
+        appid,
+        depot_id,
+        manifest_ref,
+        file_path,
+    } = file;
     let manifest_id = runtime.block_on(resolve_manifest_id(
         connection,
         appid,

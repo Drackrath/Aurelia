@@ -178,59 +178,58 @@ impl PipelineStage for PreflightStage {
         }
 
         // 3. Verify working directory
-        if final_res.is_ok() {
-            if let Some(cwd) = &spec.cwd {
-                let mut check = PreflightCheck {
-                    name: "Working Directory".into(),
-                    status: true,
-                    details: "OK".into(),
-                };
-                if !cwd.exists() {
-                    check.status = false;
-                    check.details = format!("Working directory does not exist: {}", cwd.display());
-                    final_res = Err(
-                        preflight_error(LaunchErrorKind::Environment, &check.details)
-                            .with_context("cwd", cwd.to_string_lossy()),
-                    );
-                } else if !cwd.is_dir() {
-                    check.status = false;
-                    check.details =
-                        format!("Working directory is not a directory: {}", cwd.display());
-                    final_res = Err(
-                        preflight_error(LaunchErrorKind::Environment, &check.details)
-                            .with_context("cwd", cwd.to_string_lossy()),
-                    );
-                }
-                checks.push(check);
+        if final_res.is_ok()
+            && let Some(cwd) = &spec.cwd
+        {
+            let mut check = PreflightCheck {
+                name: "Working Directory".into(),
+                status: true,
+                details: "OK".into(),
+            };
+            if !cwd.exists() {
+                check.status = false;
+                check.details = format!("Working directory does not exist: {}", cwd.display());
+                final_res = Err(
+                    preflight_error(LaunchErrorKind::Environment, &check.details)
+                        .with_context("cwd", cwd.to_string_lossy()),
+                );
+            } else if !cwd.is_dir() {
+                check.status = false;
+                check.details = format!("Working directory is not a directory: {}", cwd.display());
+                final_res = Err(
+                    preflight_error(LaunchErrorKind::Environment, &check.details)
+                        .with_context("cwd", cwd.to_string_lossy()),
+                );
             }
+            checks.push(check);
         }
 
         // 4. Verify WINEPREFIX
-        if final_res.is_ok() {
-            if let Some(prefix) = spec.env.get("WINEPREFIX") {
-                let mut check = PreflightCheck {
-                    name: "WINEPREFIX Existence".into(),
-                    status: true,
-                    details: "OK".into(),
-                };
-                let prefix_path = Path::new(prefix);
-                if !prefix_path.exists() {
-                    check.status = false;
-                    check.details = format!("WINEPREFIX does not exist: {}", prefix);
-                    final_res = Err(
-                        preflight_error(LaunchErrorKind::Environment, &check.details)
-                            .with_context("wineprefix", prefix),
-                    );
-                } else if !prefix_path.is_dir() {
-                    check.status = false;
-                    check.details = format!("WINEPREFIX is not a directory: {}", prefix);
-                    final_res = Err(
-                        preflight_error(LaunchErrorKind::Environment, &check.details)
-                            .with_context("wineprefix", prefix),
-                    );
-                }
-                checks.push(check);
+        if final_res.is_ok()
+            && let Some(prefix) = spec.env.get("WINEPREFIX")
+        {
+            let mut check = PreflightCheck {
+                name: "WINEPREFIX Existence".into(),
+                status: true,
+                details: "OK".into(),
+            };
+            let prefix_path = Path::new(prefix);
+            if !prefix_path.exists() {
+                check.status = false;
+                check.details = format!("WINEPREFIX does not exist: {}", prefix);
+                final_res = Err(
+                    preflight_error(LaunchErrorKind::Environment, &check.details)
+                        .with_context("wineprefix", prefix),
+                );
+            } else if !prefix_path.is_dir() {
+                check.status = false;
+                check.details = format!("WINEPREFIX is not a directory: {}", prefix);
+                final_res = Err(
+                    preflight_error(LaunchErrorKind::Environment, &check.details)
+                        .with_context("wineprefix", prefix),
+                );
             }
+            checks.push(check);
         }
 
         // 5. Check runner executability
@@ -242,41 +241,37 @@ impl PipelineStage for PreflightStage {
                 status: true,
                 details: "OK".into(),
             };
-            if let Ok(metadata) = std::fs::metadata(runner_file) {
-                if metadata.is_file() && metadata.permissions().mode() & 0o111 == 0 {
-                    // Native launches self-heal missing exec bit.
-                    if native_game_binary(ctx, runner_file) {
-                        let mut permissions = metadata.permissions();
-                        permissions.set_mode(permissions.mode() | 0o755);
-                        match std::fs::set_permissions(runner_file, permissions) {
-                            Ok(()) => {
-                                check.details = format!(
-                                    "Added executable permission: {}",
-                                    runner_file.display()
-                                );
-                            }
-                            Err(e) => {
-                                check.status = false;
-                                check.details = format!(
-                                    "Game binary is not executable and chmod failed ({}): {}",
-                                    e,
-                                    runner_file.display()
-                                );
-                                final_res = Err(preflight_error(
-                                    LaunchErrorKind::Permission,
-                                    &check.details,
-                                )
-                                .with_context("runner_path", runner_path.clone()));
-                            }
+            if let Ok(metadata) = std::fs::metadata(runner_file)
+                && metadata.is_file()
+                && metadata.permissions().mode() & 0o111 == 0
+            {
+                // Native launches self-heal missing exec bit.
+                if native_game_binary(ctx, runner_file) {
+                    let mut permissions = metadata.permissions();
+                    permissions.set_mode(permissions.mode() | 0o755);
+                    match std::fs::set_permissions(runner_file, permissions) {
+                        Ok(()) => {
+                            check.details =
+                                format!("Added executable permission: {}", runner_file.display());
                         }
-                    } else {
-                        check.status = false;
-                        check.details =
-                            format!("Runner binary is not executable: {}", runner_file.display());
-                        final_res =
-                            Err(preflight_error(LaunchErrorKind::Permission, &check.details)
-                                .with_context("runner_path", runner_path.clone()));
+                        Err(e) => {
+                            check.status = false;
+                            check.details = format!(
+                                "Game binary is not executable and chmod failed ({}): {}",
+                                e,
+                                runner_file.display()
+                            );
+                            final_res =
+                                Err(preflight_error(LaunchErrorKind::Permission, &check.details)
+                                    .with_context("runner_path", runner_path.clone()));
+                        }
                     }
+                } else {
+                    check.status = false;
+                    check.details =
+                        format!("Runner binary is not executable: {}", runner_file.display());
+                    final_res = Err(preflight_error(LaunchErrorKind::Permission, &check.details)
+                        .with_context("runner_path", runner_path.clone()));
                 }
             }
             checks.push(check);

@@ -15,6 +15,12 @@ pub struct LaunchPipeline {
     validators: Vec<Box<dyn crate::launch::validators::LaunchValidator>>,
 }
 
+impl Default for LaunchPipeline {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LaunchPipeline {
     pub fn new() -> Self {
         Self {
@@ -253,12 +259,10 @@ impl LaunchPipeline {
         if !ctx.graphics_stack.requested_backend.is_empty()
             && ctx.graphics_stack.requested_backend != "Auto"
         {
-            if ctx.graphics_stack.requested_backend == "DXVK"
-                && ctx.graphics_stack.effective_backend != "DXVK"
-            {
-                policy_satisfied = false;
-            } else if ctx.graphics_stack.requested_backend == "WineD3D"
-                && ctx.graphics_stack.effective_backend != "WineD3D (Baseline)"
+            let requested = ctx.graphics_stack.requested_backend.as_str();
+            let effective = ctx.graphics_stack.effective_backend.as_str();
+            if (requested == "DXVK" && effective != "DXVK")
+                || (requested == "WineD3D" && effective != "WineD3D (Baseline)")
             {
                 policy_satisfied = false;
             }

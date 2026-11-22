@@ -96,6 +96,18 @@ pub struct InstallOptions {
     pub branch: Option<String>,
 }
 
+/// One depot to download or verify.
+pub(crate) struct DepotJob {
+    pub app_id: u32,
+    pub depot_id: u32,
+    pub manifest_id: u64,
+    /// 32-byte depot decryption key.
+    pub key: Vec<u8>,
+    /// Whole-app total; `0` accumulates per-depot.
+    pub grand_total_bytes: u64,
+    pub verify_mode: bool,
+}
+
 impl SteamClient {
     pub async fn fetch_branches(&self, appid: u32) -> Result<Vec<String>> {
         // PICS returns the appinfo as *binary* VDF; parse that first and only fall
@@ -250,10 +262,10 @@ impl SteamClient {
                     existing_installdir = Some(dir);
                 }
             }
-            if game_name.starts_with("App ") {
-                if let Some(name) = parsed.display_name().filter(|n| !n.starts_with("App ")) {
-                    game_name = name;
-                }
+            if game_name.starts_with("App ")
+                && let Some(name) = parsed.display_name().filter(|n| !n.starts_with("App "))
+            {
+                game_name = name;
             }
         }
 
@@ -481,12 +493,11 @@ impl SteamClient {
 
             // For a downgrade against a named branch, record that branch's build id in
             // the appmanifest instead of the appinfo-derived (public) one.
-            if let Some(branch_name) = branch.as_deref() {
-                if let Some(bid) =
+            if let Some(branch_name) = branch.as_deref()
+                && let Some(bid) =
                     SteamClient::remote_buildid_static(&connection, appid, branch_name).await
-                {
-                    build_id = Some(bid);
-                }
+            {
+                build_id = Some(bid);
             }
 
             let _ = tx
@@ -515,14 +526,16 @@ impl SteamClient {
             if dlc_appid.is_none() {
                 if let Err(e) = SteamClient::write_appmanifest(
                     &manifest_path,
-                    appid,
-                    &game_name,
-                    &installdir,
-                    Vec::new(),
-                    build_id.as_deref(),
-                    false,
-                    pin_updates,
-                    recorded_language.as_deref(),
+                    AppManifestSpec {
+                        appid,
+                        game_name: &game_name,
+                        installdir: &installdir,
+                        installed_depots: Vec::new(),
+                        buildid: build_id.as_deref(),
+                        fully_installed: false,
+                        pin_updates,
+                        language: recorded_language.as_deref(),
+                    },
                 ) {
                     tracing::warn!("failed writing initial appmanifest for app {appid}: {e}");
                 } else {
@@ -546,10 +559,12 @@ impl SteamClient {
             let outcome = match fetch_content_hosts(&client_clone, &connection, &tx, appid).await {
                 Some(hosts) => {
                     run_depot_loop(
-                        &client_clone,
-                        &connection,
-                        &tx,
-                        &shared_state_clone,
+                        &DepotLoopCtx {
+                            client: &client_clone,
+                            connection: &connection,
+                            tx: &tx,
+                            shared_state: &shared_state_clone,
+                        },
                         appid,
                         selections,
                         &install_dir,
@@ -582,14 +597,16 @@ impl SteamClient {
             } else {
                 SteamClient::write_appmanifest(
                     &manifest_path,
-                    appid,
-                    &game_name,
-                    &installdir,
-                    successful_depots,
-                    build_id.as_deref(),
-                    true,
-                    pin_updates,
-                    recorded_language.as_deref(),
+                    AppManifestSpec {
+                        appid,
+                        game_name: &game_name,
+                        installdir: &installdir,
+                        installed_depots: successful_depots,
+                        buildid: build_id.as_deref(),
+                        fully_installed: true,
+                        pin_updates,
+                        language: recorded_language.as_deref(),
+                    },
                 )
             };
             if let Err(err) = manifest_result {
@@ -634,16 +651,18 @@ impl SteamClient {
         // grand_total_bytes = 0: this standalone call has no whole-app total, so
         // on_manifest will accumulate per-depot totals into state.total_bytes.
         self.download_depot_to_with_hosts(
-            app_id,
-            depot_id,
-            manifest_id,
+            DepotJob {
+                app_id,
+                depot_id,
+                manifest_id,
+                key,
+                grand_total_bytes: 0,
+                verify_mode: false,
+            },
             dest,
             shared_state,
             &hosts,
-            0,
             &connection,
-            key,
-            false,
         )
         .await
     }
@@ -658,17 +677,20 @@ impl SteamClient {
     /// used to decide whether to add this depot's size to `state.total_bytes`.
     pub(crate) async fn download_depot_to_with_hosts(
         &self,
-        app_id: u32,
-        depot_id: u32,
-        manifest_id: u64,
+        job: DepotJob,
         dest: &std::path::Path,
         shared_state: Arc<std::sync::RwLock<crate::core::models::DownloadState>>,
         hosts: &[ContentHost],
-        grand_total_bytes: u64,
         connection: &Connection,
-        key: Vec<u8>,
-        verify_mode: bool,
     ) -> anyhow::Result<u64> {
+        let DepotJob {
+            app_id,
+            depot_id,
+            manifest_id,
+            key,
+            grand_total_bytes,
+            verify_mode,
+        } = job;
         // A valid depot key is exactly 32 bytes; a short/all-zero key would
         // decrypt chunks to garbage (the chunk path then fails the zip parse
         // with "Could not find EOCD").

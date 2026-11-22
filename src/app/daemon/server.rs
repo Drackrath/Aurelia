@@ -307,10 +307,10 @@ where
                 Ok(Some((proto::C_STDIN, data))) => {
                     // Once the command drops its stdin receiver, stop forwarding but
                     // keep watching the socket so a later disconnect is still caught.
-                    if let Some(tx) = in_tx.as_ref() {
-                        if tx.send(data).is_err() {
-                            in_tx = None;
-                        }
+                    if let Some(tx) = in_tx.as_ref()
+                        && tx.send(data).is_err()
+                    {
+                        in_tx = None;
                     }
                 }
                 // Client is done sending stdin but stays connected: signal EOF to the

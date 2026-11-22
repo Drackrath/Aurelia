@@ -73,10 +73,10 @@ pub(crate) fn detect_installed_platform_set(install_path: &str) -> Option<(bool,
         match ext.as_deref() {
             Some("exe") => windows = true,
             // ELF check only where a native binary can plausibly live.
-            None | Some("so") | Some("x86_64") | Some("appimage") | Some("bin") => {
-                if !linux && is_elf(path) {
-                    linux = true;
-                }
+            None | Some("so") | Some("x86_64") | Some("appimage") | Some("bin")
+                if !linux && is_elf(path) =>
+            {
+                linux = true;
             }
             _ => {}
         }
@@ -230,10 +230,10 @@ pub(crate) async fn cmd_list(
     // tell native-Linux games from Windows-via-Proton ones. Only installed games
     // have files to inspect; the scan early-exits on the first `.exe`.
     for g in &mut games {
-        if g.is_installed {
-            if let Some(path) = g.install_path.as_deref() {
-                g.platform = detect_installed_platform(path);
-            }
+        if g.is_installed
+            && let Some(path) = g.install_path.as_deref()
+        {
+            g.platform = detect_installed_platform(path);
         }
     }
 

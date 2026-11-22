@@ -26,12 +26,12 @@ pub enum SteamMode {
 /// (`aurelia config game <id> --steam-runtime …`) and, when that is `Auto`, from the
 /// global default (`aurelia config steam-runtime-policy …`):
 ///   - `Enabled`  — always use the in-Wine Steam runtime (real `steamclient.dll` +
-///                  the `steam.exe` Aurelia starts), even when a host Steam exists.
+///     the `steam.exe` Aurelia starts), even when a host Steam exists.
 ///   - `Disabled` — never use the in-Wine runtime; `--steam` bridges to host Steam.
 ///   - `Auto`     — `--steam` prefers the host client and falls back to the in-Wine
-///                  runtime when no host Steam is installed (previously it assumed a
-///                  host Steam and silently ran DRM-protected games without DRM,
-///                  issue #3). Without `--steam`, standalone.
+///     runtime when no host Steam is installed (previously it assumed a
+///     host Steam and silently ran DRM-protected games without DRM,
+///     issue #3). Without `--steam`, standalone.
 ///
 /// Returns the mode and a short source label recorded in launch diagnostics.
 pub(super) fn resolve_steam_mode(ctx: &LaunchContext) -> (SteamMode, &'static str) {
@@ -42,7 +42,7 @@ pub(super) fn resolve_steam_mode(ctx: &LaunchContext) -> (SteamMode, &'static st
     )
 }
 
-/// [`resolve_steam_mode`] without a launch context.
+/// `resolve_steam_mode` without a launch context.
 pub fn resolve_steam_mode_for(
     user_config: Option<&crate::core::models::UserAppConfig>,
     launcher_config: &crate::core::config::LauncherConfig,

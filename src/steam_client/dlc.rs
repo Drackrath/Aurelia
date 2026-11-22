@@ -55,11 +55,11 @@ pub(super) fn apply_dlc_disabled(content: &str, dlc_appid: u32, disabled: bool) 
         // No DisabledDLC key yet — add one to the per-user config blocks.
         let mut out = content.to_string();
         for block in ["MountedConfig", "UserConfig"] {
-            if let Some(pos) = out.find(&format!("\"{block}\"")) {
-                if let Some(rel) = out[pos..].find('{') {
-                    let at = pos + rel + 1;
-                    out.insert_str(at, &format!("\n\t\t\"DisabledDLC\"\t\t\"{dlc}\""));
-                }
+            if let Some(pos) = out.find(&format!("\"{block}\""))
+                && let Some(rel) = out[pos..].find('{')
+            {
+                let at = pos + rel + 1;
+                out.insert_str(at, &format!("\n\t\t\"DisabledDLC\"\t\t\"{dlc}\""));
             }
         }
         return out;

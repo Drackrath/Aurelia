@@ -14,6 +14,16 @@ pub fn aurelia(config_dir: &Path, args: &[&str]) -> Output {
         .expect("failed running the aurelia binary")
 }
 
+/// Path as a quoted JSON string.
+pub fn json_path(p: &Path) -> String {
+    serde_json::to_string(&p.to_string_lossy()).unwrap()
+}
+
+/// Path with VDF backslash escaping.
+pub fn vdf_path(p: &Path) -> String {
+    p.to_string_lossy().replace('\\', "\\\\")
+}
+
 /// Captured stderr as text.
 pub fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).to_string()

@@ -195,7 +195,7 @@ impl SteamClient {
     /// Resolve `ids` to a flat, de-duplicated, first-seen-ordered list of leaf
     /// (non-collection) item ids, recursing into nested collections. Plain item
     /// ids pass through unchanged. Cycles are broken with a visited set and
-    /// recursion is capped at [`MAX_COLLECTION_DEPTH`].
+    /// recursion is capped at `MAX_COLLECTION_DEPTH`.
     pub async fn expand_collections(&self, ids: &[u64]) -> Result<Vec<u64>> {
         let mut result: Vec<u64> = Vec::new();
         let mut seen_leaf: HashSet<u64> = HashSet::new();

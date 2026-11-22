@@ -2,29 +2,6 @@
 
 use super::*;
 
-/// Steam wraps the entire VDF in a top-level key that is the numeric app ID.
-/// This wrapper accepts that outer key transparently.
-#[derive(Debug, serde::Deserialize)]
-pub struct AppInfoEnvelope(pub HashMap<String, crate::core::models::AppInfoRoot>);
-
-impl AppInfoEnvelope {
-    /// Extract the inner AppInfoRoot regardless of the outer key name.
-    pub fn into_inner(self) -> Option<crate::core::models::AppInfoRoot> {
-        self.0.into_values().next()
-    }
-}
-
-pub fn parse_appinfo(vdf: &str) -> Result<crate::core::models::AppInfoRoot> {
-    // Try direct parse first (in case steam-vent already strips the wrapper)
-    if let Ok(parsed) = keyvalues_serde::from_str::<crate::core::models::AppInfoRoot>(vdf) {
-        return Ok(parsed);
-    }
-    // Fall back to envelope parse
-    let envelope: AppInfoEnvelope =
-        keyvalues_serde::from_str(vdf).context("failed parsing appinfo VDF (envelope)")?;
-    envelope.into_inner().context("appinfo envelope was empty")
-}
-
 /// Platform-matched non-DLC depot rows.
 pub(crate) fn platform_depot_rows<'a, 'text>(
     depots: &'a steam_vdf_parser::Obj<'text>,
@@ -296,10 +273,11 @@ pub(super) fn depot_map_from_vdf_root(root: &steam_vdf_parser::Value) -> HashMap
                     .get_obj(&["config"])
                     .and_then(|c| c.get("language"))
                     .and_then(|l| l.as_str());
-                if let Some(lang) = lang {
-                    if lang != "english" && !lang.is_empty() {
-                        continue;
-                    }
+                if let Some(lang) = lang
+                    && lang != "english"
+                    && !lang.is_empty()
+                {
+                    continue;
                 }
 
                 if let Some(m_id) = extract_manifest_id_robust(value, "public") {
@@ -364,19 +342,19 @@ pub(super) fn parse_text_vdf(data: &[u8]) -> Result<HashMap<u64, u64>> {
             } else if parts.len() >= 2 && current_depot > 0 {
                 let key = parts[0].to_lowercase();
                 if inside_public && key == "gid" {
-                    if let Ok(gid) = parts[1].parse::<u64>() {
-                        if gid > 0 {
-                            depot_map.insert(current_depot, gid);
-                        }
+                    if let Ok(gid) = parts[1].parse::<u64>()
+                        && gid > 0
+                    {
+                        depot_map.insert(current_depot, gid);
                     }
                 } else if key == "language" {
                     depot_langs.insert(current_depot, parts[1].to_lowercase());
                 } else if !inside_manifests && (key == "manifest" || key == "gid") {
                     // Fallback for flat structure
-                    if let Ok(gid) = parts[1].parse::<u64>() {
-                        if gid > 0 {
-                            depot_map.insert(current_depot, gid);
-                        }
+                    if let Ok(gid) = parts[1].parse::<u64>()
+                        && gid > 0
+                    {
+                        depot_map.insert(current_depot, gid);
                     }
                 }
             }
@@ -384,10 +362,11 @@ pub(super) fn parse_text_vdf(data: &[u8]) -> Result<HashMap<u64, u64>> {
 
         // Apply Language Filter to manual scan results
         depot_map.retain(|id, _| {
-            if let Some(lang) = depot_langs.get(id) {
-                if lang != "english" && !lang.is_empty() {
-                    return false;
-                }
+            if let Some(lang) = depot_langs.get(id)
+                && lang != "english"
+                && !lang.is_empty()
+            {
+                return false;
             }
             true
         });
@@ -419,25 +398,25 @@ pub(super) fn extract_manifest_id_robust(
 ) -> Option<u64> {
     if let Some(obj) = value.as_obj() {
         // Deep search for branch manifest
-        if let Some(manifests) = obj.get("manifests").and_then(|v| v.as_obj()) {
-            if let Some(branch_entry) = manifests.get(branch) {
-                // It can be a direct string or a gid object
-                if let Some(gid_str) = branch_entry.as_str() {
-                    if let Ok(gid) = gid_str.parse::<u64>() {
-                        return Some(gid);
-                    }
+        if let Some(manifests) = obj.get("manifests").and_then(|v| v.as_obj())
+            && let Some(branch_entry) = manifests.get(branch)
+        {
+            // It can be a direct string or a gid object
+            if let Some(gid_str) = branch_entry.as_str()
+                && let Ok(gid) = gid_str.parse::<u64>()
+            {
+                return Some(gid);
+            }
+            if let Some(gid_val) = branch_entry.as_u64() {
+                return Some(gid_val);
+            }
+            if let Some(branch_obj) = branch_entry.as_obj()
+                && let Some(gid) = branch_obj.get("gid")
+            {
+                if let Some(s) = gid.as_str() {
+                    return s.parse().ok();
                 }
-                if let Some(gid_val) = branch_entry.as_u64() {
-                    return Some(gid_val);
-                }
-                if let Some(branch_obj) = branch_entry.as_obj() {
-                    if let Some(gid) = branch_obj.get("gid") {
-                        if let Some(s) = gid.as_str() {
-                            return s.parse().ok();
-                        }
-                        return gid.as_u64();
-                    }
-                }
+                return gid.as_u64();
             }
         }
 

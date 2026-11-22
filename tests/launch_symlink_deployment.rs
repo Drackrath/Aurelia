@@ -1,3 +1,5 @@
+//! Unix symlinks; Windows needs privileges.
+#![cfg(unix)]
 use aurelia::core::dll_symlinks::{cleanup_dll_symlinks, deploy_dll_symlinks};
 use aurelia::core::models::ExecutableArchitecture;
 use aurelia::launch::dll_provider_resolver::{DllProvider, DllResolution};

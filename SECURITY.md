@@ -1,12 +1,17 @@
 # Security Policy
 
-## Supported Versions
+## Supported versions
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 0.1.37+   | :white_check_mark: |
+Only the latest release gets security fixes.
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
-- 0.1.37 and prior had a user-error prone bug that caused the deletion of steamapps/common. 0.1.37-2 Fixed this.
-- 0.1.37 session.json has been moved to OS Keyring. Versions before this should not be used anymore!
+Report privately via the repository's **Security** tab → **Report a vulnerability**.
+Never include session files, tokens or passwords.
+
+## Past issues
+
+- **0.3.0:** fixes dependency advisories in releases up to 0.2.6, notably
+  RUSTSEC-2026-0344 (`ruzstd`, via `aurelia-steam-cdn`).
+- **0.1.37:** session moved to the OS keyring. Don't use older versions.
+- **0.1.37-2:** fixes a bug that could delete `steamapps/common`.

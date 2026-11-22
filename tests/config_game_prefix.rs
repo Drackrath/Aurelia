@@ -4,6 +4,7 @@ mod common;
 use common::{aurelia, out};
 
 use std::fs;
+use std::path::{Path, PathBuf};
 use tempfile::{TempDir, tempdir};
 
 fn sandbox() -> TempDir {
@@ -14,6 +15,11 @@ fn sandbox() -> TempDir {
     )
     .unwrap();
     tmp
+}
+
+/// Separator-agnostic path from JSON.
+fn as_path(v: &serde_json::Value) -> PathBuf {
+    PathBuf::from(v.as_str().unwrap())
 }
 
 fn game_json(tmp: &TempDir, extra: &[&str]) -> serde_json::Value {
@@ -29,12 +35,15 @@ fn prefix_sets_and_clears_the_game_prefix() {
     let tmp = sandbox();
     let dir = tmp.path().join("Prefixes/Dota");
     let v = game_json(&tmp, &["--prefix", dir.to_str().unwrap()]);
-    assert_eq!(v["prefix_dir"], dir.to_str().unwrap());
-    assert_eq!(v["wine_prefix"], dir.join("pfx").to_str().unwrap());
+    assert_eq!(as_path(&v["prefix_dir"]), dir);
+    assert_eq!(as_path(&v["wine_prefix"]), dir.join("pfx"));
 
     let v = game_json(&tmp, &["--no-prefix"]);
     assert!(v["prefix_dir"].is_null(), "{v}");
-    assert_eq!(v["wine_prefix"], "/x/steamapps/compatdata/570/pfx");
+    assert_eq!(
+        as_path(&v["wine_prefix"]),
+        Path::new("/x/steamapps/compatdata/570/pfx")
+    );
 }
 
 #[test]

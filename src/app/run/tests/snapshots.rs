@@ -42,7 +42,10 @@ fn cli_help_matches_snapshot() {
         std::fs::write(&path, &actual).unwrap();
         return;
     }
-    let expected = std::fs::read_to_string(&path).expect("missing cli_help.txt snapshot");
+    // CRLF checkouts still match.
+    let expected = std::fs::read_to_string(&path)
+        .expect("missing cli_help.txt snapshot")
+        .replace("\r\n", "\n");
     if actual != expected {
         let first = actual
             .lines()

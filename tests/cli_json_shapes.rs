@@ -1,5 +1,7 @@
 //! CLI guard: offline `--json` output shapes.
 
+mod common;
+
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -47,7 +49,7 @@ fn sandbox(cache: &str) -> Sandbox {
         steamapps.join("libraryfolders.vdf"),
         format!(
             "\"libraryfolders\"\n{{\n\t\"0\"\n\t{{\n\t\t\"path\"\t\t\"{}\"\n\t\t\"apps\"\n\t\t{{\n\t\t\t\"570\"\t\t\"1000\"\n\t\t}}\n\t}}\n}}\n",
-            steam.display()
+            common::vdf_path(&steam)
         ),
     )
     .unwrap();
@@ -59,8 +61,8 @@ fn sandbox(cache: &str) -> Sandbox {
     fs::write(
         config.join("config.json"),
         format!(
-            r#"{{ "steam_library_path": "{}", "proton_version": "x", "enable_cloud_sync": false }}"#,
-            steam.display()
+            r#"{{ "steam_library_path": {}, "proton_version": "x", "enable_cloud_sync": false }}"#,
+            common::json_path(&steam)
         ),
     )
     .unwrap();
@@ -207,12 +209,11 @@ fn list_reports_installed_game_from_fake_steam_root() {
     let dota = games.iter().find(|g| g["app_id"] == 570).unwrap();
     assert_eq!(dota["is_installed"], true);
     assert_eq!(dota["name"], "Dota 2");
+    // Canonical: Windows TEMP may be 8.3-short.
+    let canon = |p: &Path| fs::canonicalize(p).unwrap();
     assert_eq!(
-        dota["install_path"],
-        sb.steam
-            .join("steamapps/common/dota 2 beta")
-            .display()
-            .to_string()
+        canon(Path::new(dota["install_path"].as_str().unwrap())),
+        canon(&sb.steam.join("steamapps/common/dota 2 beta"))
     );
     assert_eq!(dota["store_url"], "https://store.steampowered.com/app/570");
 }

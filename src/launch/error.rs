@@ -91,23 +91,6 @@ impl fmt::Display for LaunchError {
 
 impl std::error::Error for LaunchError {}
 
-pub fn map_anyhow_error(err: anyhow::Error) -> LaunchError {
-    let msg = err.to_string();
-    if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
-        return map_io_error(io_err, None);
-    }
-
-    if msg.contains("Permission denied") || msg.contains("EACCES") {
-        LaunchError::new(LaunchErrorKind::Permission, msg).with_source(err)
-    } else if msg.contains("not found") || msg.contains("No such file or directory") {
-        LaunchError::new(LaunchErrorKind::GameData, msg).with_source(err)
-    } else if msg.contains("proton") || msg.contains("compatibility layer") {
-        LaunchError::new(LaunchErrorKind::Runner, msg).with_source(err)
-    } else {
-        LaunchError::new(LaunchErrorKind::Unknown, msg).with_source(err)
-    }
-}
-
 pub fn map_io_error(err: &std::io::Error, dup_info: Option<&DuplicateInstanceInfo>) -> LaunchError {
     use std::io::ErrorKind;
 

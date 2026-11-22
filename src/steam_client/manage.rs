@@ -428,14 +428,16 @@ impl SteamClient {
 
         Self::write_appmanifest(
             &manifest,
-            appid,
-            &name,
-            &installdir,
-            installed_depots,
-            buildid.as_deref(),
-            true,
-            false,
-            None,
+            AppManifestSpec {
+                appid,
+                game_name: &name,
+                installdir: &installdir,
+                installed_depots,
+                buildid: buildid.as_deref(),
+                fully_installed: true,
+                pin_updates: false,
+                language: None,
+            },
         )?;
 
         // Register in libraryfolders.vdf (add to this library; nothing to remove).

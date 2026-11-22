@@ -114,6 +114,7 @@ mod install;
 
 mod market;
 
+use install::DepotJob;
 pub use install::InstallOptions;
 
 mod content;
@@ -131,9 +132,9 @@ mod library;
 mod manage;
 
 pub use launch::{
-    LaunchTargetChoice, check_launch_option_target, find_launch_option, forced_steam_reason,
-    hide_uninstalled_launch_options, launch_executable_installed, launch_targets,
-    select_launch_entry,
+    LaunchFlags, LaunchTargetChoice, check_launch_option_target, find_launch_option,
+    forced_steam_reason, hide_uninstalled_launch_options, launch_executable_installed,
+    launch_targets, select_launch_entry,
 };
 
 mod cloudconfig;
@@ -141,6 +142,7 @@ mod cloudconfig;
 mod collections;
 
 mod manifests;
+pub use manifests::AppManifestSpec;
 
 mod process;
 
@@ -304,12 +306,12 @@ impl SteamClient {
         if let Ok(output) = std::process::Command::new("ldconfig").args(["-p"]).output() {
             let text = String::from_utf8_lossy(&output.stdout);
             for line in text.lines() {
-                if line.contains("libMangoHud") {
-                    if let Some(path) = line.split("=>").nth(1) {
-                        let p = PathBuf::from(path.trim());
-                        if p.exists() {
-                            return Some(p);
-                        }
+                if line.contains("libMangoHud")
+                    && let Some(path) = line.split("=>").nth(1)
+                {
+                    let p = PathBuf::from(path.trim());
+                    if p.exists() {
+                        return Some(p);
                     }
                 }
             }

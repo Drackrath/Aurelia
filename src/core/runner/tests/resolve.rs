@@ -118,6 +118,6 @@ fn library_roots_dedupe_and_order() {
     std::fs::create_dir_all(&lib).unwrap();
     write_libraryfolders(&main, &[&main, &lib]);
 
-    let roots = runner_library_roots(&lib, &[main.clone()]);
+    let roots = runner_library_roots(&lib, std::slice::from_ref(&main));
     assert_eq!(roots, vec![lib, main]);
 }

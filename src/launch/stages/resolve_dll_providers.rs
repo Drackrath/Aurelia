@@ -55,7 +55,7 @@ impl PipelineStage for ResolveDllProvidersStage {
         let nvapi_enabled = ctx
             .user_config
             .as_ref()
-            .map_or(true, |c| c.graphics_layers.nvapi_enabled);
+            .is_none_or(|c| c.graphics_layers.nvapi_enabled);
 
         let resolver = DllProviderResolver::new();
 

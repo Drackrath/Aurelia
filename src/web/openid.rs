@@ -38,7 +38,7 @@ const MIN_INDIVIDUAL_STEAMID: u64 = 76561197960265728;
 ///
 /// Binds a localhost-only callback listener, invokes `on_url` once with the
 /// official Steam sign-in URL (the caller renders it and/or opens a browser),
-/// then waits — bounded by [`BROWSER_WAIT`] — for Steam to redirect back.
+/// then waits — bounded by `BROWSER_WAIT` — for Steam to redirect back.
 /// The assertion is accepted only when every local check passes **and** Steam
 /// itself confirms the signature via `check_authentication`.
 pub async fn verify_identity_via_browser<F>(mut on_url: F) -> Result<u64>

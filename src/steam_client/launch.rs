@@ -4,6 +4,22 @@
 use super::*;
 use crate::core::acf;
 
+/// Called with the resolved launch target.
+pub type TargetCallback = dyn Fn(Option<&str>) + Send + Sync;
+
+/// Launch switches for one `play`.
+#[derive(Clone, Default)]
+pub struct LaunchFlags {
+    pub force_windows: bool,
+    pub force_native_engine: bool,
+    pub force_umu: bool,
+    pub launch_script_override: Option<PathBuf>,
+    pub disable_launch_script: bool,
+    pub steam_enabled: bool,
+    pub prefer_native_target: bool,
+    pub shaders: crate::launch::shaders::ShaderLaunch,
+}
+
 /// Pick the launch entry to run.
 ///
 /// Only one platform's depot is installed, so a launch entry is only usable if its
@@ -222,10 +238,10 @@ pub fn launch_targets(
     }
 
     // Fallback default: first available.
-    if !targets.iter().any(|t| t.default) {
-        if let Some(first) = targets.iter_mut().find(|t| t.available) {
-            first.default = true;
-        }
+    if !targets.iter().any(|t| t.default)
+        && let Some(first) = targets.iter_mut().find(|t| t.available)
+    {
+        first.default = true;
     }
     targets
 }
@@ -246,13 +262,12 @@ fn pick_launch_entry(
     });
 
     // Explicit per-game preference beats the manifest.
-    if prefer_native_target {
-        if let Some(entry) = launch_options
+    if prefer_native_target
+        && let Some(entry) = launch_options
             .iter()
             .find(|o| o.target == LaunchTarget::NativeLinux && exe_exists(o))
-        {
-            return Some(entry.clone());
-        }
+    {
+        return Some(entry.clone());
     }
 
     if prefer_windows_target {
@@ -301,17 +316,20 @@ impl SteamClient {
         app: &LibraryGame,
         proton_path: Option<&str>,
         user_config: Option<&crate::core::models::UserAppConfig>,
-        force_windows: bool,
-        force_native_engine: bool,
-        force_umu: bool,
-        launch_script_override: Option<PathBuf>,
-        disable_launch_script: bool,
-        steam_enabled: bool,
-        prefer_native_target: bool,
         launch_option: Option<&str>,
-        on_target_resolved: Option<&(dyn Fn(Option<&str>) + Send + Sync)>,
-        shaders: crate::launch::shaders::ShaderLaunch,
+        on_target_resolved: Option<&TargetCallback>,
+        flags: LaunchFlags,
     ) -> Result<LaunchInfo> {
+        let LaunchFlags {
+            force_windows,
+            force_native_engine,
+            force_umu,
+            launch_script_override,
+            disable_launch_script,
+            steam_enabled,
+            prefer_native_target,
+            shaders,
+        } = flags;
         let steam_enabled = steam_enabled || forced_steam_reason(app).is_some();
 
         // Reject bad entries before starting Steam.
@@ -501,12 +519,16 @@ impl SteamClient {
                 chosen_proton_path,
                 &launcher_config,
                 user_config,
-                force_native_engine,
-                force_umu,
-                launch_script_override,
-                disable_launch_script,
-                steam_enabled,
-                shaders,
+                LaunchFlags {
+                    force_windows,
+                    force_native_engine,
+                    force_umu,
+                    launch_script_override,
+                    disable_launch_script,
+                    steam_enabled,
+                    prefer_native_target,
+                    shaders,
+                },
             )
             .await?
             .into()
@@ -560,25 +582,24 @@ impl SteamClient {
         crate::compat::running::clear(app.app_id);
         wait_result?;
 
-        if cloud_enabled {
-            if let (Some(client), Some(resolver)) = (cloud_client.as_ref(), cloud_resolver.as_ref())
-            {
-                // The game has already run and exited, so a cloud-upload failure must not
-                // be surfaced as a launch failure. Log it and continue (this mirrors the
-                // best-effort sync_down before launch).
-                match client.sync_up(app.app_id, resolver, &cloud_specs).await {
-                    Ok(outcome) if outcome.has_conflicts() => tracing::warn!(
+        if cloud_enabled
+            && let (Some(client), Some(resolver)) = (cloud_client.as_ref(), cloud_resolver.as_ref())
+        {
+            // The game has already run and exited, so a cloud-upload failure must not
+            // be surfaced as a launch failure. Log it and continue (this mirrors the
+            // best-effort sync_down before launch).
+            match client.sync_up(app.app_id, resolver, &cloud_specs).await {
+                Ok(outcome) if outcome.has_conflicts() => tracing::warn!(
+                    appid = app.app_id,
+                    "{} Cloud save(s) diverged on upload — left untouched; resolve with `aurelia cloud sync`",
+                    outcome.conflicts.len()
+                ),
+                Ok(_) => tracing::info!(appid = app.app_id, "Upload Complete"),
+                Err(e) => {
+                    tracing::warn!(
                         appid = app.app_id,
-                        "{} Cloud save(s) diverged on upload — left untouched; resolve with `aurelia cloud sync`",
-                        outcome.conflicts.len()
-                    ),
-                    Ok(_) => tracing::info!(appid = app.app_id, "Upload Complete"),
-                    Err(e) => {
-                        tracing::warn!(
-                            appid = app.app_id,
-                            "Cloud upload failed (continuing): {e:#}"
-                        )
-                    }
+                        "Cloud upload failed (continuing): {e:#}"
+                    )
                 }
             }
         }
@@ -747,10 +768,12 @@ impl SteamClient {
 
             // Zero grand total: per-depot accumulation.
             let Some(successful_depots) = run_depot_loop(
-                &client_clone,
-                &connection,
-                &tx,
-                &shared_state_clone,
+                &DepotLoopCtx {
+                    client: &client_clone,
+                    connection: &connection,
+                    tx: &tx,
+                    shared_state: &shared_state_clone,
+                },
                 appid,
                 selections,
                 &install_root,
@@ -790,14 +813,16 @@ impl SteamClient {
 
             if let Err(err) = SteamClient::write_appmanifest(
                 &manifest_path,
-                appid,
-                &game_name,
-                &installdir,
-                successful_depots,
-                build_id.as_deref(),
-                true,
-                false,
-                None,
+                AppManifestSpec {
+                    appid,
+                    game_name: &game_name,
+                    installdir: &installdir,
+                    installed_depots: successful_depots,
+                    buildid: build_id.as_deref(),
+                    fully_installed: true,
+                    pin_updates: false,
+                    language: None,
+                },
             ) {
                 tracing::warn!("failed writing appmanifest for {}: {}", appid, err);
             }

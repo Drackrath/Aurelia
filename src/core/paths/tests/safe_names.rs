@@ -1,5 +1,5 @@
-use super::super::{is_safe_dir_name, resolves_within, safe_relative_path};
-use std::path::{Path, PathBuf};
+use super::super::{is_safe_dir_name, safe_relative_path};
+use std::path::PathBuf;
 
 #[test]
 fn accepts_plain_names() {
@@ -57,6 +57,8 @@ fn relative_paths_reject_escapes() {
 #[cfg(unix)]
 #[test]
 fn symlinked_ancestor_out_of_root_is_caught() {
+    use super::super::resolves_within;
+    use std::path::Path;
     let root = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
     let root_path = root.path().canonicalize().unwrap();

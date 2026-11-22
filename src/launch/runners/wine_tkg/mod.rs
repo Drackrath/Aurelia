@@ -281,12 +281,13 @@ fn game_compat_data_path(
     master_wine_prefix: &Path,
 ) -> PathBuf {
     use crate::core::models::SteamPrefixMode;
-    if steam_mode == SteamMode::InWineRuntime && steam_prefix_mode == SteamPrefixMode::Shared {
-        if let Some(parent) = master_wine_prefix.parent() {
-            // Shareable only for proton pfx layout.
-            if parent.join("pfx") == master_wine_prefix {
-                return parent.to_path_buf();
-            }
+    if steam_mode == SteamMode::InWineRuntime
+        && steam_prefix_mode == SteamPrefixMode::Shared
+        && let Some(parent) = master_wine_prefix.parent()
+    {
+        // Shareable only for proton pfx layout.
+        if parent.join("pfx") == master_wine_prefix {
+            return parent.to_path_buf();
         }
     }
     crate::core::paths::compat_data_dir(library_root, app_id)

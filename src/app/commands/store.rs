@@ -211,10 +211,10 @@ async fn store_info_with_media(app_id: u32) -> Result<StoreAppInfo> {
     use aurelia::core::config::{info_cache_ttl, load_info_cache};
     let lang = resolve_steam_language(None).await;
     let country = resolve_steam_country(None).await?;
-    if let Some(cached) = load_info_cache(app_id, &lang, &country, info_cache_ttl()).await {
-        if !cached.details.screenshots.is_empty() || !cached.details.tags.is_empty() {
-            return Ok(cached.details);
-        }
+    if let Some(cached) = load_info_cache(app_id, &lang, &country, info_cache_ttl()).await
+        && (!cached.details.screenshots.is_empty() || !cached.details.tags.is_empty())
+    {
+        return Ok(cached.details);
     }
     let client = authed_client().await?;
     client

@@ -62,10 +62,10 @@ pub(super) async fn build_env(
         .or_else(|| ctx.proton_path.as_deref().filter(|p| !p.is_empty()))
         .unwrap_or("wine");
 
-    let active_runner_path = crate::core::runner::resolve_runner(proton, &library_root);
+    let active_runner_path = crate::core::runner::resolve_runner(proton, library_root);
     let components = crate::core::components::detect_runner_components(
         &active_runner_path,
-        Some(&effective_game_prefix),
+        Some(effective_game_prefix),
     );
 
     let flags = resolve_graphics(ctx, &glc, &components);
@@ -214,14 +214,16 @@ fn wine_dll_overrides(
         effective_vkd3d,
     } = flags;
     let mut dll_overrides = crate::core::dll_overrides::build_dll_overrides(
-        effective_dxvk,
-        effective_vkd3d_proton,
-        effective_vkd3d,
-        no_overlay,
-        force_builtin_d3d,
-        Some(game_working_dir),
-        strict_dxvk,
-        host_bridge,
+        crate::core::dll_overrides::DllOverrideInputs {
+            dxvk_active: effective_dxvk,
+            vkd3d_proton_active: effective_vkd3d_proton,
+            vkd3d_active: effective_vkd3d,
+            no_overlay,
+            force_builtin_d3d,
+            game_dir: Some(game_working_dir),
+            strict_dxvk,
+            steam_enabled: host_bridge,
+        },
     );
 
     // Enhance overrides with resolved DLL providers
@@ -332,24 +334,24 @@ fn insert_wine_dll_paths(
                 continue;
             }
 
-            if let Some(path) = &res.chosen_path {
-                if let Some(parent) = path.parent() {
-                    push_dll_dir_once(&mut wine_dll_dirs, parent);
+            if let Some(path) = &res.chosen_path
+                && let Some(parent) = path.parent()
+            {
+                push_dll_dir_once(&mut wine_dll_dirs, parent);
 
-                    // For Wine-TKG and similar layouts, we must ensure both 64-bit and 32-bit
-                    // architecture folders are in WINEDLLPATH if they exist, so that both
-                    // architectures of a game find their respective native DLLs.
-                    let folder_name = parent.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    let sibling_arch = match folder_name {
-                        "x86_64-windows" => Some("i386-windows"),
-                        "i386-windows" => Some("x86_64-windows"),
-                        _ => None,
-                    };
-                    if let Some(arch) = sibling_arch {
-                        let sibling = parent.parent().unwrap().join(arch);
-                        if sibling.exists() {
-                            push_dll_dir_once(&mut wine_dll_dirs, &sibling);
-                        }
+                // For Wine-TKG and similar layouts, we must ensure both 64-bit and 32-bit
+                // architecture folders are in WINEDLLPATH if they exist, so that both
+                // architectures of a game find their respective native DLLs.
+                let folder_name = parent.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                let sibling_arch = match folder_name {
+                    "x86_64-windows" => Some("i386-windows"),
+                    "i386-windows" => Some("x86_64-windows"),
+                    _ => None,
+                };
+                if let Some(arch) = sibling_arch {
+                    let sibling = parent.parent().unwrap().join(arch);
+                    if sibling.exists() {
+                        push_dll_dir_once(&mut wine_dll_dirs, &sibling);
                     }
                 }
             }

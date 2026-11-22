@@ -140,11 +140,11 @@ impl LaunchPipeline {
                         ctx.verification.log_growth_observed = true;
                     }
 
-                    if let Ok(current_content) = std::fs::read_to_string(&log_path) {
-                        if !current_content.is_empty() || retries == max_retries {
-                            content = current_content;
-                            break;
-                        }
+                    if let Ok(current_content) = std::fs::read_to_string(&log_path)
+                        && (!current_content.is_empty() || retries == max_retries)
+                    {
+                        content = current_content;
+                        break;
                     }
                 }
 
@@ -190,23 +190,19 @@ impl LaunchPipeline {
                 for res in &ctx.dll_resolutions {
                     if res.chosen_provider
                         == crate::launch::dll_provider_resolver::DllProvider::Runner
+                        && let Some(path) = &res.chosen_path
+                        && let Some(parent) = path.parent()
                     {
-                        if let Some(path) = &res.chosen_path {
-                            if let Some(parent) = path.parent() {
-                                let family =
-                                    if res.name.contains("d3d12") || res.name.contains("vkd3d") {
-                                        if path.to_string_lossy().contains("vkd3d-proton") {
-                                            "vkd3d_proton"
-                                        } else {
-                                            "vkd3d"
-                                        }
-                                    } else {
-                                        "dxvk"
-                                    };
-                                component_paths
-                                    .insert(family, parent.to_string_lossy().to_string());
+                        let family = if res.name.contains("d3d12") || res.name.contains("vkd3d") {
+                            if path.to_string_lossy().contains("vkd3d-proton") {
+                                "vkd3d_proton"
+                            } else {
+                                "vkd3d"
                             }
-                        }
+                        } else {
+                            "dxvk"
+                        };
+                        component_paths.insert(family, parent.to_string_lossy().to_string());
                     }
                 }
 
@@ -235,10 +231,10 @@ impl LaunchPipeline {
                     }
 
                     // Update Milestone
-                    if let Some(m) = crate::logging::detect_startup_milestone(line) {
-                        if m > max_milestone {
-                            max_milestone = m;
-                        }
+                    if let Some(m) = crate::logging::detect_startup_milestone(line)
+                        && m > max_milestone
+                    {
+                        max_milestone = m;
                     }
 
                     if let Some(evidence) = crate::logging::classify_graphics_evidence(line) {
@@ -298,25 +294,25 @@ impl LaunchPipeline {
                     // Robust Path & Module Matching
 
                     // DXVK Path Match
-                    if let Some(path) = component_paths.get("dxvk") {
-                        if line_lower.contains(&path.to_lowercase()) {
-                            record_evidence(
-                                &mut ctx.graphics_stack.runtime_evidence.dxvk,
-                                format!("Path match: {}", line.trim()),
-                            );
-                            line_matched = true;
-                        }
+                    if let Some(path) = component_paths.get("dxvk")
+                        && line_lower.contains(&path.to_lowercase())
+                    {
+                        record_evidence(
+                            &mut ctx.graphics_stack.runtime_evidence.dxvk,
+                            format!("Path match: {}", line.trim()),
+                        );
+                        line_matched = true;
                     }
 
                     // VKD3D-Proton Path Match
-                    if let Some(path) = component_paths.get("vkd3d_proton") {
-                        if line_lower.contains(&path.to_lowercase()) {
-                            record_evidence(
-                                &mut ctx.graphics_stack.runtime_evidence.vkd3d_proton,
-                                format!("Path match: {}", line.trim()),
-                            );
-                            line_matched = true;
-                        }
+                    if let Some(path) = component_paths.get("vkd3d_proton")
+                        && line_lower.contains(&path.to_lowercase())
+                    {
+                        record_evidence(
+                            &mut ctx.graphics_stack.runtime_evidence.vkd3d_proton,
+                            format!("Path match: {}", line.trim()),
+                        );
+                        line_matched = true;
                     }
 
                     // Generic Module Loader matches for graphics DLLs
@@ -467,19 +463,18 @@ impl LaunchPipeline {
                 .evidence_found
             || ctx.graphics_stack.runtime_evidence.vkd3d.evidence_found)
             && !ctx.graphics_stack.runtime_evidence.wined3d.expected
+            && ctx.graphics_stack.runtime_evidence.wined3d.evidence_found
         {
-            if ctx.graphics_stack.runtime_evidence.wined3d.evidence_found {
-                let has_strong_wined3d = ctx
-                    .graphics_stack
-                    .runtime_evidence
-                    .wined3d
-                    .evidence
-                    .iter()
-                    .any(|e| e.contains("Fallback Detected"));
-                if !has_strong_wined3d {
-                    ctx.graphics_stack.runtime_evidence.wined3d.diagnosis =
-                        "neutral: inconclusive (standard builtins loaded)".to_string();
-                }
+            let has_strong_wined3d = ctx
+                .graphics_stack
+                .runtime_evidence
+                .wined3d
+                .evidence
+                .iter()
+                .any(|e| e.contains("Fallback Detected"));
+            if !has_strong_wined3d {
+                ctx.graphics_stack.runtime_evidence.wined3d.diagnosis =
+                    "neutral: inconclusive (standard builtins loaded)".to_string();
             }
         }
 

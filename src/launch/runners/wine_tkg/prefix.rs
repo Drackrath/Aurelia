@@ -465,6 +465,7 @@ async fn wait_for_steam_ready(
 ///      one).
 ///   3. If the only available runtime is a Proton tree, its bundled bare
 ///      `files/bin/wine64` directly (NOT `proton run`).
+///
 /// If none of these yield a usable bare wine, a clear [`LaunchError`] is returned —
 /// it NEVER silently falls back to hosting Steam on the game's `proton run` runner.
 fn resolve_background_steam_command(

@@ -5,8 +5,9 @@ use super::*;
 /// Stamp a downloaded save with its cloud mtime so the next `sync_up` doesn't see it
 /// as locally modified and re-upload it (and so Steam's own comparison stays stable).
 pub(super) fn set_file_mtime_secs(path: &Path, secs: u64) {
-    let mtime = filetime::FileTime::from_unix_time(secs as i64, 0);
-    if let Err(e) = filetime::set_file_mtime(path, mtime) {
+    let mtime = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+    let times = std::fs::FileTimes::new().set_modified(mtime);
+    if let Err(e) = std::fs::set_times(path, times) {
         tracing::warn!("could not set mtime on {}: {e}", path.display());
     }
 }
@@ -92,7 +93,7 @@ impl CloudClient {
     /// Reconcile a game's Steam Cloud saves with their on-disk copies.
     ///
     /// For each save it compares the **content hash** of the cloud and local copies
-    /// against a persisted [`SyncBaseline`] (the last state at which the two agreed):
+    /// against a persisted `SyncBaseline` (the last state at which the two agreed):
     ///
     /// - identical content → nothing to do;
     /// - only one side changed since the baseline → move it the obvious way

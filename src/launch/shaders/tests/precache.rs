@@ -17,6 +17,8 @@ fn cache_dir_sits_beside_common() {
     assert_eq!(shader_cache_dir(Path::new("/games/nms"), 1), None);
 }
 
+// Shader precache is Linux-only.
+#[cfg(target_os = "linux")]
 #[test]
 fn env_points_drivers_into_the_cache() {
     let env: HashMap<_, _> = cache_env(Path::new("/c/275850")).into_iter().collect();
@@ -26,6 +28,8 @@ fn env_points_drivers_into_the_cache() {
     assert_eq!(env["__GL_SHADER_DISK_CACHE"], "1");
 }
 
+// Shader precache is Linux-only.
+#[cfg(target_os = "linux")]
 #[test]
 fn finds_steam_and_run_databases_only() {
     let tmp = tempfile::tempdir().unwrap();
@@ -160,5 +164,5 @@ async fn replays_a_real_cache() {
         second,
         ShaderEvent::Skipped("shaders already processed".into())
     );
-    println!("replayed {done}/{total}; events {}", seen.len());
+    eprintln!("replayed {done}/{total}; events {}", seen.len());
 }

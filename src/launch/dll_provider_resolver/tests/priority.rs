@@ -16,7 +16,7 @@ fn test_dll_priority_game_local() {
     let arch = crate::core::models::ExecutableArchitecture::X86_64;
     let (resolutions, _) = resolver.resolve(&DllResolveRequest {
         game_exe_dir: &game_dir,
-        runner_path: runner_path,
+        runner_path,
         runner_components: &components,
         d3d12_policy: &d3d12_policy,
         target_arch: &arch,
@@ -44,7 +44,7 @@ fn test_dll_priority_system_fallback() {
     let arch = crate::core::models::ExecutableArchitecture::X86_64;
     let (resolutions, _) = resolver.resolve(&DllResolveRequest {
         game_exe_dir: &game_dir,
-        runner_path: runner_path,
+        runner_path,
         runner_components: &components,
         d3d12_policy: &d3d12_policy,
         target_arch: &arch,

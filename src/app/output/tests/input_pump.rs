@@ -62,7 +62,8 @@ async fn pump_reader_feeds_shared_buffer() {
 
 #[tokio::test]
 async fn user_path_uses_scoped_client_cwd() {
-    let abs = Path::new("/etc/hosts");
+    let abs_buf = std::env::temp_dir().join("hosts");
+    let abs = abs_buf.as_path();
     assert_eq!(user_path(abs), abs);
 
     // Outside a scope: process cwd.
@@ -71,12 +72,13 @@ async fn user_path_uses_scoped_client_cwd() {
 
     let (out_tx, _out_rx) = mpsc::unbounded_channel();
     let (_in_tx, in_rx) = mpsc::unbounded_channel();
-    let ctx = OutputCtx::new(out_tx, in_rx, Some(PathBuf::from("/home/u/shots")));
+    let cwd = std::env::temp_dir().join("shots");
+    let ctx = OutputCtx::new(out_tx, in_rx, Some(cwd.clone()));
     let (rel, abs_in) = scoped(ctx, async {
         (user_path(Path::new("a.jpg")), user_path(abs))
     })
     .await;
-    assert_eq!(rel, Path::new("/home/u/shots/a.jpg"));
+    assert_eq!(rel, cwd.join("a.jpg"));
     assert_eq!(abs_in, abs);
 }
 

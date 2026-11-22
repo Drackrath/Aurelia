@@ -1373,7 +1373,7 @@ Options:
   -g, --guard <GUARD>        Steam Guard code, if known
   -q, --qr                   Log in via Steam Mobile QR code
   -t, --timeout <SECS>       With `--qr`: give up after this many seconds without approval (default 600). With `--json`, a `cancel` line or EOF on stdin also ends the wait
-  -c, --code                 Type the Guard code instead of app approval [aliases: --pin]
+  -c, --code                 Type the Guard code instead of app approval [alias: --pin]
   -H, --health               Report session health without logging in
   -r, --reconnect            Re-establish the daemon session (daemon required)
   -j, --json                 Emit output (and errors) as JSON. Works with every command
@@ -1998,7 +1998,7 @@ Commands:
   install    Download SteamSetup.exe (if needed) and install Steam into the master prefix. Requires `steam_runtime_runner` to be configured
   repair     Stop Steam, back up the master prefix (timestamped `.bak-*`), then reinstall. Requires `steam_runtime_runner` to be configured
   uninstall  Remove the master Windows Steam prefix entirely (uninstall the runtime). Stops any Steam running in it first, then deletes the whole master prefix (including any `.bak-*`). Reinstall later with `steam-runtime install`
-  login      (Re-)start the in-Wine Steam client interactively so you can sign in — use after the runtime's Steam session expired, or to switch accounts. Does NOT reinstall. The in-Wine Steam keeps its own login (separate from `aurelia login`). Requires `steam_runtime_runner` and an installed runtime [aliases: relogin]
+  login      (Re-)start the in-Wine Steam client interactively so you can sign in — use after the runtime's Steam session expired, or to switch accounts. Does NOT reinstall. The in-Wine Steam keeps its own login (separate from `aurelia login`). Requires `steam_runtime_runner` and an installed runtime [alias: relogin]
   stop       Stop the in-Wine Steam client running in the master prefix (kills its Wine session), without uninstalling. Use to shut down a Steam started by `login` or one left running after a game launch
   status     Show the resolved master prefix, layout, whether steam.exe is present, and whether a Steam-runtime runner is configured
   help       Print this message or the help of the given subcommand(s)

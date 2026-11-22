@@ -11,6 +11,9 @@ use aurelia::core::config::save_info_cache;
 use aurelia::steam_client::{SteamClient, StoreAppInfo};
 use std::path::PathBuf;
 
+/// DLC app ids with optional names.
+type DlcList = Vec<(u32, Option<String>)>;
+
 pub(crate) async fn cmd_set_dlc(
     app_id: u32,
     enable: bool,
@@ -143,7 +146,7 @@ pub(crate) async fn cmd_info(
     // fetched over a *single* Steam logon with one batched StoreBrowse call, so
     // `info 1 2 3` costs one logon — not the three a caller spends running `info 1`,
     // `info 2`, `info 3` separately.
-    let mut base: std::collections::HashMap<u32, (StoreAppInfo, Vec<(u32, Option<String>)>)> =
+    let mut base: std::collections::HashMap<u32, (StoreAppInfo, DlcList)> =
         std::collections::HashMap::new();
     let mut misses: Vec<u32> = Vec::new();
     for &id in &app_ids {
@@ -194,7 +197,7 @@ pub(crate) async fn cmd_info(
                 .await
                 .map(|e| e.dlcs)
                 .unwrap_or_default();
-            let dlc = resolve_dlc_names_via_store(&client, &dlc_ids, &lang, &country).await;
+            let dlc = resolve_dlc_names_via_store(client, &dlc_ids, &lang, &country).await;
 
             // Best-effort cache write — a failure here must not fail the command.
             if let Err(e) = save_info_cache(id, &lang, &country, &details, &dlc).await {

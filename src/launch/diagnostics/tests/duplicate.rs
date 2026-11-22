@@ -9,8 +9,10 @@ fn test_detect_duplicate_instance_lockfile() {
     std::fs::write(&lockfile, "").unwrap();
 
     let mut ctx = PipelineContext::new(123);
-    let mut spec = CommandSpec::default();
-    spec.cwd = Some(tmp.path().to_path_buf());
+    let spec = CommandSpec {
+        cwd: Some(tmp.path().to_path_buf()),
+        ..Default::default()
+    };
     ctx.command_spec = Some(spec);
 
     let info = detect_duplicate_instance(&ctx);
