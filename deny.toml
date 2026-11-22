@@ -23,17 +23,7 @@ exceptions = [{ allow = ["OpenSSL"], crate = "aws-lc-sys" }]
 
 [advisories]
 # Each ignore names why it can't be reached.
-ignore = [
-    # zip 2.x, pinned by aurelia-steam-cdn. Both crates only
-    # read one entry via ZipArchive::by_index: no extract,
-    # no ZipStreamReader, no AES decryption.
-    { id = "RUSTSEC-2026-0367", reason = "zip extract unused" },
-    { id = "RUSTSEC-2026-0368", reason = "zip extract unused" },
-    { id = "RUSTSEC-2026-0369", reason = "zip extract unused" },
-    { id = "RUSTSEC-2026-0429", reason = "zip extract unused" },
-    { id = "RUSTSEC-2026-0545", reason = "zip AES decryption unused" },
-    { id = "RUSTSEC-2026-0548", reason = "ZipStreamReader unused" },
-]
+ignore = []
 
 [bans]
 multiple-versions = "warn"
