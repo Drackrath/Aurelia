@@ -597,20 +597,31 @@ async fn installed_platform_set(app_id: u32) -> Option<(bool, bool)> {
     )
 }
 
-/// `config game`: view or set a game's per-game launch settings.
-/// Absolute form of a `--prefix` dir.
+/// Absolute, tidied form of a `--prefix` dir.
 fn absolute_prefix_dir(dir: std::path::PathBuf) -> Result<std::path::PathBuf> {
+    use std::path::Component;
     if dir.as_os_str().is_empty() {
         anyhow::bail!("--prefix needs a directory");
     }
-    if dir.is_absolute() {
-        return Ok(dir);
+    // Client cwd when run via daemon.
+    let full = crate::app::output::user_path(&dir);
+    let mut out = std::path::PathBuf::new();
+    for part in full.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
     }
-    Ok(std::env::current_dir()
-        .context("failed reading the current directory")?
-        .join(dir))
+    if !out.is_absolute() {
+        anyhow::bail!("--prefix needs an absolute directory");
+    }
+    Ok(out)
 }
 
+/// `config game`: view or set a game's per-game launch settings.
 pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<()> {
     let GameConfigArgs {
         app_id,
@@ -873,3 +884,6 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;
