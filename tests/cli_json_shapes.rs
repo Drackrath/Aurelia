@@ -209,9 +209,11 @@ fn list_reports_installed_game_from_fake_steam_root() {
     let dota = games.iter().find(|g| g["app_id"] == 570).unwrap();
     assert_eq!(dota["is_installed"], true);
     assert_eq!(dota["name"], "Dota 2");
+    // Canonical: Windows TEMP may be 8.3-short.
+    let canon = |p: &Path| fs::canonicalize(p).unwrap();
     assert_eq!(
-        Path::new(dota["install_path"].as_str().unwrap()),
-        sb.steam.join("steamapps/common/dota 2 beta")
+        canon(Path::new(dota["install_path"].as_str().unwrap())),
+        canon(&sb.steam.join("steamapps/common/dota 2 beta"))
     );
     assert_eq!(dota["store_url"], "https://store.steampowered.com/app/570");
 }
