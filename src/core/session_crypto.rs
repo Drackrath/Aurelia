@@ -64,9 +64,9 @@ pub fn encrypt(plaintext: &[u8], password: &str) -> Result<EncryptedSession> {
     rand::fill(&mut nonce[..]);
 
     let key = derive_key(password, &salt)?;
-    let cipher = ChaCha20Poly1305::new(Key::from_slice(&key));
+    let cipher = ChaCha20Poly1305::new(&Key::from(key));
     let ciphertext = cipher
-        .encrypt(Nonce::from_slice(&nonce), plaintext)
+        .encrypt(&Nonce::from(nonce), plaintext)
         .map_err(|e| anyhow!("session encryption failed: {e}"))?;
 
     Ok(EncryptedSession {
@@ -87,9 +87,12 @@ pub fn decrypt(envelope: &EncryptedSession, password: &str) -> Result<Vec<u8>> {
         hex::decode(&envelope.ciphertext).context("bad ciphertext in encrypted session")?;
 
     let key = derive_key(password, &salt)?;
-    let cipher = ChaCha20Poly1305::new(Key::from_slice(&key));
+    let cipher = ChaCha20Poly1305::new(&Key::from(key));
+    // Wrong length: error, not panic.
+    let nonce = Nonce::try_from(nonce.as_slice())
+        .map_err(|_| anyhow!("bad nonce length in encrypted session"))?;
     cipher
-        .decrypt(Nonce::from_slice(&nonce), ciphertext.as_slice())
+        .decrypt(&nonce, ciphertext.as_slice())
         .map_err(|_| anyhow!("could not decrypt session.json — the key does not match this file"))
 }
 

@@ -24,7 +24,9 @@ impl SteamClient {
             return false;
         };
         let pid = Pid::from_u32(pid);
-        let mut sys = System::new();
+        let Ok(mut sys) = System::new() else {
+            return false;
+        };
         sys.refresh_processes_specifics(
             ProcessesToUpdate::Some(&[pid]),
             true,

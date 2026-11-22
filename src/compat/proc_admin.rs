@@ -22,7 +22,10 @@ fn is_aurelia_name(name: &str) -> bool {
 /// Enumerate running `aurelia` processes, excluding the current process.
 pub fn find_aurelia_processes(is_daemon: impl Fn(&[String]) -> bool) -> Vec<AureliaProcess> {
     let me = std::process::id();
-    let sys = System::new_all();
+    let Ok(sys) = System::new_all() else {
+        tracing::warn!("could not read the process list");
+        return Vec::new();
+    };
 
     let mut out: Vec<AureliaProcess> = sys
         .processes()
@@ -51,7 +54,10 @@ pub fn kill_pids(pids: &[u32]) -> usize {
     if pids.is_empty() {
         return 0;
     }
-    let sys = System::new_all();
+    let Ok(sys) = System::new_all() else {
+        tracing::warn!("could not read the process list");
+        return 0;
+    };
     pids.iter()
         .filter_map(|&pid| sys.process(Pid::from_u32(pid)))
         .filter(|p| p.kill())
