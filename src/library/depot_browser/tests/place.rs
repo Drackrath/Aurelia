@@ -66,7 +66,7 @@ fn place_sha_mismatch_removes_part() {
     let dir = tempfile::tempdir().unwrap();
     let dest = dir.path().join("f");
     let part = part_path(&dest);
-    std::fs::write(&part, b"abd").unwrap();
+    std::fs::write(&part, b"xyz").unwrap();
     let err = place(&part, &dest, check(ABC_SHA1, false)).unwrap_err();
     assert!(err.to_string().contains("checksum"), "{err}");
     assert!(!part.exists());
@@ -105,7 +105,7 @@ fn checksum_mismatch_is_typed() {
     let dir = tempfile::tempdir().unwrap();
     let dest = dir.path().join("f");
     let part = part_path(&dest);
-    std::fs::write(&part, b"abd").unwrap();
+    std::fs::write(&part, b"xyz").unwrap();
     let err = place(&part, &dest, check(ABC_SHA1, true)).unwrap_err();
     assert!(err.downcast_ref::<ChecksumMismatch>().is_some());
 }
