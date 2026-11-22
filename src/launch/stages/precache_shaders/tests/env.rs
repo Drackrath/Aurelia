@@ -1,5 +1,6 @@
 use super::super::*;
 use crate::launch::runners::CommandSpec;
+#[cfg(target_os = "linux")]
 use std::sync::{Arc, Mutex};
 
 fn ctx_for(lib: &std::path::Path, mode: ShaderPrecache) -> PipelineContext {
@@ -19,6 +20,7 @@ fn ctx_for(lib: &std::path::Path, mode: ShaderPrecache) -> PipelineContext {
     ctx
 }
 
+#[cfg(target_os = "linux")]
 fn events(ctx: &mut PipelineContext) -> Arc<Mutex<Vec<ShaderEvent>>> {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let sink = seen.clone();
@@ -26,6 +28,8 @@ fn events(ctx: &mut PipelineContext) -> Arc<Mutex<Vec<ShaderEvent>>> {
     seen
 }
 
+// Stage only runs on Linux.
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn points_the_game_at_steams_caches() {
     let lib = tempfile::tempdir().unwrap();
@@ -70,6 +74,8 @@ async fn off_changes_nothing() {
     assert!(!lib.path().join("steamapps/shadercache").exists());
 }
 
+// Stage only runs on Linux.
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn no_cache_is_reported_as_skipped() {
     let lib = tempfile::tempdir().unwrap();

@@ -24,8 +24,8 @@ fn sandbox_with_proton() -> TempDir {
     fs::write(
         tmp.path().join("config.json"),
         format!(
-            r#"{{ "steam_library_path": "{}", "proton_version": "x", "enable_cloud_sync": false }}"#,
-            lib.display()
+            r#"{{ "steam_library_path": {}, "proton_version": "x", "enable_cloud_sync": false }}"#,
+            common::json_path(&lib)
         ),
     )
     .unwrap();

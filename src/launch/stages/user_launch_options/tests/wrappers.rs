@@ -197,6 +197,8 @@ fn only_shell_names_count_as_assignments() {
     assert_eq!(env_assignment("plain"), None);
 }
 
+// Wrappers are Unix commands.
+#[cfg(unix)]
 #[test]
 fn wrapper_must_exist_on_path_or_disk() {
     let bin = tempfile::tempdir().unwrap();
