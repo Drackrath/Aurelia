@@ -24,7 +24,7 @@ jobs:
     # New advisories shouldn't block unrelated PRs.
     continue-on-error: ${{ matrix.checks == 'advisories' && github.event_name != 'schedule' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check ${{ matrix.checks }}
