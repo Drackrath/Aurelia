@@ -4,15 +4,34 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    # nixpkgs' Rust lags; pin via rust-toolchain.toml.
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
-    { self, nixpkgs, flake-utils }:
+    {
+      self,
+      nixpkgs,
+      flake-utils,
+      rust-overlay,
+    }:
     flake-utils.lib.eachDefaultSystem (
       system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ (import rust-overlay) ];
+        };
         inherit (pkgs) lib;
+        # Same toolchain as rustup and CI.
+        toolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+        rustPlatform = pkgs.makeRustPlatform {
+          cargo = toolchain;
+          rustc = toolchain;
+        };
         manifest = (lib.importTOML ./Cargo.toml).package;
 
         # `target/` is a local build artefact, not input: including it would make
@@ -32,7 +51,7 @@
       {
         packages.default = self.packages.${system}.aurelia;
 
-        packages.aurelia = pkgs.rustPlatform.buildRustPackage {
+        packages.aurelia = rustPlatform.buildRustPackage {
           pname = "aurelia";
           inherit (manifest) version;
           inherit src;
@@ -48,7 +67,7 @@
             pkgs.cmake
             pkgs.perl
             pkgs.pkg-config
-            pkgs.rustPlatform.bindgenHook
+            rustPlatform.bindgenHook
           ];
 
           # The compression -sys crates (bzip2, lzma, zstd) link these when a
@@ -76,10 +95,10 @@
 
         devShells.default = pkgs.mkShell {
           inputsFrom = [ self.packages.${system}.aurelia ];
+          # Toolchain ships clippy and rustfmt.
           packages = [
             pkgs.cargo-deb
-            pkgs.clippy
-            pkgs.rustfmt
+            toolchain
           ];
         };
       }
