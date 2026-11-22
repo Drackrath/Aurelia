@@ -8,6 +8,17 @@ use super::*;
 pub(crate) struct ContentHost {
     pub host: String,
     pub https: bool,
+    /// Steam issues tokens to `CDN` hosts only.
+    pub needs_token: bool,
+}
+
+/// Host entry for a content server.
+pub(crate) fn content_host(server_type: &str, host: &str, https_support: &str) -> ContentHost {
+    ContentHost {
+        host: host.to_string(),
+        https: supports_https(https_support),
+        needs_token: server_type == "CDN",
+    }
 }
 
 /// Whether `https_support` allows TLS.
@@ -54,16 +65,29 @@ impl SteamClient {
     ) -> Result<Vec<steam_cdn::web_api::content_service::CDNServer>> {
         let mut tokens = Vec::with_capacity(hosts.len());
         for host in hosts {
-            let token = match self.get_cdn_auth_token(app_id, depot_id, &host.host).await {
-                Ok(t) => Some(t),
-                Err(e) => {
-                    tracing::warn!("Failed to get auth token for host {}: {}", host.host, e);
-                    None
-                }
-            };
-            tokens.push(token);
+            tokens.push(self.cdn_token_for(app_id, depot_id, host).await);
         }
         cdn_pool(hosts, cell_id, tokens)
+    }
+
+    /// Auth token, asked only of `CDN` hosts.
+    pub(crate) async fn cdn_token_for(
+        &self,
+        app_id: u32,
+        depot_id: u32,
+        host: &ContentHost,
+    ) -> Option<String> {
+        if !host.needs_token {
+            return None;
+        }
+        match self.get_cdn_auth_token(app_id, depot_id, &host.host).await {
+            Ok(token) => Some(token),
+            Err(e) => {
+                // Other hosts may still work.
+                tracing::debug!("No auth token for host {}: {e}", host.host);
+                None
+            }
+        }
     }
 
     /// CDN client over live content servers.
@@ -106,10 +130,7 @@ impl SteamClient {
         let hosts = prefer_https(
             servers
                 .iter()
-                .map(|s| ContentHost {
-                    host: s.host().to_string(),
-                    https: supports_https(s.https_support()),
-                })
+                .map(|s| content_host(s.type_(), s.host(), s.https_support()))
                 .collect(),
         );
 

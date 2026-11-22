@@ -45,14 +45,8 @@ fn cdn_errors_map_to_kinds() {
 #[test]
 fn cdn_pool_is_never_empty() {
     let hosts = vec![
-        ContentHost {
-            host: "cache1.steamcontent.com".into(),
-            https: true,
-        },
-        ContentHost {
-            host: "cache2.steamcontent.com".into(),
-            https: true,
-        },
+        content::content_host("CDN", "cache1.steamcontent.com", "mandatory"),
+        content::content_host("SteamCache", "cache2.steamcontent.com", "mandatory"),
     ];
     // Missing tokens default to none.
     let pool = content::cdn_pool(&hosts, 7, vec![Some("t".into())]).unwrap();
@@ -69,6 +63,7 @@ fn cdn_server_parses_host_and_port() {
     let host = |h: &str, https| ContentHost {
         host: h.into(),
         https,
+        needs_token: false,
     };
     let s = install::cdn_server_for(&host("cache1.steamcontent.com", false), 7, Some("t".into()));
     assert_eq!(
@@ -101,9 +96,31 @@ fn https_hosts_are_preferred() {
     let host = |h: &str, https| ContentHost {
         host: h.into(),
         https,
+        needs_token: false,
     };
     let kept = content::prefer_https(vec![host("a", false), host("b", true), host("c", true)]);
     assert_eq!(kept, vec![host("b", true), host("c", true)]);
     let only_http = vec![host("a", false)];
     assert_eq!(content::prefer_https(only_http.clone()), only_http);
+}
+
+#[test]
+fn only_cdn_hosts_need_tokens() {
+    let cache = content::content_host("SteamCache", "c.example", "mandatory");
+    let cdn = content::content_host("CDN", "d.example", "none");
+    assert!(!cache.needs_token && cache.https);
+    assert!(cdn.needs_token && !cdn.https);
+    // HTTPS preference keeps the flag.
+    let kept = content::prefer_https(vec![cache.clone(), cdn]);
+    assert_eq!(kept, vec![cache]);
+}
+
+#[tokio::test]
+async fn steam_cache_hosts_skip_the_token_request() {
+    // No connection: any request would error.
+    let client = SteamClient::new().unwrap();
+    let cache = content::content_host("SteamCache", "c.example", "mandatory");
+    assert_eq!(client.cdn_token_for(1, 2, &cache).await, None);
+    let cdn = content::content_host("CDN", "d.example", "mandatory");
+    assert_eq!(client.cdn_token_for(1, 2, &cdn).await, None);
 }
