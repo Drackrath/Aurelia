@@ -194,16 +194,69 @@ async fn resolve_selected(
     vdf: Vdf<'static>,
     selected: Option<&HashMap<u64, u64>>,
 ) -> Result<ResolvedDepots> {
-    resolve_with(app_id, vdf, selected, |source_app| async move {
-        let buffer = pics_app_buffer(
-            connection,
-            source_app,
-            "failed requesting shared depot appinfo",
-        )
-        .await?;
-        find_vdf_in_pics(&buffer)
+    resolve_with(app_id, vdf, selected, |source_app| {
+        shared_appinfo(connection, source_app)
     })
     .await
+}
+
+/// Appinfo of a shared depot's source.
+async fn shared_appinfo(connection: &Connection, source_app: u32) -> Result<Vdf<'static>> {
+    let buffer = pics_app_buffer(
+        connection,
+        source_app,
+        "failed requesting shared depot appinfo",
+    )
+    .await?;
+    find_vdf_in_pics(&buffer)
+}
+
+/// One depot, shared installs included.
+pub(crate) async fn resolve_depot(
+    connection: &Connection,
+    app_id: u32,
+    vdf: Vdf<'static>,
+    depot_id: u32,
+) -> Result<ResolvedDepots> {
+    resolve_one_with(app_id, vdf, depot_id, |source_app| {
+        shared_appinfo(connection, source_app)
+    })
+    .await
+}
+
+/// Resolve one depot, sharedinstall included.
+async fn resolve_one_with<F, Fut>(
+    app_id: u32,
+    vdf: Vdf<'static>,
+    depot_id: u32,
+    fetch: F,
+) -> Result<ResolvedDepots>
+where
+    F: FnMut(u32) -> Fut + Send,
+    Fut: Future<Output = Result<Vdf<'static>>> + Send,
+{
+    let advertised = pics_depots_value(&vdf)
+        .and_then(Value::as_obj)
+        .context("appinfo has no depots object")?
+        .contains_key(&depot_id.to_string());
+    let mut rows = Obj::new();
+    let mut sources = HashMap::new();
+    // Unknown depot: caller reports it.
+    if advertised {
+        let mut resolver = Resolver {
+            apps: HashMap::from([(app_id, vdf)]),
+            fetch,
+            allow_missing_manifests: false,
+        };
+        let (row, source) = resolver.entry(app_id, depot_id, Vec::new()).await?;
+        rows.insert(depot_id.to_string(), row);
+        sources.insert(depot_id, source);
+    }
+    Ok(ResolvedDepots {
+        rows,
+        sources,
+        app_id,
+    })
 }
 
 async fn resolve_with<F, Fut>(

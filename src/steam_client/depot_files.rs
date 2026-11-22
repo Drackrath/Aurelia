@@ -1,5 +1,6 @@
 //! Depot browser: list and fetch files.
 use super::*;
+use crate::core::error::{ErrorKind, TypedError};
 use crate::library::depot_browser::{
     self as browser, DepotFileDownload, DownloadedFile, ManifestRef, RawEntry,
 };
@@ -12,6 +13,18 @@ struct ManifestAccess {
     key: [u8; 32],
     code: Option<u64>,
     manifest_id: u64,
+}
+
+/// Local IO stops; network tries on.
+pub(crate) fn download_failure(wanted: &str, err: &steam_cdn::Error) -> PoolError {
+    let message = format!("failed to download {wanted}: {err}");
+    match install::cdn_error_kind(err) {
+        Some(ErrorKind::DiskFull) => {
+            PoolError::Stop(anyhow!(TypedError::new(ErrorKind::DiskFull, message)))
+        }
+        _ if matches!(err, steam_cdn::Error::Io(_)) => PoolError::Stop(anyhow!(message)),
+        _ => PoolError::Next(anyhow!(message)),
+    }
 }
 
 /// Raw fields; the type is unnameable.
@@ -37,7 +50,16 @@ impl SteamClient {
         depot_id: u32,
         manifest: &ManifestRef,
     ) -> Result<ManifestAccess> {
-        let resolved = self.resolved_depots(app_id).await?;
+        let buffer = self
+            .pics_buffer(app_id, "failed requesting appinfo for depot files")
+            .await?;
+        let resolved = depots::resolve_depot(
+            self.require_connection()?,
+            app_id,
+            find_vdf_in_pics(&buffer)?,
+            depot_id,
+        )
+        .await?;
         let manifest_id =
             browser::pick_manifest(&depots::manifest_infos(&resolved.rows), depot_id, manifest)?;
         self.access_for(resolved.source_app(depot_id), depot_id, manifest_id)
@@ -207,7 +229,7 @@ impl SteamClient {
                     .await
                 {
                     let _ = std::fs::remove_file(&part);
-                    return Err(PoolError::Next(anyhow!("failed to download {wanted}: {e}")));
+                    return Err(download_failure(&wanted, &e));
                 }
                 let sha1 = hex::encode(&raw.sha_content);
                 let check = browser::PlaceCheck {
@@ -237,3 +259,6 @@ impl SteamClient {
         Err(run.exhausted())
     }
 }
+
+#[cfg(test)]
+mod tests;
