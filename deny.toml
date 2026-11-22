@@ -33,9 +33,6 @@ ignore = [
     { id = "RUSTSEC-2026-0429", reason = "zip extract unused" },
     { id = "RUSTSEC-2026-0545", reason = "zip AES decryption unused" },
     { id = "RUSTSEC-2026-0548", reason = "ZipStreamReader unused" },
-    # Reachable via CDN chunks; needs an aurelia-steam-cdn
-    # release with ruzstd >= 0.9.1 (ticket T-264).
-    { id = "RUSTSEC-2026-0344", reason = "pinned by aurelia-steam-cdn, T-264" },
 ]
 
 [bans]
