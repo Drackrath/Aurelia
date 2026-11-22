@@ -33,7 +33,13 @@ pub struct SteamLaunchConfig {
     pub no_vr: bool, // no OpenVR/SteamVR
     #[serde(default)]
     pub big_picture: bool, // force Big Picture (lighter than desktop UI)
+    /// Unknown keys, kept on save.
+    #[serde(flatten)]
+    pub extra: ExtraKeys,
 }
+
+/// Keys this build does not know.
+pub type ExtraKeys = serde_json::Map<String, serde_json::Value>;
 
 pub fn default_true() -> bool {
     true
@@ -48,6 +54,7 @@ impl Default for SteamLaunchConfig {
             no_chat_ui: true,
             no_vr: false,
             big_picture: false,
+            extra: ExtraKeys::new(),
         }
     }
 }
@@ -90,6 +97,9 @@ pub struct GraphicsLayerConfig {
     pub custom_vkd3d_path: Option<PathBuf>,
     #[serde(default)]
     pub custom_vkd3d_proton_path: Option<PathBuf>,
+    /// Unknown keys, kept on save.
+    #[serde(flatten)]
+    pub extra: ExtraKeys,
 }
 
 impl Default for GraphicsLayerConfig {
@@ -105,6 +115,7 @@ impl Default for GraphicsLayerConfig {
             custom_dxvk_path: None,
             custom_vkd3d_path: None,
             custom_vkd3d_proton_path: None,
+            extra: ExtraKeys::new(),
         }
     }
 }
@@ -125,6 +136,9 @@ pub struct UserAppConfig {
     pub gpu_preference: Option<String>,
     pub hidden: bool,   // Future use
     pub favorite: bool, // Future use
+    /// Unknown keys, kept on save.
+    #[serde(flatten)]
+    pub extra: ExtraKeys,
 }
 
 pub type UserConfigStore = HashMap<u32, UserAppConfig>;

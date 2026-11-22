@@ -81,6 +81,7 @@ fn proxy_config_omits_empty_and_round_trips() {
     let proxy = ProxyConfig {
         url: Some("socks5://127.0.0.1:1080".to_string()),
         no_proxy: Some("localhost,.internal".to_string()),
+        ..Default::default()
     };
     let back: ProxyConfig = serde_json::from_str(&serde_json::to_string(&proxy).unwrap()).unwrap();
     assert_eq!(back, proxy);

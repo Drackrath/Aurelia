@@ -24,3 +24,22 @@ fn real_changes_are_reported() {
     store.remove(&1);
     assert!(settle_entry(&mut store, 1, Some(2)));
 }
+
+#[test]
+fn unknown_only_entries_are_kept() {
+    use aurelia::core::config::GameConfig;
+    use aurelia::core::models::UserAppConfig;
+
+    let mut game = GameConfig::default();
+    game.extra
+        .insert("aureliaworks_override".into(), "steamless".into());
+    let mut games = HashMap::from([(1, game.clone())]);
+    assert!(!settle_entry(&mut games, 1, Some(game.clone())));
+    assert_eq!(games.get(&1), Some(&game));
+
+    let mut app = UserAppConfig::default();
+    app.extra.insert("aureliaworks_runtime".into(), 1.into());
+    let mut apps = HashMap::from([(1, app.clone())]);
+    assert!(!settle_entry(&mut apps, 1, Some(app.clone())));
+    assert_eq!(apps.get(&1), Some(&app));
+}
