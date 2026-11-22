@@ -401,14 +401,16 @@ fn fresh_install(dir: &Path, existing: Option<&str>, rows: &str, steam: &str) ->
     let recorded = recorded_language(vdf.as_obj().unwrap(), DepotPlatform::Linux, &wanted);
     SteamClient::write_appmanifest(
         &path,
-        1,
-        "Game",
-        "Game",
-        vec![(2378501, 1, 10)],
-        Some("1"),
-        true,
-        false,
-        recorded.as_deref(),
+        AppManifestSpec {
+            appid: 1,
+            game_name: "Game",
+            installdir: "Game",
+            installed_depots: vec![(2378501, 1, 10)],
+            buildid: Some("1"),
+            fully_installed: true,
+            pin_updates: false,
+            language: recorded.as_deref(),
+        },
     )
     .unwrap();
     std::fs::read_to_string(&path).unwrap()

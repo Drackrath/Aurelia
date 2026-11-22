@@ -214,14 +214,16 @@ fn wine_dll_overrides(
         effective_vkd3d,
     } = flags;
     let mut dll_overrides = crate::core::dll_overrides::build_dll_overrides(
-        effective_dxvk,
-        effective_vkd3d_proton,
-        effective_vkd3d,
-        no_overlay,
-        force_builtin_d3d,
-        Some(game_working_dir),
-        strict_dxvk,
-        host_bridge,
+        crate::core::dll_overrides::DllOverrideInputs {
+            dxvk_active: effective_dxvk,
+            vkd3d_proton_active: effective_vkd3d_proton,
+            vkd3d_active: effective_vkd3d,
+            no_overlay,
+            force_builtin_d3d,
+            game_dir: Some(game_working_dir),
+            strict_dxvk,
+            steam_enabled: host_bridge,
+        },
     );
 
     // Enhance overrides with resolved DLL providers

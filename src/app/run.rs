@@ -458,8 +458,7 @@ async fn run(mut cli: Cli) -> Result<()> {
                 skip_shaders,
                 launch_timeout,
             };
-            cmd_play(
-                app_id,
+            let run = crate::app::commands::launch::PlayRun {
                 proton,
                 windows,
                 native_engine,
@@ -467,12 +466,8 @@ async fn run(mut cli: Cli) -> Result<()> {
                 script,
                 no_script,
                 steam,
-                target,
-                wait,
-                no_update,
-                json,
-            )
-            .await
+            };
+            cmd_play(app_id, run, target, wait, no_update, json).await
         }
         Command::Shaders { app_id, force } => cmd_shaders(app_id, force, json).await,
         Command::LaunchTargets { app_id, steam } => cmd_launch_targets(app_id, steam, json).await,

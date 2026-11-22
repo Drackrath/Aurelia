@@ -7,6 +7,19 @@ use crate::core::acf;
 /// Called with the resolved launch target.
 pub type TargetCallback = dyn Fn(Option<&str>) + Send + Sync;
 
+/// Launch switches for one `play`.
+#[derive(Clone, Default)]
+pub struct LaunchFlags {
+    pub force_windows: bool,
+    pub force_native_engine: bool,
+    pub force_umu: bool,
+    pub launch_script_override: Option<PathBuf>,
+    pub disable_launch_script: bool,
+    pub steam_enabled: bool,
+    pub prefer_native_target: bool,
+    pub shaders: crate::launch::shaders::ShaderLaunch,
+}
+
 /// Pick the launch entry to run.
 ///
 /// Only one platform's depot is installed, so a launch entry is only usable if its
@@ -298,23 +311,25 @@ pub fn forced_steam_reason(app: &LibraryGame) -> Option<&'static str> {
 }
 
 impl SteamClient {
-    #[expect(clippy::too_many_arguments, reason = "one parameter per play option")]
     pub async fn play_game(
         &mut self,
         app: &LibraryGame,
         proton_path: Option<&str>,
         user_config: Option<&crate::core::models::UserAppConfig>,
-        force_windows: bool,
-        force_native_engine: bool,
-        force_umu: bool,
-        launch_script_override: Option<PathBuf>,
-        disable_launch_script: bool,
-        steam_enabled: bool,
-        prefer_native_target: bool,
         launch_option: Option<&str>,
         on_target_resolved: Option<&TargetCallback>,
-        shaders: crate::launch::shaders::ShaderLaunch,
+        flags: LaunchFlags,
     ) -> Result<LaunchInfo> {
+        let LaunchFlags {
+            force_windows,
+            force_native_engine,
+            force_umu,
+            launch_script_override,
+            disable_launch_script,
+            steam_enabled,
+            prefer_native_target,
+            shaders,
+        } = flags;
         let steam_enabled = steam_enabled || forced_steam_reason(app).is_some();
 
         // Reject bad entries before starting Steam.
@@ -504,12 +519,16 @@ impl SteamClient {
                 chosen_proton_path,
                 &launcher_config,
                 user_config,
-                force_native_engine,
-                force_umu,
-                launch_script_override,
-                disable_launch_script,
-                steam_enabled,
-                shaders,
+                LaunchFlags {
+                    force_windows,
+                    force_native_engine,
+                    force_umu,
+                    launch_script_override,
+                    disable_launch_script,
+                    steam_enabled,
+                    prefer_native_target,
+                    shaders,
+                },
             )
             .await?
             .into()
@@ -749,10 +768,12 @@ impl SteamClient {
 
             // Zero grand total: per-depot accumulation.
             let Some(successful_depots) = run_depot_loop(
-                &client_clone,
-                &connection,
-                &tx,
-                &shared_state_clone,
+                &DepotLoopCtx {
+                    client: &client_clone,
+                    connection: &connection,
+                    tx: &tx,
+                    shared_state: &shared_state_clone,
+                },
                 appid,
                 selections,
                 &install_root,
@@ -792,14 +813,16 @@ impl SteamClient {
 
             if let Err(err) = SteamClient::write_appmanifest(
                 &manifest_path,
-                appid,
-                &game_name,
-                &installdir,
-                successful_depots,
-                build_id.as_deref(),
-                true,
-                false,
-                None,
+                AppManifestSpec {
+                    appid,
+                    game_name: &game_name,
+                    installdir: &installdir,
+                    installed_depots: successful_depots,
+                    buildid: build_id.as_deref(),
+                    fully_installed: true,
+                    pin_updates: false,
+                    language: None,
+                },
             ) {
                 tracing::warn!("failed writing appmanifest for {}: {}", appid, err);
             }

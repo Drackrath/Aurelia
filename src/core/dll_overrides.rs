@@ -108,18 +108,31 @@ pub fn dll_override_entries(overrides: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Inputs for `build_dll_overrides`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DllOverrideInputs<'a> {
+    pub dxvk_active: bool,
+    pub vkd3d_proton_active: bool,
+    pub vkd3d_active: bool,
+    pub no_overlay: bool,
+    pub force_builtin_d3d: bool,
+    pub game_dir: Option<&'a std::path::Path>,
+    pub strict_dxvk: bool,
+    pub steam_enabled: bool,
+}
+
 /// Returns the WINEDLLOVERRIDES string needed to activate installed layers.
-#[expect(clippy::too_many_arguments, reason = "one switch per graphics layer")]
-pub fn build_dll_overrides(
-    dxvk_active: bool,
-    vkd3d_proton_active: bool,
-    vkd3d_active: bool,
-    no_overlay: bool,
-    force_builtin_d3d: bool,
-    game_dir: Option<&std::path::Path>,
-    strict_dxvk: bool,
-    steam_enabled: bool,
-) -> String {
+pub fn build_dll_overrides(inputs: DllOverrideInputs<'_>) -> String {
+    let DllOverrideInputs {
+        dxvk_active,
+        vkd3d_proton_active,
+        vkd3d_active,
+        no_overlay,
+        force_builtin_d3d,
+        game_dir,
+        strict_dxvk,
+        steam_enabled,
+    } = inputs;
     // In standalone mode Aurelia neutralises Steam's client DLLs and disables
     // `lsteamclient` so a game runs without a Steam client. When Steam is enabled
     // those must be left to Proton's defaults (`lsteamclient` loads builtin and

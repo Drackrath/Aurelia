@@ -91,3 +91,7 @@ depends = "$auto, libssl3"
 assets = [
     ["target/release/aurelia", "usr/bin/aurelia", "755"],
 ]
+
+[lints.clippy]
+# CI rejects allow/expect; use a struct.
+too_many_arguments = "deny"

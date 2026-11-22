@@ -37,18 +37,21 @@ pub(crate) async fn cmd_move(
     Ok(())
 }
 
+/// Status and verb a relocate reports.
+pub(super) struct RelocateLabels {
+    /// JSON `status`, e.g. `relinked`.
+    pub status: &'static str,
+    /// Error-message verb, e.g. `relink`.
+    pub verb: &'static str,
+}
+
 /// Steam-guarded relink/import shared body.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "mirrors the relink/import CLI flags"
-)]
 pub(super) async fn steam_guarded_relocate<F, Fut>(
     app_id: u32,
     library: PathBuf,
     restart_steam: bool,
     json: bool,
-    status: &'static str,
-    verb: &'static str,
+    labels: RelocateLabels,
     human: impl FnOnce(&std::path::Path) -> String,
     op: F,
 ) -> Result<()>
@@ -56,6 +59,7 @@ where
     F: FnOnce(SteamClient, PathBuf) -> Fut,
     Fut: Future<Output = Result<std::path::PathBuf>>,
 {
+    let RelocateLabels { status, verb } = labels;
     let client = authed_client().await?;
     let managed = steam_guard_stop(restart_steam, json)?;
     let path = with_steam_stopped(managed, json, async {
@@ -91,8 +95,10 @@ pub(crate) async fn cmd_relink(
         library.clone(),
         restart_steam,
         json,
-        "relinked",
-        "relink",
+        RelocateLabels {
+            status: "relinked",
+            verb: "relink",
+        },
         human,
         |client, lib| async move { client.relink_install(app_id, lib).await },
     )
@@ -121,8 +127,10 @@ pub(crate) async fn cmd_import(
         library,
         restart_steam,
         json,
-        "imported",
-        "import",
+        RelocateLabels {
+            status: "imported",
+            verb: "import",
+        },
         human,
         move |client, lib| async move { client.import_install(app_id, lib, platform).await },
     )

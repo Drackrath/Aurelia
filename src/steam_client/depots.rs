@@ -560,10 +560,12 @@ impl SteamClient {
             &runtime,
             connection,
             &cdn,
-            appid,
-            depot_id,
-            manifest_ref,
-            file_path,
+            depot_browser::DepotFileRef {
+                appid,
+                depot_id,
+                manifest_ref,
+                file_path,
+            },
             output_dir,
         )
     }

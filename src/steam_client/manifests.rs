@@ -4,6 +4,20 @@
 use super::*;
 use crate::core::acf;
 
+/// Fields of one appmanifest.
+#[derive(Clone, Debug, Default)]
+pub struct AppManifestSpec<'a> {
+    pub appid: u32,
+    pub game_name: &'a str,
+    pub installdir: &'a str,
+    /// (depot, manifest, size) triples.
+    pub installed_depots: Vec<(u32, u64, u64)>,
+    pub buildid: Option<&'a str>,
+    pub fully_installed: bool,
+    pub pin_updates: bool,
+    pub language: Option<&'a str>,
+}
+
 impl SteamClient {
     pub(crate) async fn appmanifest_path(&self, appid: u32) -> Result<PathBuf> {
         let file = format!("appmanifest_{appid}.acf");
@@ -273,18 +287,17 @@ impl SteamClient {
     ///
     /// Existing `UserConfig`/`MountedConfig` are copied verbatim.
     /// `language` fills a missing `UserConfig` language.
-    #[allow(clippy::too_many_arguments)]
-    pub fn write_appmanifest(
-        path: &Path,
-        appid: u32,
-        game_name: &str,
-        installdir: &str,
-        installed_depots: Vec<(u32, u64, u64)>,
-        buildid: Option<&str>,
-        fully_installed: bool,
-        pin_updates: bool,
-        language: Option<&str>,
-    ) -> Result<()> {
+    pub fn write_appmanifest(path: &Path, spec: AppManifestSpec<'_>) -> Result<()> {
+        let AppManifestSpec {
+            appid,
+            game_name,
+            installdir,
+            installed_depots,
+            buildid,
+            fully_installed,
+            pin_updates,
+            language,
+        } = spec;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("failed creating {}", parent.display()))?;

@@ -541,7 +541,6 @@ NoSavePersonalInfo=1
         Ok(crate::launch::game_process::GameProcess::Elevated(process))
     }
 
-    #[expect(clippy::too_many_arguments, reason = "resolved launch inputs")]
     pub(crate) async fn spawn_game_process(
         &self,
         app: &LibraryGame,
@@ -549,13 +548,17 @@ NoSavePersonalInfo=1
         proton_path: Option<&str>,
         launcher_config: &crate::core::config::LauncherConfig,
         user_config: Option<&crate::core::models::UserAppConfig>,
-        force_native_engine: bool,
-        force_umu: bool,
-        launch_script_override: Option<PathBuf>,
-        disable_launch_script: bool,
-        steam_enabled: bool,
-        shaders: crate::launch::shaders::ShaderLaunch,
+        flags: super::LaunchFlags,
     ) -> Result<std::process::Child> {
+        let super::LaunchFlags {
+            force_native_engine,
+            force_umu,
+            launch_script_override,
+            disable_launch_script,
+            steam_enabled,
+            shaders,
+            ..
+        } = flags;
         use crate::launch::{context::PipelineContext, pipeline::LaunchPipeline};
         use crate::logging::{EventLogger, LaunchSession};
 

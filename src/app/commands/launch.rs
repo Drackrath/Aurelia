@@ -235,21 +235,34 @@ pub(crate) async fn cmd_launch_targets(app_id: u32, steam: bool, json: bool) -> 
     Ok(())
 }
 
-#[expect(clippy::too_many_arguments, reason = "one parameter per play CLI flag")]
+/// How `play` runs the game.
+pub(crate) struct PlayRun {
+    pub proton: Option<String>,
+    pub windows: bool,
+    pub native_engine: bool,
+    pub umu: bool,
+    pub script: Option<PathBuf>,
+    pub no_script: bool,
+    pub steam: bool,
+}
+
 pub(crate) async fn cmd_play(
     app_id: u32,
-    proton: Option<String>,
-    windows: bool,
-    native_engine: bool,
-    umu: bool,
-    script: Option<PathBuf>,
-    no_script: bool,
-    steam: bool,
+    run: PlayRun,
     target: PlayTarget,
     wait: PlayWait,
     no_update: bool,
     json: bool,
 ) -> Result<()> {
+    let PlayRun {
+        proton,
+        windows,
+        native_engine,
+        umu,
+        script,
+        no_script,
+        steam,
+    } = run;
     let linux_target = matches!(target.platform, Some(PlatformArg::Linux));
     if linux_target && proton.is_some() {
         bail!("--platform linux runs the native build; it can't be combined with --proton");
@@ -518,18 +531,20 @@ pub(crate) async fn cmd_play(
             &game,
             proton_path.as_deref(),
             user_config,
-            force_windows,
-            native_engine,
-            umu,
-            script,
-            no_script,
-            steam,
-            prefers_linux,
             target.launch_option.as_deref(),
             (!json).then_some(&announce_target),
-            aurelia::launch::shaders::ShaderLaunch {
-                skip: wait.skip_shaders,
-                on_event: Some(shader_reporter(json, true)),
+            aurelia::steam_client::LaunchFlags {
+                force_windows,
+                force_native_engine: native_engine,
+                force_umu: umu,
+                launch_script_override: script,
+                disable_launch_script: no_script,
+                steam_enabled: steam,
+                prefer_native_target: prefers_linux,
+                shaders: aurelia::launch::shaders::ShaderLaunch {
+                    skip: wait.skip_shaders,
+                    on_event: Some(shader_reporter(json, true)),
+                },
             },
         )
         .await

@@ -48,6 +48,14 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
+      # Lint is denied in Cargo.toml.
+      - name: No too_many_arguments exceptions
+        if: runner.os == 'Linux'
+        run: |
+          if grep -rn "too_many_arguments" src tests build.rs; then
+            echo "::error::Group the arguments into a struct instead of allowing clippy::too_many_arguments"
+            exit 1
+          fi
 
   test:
     name: test (${{ matrix.os }})

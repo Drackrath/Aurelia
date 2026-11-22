@@ -70,21 +70,28 @@ pub(crate) async fn fetch_content_hosts(
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "shared by install, update and verify"
-)]
+/// Handles one depot loop reports through.
+pub(crate) struct DepotLoopCtx<'a> {
+    pub client: &'a SteamClient,
+    pub connection: &'a Connection,
+    pub tx: &'a tokio::sync::mpsc::Sender<DownloadProgress>,
+    pub shared_state: &'a Arc<std::sync::RwLock<crate::core::models::DownloadState>>,
+}
+
 pub(crate) async fn run_depot_loop(
-    client: &SteamClient,
-    connection: &Connection,
-    tx: &tokio::sync::mpsc::Sender<DownloadProgress>,
-    shared_state: &Arc<std::sync::RwLock<crate::core::models::DownloadState>>,
+    ctx: &DepotLoopCtx<'_>,
     appid: u32,
     selections: Vec<ManifestSelection>,
     dest: &Path,
     hosts: &[ContentHost],
     opts: &DepotLoopOpts,
 ) -> Option<Vec<(u32, u64, u64)>> {
+    let DepotLoopCtx {
+        client,
+        connection,
+        tx,
+        shared_state,
+    } = *ctx;
     let verb = if opts.verify_mode {
         "Verifying"
     } else {
@@ -174,16 +181,18 @@ pub(crate) async fn run_depot_loop(
 
         match client
             .download_depot_to_with_hosts(
-                selection.app_id,
-                selection.depot_id,
-                selection.manifest_id,
+                DepotJob {
+                    app_id: selection.app_id,
+                    depot_id: selection.depot_id,
+                    manifest_id: selection.manifest_id,
+                    key,
+                    grand_total_bytes: opts.grand_total_bytes,
+                    verify_mode: opts.verify_mode,
+                },
                 dest,
                 shared_state.clone(),
                 hosts,
-                opts.grand_total_bytes,
                 connection,
-                key,
-                opts.verify_mode,
             )
             .await
         {
