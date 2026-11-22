@@ -128,26 +128,6 @@ pub(crate) fn depot_language<'a>(value: &'a Value<'_>) -> Option<&'a str> {
         .filter(|l| !l.is_empty())
 }
 
-/// Language for `UserConfig`, like Steam.
-///
-/// Only a real language depot choice;
-/// else Steam's client language applies.
-pub(crate) fn recorded_language(
-    rows: &Obj<'_>,
-    platform: DepotPlatform,
-    wanted: &str,
-) -> Option<String> {
-    let available = rows.values().any(|row| {
-        let oslist = row
-            .get_obj(&["config"])
-            .and_then(|c| c.get("oslist"))
-            .and_then(|o| o.as_str());
-        should_keep_depot(oslist, platform)
-            && depot_language(row).is_some_and(|l| l.eq_ignore_ascii_case(wanted))
-    });
-    available.then(|| wanted.to_ascii_lowercase())
-}
-
 /// Whether a depot serves `language`.
 pub(crate) fn depot_matches_language(value: &Value<'_>, language: &str) -> bool {
     depot_language(value).is_none_or(|l| l.eq_ignore_ascii_case(language))
@@ -519,49 +499,70 @@ impl SteamClient {
         app_id: u32,
         platform: DepotPlatform,
     ) -> Result<InstallSizeEstimate> {
+        let resolved = self.estimate_rows(app_id).await?;
+        Ok(estimate_from_rows(&resolved.rows, platform))
+    }
+
+    /// Size estimate plus language choices.
+    ///
+    /// Reads the local appmanifest, never writes.
+    pub async fn install_preview(
+        &self,
+        app_id: u32,
+        platform: DepotPlatform,
+    ) -> Result<InstallPreview> {
+        let resolved = self.estimate_rows(app_id).await?;
+        let manifest = self
+            .appmanifest_path(app_id)
+            .await
+            .ok()
+            .and_then(|p| std::fs::read_to_string(p).ok());
+        let installed_language = manifest
+            .as_deref()
+            .and_then(super::manifests::user_config_language)
+            .map(|l| l.to_ascii_lowercase());
+        let cfg_language = load_launcher_config().await.ok().and_then(|c| c.language);
+        // Same order as install_game.
+        let wanted = crate::core::locale::pick_install_language(
+            installed_language.as_deref(),
+            crate::core::locale::steam_client_language().as_deref(),
+            cfg_language.as_deref(),
+        );
+        Ok(InstallPreview {
+            estimate: estimate_from_rows(&resolved.rows, platform),
+            languages: super::language::language_choices(&resolved.rows, app_id, platform),
+            default_language: Some(super::language::default_language(
+                &resolved.rows,
+                app_id,
+                platform,
+                &wanted,
+            )),
+            installed_language,
+        })
+    }
+
+    /// Normalised `--language`, or typed error.
+    pub async fn check_install_language(
+        &self,
+        app_id: u32,
+        platform: DepotPlatform,
+        language: &str,
+    ) -> Result<String> {
+        let resolved = self.resolved_depots(app_id).await?;
+        super::language::validate_language(&resolved.rows, app_id, platform, language)
+    }
+
+    /// Resolved depot rows for estimates.
+    async fn estimate_rows(&self, app_id: u32) -> Result<ResolvedDepots> {
         let buffer = self
             .pics_buffer(
                 app_id,
                 "failed requesting appinfo product info for size estimate",
             )
             .await?;
-
-        let mut est = InstallSizeEstimate::default();
         let vdf = find_vdf_in_pics(&buffer).context("failed to parse product info VDF")?;
         vdf.as_obj().context("root is not an object")?;
-        let resolved = depots::resolve(self.require_connection()?, app_id, vdf).await?;
-        let resolved_value = steam_vdf_parser::Value::Obj(resolved.rows);
-        let depots_val = Some(&resolved_value);
-
-        if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
-            for (_depot_id, obj, public) in platform_depot_rows(depots, platform) {
-                let disk = public
-                    .and_then(|p| p.get("size"))
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .or_else(|| {
-                        obj.get("maxsize")
-                            .and_then(|v| v.as_str())
-                            .and_then(|s| s.parse::<u64>().ok())
-                    })
-                    .unwrap_or(0);
-                // Steam's `download` is the compressed transfer size; fall back to the
-                // uncompressed size when a depot doesn't advertise it.
-                let download = public
-                    .and_then(|p| p.get("download"))
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .unwrap_or(disk);
-
-                if disk > 0 || download > 0 {
-                    est.disk_size += disk;
-                    est.download_size += download;
-                    est.depot_count += 1;
-                }
-            }
-        }
-
-        Ok(est)
+        depots::resolve(self.require_connection()?, app_id, vdf).await
     }
 
     pub async fn get_depot_key(&self, app_id: u32, depot_id: u32) -> Result<Vec<u8>> {
@@ -581,6 +582,36 @@ impl SteamClient {
 
         Ok(response.depot_encryption_key().to_vec())
     }
+}
+
+/// Sum platform depot sizes from rows.
+pub(crate) fn estimate_from_rows(rows: &Obj<'_>, platform: DepotPlatform) -> InstallSizeEstimate {
+    let mut est = InstallSizeEstimate::default();
+    for (_depot_id, obj, public) in platform_depot_rows(rows, platform) {
+        let disk = public
+            .and_then(|p| p.get("size"))
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<u64>().ok())
+            .or_else(|| {
+                obj.get("maxsize")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.parse::<u64>().ok())
+            })
+            .unwrap_or(0);
+        // Steam's `download` is the compressed transfer size; fall back to the
+        // uncompressed size when a depot doesn't advertise it.
+        let download = public
+            .and_then(|p| p.get("download"))
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(disk);
+        if disk > 0 || download > 0 {
+            est.disk_size += disk;
+            est.download_size += download;
+            est.depot_count += 1;
+        }
+    }
+    est
 }
 
 #[cfg(test)]

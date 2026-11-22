@@ -20,7 +20,8 @@ pub(crate) struct InstallArgs {
     #[arg(short = 'r', long)]
     pub(crate) restart_steam: bool,
     /// Don't install — just report the estimated download and on-disk size
-    /// (from PICS, no files fetched). Pair with `--json` for tooling.
+    /// and the language choices (from PICS, no files fetched). Pair with
+    /// `--json` for tooling.
     #[arg(short = 'd', long)]
     pub(crate) dry_run: bool,
     /// Steam library folder (drive/location) to install into. A library root
@@ -28,6 +29,12 @@ pub(crate) struct InstallArgs {
     /// Defaults to the configured `steam_library_path`.
     #[arg(short = 'l', long)]
     pub(crate) library: Option<String>,
+    /// Steam language to install, e.g. `german`. Must be one of the
+    /// `languages` that `--dry-run --json` lists; recorded like a Steam
+    /// language choice. Defaults to the manifest, Steam client or config
+    /// language, falling back to English.
+    #[arg(long, value_name = "LANGUAGE")]
+    pub(crate) language: Option<String>,
 }
 
 #[derive(clap::Subcommand)]

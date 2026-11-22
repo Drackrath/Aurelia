@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::steam_client::language::recorded_language;
 
 fn appinfo(text: &str) -> Vdf<'static> {
     steam_vdf_parser::parse_text(&format!(r#""appinfo" {{ {text} }}"#))
@@ -398,7 +399,13 @@ fn fresh_install(dir: &Path, existing: Option<&str>, rows: &str, steam: &str) ->
     let wanted =
         crate::core::locale::pick_install_language(manifest_language.as_deref(), Some(steam), None);
     let vdf = depot_rows(rows);
-    let recorded = recorded_language(vdf.as_obj().unwrap(), DepotPlatform::Linux, &wanted);
+    let recorded = recorded_language(
+        vdf.as_obj().unwrap(),
+        1,
+        DepotPlatform::Linux,
+        &wanted,
+        false,
+    );
     SteamClient::write_appmanifest(
         &path,
         AppManifestSpec {
@@ -421,11 +428,11 @@ fn no_language_depots_writes_no_language() {
     let vdf = depot_rows(NO_LANGUAGE_DEPOTS);
     let rows = vdf.as_obj().unwrap();
     assert_eq!(
-        recorded_language(rows, DepotPlatform::Linux, "german"),
+        recorded_language(rows, 1, DepotPlatform::Linux, "german", false),
         None
     );
     assert_eq!(
-        recorded_language(rows, DepotPlatform::Linux, "english"),
+        recorded_language(rows, 1, DepotPlatform::Linux, "english", false),
         None
     );
 
@@ -439,7 +446,7 @@ fn wanted_language_depot_is_recorded() {
     let vdf = depot_rows(LANGUAGE_DEPOTS);
     let rows = vdf.as_obj().unwrap();
     assert_eq!(
-        recorded_language(rows, DepotPlatform::Linux, "German").as_deref(),
+        recorded_language(rows, 1, DepotPlatform::Linux, "German", false).as_deref(),
         Some("german")
     );
 
@@ -457,15 +464,15 @@ fn missing_language_depot_records_no_fallback() {
     let rows = vdf.as_obj().unwrap();
     // French exists for Windows only.
     assert_eq!(
-        recorded_language(rows, DepotPlatform::Linux, "french"),
+        recorded_language(rows, 1, DepotPlatform::Linux, "french", false),
         None
     );
     assert_eq!(
-        recorded_language(rows, DepotPlatform::Windows, "french").as_deref(),
+        recorded_language(rows, 1, DepotPlatform::Windows, "french", false).as_deref(),
         Some("french")
     );
     assert_eq!(
-        recorded_language(rows, DepotPlatform::Linux, "polish"),
+        recorded_language(rows, 1, DepotPlatform::Linux, "polish", false),
         None
     );
 

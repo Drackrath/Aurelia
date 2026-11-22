@@ -77,6 +77,18 @@ pub struct InstallSizeEstimate {
     pub depot_count: u64,
 }
 
+/// What `install --dry-run` reports.
+#[derive(Debug, Clone, Default)]
+pub struct InstallPreview {
+    pub estimate: InstallSizeEstimate,
+    /// Valid `--language` values, sorted.
+    pub languages: Vec<String>,
+    /// What a plain install picks.
+    pub default_language: Option<String>,
+    /// Installed manifest's `UserConfig` language.
+    pub installed_language: Option<String>,
+}
+
 /// A single Steam achievement for a game, combining the game's achievement
 /// definition (name/description/icons/global rarity) with the logged-in user's
 /// unlock state. Shaped to match how launchers (Heroic/Legendary) report

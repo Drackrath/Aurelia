@@ -57,6 +57,82 @@ pub(crate) fn depot_languages(rows: &Obj<'_>, app_id: u32, platform: DepotPlatfo
     langs
 }
 
+/// Languages an install may choose.
+///
+/// English plus base-game language depots.
+pub(crate) fn language_choices(
+    rows: &Obj<'_>,
+    app_id: u32,
+    platform: DepotPlatform,
+) -> Vec<String> {
+    let mut langs = depot_languages(rows, app_id, platform);
+    if !langs.iter().any(|l| l == "english") {
+        langs.push("english".to_string());
+        langs.sort();
+    }
+    langs
+}
+
+/// Typed error listing valid languages.
+pub(crate) fn unknown_language(app_id: u32, language: &str, choices: &[String]) -> anyhow::Error {
+    crate::core::error::TypedError::new(
+        crate::core::error::ErrorKind::InvalidInput,
+        format!(
+            "app {app_id} has no {language} depots; available: {}",
+            choices.join(", ")
+        ),
+    )
+    .into()
+}
+
+/// Normalise and check a chosen language.
+pub(crate) fn validate_language(
+    rows: &Obj<'_>,
+    app_id: u32,
+    platform: DepotPlatform,
+    language: &str,
+) -> Result<String> {
+    let language = language.trim().to_ascii_lowercase();
+    if language.is_empty() {
+        return Err(crate::core::error::TypedError::new(
+            crate::core::error::ErrorKind::InvalidInput,
+            "language must not be empty",
+        )
+        .into());
+    }
+    let choices = language_choices(rows, app_id, platform);
+    if !choices.contains(&language) {
+        return Err(unknown_language(app_id, &language, &choices));
+    }
+    Ok(language)
+}
+
+/// `UserConfig` language for an install.
+///
+/// Only real language-depot choices count.
+pub(crate) fn recorded_language(
+    rows: &Obj<'_>,
+    app_id: u32,
+    platform: DepotPlatform,
+    wanted: &str,
+    explicit: bool,
+) -> Option<String> {
+    let wanted = wanted.trim().to_ascii_lowercase();
+    let langs = depot_languages(rows, app_id, platform);
+    let chosen = langs.contains(&wanted) || (explicit && !langs.is_empty() && wanted == "english");
+    chosen.then_some(wanted)
+}
+
+/// Language a plain install installs.
+pub(crate) fn default_language(
+    rows: &Obj<'_>,
+    app_id: u32,
+    platform: DepotPlatform,
+    wanted: &str,
+) -> String {
+    recorded_language(rows, app_id, platform, wanted, false).unwrap_or_else(|| "english".into())
+}
+
 /// Plan the depot swap for `language`.
 pub(crate) fn plan_language_switch(
     rows: &Obj<'_>,
@@ -66,15 +142,7 @@ pub(crate) fn plan_language_switch(
     language: &str,
 ) -> Result<LanguagePlan> {
     let platform = installed_platform(rows, installed);
-    let languages = depot_languages(rows, app_id, platform);
-    let language = language.to_ascii_lowercase();
-    // English often ships in base depots.
-    if !languages.is_empty() && !languages.contains(&language) && language != "english" {
-        bail!(
-            "app {app_id} has no {language} depots; available: english, {}",
-            languages.join(", ")
-        );
-    }
+    let language = validate_language(rows, app_id, platform, language)?;
 
     let on_platform = |row: &Value<'_>| {
         let oslist = row

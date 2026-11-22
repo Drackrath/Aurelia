@@ -39,6 +39,8 @@ pub(crate) const FEATURES: &[&str] = &[
     "login.qr.result_line",
     // stdin `cancel` or EOF ends it.
     "login.qr.stdin_control",
+    // Dry run lists languages; `--language`.
+    "install.languages",
     // Vulkan pipelines replayed before launch.
     "play.shader_precache",
     // `result` lines carry `schema`.
