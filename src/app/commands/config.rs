@@ -597,6 +597,42 @@ async fn installed_platform_set(app_id: u32) -> Option<(bool, bool)> {
     )
 }
 
+/// Absolute, tidied form of a `--prefix` dir.
+fn absolute_prefix_dir(dir: std::path::PathBuf) -> Result<std::path::PathBuf> {
+    use std::path::Component;
+    if dir.as_os_str().is_empty() {
+        anyhow::bail!("--prefix needs a directory");
+    }
+    // Client cwd when run via daemon.
+    let full = crate::app::output::user_path(&dir);
+    let mut out = std::path::PathBuf::new();
+    for part in full.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    if !out.is_absolute() {
+        anyhow::bail!("--prefix needs an absolute directory");
+    }
+    Ok(out)
+}
+
+/// Drop all-default entries; report real changes.
+fn settle_entry<T: Default + PartialEq>(
+    store: &mut std::collections::HashMap<u32, T>,
+    app_id: u32,
+    before: Option<T>,
+) -> bool {
+    if store.get(&app_id).is_some_and(|e| *e == T::default()) {
+        store.remove(&app_id);
+    }
+    store.get(&app_id) != before.as_ref()
+}
+
 /// `config game`: view or set a game's per-game launch settings.
 pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<()> {
     let GameConfigArgs {
@@ -617,7 +653,10 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
         launch_options,
         no_launch_options,
         cloud_sync,
+        prefix,
+        no_prefix,
     } = args;
+    let prefix = prefix.map(absolute_prefix_dir).transpose()?;
     if let Some(line) = &launch_options {
         aurelia::launch::stages::user_launch_options::parse_launch_options(line)
             .map_err(|e| anyhow::anyhow!("invalid --launch-options {line:?}: {e}"))?;
@@ -640,6 +679,7 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
                 "--steam-runtime on",
             ),
             (steam_prefix_mode.is_some(), "--steam-prefix-mode"),
+            (prefix.is_some(), "--prefix"),
         ]
         .into_iter()
         .filter_map(|(used, flag)| used.then_some(flag))
@@ -656,27 +696,24 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
     // The Steam-runtime knobs live in a separate per-game store (user_apps.json) from the
     // GameConfig fields above (config.json). Update whichever store each flag targets.
     let mut user_configs = aurelia::core::config::load_user_configs().await?;
-    let mut user_changed = false;
+    let user_before = user_configs.get(&app_id).cloned();
     if clear {
-        user_changed = user_configs.remove(&app_id).is_some();
+        user_configs.remove(&app_id);
     } else {
         let ua = user_configs.entry(app_id).or_default();
         if let Some(sr) = steam_runtime {
             ua.steam_runtime_policy = sr.into();
-            user_changed = true;
         }
         if let Some(pm) = steam_prefix_mode {
             ua.steam_prefix_mode = pm.into();
-            user_changed = true;
         }
         if no_launch_options {
             ua.launch_options.clear();
-            user_changed = true;
         } else if let Some(line) = launch_options {
             ua.launch_options = line.trim().to_string();
-            user_changed = true;
         }
     }
+    let user_changed = settle_entry(&mut user_configs, app_id, user_before);
     if user_changed {
         aurelia::core::config::save_user_configs(&user_configs)
             .await
@@ -684,21 +721,18 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
     }
 
     let mut cfg = load_launcher_config().await?;
-    let mut changed = false;
+    let before = cfg.game_configs.get(&app_id).cloned();
     if clear {
-        changed = cfg.game_configs.remove(&app_id).is_some();
+        cfg.game_configs.remove(&app_id);
     } else {
         let entry = cfg.game_configs.entry(app_id).or_default();
         if clear_proton {
             entry.forced_proton_version = None;
-            changed = true;
         } else if let Some(p) = proton {
             entry.forced_proton_version = Some(p);
-            changed = true;
         }
         if no_platform {
             entry.platform_preference = None;
-            changed = true;
         } else if let Some(pl) = platform {
             entry.platform_preference = Some(
                 match pl {
@@ -707,33 +741,31 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
                 }
                 .to_string(),
             );
-            changed = true;
         }
         if native_engine {
             entry.runner = GameRunner::Luxtorpeda;
-            changed = true;
         } else if no_native_engine {
             entry.runner = GameRunner::Auto;
-            changed = true;
         } else if umu {
             entry.runner = GameRunner::Umu;
-            changed = true;
         } else if no_umu {
             entry.runner = GameRunner::Auto;
-            changed = true;
         }
         if no_launch_script {
             entry.launch_script = None;
-            changed = true;
         } else if let Some(s) = launch_script {
             entry.launch_script = Some(s.to_string_lossy().to_string());
-            changed = true;
         }
         if let Some(mode) = cloud_sync {
             entry.cloud_sync = mode.as_override();
-            changed = true;
+        }
+        if no_prefix {
+            entry.prefix_dir = None;
+        } else if let Some(dir) = prefix {
+            entry.prefix_dir = Some(dir);
         }
     }
+    let changed = settle_entry(&mut cfg.game_configs, app_id, before);
     if changed {
         cfg.save().await.context("failed saving game config")?;
     }
@@ -780,6 +812,7 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
         Some(on) => on_off(on).to_string(),
         None => format!("auto ({}, from global)", on_off(cloud_sync_effective)),
     };
+    let wine_prefix = aurelia::core::paths::proton_compat_prefix(&cfg, app_id, None);
     let prefix_mode_label = match ua.steam_prefix_mode {
         SteamPrefixMode::Shared => "shared",
         SteamPrefixMode::PerGame => "per-game",
@@ -796,6 +829,8 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
             "launch_options": ua.launch_options,
             "cloud_sync": entry.cloud_sync,
             "cloud_sync_effective": cloud_sync_effective,
+            "prefix_dir": entry.prefix_dir,
+            "wine_prefix": wine_prefix,
         }));
     } else {
         cli_println!("App {app_id}:");
@@ -827,6 +862,15 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
         cli_println!("  Prefix mode  : {prefix_mode_label}");
         cli_println!("  Cloud sync   : {cloud_sync_label}");
         cli_println!(
+            "  Wine prefix  : {}{}",
+            wine_prefix.display(),
+            if entry.prefix_dir.is_some() {
+                " (custom)"
+            } else {
+                ""
+            }
+        );
+        cli_println!(
             "  Launch opts  : {}",
             if ua.launch_options.is_empty() {
                 "(none)"
@@ -837,3 +881,6 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

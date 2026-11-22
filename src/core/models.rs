@@ -19,7 +19,7 @@ pub enum SteamRuntimePolicy {
     Disabled,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SteamLaunchConfig {
     #[serde(default = "default_true")]
     pub no_browser: bool, // kill CEF/steamwebhelper entirely
@@ -68,7 +68,7 @@ pub enum D3D12ProviderPolicy {
     Vkd3dWine,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GraphicsLayerConfig {
     #[serde(default)]
     pub dxvk_enabled: bool,
@@ -109,7 +109,7 @@ impl Default for GraphicsLayerConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct UserAppConfig {
     pub launch_options: String,                 // e.g. "-novid -console"
     pub env_variables: HashMap<String, String>, // e.g. {"MANGOHUD": "1"}
@@ -209,6 +209,9 @@ pub struct LibraryGame {
     /// pipeline. Defaults to `false`.
     #[serde(default)]
     pub from_windows_steam: bool,
+    /// Installed bytes (`SizeOnDisk`); `None` when not installed.
+    #[serde(default)]
+    pub size_on_disk: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

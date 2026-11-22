@@ -17,6 +17,7 @@ fn licence_game(is_owned: bool, is_family_shared: bool) -> LibraryGame {
         online_required: None,
         platform: None,
         from_windows_steam: false,
+        size_on_disk: None,
     }
 }
 

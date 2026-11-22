@@ -298,6 +298,7 @@ pub(crate) fn absolutize_path_args(command: &mut Command) {
         } => {
             proton(&mut args.proton);
             opt_path(&mut args.launch_script);
+            opt_path(&mut args.prefix);
         }
         Command::Config {
             command: ConfigCommand::SteamRuntimeRunner { runner },

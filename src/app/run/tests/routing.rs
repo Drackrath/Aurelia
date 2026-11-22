@@ -96,4 +96,16 @@ fn relative_path_args_resolve_against_cwd() {
     assert_eq!(runner_of("wine/bin"), Some(expected));
     assert_eq!(runner_of("GE-Proton9-20").as_deref(), Some("GE-Proton9-20"));
     assert_eq!(runner_of("").as_deref(), Some(""));
+
+    // Game prefix resolves before forwarding.
+    let mut cli =
+        Cli::try_parse_from(["aurelia", "config", "game", "570", "--prefix", "rel"]).unwrap();
+    absolutize_path_args(&mut cli.command);
+    let Command::Config {
+        command: ConfigCommand::Game { args },
+    } = cli.command
+    else {
+        panic!("expected config game");
+    };
+    assert_eq!(args.prefix, Some(cwd.join("rel")));
 }

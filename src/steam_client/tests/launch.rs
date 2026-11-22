@@ -35,6 +35,7 @@ fn select_launch_entry_prefers_installed_platform() {
         online_required: None,
         platform: Some("linux".to_string()),
         from_windows_steam: false,
+        size_on_disk: None,
     };
 
     // Installed platform wins over declared order and stale files.
@@ -130,6 +131,7 @@ fn launch_option_must_be_installed() {
         online_required: None,
         platform: Some("windows".to_string()),
         from_windows_steam: false,
+        size_on_disk: None,
     };
 
     let installed = launch_option("0", "game.exe", LaunchTarget::WindowsProton);
@@ -224,6 +226,7 @@ fn select_launch_entry_matches_executable_case_insensitively() {
         online_required: None,
         platform: Some("linux".to_string()),
         from_windows_steam: false,
+        size_on_disk: None,
     };
 
     // Proton request finds the lowercase exe.
@@ -282,6 +285,7 @@ fn launch_targets_lists_installed_builds_and_steam_modes() {
         online_required: None,
         platform: Some("linux".to_string()),
         from_windows_steam: false,
+        size_on_disk: None,
     };
 
     let ids = |targets: &[LaunchTargetChoice]| targets.iter().map(|t| t.id).collect::<Vec<_>>();

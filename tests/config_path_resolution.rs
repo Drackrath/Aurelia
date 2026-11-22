@@ -48,6 +48,7 @@ async fn test_batman_path_resolution() {
         online_required: None,
         platform: None,
         from_windows_steam: false,
+        size_on_disk: None,
     };
 
     let launch_info = LaunchInfo {

@@ -159,6 +159,7 @@ async fn test_preflight_native_game_self_heals_exec_bit() {
         online_required: None,
         platform: None,
         from_windows_steam: false,
+        size_on_disk: None,
     });
     ctx.launch_info = Some(LaunchInfo {
         app_id: 123,
@@ -214,6 +215,7 @@ async fn test_preflight_native_ignores_path_like_argument() {
         online_required: None,
         platform: None,
         from_windows_steam: false,
+        size_on_disk: None,
     });
     ctx.launch_info = Some(LaunchInfo {
         app_id: 123,

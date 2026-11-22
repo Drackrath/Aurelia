@@ -24,6 +24,7 @@ async fn native_runner_leaves_launch_options_to_their_stage() {
             online_required: None,
             platform: None,
             from_windows_steam: false,
+            size_on_disk: None,
         },
         launch_info: LaunchInfo {
             app_id: 123,

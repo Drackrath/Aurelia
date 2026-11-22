@@ -526,7 +526,9 @@ impl SteamClient {
             );
             // Only record a per-game (compatdata) prefix — sweeping the shared
             // master prefix on stop would also kill the Steam client inside it.
-            pfx.to_string_lossy().contains("compatdata").then_some(pfx)
+            let own = launcher_config.prefix_dir(app.app_id).is_some()
+                || pfx.to_string_lossy().contains("compatdata");
+            own.then_some(pfx)
         };
         let record = crate::compat::running::RunningGame::new(
             app.app_id,

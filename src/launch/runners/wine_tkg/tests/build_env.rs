@@ -23,6 +23,7 @@ fn mock_context() -> LaunchContext {
             online_required: None,
             platform: None,
             from_windows_steam: false,
+            size_on_disk: None,
         },
         launch_info: LaunchInfo {
             app_id: 123,
@@ -100,6 +101,7 @@ async fn test_wine_tkg_runner_graphics_policy_autodetect() {
         online_required: None,
         platform: None,
         from_windows_steam: false,
+        size_on_disk: None,
     };
 
     let mut config = LauncherConfig::default();

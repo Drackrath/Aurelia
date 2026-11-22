@@ -653,6 +653,12 @@ Options:
           - on:   Sync around `play`
           - off:  Never sync around `play`
 
+      --prefix <DIR>
+          Use DIR instead of Steam's compatdata folder for this game (`STEAM_COMPAT_DATA_PATH`; the Wine prefix is `DIR/pfx`). Launches and `cloud sync` both use it
+
+      --no-prefix
+          Go back to Steam's compatdata folder
+
   -j, --json
           Emit output (and errors) as JSON. Works with every command
 

@@ -87,3 +87,10 @@ fn rewrite_branch_replaces_or_adds_betakey() {
     assert_eq!(parse_app_manifest(&out).active_branch, "beta");
     assert_eq!(out.matches("BetaKey").count(), 1);
 }
+
+#[test]
+fn reads_size_on_disk() {
+    let m = parse_app_manifest("\"AppState\"\n{\n\t\"SizeOnDisk\"\t\t\"1073741824\"\n}");
+    assert_eq!(m.size_on_disk, 1_073_741_824);
+    assert_eq!(parse_app_manifest("\"AppState\"\n{\n}").size_on_disk, 0);
+}
