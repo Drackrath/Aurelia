@@ -54,6 +54,50 @@ pub(crate) fn cdn_pool(
         .collect())
 }
 
+/// One pool attempt's failure.
+#[derive(Debug)]
+pub(crate) enum PoolError {
+    /// Try the next pool.
+    Next(anyhow::Error),
+    /// Give up now.
+    Stop(anyhow::Error),
+}
+
+/// Hosts split into fallback pools.
+pub(crate) fn host_pools(hosts: &[ContentHost]) -> std::slice::Chunks<'_, ContentHost> {
+    hosts.chunks(super::install::HOST_POOL_SIZE)
+}
+
+/// Failures across pool attempts.
+#[derive(Debug, Default)]
+pub(crate) struct PoolRun {
+    last: Option<anyhow::Error>,
+}
+
+impl PoolRun {
+    /// `Some` ends the pool loop.
+    pub(crate) fn step<T>(
+        &mut self,
+        outcome: std::result::Result<T, PoolError>,
+    ) -> Option<Result<T>> {
+        match outcome {
+            Ok(value) => Some(Ok(value)),
+            Err(PoolError::Stop(e)) => Some(Err(e)),
+            Err(PoolError::Next(e)) => {
+                tracing::warn!("Content server pool failed, trying next: {e:#}");
+                self.last = Some(e);
+                None
+            }
+        }
+    }
+
+    /// Error once every pool failed.
+    pub(crate) fn exhausted(self) -> anyhow::Error {
+        self.last
+            .unwrap_or_else(|| anyhow!("Steam offered no usable content servers"))
+    }
+}
+
 impl SteamClient {
     /// Pool with per-host auth tokens.
     pub(crate) async fn cdn_servers(
@@ -88,23 +132,6 @@ impl SteamClient {
                 None
             }
         }
-    }
-
-    /// CDN client over live content servers.
-    pub(crate) async fn browser_cdn_client(
-        &self,
-        app_id: u32,
-        depot_id: u32,
-    ) -> Result<steam_cdn::CDNClient> {
-        let connection = self.require_connection()?;
-        let cell_id = connection.cell_id();
-        let hosts = self.get_content_servers(cell_id).await?;
-        let pool = &hosts[..hosts.len().min(super::install::HOST_POOL_SIZE)];
-        let servers = self.cdn_servers(app_id, depot_id, pool, cell_id).await?;
-        Ok(steam_cdn::CDNClient::with_servers(
-            Arc::new(connection.clone()),
-            servers,
-        ))
     }
 
     pub(crate) async fn get_content_servers(&self, cell_id: u32) -> Result<Vec<ContentHost>> {

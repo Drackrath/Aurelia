@@ -99,3 +99,13 @@ fn place_keeps_existing_without_force() {
     place(&part, &dest, check(&ABC_SHA1.to_uppercase(), true)).unwrap();
     assert_eq!(std::fs::read(&dest).unwrap(), b"abc");
 }
+
+#[test]
+fn checksum_mismatch_is_typed() {
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("f");
+    let part = part_path(&dest);
+    std::fs::write(&part, b"abd").unwrap();
+    let err = place(&part, &dest, check(ABC_SHA1, true)).unwrap_err();
+    assert!(err.downcast_ref::<ChecksumMismatch>().is_some());
+}

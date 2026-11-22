@@ -3,6 +3,7 @@ use super::*;
 use crate::library::depot_browser::{
     self as browser, DepotFileDownload, DownloadedFile, ManifestRef, RawEntry,
 };
+use content::{PoolError, PoolRun, host_pools};
 
 /// Everything a manifest fetch needs.
 struct ManifestAccess {
@@ -76,26 +77,63 @@ impl SteamClient {
         })
     }
 
+    /// Live content hosts for pooling.
+    async fn browser_hosts(&self) -> Result<Vec<ContentHost>> {
+        let cell_id = self.require_connection()?.cell_id();
+        self.get_content_servers(cell_id).await
+    }
+
+    /// CDN client over one pool.
+    async fn pool_client(
+        &self,
+        access: &ManifestAccess,
+        depot_id: u32,
+        pool: &[ContentHost],
+    ) -> Result<steam_cdn::CDNClient> {
+        let connection = self.require_connection()?;
+        let servers = self
+            .cdn_servers(access.app_id, depot_id, pool, connection.cell_id())
+            .await?;
+        Ok(steam_cdn::CDNClient::with_servers(
+            Arc::new(connection.clone()),
+            servers,
+        ))
+    }
+
     /// Rows for an access, sorted.
     async fn manifest_rows(
         &self,
         depot_id: u32,
         access: &ManifestAccess,
     ) -> Result<Vec<ManifestFileEntry>> {
-        let cdn = self.browser_cdn_client(access.app_id, depot_id).await?;
-        let listing = cdn
-            .get_manifest(
-                access.app_id,
-                depot_id,
-                access.manifest_id,
-                access.code,
-                Some(access.key),
-            )
-            .await
-            .map_err(|e| anyhow!("failed to get manifest: {e}"))?;
-        Ok(browser::entries(
-            listing.files().iter().map(|f| raw_entry!(f)),
-        ))
+        let hosts = self.browser_hosts().await?;
+        let mut run = PoolRun::default();
+        for pool in host_pools(&hosts) {
+            let outcome: std::result::Result<_, PoolError> = async {
+                let cdn = self
+                    .pool_client(access, depot_id, pool)
+                    .await
+                    .map_err(PoolError::Next)?;
+                let listing = cdn
+                    .get_manifest(
+                        access.app_id,
+                        depot_id,
+                        access.manifest_id,
+                        access.code,
+                        Some(access.key),
+                    )
+                    .await
+                    .map_err(|e| PoolError::Next(anyhow!("failed to get manifest: {e}")))?;
+                Ok(browser::entries(
+                    listing.files().iter().map(|f| raw_entry!(f)),
+                ))
+            }
+            .await;
+            if let Some(done) = run.step(outcome) {
+                return done;
+            }
+        }
+        Err(run.exhausted())
     }
 
     /// Entry rows of one depot manifest.
@@ -130,51 +168,72 @@ impl SteamClient {
         let access = self
             .manifest_access(request.app_id, depot_id, &request.manifest)
             .await?;
-        let cdn = self.browser_cdn_client(access.app_id, depot_id).await?;
-        let listing = cdn
-            .get_manifest(
-                access.app_id,
-                depot_id,
-                access.manifest_id,
-                access.code,
-                Some(access.key),
-            )
-            .await
-            .map_err(|e| anyhow!("failed to get manifest: {e}"))?;
         let wanted = browser::normalize_request(&request.path);
-        let file = listing
-            .files()
-            .iter()
-            .find(|f| f.full_path() == wanted)
-            .ok_or_else(|| {
-                anyhow!("{wanted} is not in this manifest (paths are case-sensitive)")
-            })?;
-        let raw = raw_entry!(file);
-        browser::ensure_file(&wanted, browser::entry_kind(raw.flags, &raw.link_target))?;
+        let hosts = self.browser_hosts().await?;
+        let mut run = PoolRun::default();
+        for pool in host_pools(&hosts) {
+            let outcome: std::result::Result<u64, PoolError> = async {
+                let cdn = self
+                    .pool_client(&access, depot_id, pool)
+                    .await
+                    .map_err(PoolError::Next)?;
+                let listing = cdn
+                    .get_manifest(
+                        access.app_id,
+                        depot_id,
+                        access.manifest_id,
+                        access.code,
+                        Some(access.key),
+                    )
+                    .await
+                    .map_err(|e| PoolError::Next(anyhow!("failed to get manifest: {e}")))?;
+                let file = listing
+                    .files()
+                    .iter()
+                    .find(|f| f.full_path() == wanted)
+                    .ok_or_else(|| {
+                        PoolError::Stop(anyhow!(
+                            "{wanted} is not in this manifest (paths are case-sensitive)"
+                        ))
+                    })?;
+                let raw = raw_entry!(file);
+                let kind = browser::entry_kind(raw.flags, &raw.link_target);
+                browser::ensure_file(&wanted, kind).map_err(PoolError::Stop)?;
 
-        browser::check_dest(&dest, request.force)?;
-        let part = browser::create_part(&dest)?;
-        if let Err(e) = file
-            .download(access.key, &part, false, None, None, None)
-            .await
-        {
-            let _ = std::fs::remove_file(&part);
-            bail!("failed to download {wanted}: {e}");
+                browser::check_dest(&dest, request.force).map_err(PoolError::Stop)?;
+                let part = browser::create_part(&dest).map_err(PoolError::Stop)?;
+                if let Err(e) = file
+                    .download(access.key, &part, false, None, None, None)
+                    .await
+                {
+                    let _ = std::fs::remove_file(&part);
+                    return Err(PoolError::Next(anyhow!("failed to download {wanted}: {e}")));
+                }
+                let sha1 = hex::encode(&raw.sha_content);
+                let check = browser::PlaceCheck {
+                    sha1: &sha1,
+                    size: raw.size,
+                    force: request.force,
+                };
+                browser::place(&part, &dest, check).map_err(|e| {
+                    // Corrupt data: another pool.
+                    if e.downcast_ref::<browser::ChecksumMismatch>().is_some() {
+                        PoolError::Next(e)
+                    } else {
+                        PoolError::Stop(e)
+                    }
+                })?;
+                Ok(raw.size)
+            }
+            .await;
+            if let Some(done) = run.step(outcome) {
+                return Ok(DownloadedFile {
+                    manifest_id: access.manifest_id,
+                    path: dest,
+                    size: done?,
+                });
+            }
         }
-        let sha1 = hex::encode(&raw.sha_content);
-        browser::place(
-            &part,
-            &dest,
-            browser::PlaceCheck {
-                sha1: &sha1,
-                size: raw.size,
-                force: request.force,
-            },
-        )?;
-        Ok(DownloadedFile {
-            manifest_id: access.manifest_id,
-            path: dest,
-            size: raw.size,
-        })
+        Err(run.exhausted())
     }
 }

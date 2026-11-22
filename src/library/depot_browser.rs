@@ -315,6 +315,28 @@ pub struct PlaceCheck<'a> {
     pub force: bool,
 }
 
+/// Downloaded content fails its SHA-1.
+#[derive(Debug)]
+pub struct ChecksumMismatch {
+    pub path: PathBuf,
+    pub expected: String,
+    pub actual: String,
+}
+
+impl std::fmt::Display for ChecksumMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} failed its checksum (expected SHA-1 {}, got {})",
+            self.path.display(),
+            self.expected,
+            self.actual
+        )
+    }
+}
+
+impl std::error::Error for ChecksumMismatch {}
+
 /// Verify, then move; failure removes `part`.
 pub fn place(part: &Path, dest: &Path, check: PlaceCheck<'_>) -> Result<()> {
     let result = verify_and_move(part, dest, check);
@@ -328,11 +350,12 @@ fn verify_and_move(part: &Path, dest: &Path, check: PlaceCheck<'_>) -> Result<()
     if !check.sha1.is_empty() && check.size > 0 {
         let actual = sha1_file(part)?;
         if !actual.eq_ignore_ascii_case(check.sha1) {
-            bail!(
-                "{} failed its checksum (expected SHA-1 {}, got {actual})",
-                dest.display(),
-                check.sha1
-            );
+            return Err(ChecksumMismatch {
+                path: dest.to_path_buf(),
+                expected: check.sha1.to_string(),
+                actual,
+            }
+            .into());
         }
     }
     if check.force {
