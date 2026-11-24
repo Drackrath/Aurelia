@@ -208,16 +208,7 @@ fn apply_master_steam_env(
     // desktops place the cookie under $XDG_RUNTIME_DIR, not ~/.Xauthority): without it
     // Wine's winex11 driver can't authenticate to the X server and Steam runs
     // *invisibly* even though DISPLAY is set — so `steam-runtime login` shows no window.
-    for var in [
-        "DISPLAY",
-        "WAYLAND_DISPLAY",
-        "XDG_RUNTIME_DIR",
-        "XAUTHORITY",
-    ] {
-        if let Ok(value) = std::env::var(var) {
-            cmd.env(var, value);
-        }
-    }
+    crate::core::session_env::current().apply(cmd);
     Ok(())
 }
 

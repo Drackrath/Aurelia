@@ -208,6 +208,7 @@ where
         argv,
         config_dir: super::own_config_dir(),
         cwd: std::env::current_dir().ok(),
+        session_env: Some(aurelia::core::session_env::SessionEnv::capture()),
     })?;
     proto::send_frame(&writer, proto::C_HEADER, &header)
         .await

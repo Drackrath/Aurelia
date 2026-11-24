@@ -475,15 +475,12 @@ fn expose_steam_client(
 }
 
 /// Forward display and X auth variables.
-fn insert_display_env(env: &mut HashMap<String, String>) {
-    if let Ok(display) = std::env::var("DISPLAY") {
-        env.insert("DISPLAY".to_string(), display);
-    }
-    if let Ok(wayland) = std::env::var("WAYLAND_DISPLAY") {
-        env.insert("WAYLAND_DISPLAY".to_string(), wayland);
-    }
-    if let Ok(xdg_runtime) = std::env::var("XDG_RUNTIME_DIR") {
-        env.insert("XDG_RUNTIME_DIR".to_string(), xdg_runtime);
+pub(super) fn insert_display_env(env: &mut HashMap<String, String>) {
+    let session = crate::core::session_env::current();
+    for key in ["DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR"] {
+        if let Some(value) = session.get(key) {
+            env.insert(key.to_string(), value.to_string());
+        }
     }
     // X11 servers that use cookie authentication reject Wine's winex11 driver
     // unless XAUTHORITY is forwarded. Modern desktops (GDM/systemd/Xwayland)
@@ -491,8 +488,8 @@ fn insert_display_env(env: &mut HashMap<String, String>) {
     // Wine can't find it implicitly — without this the game fails to create a
     // window ("nodrv_CreateWindow: no driver could be loaded") and runs
     // invisibly even though DISPLAY is set.
-    if let Ok(xauthority) = std::env::var("XAUTHORITY") {
-        env.insert("XAUTHORITY".to_string(), xauthority);
+    if let Some(xauthority) = session.get("XAUTHORITY") {
+        env.insert("XAUTHORITY".to_string(), xauthority.to_string());
     }
 }
 

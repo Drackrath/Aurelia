@@ -275,6 +275,7 @@ pub fn start_steam_detached(args: &[&str]) -> Result<()> {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
+    crate::core::session_env::current().apply(&mut cmd);
     // Own session; outlives the game.
     {
         use std::os::unix::process::CommandExt;

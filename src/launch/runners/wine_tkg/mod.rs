@@ -227,6 +227,7 @@ impl Runner for WineTkgRunner {
         if let Some(cwd) = &spec.cwd {
             cmd.current_dir(cwd);
         }
+        crate::core::session_env::current().apply(&mut cmd);
         for (key, val) in &spec.env {
             cmd.env(key, val);
         }

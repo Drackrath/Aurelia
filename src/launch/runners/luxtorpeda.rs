@@ -64,11 +64,7 @@ impl Runner for LuxtorpedaRunner {
         crate::launch::runners::insert_fake_steam_trap(&mut env)?;
 
         // Pass through display/session so the engine picker and game can open a window.
-        for var in ["DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR"] {
-            if let Ok(val) = std::env::var(var) {
-                env.insert(var.to_string(), val);
-            }
-        }
+        crate::core::session_env::current().insert_into(&mut env);
 
         // User-supplied per-game environment overrides win.
         if let Some(config) = &ctx.user_config {
@@ -115,6 +111,7 @@ impl Runner for LuxtorpedaRunner {
         if let Some(cwd) = &spec.cwd {
             cmd.current_dir(cwd);
         }
+        crate::core::session_env::current().apply(&mut cmd);
         cmd.envs(&spec.env);
         cmd.stdout(crate::logging::relay::child_stdio());
         cmd.stderr(crate::logging::relay::child_stdio());

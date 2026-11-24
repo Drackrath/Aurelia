@@ -401,10 +401,15 @@ where
     let ctx = OutputCtx::new(out_tx, in_rx, header.cwd);
     let refused = refusal.is_some();
     let run_argv = argv.clone();
+    let session_env = header.session_env;
     let run = async move {
-        match refusal {
-            Some(msg) => report_refusal(&run_argv, &msg),
-            None => crate::app::run::run_argv(run_argv).await,
+        match (refusal, session_env) {
+            (Some(msg), _) => report_refusal(&run_argv, &msg),
+            // Children use the client's display.
+            (None, Some(env)) => {
+                aurelia::core::session_env::scoped(env, crate::app::run::run_argv(run_argv)).await
+            }
+            (None, None) => crate::app::run::run_argv(run_argv).await,
         }
     };
     let command = crate::app::output::scoped(ctx, aurelia::logging::relay::scoped(relay, run));

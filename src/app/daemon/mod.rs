@@ -42,6 +42,9 @@ struct Header {
     /// Client's working directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cwd: Option<std::path::PathBuf>,
+    /// Client's display session env.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session_env: Option<aurelia::core::session_env::SessionEnv>,
 }
 
 /// This process's canonical config dir.

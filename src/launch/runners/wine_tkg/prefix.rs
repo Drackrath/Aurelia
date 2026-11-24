@@ -304,6 +304,7 @@ async fn start_background_steam(
         v.steam_auto_start_attempted = true;
     });
 
+    crate::core::session_env::current().apply(&mut steam_cmd);
     let start_time = std::time::Instant::now();
     let mut steam_process = steam_cmd.spawn().map_err(|e| {
         LaunchError::new(LaunchErrorKind::Process, "Failed to spawn background Steam")

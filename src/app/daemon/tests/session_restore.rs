@@ -49,11 +49,17 @@ fn header_round_trips_with_and_without_config_dir() {
     assert_eq!(old.argv, ["aurelia", "list"]);
     assert!(old.config_dir.is_none());
     assert!(old.cwd.is_none());
+    assert!(old.session_env.is_none());
 
+    let env = aurelia::core::session_env::SessionEnv::from_pairs([
+        ("DISPLAY", ":6"),
+        ("WAYLAND_DISPLAY", "wayland-4"),
+    ]);
     let h = Header {
         argv: vec!["aurelia".into()],
         config_dir: Some("/tmp/iso".into()),
         cwd: Some("/home/u/shots".into()),
+        session_env: Some(env.clone()),
     };
     let back: Header = serde_json::from_slice(&serde_json::to_vec(&h).unwrap()).unwrap();
     assert_eq!(
@@ -64,6 +70,7 @@ fn header_round_trips_with_and_without_config_dir() {
         back.cwd.as_deref(),
         Some(std::path::Path::new("/home/u/shots"))
     );
+    assert_eq!(back.session_env, Some(env));
 }
 
 #[test]

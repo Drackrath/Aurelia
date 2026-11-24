@@ -13,6 +13,7 @@ pub mod paths;
 pub mod runner;
 pub mod secret;
 pub mod session_crypto;
+pub mod session_env;
 pub mod steam_host;
 pub mod sysinfo;
 pub mod time;

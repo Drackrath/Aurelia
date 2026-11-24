@@ -98,6 +98,7 @@ impl Runner for NativeRunner {
             if let Some(cwd) = &spec.cwd {
                 cmd.current_dir(cwd);
             }
+            crate::core::session_env::current().apply(&mut cmd);
             cmd.envs(&spec.env);
             match session_log_file(spec, "AURELIA_STDOUT_LOG") {
                 Some(file) => {
