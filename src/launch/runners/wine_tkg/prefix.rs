@@ -71,6 +71,8 @@ async fn prepare_steam_runtime(
     runtime_source: &'static str,
     effective_game_prefix: &Path,
 ) -> std::result::Result<(), LaunchError> {
+    ensure_game_and_steam_share_wine(ctx, library_root)?;
+
     let steam_cfg = crate::core::steam_host::get_master_steam_config();
     tracing::info!("Unified Master Steam resolution (Game Launch):");
     tracing::info!("  - Root Dir: {}", steam_cfg.root_dir.display());
@@ -452,6 +454,92 @@ async fn wait_for_steam_ready(
         v.steam_runtime_milestone = "steam_ready_timeout".to_string();
     });
     true
+}
+
+/// Refuse a launch whose game runner and in-Wine Steam would use different Wine
+/// builds. The game has to reach `steam.exe` through the same wineserver, and a
+/// wineserver only talks to its own Wine version: a mismatch makes the game die at
+/// startup with `wine client error: version mismatch`.
+///
+/// Only checked when `steam_runtime_runner` is configured; otherwise background
+/// Steam is derived from the game runner and matches by construction.
+fn ensure_game_and_steam_share_wine(
+    ctx: &LaunchContext,
+    library_root: &Path,
+) -> std::result::Result<(), LaunchError> {
+    let configured = &ctx.launcher_config.steam_runtime_runner;
+    if configured.as_os_str().is_empty() {
+        return Ok(());
+    }
+    let steam_runner = configured.to_string_lossy();
+    // Unresolvable runners are reported by the code that actually spawns them.
+    let Ok(steam_wine) =
+        crate::core::runner::resolve_steam_runtime_wine(&steam_runner, library_root)
+    else {
+        return Ok(());
+    };
+    let Ok(game_runner) = resolve_proton_required(ctx) else {
+        return Ok(());
+    };
+    let Some(game_wine) = game_runner_bare_wine(game_runner, library_root) else {
+        return Ok(());
+    };
+    check_same_wine(
+        &game_wine,
+        &steam_wine,
+        game_runner,
+        &steam_runner,
+        ctx.app.app_id,
+    )
+}
+
+/// The bare wine binary behind the game runner `name`, if it has one.
+fn game_runner_bare_wine(name: &str, library_root: &Path) -> Option<PathBuf> {
+    use crate::core::runner::RunnerKind;
+    let runner = crate::core::runner::resolve_runner(name, library_root);
+    match crate::core::runner::classify_runner(&runner) {
+        RunnerKind::Proton => crate::core::runner::proton_bundled_bare_wine(&runner),
+        RunnerKind::WineTkg | RunnerKind::PlainWine => {
+            if runner.is_file() {
+                return Some(runner);
+            }
+            let root = crate::core::runner::derive_runner_root(&runner);
+            ["bin/wine64", "bin/wine"]
+                .iter()
+                .map(|rel| root.join(rel))
+                .find(|p| p.exists())
+        }
+        RunnerKind::Unknown => None,
+    }
+}
+
+/// Compare two wine binaries by their resolved location (so `GE-Proton-latest`
+/// matches the build it links to).
+pub(super) fn check_same_wine(
+    game_wine: &Path,
+    steam_wine: &Path,
+    game_runner: &str,
+    steam_runner: &str,
+    app_id: u32,
+) -> std::result::Result<(), LaunchError> {
+    let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    if canon(game_wine) == canon(steam_wine) {
+        return Ok(());
+    }
+    Err(LaunchError::new(
+        LaunchErrorKind::Runner,
+        format!(
+            "this game runs on '{game_runner}' but Steam inside Wine runs on '{steam_runner}'. \
+             The game connects to that Steam through one shared Wine server, which only works \
+             when both use the same Wine build (otherwise the game fails with \
+             'version mismatch'). Use the same build for both:\n  \
+             aurelia config steam-runtime-runner {game_runner}\n  \
+             or: aurelia config game {app_id} --proton {steam_runner}\n\
+             Or run this game without Steam inside Wine: aurelia config game {app_id} --steam-runtime off"
+        ),
+    )
+    .with_context("game_wine", game_wine.to_string_lossy())
+    .with_context("steam_wine", steam_wine.to_string_lossy()))
 }
 
 /// Resolve the command used to host the background Steam client under a BARE wine.
