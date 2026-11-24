@@ -343,6 +343,29 @@ impl SteamClient {
             None => launch_options,
         };
 
+        let prefer_windows_target = force_windows || proton_path.is_some();
+        let launch_info = select_launch_entry(
+            &launch_options,
+            app,
+            prefer_windows_target,
+            prefer_native_target,
+        )
+        .ok_or_else(|| anyhow!("no launch options"))?;
+
+        let launcher_config = load_launcher_config().await?;
+
+        // A Proton launch served by the in-Wine Steam runtime needs no host client
+        // (which also can't start without X, e.g. in a Wayland-only session).
+        #[cfg(target_os = "linux")]
+        let needs_host_steam = !(launch_info.target == LaunchTarget::WindowsProton
+            && !force_windows
+            && crate::launch::runners::wine_tkg::steam_mode::resolve_steam_mode_for(
+                user_config,
+                &launcher_config,
+                steam_enabled,
+            )
+            .0 == crate::launch::runners::wine_tkg::steam_mode::SteamMode::InWineRuntime);
+
         // With Steam integration the game talks to the host Steam client; make sure
         // one is running (start it silently if not) so Steamworks/Family-Sharing can
         // initialise. Best-effort.
@@ -351,7 +374,7 @@ impl SteamClient {
             SteamClient::ensure_host_steam_ready(std::time::Duration::from_secs(30)).await;
         }
         #[cfg(target_os = "linux")]
-        if steam_enabled {
+        if steam_enabled && needs_host_steam {
             crate::core::steam_host::require_x11_for_host_steam(
                 &crate::core::session_env::current(),
             )?;
@@ -367,17 +390,6 @@ impl SteamClient {
                 );
             }
         }
-
-        let prefer_windows_target = force_windows || proton_path.is_some();
-        let launch_info = select_launch_entry(
-            &launch_options,
-            app,
-            prefer_windows_target,
-            prefer_native_target,
-        )
-        .ok_or_else(|| anyhow!("no launch options"))?;
-
-        let launcher_config = load_launcher_config().await?;
 
         // Proton/Wine only exists on Linux. On Windows, a Windows game runs natively, so
         // run its executable directly instead of routing through the Proton pipeline.
