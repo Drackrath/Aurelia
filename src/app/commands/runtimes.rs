@@ -34,7 +34,8 @@ pub(crate) async fn cmd_proton_list(installed_only: bool, json: bool) -> Result<
         cli_println!("Installed runtimes:");
         for i in &installed {
             let star = if i.name == default { "  * default" } else { "" };
-            cli_println!("  {:<28} ({}){star}", i.name, i.location);
+            let wayland = if i.wine_wayland { ", wayland" } else { "" };
+            cli_println!("  {:<28} ({}{wayland}){star}", i.name, i.location);
         }
         return Ok(());
     }

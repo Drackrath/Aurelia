@@ -598,6 +598,10 @@ async fn run(mut cli: Cli) -> Result<()> {
                 clear,
             } => cmd_config_proxy(url, no_proxy, clear, json).await,
             ConfigCommand::Game { args } => cmd_config_game(args, json).await,
+            ConfigCommand::Display { target, clear } => {
+                cmd_config_display(target, clear, json).await
+            }
+            ConfigCommand::WaylandNative { mode } => cmd_config_wayland_native(mode, json).await,
             ConfigCommand::ClearGames { yes } => cmd_config_clear_games(yes, json).await,
         },
         Command::Cloud { command } => match command {

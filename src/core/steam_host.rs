@@ -179,6 +179,28 @@ pub fn ensure_steam_running() {
     }
 }
 
+/// Host Steam needs X11 to start.
+#[cfg(target_os = "linux")]
+pub fn require_x11_for_host_steam(session: &crate::core::session_env::SessionEnv) -> Result<()> {
+    if is_steam_running() {
+        return Ok(());
+    }
+    check_x11_for_host_steam(session)
+}
+
+/// Testable core of the X11 check.
+pub fn check_x11_for_host_steam(session: &crate::core::session_env::SessionEnv) -> Result<()> {
+    if session.has_x11() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "host Steam needs an X server (Xwayland or X11), but this session has none ({}). \
+         Start host Steam from a session with Xwayland, set `aurelia config display`, \
+         or launch without host Steam (`--steam-mode none`)",
+        session.describe()
+    )
+}
+
 /// Flatpak app id of Valve's Steam.
 pub const STEAM_FLATPAK_APP_ID: &str = "com.valvesoftware.Steam";
 

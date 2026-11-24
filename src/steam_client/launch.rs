@@ -352,6 +352,9 @@ impl SteamClient {
         }
         #[cfg(target_os = "linux")]
         if steam_enabled {
+            crate::core::steam_host::require_x11_for_host_steam(
+                &crate::core::session_env::current(),
+            )?;
             crate::core::steam_host::ensure_steam_running();
             // Avoid racing a cold client.
             let timeout = std::time::Duration::from_secs(30);

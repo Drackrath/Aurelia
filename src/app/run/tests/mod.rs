@@ -6,6 +6,7 @@ fn parse(args: &[&str]) -> Cli {
 }
 
 mod parse;
+mod parse_display;
 mod progress;
 mod routing;
 mod snapshots;

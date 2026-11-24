@@ -11,6 +11,7 @@ pub mod shaders;
 pub mod stages;
 pub mod summary;
 pub mod validators;
+pub mod wayland_native;
 
 use crate::core::config::{LauncherConfig, config_dir};
 use crate::core::steam_host::MasterSteamConfig;

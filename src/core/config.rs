@@ -1,4 +1,5 @@
 use crate::core::models::{ExtraKeys, OwnedGame, SessionState, SteamPrefixMode, UserConfigStore};
+pub use crate::core::session_env::DisplayTarget;
 use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -59,6 +60,12 @@ pub struct GameConfig {
     /// Custom compatdata folder; prefix is `<dir>/pfx`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix_dir: Option<PathBuf>,
+    /// Per-game display session override.
+    #[serde(default, skip_serializing_if = "DisplayTarget::is_empty")]
+    pub display: DisplayTarget,
+    /// Overrides global `wayland_native`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wayland_native: Option<bool>,
     /// Unknown keys, kept on save.
     #[serde(flatten)]
     pub extra: ExtraKeys,
@@ -200,6 +207,12 @@ pub struct LauncherConfig {
     /// Global download limit in kbit/s; 0 is unlimited.
     #[serde(default)]
     pub download_limit_kbit: u64,
+    /// Default display session for launches.
+    #[serde(default, skip_serializing_if = "DisplayTarget::is_empty")]
+    pub display: DisplayTarget,
+    /// Run Wine/SDL games natively on Wayland.
+    #[serde(default)]
+    pub wayland_native: bool,
     /// Unknown keys, kept on save.
     #[serde(flatten)]
     pub extra: ExtraKeys,
@@ -231,6 +244,22 @@ impl LauncherConfig {
         self.game_configs
             .get(&app_id)
             .and_then(|g| g.prefix_dir.as_deref())
+    }
+
+    /// Per-game, else global Wayland opt-in.
+    pub fn wayland_native(&self, app_id: u32) -> bool {
+        self.game_configs
+            .get(&app_id)
+            .and_then(|g| g.wayland_native)
+            .unwrap_or(self.wayland_native)
+    }
+
+    /// Per-game display override, if any.
+    pub fn game_display(&self, app_id: u32) -> Option<&DisplayTarget> {
+        self.game_configs
+            .get(&app_id)
+            .map(|g| &g.display)
+            .filter(|d| !d.is_empty())
     }
 
     /// Download limit in bytes/s; 0 is unlimited.
@@ -286,6 +315,8 @@ impl Default for LauncherConfig {
             encrypt_session: false,
             persona_wait_secs: DEFAULT_PERSONA_WAIT_SECS,
             download_limit_kbit: 0,
+            display: DisplayTarget::default(),
+            wayland_native: false,
             extra: ExtraKeys::new(),
         }
     }

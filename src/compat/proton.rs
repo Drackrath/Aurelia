@@ -46,6 +46,8 @@ pub struct InstalledProton {
     /// `steam` (`steamapps/common`) or `custom` (`compatibilitytools.d`).
     pub location: &'static str,
     pub path: PathBuf,
+    /// Ships Wine's native Wayland driver.
+    pub wine_wayland: bool,
 }
 
 /// Curated set of official Valve Proton apps (name → Steam app id). These are free
@@ -231,6 +233,7 @@ pub fn list_installed_in(common: &Path, tools: Option<&Path>) -> Vec<InstalledPr
                 out.push(InstalledProton {
                     name,
                     location: "steam",
+                    wine_wayland: supports_wine_wayland(&path),
                     path,
                 });
             }
@@ -245,6 +248,7 @@ pub fn list_installed_in(common: &Path, tools: Option<&Path>) -> Vec<InstalledPr
                 out.push(InstalledProton {
                     name: entry.file_name().to_string_lossy().to_string(),
                     location: "custom",
+                    wine_wayland: supports_wine_wayland(&path),
                     path,
                 });
             }
@@ -267,6 +271,15 @@ pub fn list_installed_in(common: &Path, tools: Option<&Path>) -> Vec<InstalledPr
     });
     out.dedup_by(|a, b| a.name == b.name);
     out
+}
+
+/// Runner tree ships `winewayland.drv`.
+pub fn supports_wine_wayland(root: &Path) -> bool {
+    ["files/lib", "files/lib64", "lib", "lib64"]
+        .iter()
+        .filter_map(|lib| std::fs::read_dir(root.join(lib).join("wine")).ok())
+        .flat_map(|arches| arches.flatten())
+        .any(|arch| arch.path().join("winewayland.drv").is_file())
 }
 
 /// Tools dir entry looks runnable.

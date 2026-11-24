@@ -135,6 +135,25 @@ pub(crate) enum ConfigCommand {
         #[arg(short = 'c', long, conflicts_with_all = ["url", "no_proxy"])]
         clear: bool,
     },
+    /// View or set launch display session.
+    ///
+    /// Where games and host Steam open.
+    /// Empty value clears one field.
+    Display {
+        #[command(flatten)]
+        target: DisplayArgs,
+        /// Clear all display overrides.
+        #[arg(long, conflicts_with_all = ["tty", "display", "wayland_display",
+            "xauthority", "xdg_runtime_dir"])]
+        clear: bool,
+    },
+    /// View or set native Wayland launches.
+    ///
+    /// Needs GE-Proton 10+ or Proton-CachyOS.
+    WaylandNative {
+        /// `on` or `off`; omit to print.
+        mode: Option<OnOffArg>,
+    },
     /// View or set per-game launch settings (Proton version, platform).
     Game {
         #[command(flatten)]
@@ -146,6 +165,51 @@ pub(crate) enum ConfigCommand {
         #[arg(short = 'y', long)]
         yes: bool,
     },
+}
+
+/// Display session override flags.
+#[derive(clap::Args, Default)]
+pub(crate) struct DisplayArgs {
+    /// Session on this tty (`tty3`, `3`).
+    #[arg(long, value_name = "TTY")]
+    pub(crate) tty: Option<String>,
+    /// X11 `DISPLAY`, e.g. `:1`.
+    #[arg(long, value_name = "DISPLAY")]
+    pub(crate) display: Option<String>,
+    /// `WAYLAND_DISPLAY`, e.g. `wayland-1`.
+    #[arg(long, value_name = "NAME")]
+    pub(crate) wayland_display: Option<String>,
+    /// `XAUTHORITY` cookie file.
+    #[arg(long, value_name = "FILE")]
+    pub(crate) xauthority: Option<String>,
+    /// `XDG_RUNTIME_DIR`.
+    #[arg(long, value_name = "DIR")]
+    pub(crate) xdg_runtime_dir: Option<String>,
+}
+
+impl DisplayArgs {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.tty.is_none()
+            && self.display.is_none()
+            && self.wayland_display.is_none()
+            && self.xauthority.is_none()
+            && self.xdg_runtime_dir.is_none()
+    }
+
+    /// Merge into `target`; empty clears.
+    pub(crate) fn apply_to(self, target: &mut aurelia::core::config::DisplayTarget) {
+        let set = |field: &mut Option<String>, value: Option<String>| {
+            if let Some(v) = value {
+                let v = v.trim().to_string();
+                *field = (!v.is_empty()).then_some(v);
+            }
+        };
+        set(&mut target.tty, self.tty);
+        set(&mut target.display, self.display);
+        set(&mut target.wayland_display, self.wayland_display);
+        set(&mut target.xauthority, self.xauthority);
+        set(&mut target.xdg_runtime_dir, self.xdg_runtime_dir);
+    }
 }
 
 /// Grouped `config game` flags.
@@ -169,7 +233,8 @@ pub(crate) struct GameConfigArgs {
     #[arg(long, conflicts_with_all = ["proton", "clear_proton", "platform", "no_platform",
         "native_engine", "no_native_engine", "umu", "no_umu", "launch_script",
         "no_launch_script", "steam_runtime", "steam_prefix_mode", "launch_options",
-        "no_launch_options", "cloud_sync", "prefix", "no_prefix"])]
+        "no_launch_options", "cloud_sync", "prefix", "no_prefix", "tty", "display",
+        "wayland_display", "xauthority", "xdg_runtime_dir", "no_display", "wayland_native"])]
     pub(crate) clear: bool,
     /// Route this game through the luxtorpeda native-engine plugin (Linux only;
     /// requires `aurelia luxtorpeda enable`).
@@ -222,4 +287,14 @@ pub(crate) struct GameConfigArgs {
     /// Go back to Steam's compatdata folder.
     #[arg(long, conflicts_with = "prefix")]
     pub(crate) no_prefix: bool,
+    /// Per-game display session.
+    #[command(flatten)]
+    pub(crate) display_target: DisplayArgs,
+    /// Clear per-game display overrides.
+    #[arg(long, conflicts_with_all = ["tty", "display", "wayland_display",
+        "xauthority", "xdg_runtime_dir"])]
+    pub(crate) no_display: bool,
+    /// Per-game native Wayland.
+    #[arg(long, value_name = "auto|on|off")]
+    pub(crate) wayland_native: Option<WaylandNativeArg>,
 }

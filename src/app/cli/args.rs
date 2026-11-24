@@ -123,6 +123,28 @@ pub(crate) enum CloudSyncArg {
     Off,
 }
 
+/// Per-game `--wayland-native` choices.
+#[derive(Clone, Copy, ValueEnum)]
+pub(crate) enum WaylandNativeArg {
+    /// Follow `config wayland-native`.
+    Auto,
+    /// Use Wine/SDL Wayland drivers.
+    On,
+    /// Always use X11.
+    Off,
+}
+
+impl WaylandNativeArg {
+    /// Per-game override; `None` follows global.
+    pub(crate) fn as_override(self) -> Option<bool> {
+        match self {
+            WaylandNativeArg::Auto => None,
+            WaylandNativeArg::On => Some(true),
+            WaylandNativeArg::Off => Some(false),
+        }
+    }
+}
+
 impl CloudSyncArg {
     /// Per-game override; `None` follows global.
     pub(crate) fn as_override(self) -> Option<bool> {

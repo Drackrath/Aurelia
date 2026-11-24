@@ -382,6 +382,98 @@ pub(crate) async fn cmd_config_cloud_sync(mode: Option<OnOffArg>, json: bool) ->
     Ok(())
 }
 
+/// Print a display target.
+fn print_display_target(indent: &str, label: &str, t: &aurelia::core::config::DisplayTarget) {
+    if t.is_empty() {
+        cli_println!("{indent}{label}: (none — follows the launching session)");
+        return;
+    }
+    cli_println!("{indent}{label}:");
+    let rows = [
+        ("tty", &t.tty),
+        ("DISPLAY", &t.display),
+        ("WAYLAND_DISPLAY", &t.wayland_display),
+        ("XAUTHORITY", &t.xauthority),
+        ("XDG_RUNTIME_DIR", &t.xdg_runtime_dir),
+    ];
+    for (name, value) in rows {
+        if let Some(v) = value {
+            cli_println!("{indent}  {name:<16}: {v}");
+        }
+    }
+}
+
+/// `config display [--tty …] [--clear]`.
+pub(crate) async fn cmd_config_display(args: DisplayArgs, clear: bool, json: bool) -> Result<()> {
+    let mut config = load_launcher_config().await?;
+    let changed = clear || !args.is_empty();
+    if clear {
+        config.display = Default::default();
+    } else {
+        args.apply_to(&mut config.display);
+    }
+    // Fail early on a bad tty.
+    let effective = aurelia::core::session_env::resolve_for_launch(&config.display, None);
+    if changed {
+        if let Err(e) = &effective {
+            anyhow::bail!("not saved: {e:#}");
+        }
+        save_launcher_config(&config)
+            .await
+            .context("failed saving display config")?;
+    }
+    if json {
+        print_json(&serde_json::json!({
+            "display": config.display,
+            "effective": effective.as_ref().ok().map(|e| e.vars().clone()),
+            "error": effective.as_ref().err().map(|e| format!("{e:#}")),
+        }));
+        return Ok(());
+    }
+    print_display_target("", "Display override", &config.display);
+    match &effective {
+        Ok(env) => cli_println!("Launches use: {}", env.describe()),
+        Err(e) => cli_println!("⚠ {e:#}"),
+    }
+    if changed {
+        cli_println!("Saved. Applies to the next launch.");
+    }
+    Ok(())
+}
+
+/// `config wayland-native [on|off]`.
+pub(crate) async fn cmd_config_wayland_native(mode: Option<OnOffArg>, json: bool) -> Result<()> {
+    let (config, changed) = view_or_set(mode, |c, m| {
+        c.wayland_native = matches!(m, OnOffArg::On);
+    })
+    .await?;
+    let overrides: std::collections::BTreeMap<u32, bool> = config
+        .game_configs
+        .iter()
+        .filter_map(|(id, g)| g.wayland_native.map(|on| (*id, on)))
+        .collect();
+    if json {
+        print_json(&serde_json::json!({
+            "wayland_native": config.wayland_native,
+            "game_overrides": overrides,
+        }));
+        return Ok(());
+    }
+    let label = if config.wayland_native {
+        "on (Proton with winewayland and SDL games use Wayland directly)"
+    } else {
+        "off (games use X11 via Xwayland)"
+    };
+    cli_println!("Native Wayland: {label}");
+    for (id, on) in &overrides {
+        cli_println!("  App {id}: {} (per-game)", if *on { "on" } else { "off" });
+    }
+    if changed {
+        cli_println!("Saved. Applies to the next launch.");
+    }
+    Ok(())
+}
+
 /// `config anticheat-auto-install [on|off]`.
 pub(crate) async fn cmd_config_anticheat_auto_install(
     mode: Option<OnOffArg>,
@@ -655,6 +747,9 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
         cloud_sync,
         prefix,
         no_prefix,
+        display_target,
+        no_display,
+        wayland_native,
     } = args;
     let prefix = prefix.map(absolute_prefix_dir).transpose()?;
     if let Some(line) = &launch_options {
@@ -764,6 +859,14 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
         } else if let Some(dir) = prefix {
             entry.prefix_dir = Some(dir);
         }
+        if no_display {
+            entry.display = Default::default();
+        } else {
+            display_target.apply_to(&mut entry.display);
+        }
+        if let Some(mode) = wayland_native {
+            entry.wayland_native = mode.as_override();
+        }
     }
     let changed = settle_entry(&mut cfg.game_configs, app_id, before);
     if changed {
@@ -831,6 +934,9 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
             "cloud_sync_effective": cloud_sync_effective,
             "prefix_dir": entry.prefix_dir,
             "wine_prefix": wine_prefix,
+            "display": entry.display,
+            "wayland_native": entry.wayland_native,
+            "wayland_native_effective": cfg.wayland_native(app_id),
         }));
     } else {
         cli_println!("App {app_id}:");
@@ -878,6 +984,14 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
                 &ua.launch_options
             }
         );
+        let wayland_label = match entry.wayland_native {
+            Some(on) => on_off(on).to_string(),
+            None => format!("auto ({}, from global)", on_off(cfg.wayland_native)),
+        };
+        cli_println!("  Wayland      : {wayland_label}");
+        if !entry.display.is_empty() {
+            print_display_target("  ", "Display", &entry.display);
+        }
     }
     Ok(())
 }

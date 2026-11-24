@@ -456,6 +456,8 @@ Commands:
   cloud-sync                       Steam Cloud sync around `play`
   anticheat-auto-install           View or set whether `play` auto-installs a missing Proton anti-cheat runtime (EasyAntiCheat / BattlEye) for a game that ships one. `on` (default) downloads it before the Proton launch, like Steam; `off` never downloads (install manually with `aurelia proton anticheat`)
   proxy                            View or set the network proxy used for all HTTP(S) communication
+  display                          View or set launch display session
+  wayland-native                   View or set native Wayland launches
   game                             View or set per-game launch settings (Proton version, platform)
   clear-games                      Reset the per-game settings of ALL games to defaults (both stores)
   help                             Print this message or the help of the given subcommand(s)
@@ -534,6 +536,41 @@ Options:
   -j, --json        Emit output (and errors) as JSON. Works with every command
   -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
   -h, --help        Print help
+
+===== aurelia config display =====
+View or set launch display session.
+
+Where games and host Steam open. Empty value clears one field.
+
+Usage: aurelia config display [OPTIONS]
+
+Options:
+      --tty <TTY>
+          Session on this tty (`tty3`, `3`)
+
+      --display <DISPLAY>
+          X11 `DISPLAY`, e.g. `:1`
+
+      --wayland-display <NAME>
+          `WAYLAND_DISPLAY`, e.g. `wayland-1`
+
+      --xauthority <FILE>
+          `XAUTHORITY` cookie file
+
+      --xdg-runtime-dir <DIR>
+          `XDG_RUNTIME_DIR`
+
+      --clear
+          Clear all display overrides
+
+  -j, --json
+          Emit output (and errors) as JSON. Works with every command
+
+  -v, --verbose...
+          Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+
+  -h, --help
+          Print help (see a summary with '-h')
 
 ===== aurelia config download-limit =====
 View or set the global download limit.
@@ -658,6 +695,32 @@ Options:
 
       --no-prefix
           Go back to Steam's compatdata folder
+
+      --tty <TTY>
+          Session on this tty (`tty3`, `3`)
+
+      --display <DISPLAY>
+          X11 `DISPLAY`, e.g. `:1`
+
+      --wayland-display <NAME>
+          `WAYLAND_DISPLAY`, e.g. `wayland-1`
+
+      --xauthority <FILE>
+          `XAUTHORITY` cookie file
+
+      --xdg-runtime-dir <DIR>
+          `XDG_RUNTIME_DIR`
+
+      --no-display
+          Clear per-game display overrides
+
+      --wayland-native <auto|on|off>
+          Per-game native Wayland
+
+          Possible values:
+          - auto: Follow `config wayland-native`
+          - on:   Use Wine/SDL Wayland drivers
+          - off:  Always use X11
 
   -j, --json
           Emit output (and errors) as JSON. Works with every command
@@ -859,6 +922,31 @@ Usage: aurelia config steam-runtime-runner [OPTIONS] [RUNNER]
 Arguments:
   [RUNNER]
           Installed runtime name or absolute Wine path. Omit to print the current setting; pass `""` to clear it
+
+Options:
+  -j, --json
+          Emit output (and errors) as JSON. Works with every command
+
+  -v, --verbose...
+          Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+===== aurelia config wayland-native =====
+View or set native Wayland launches.
+
+Needs GE-Proton 10+ or Proton-CachyOS.
+
+Usage: aurelia config wayland-native [OPTIONS] [MODE]
+
+Arguments:
+  [MODE]
+          `on` or `off`; omit to print
+
+          Possible values:
+          - on:  Enable the setting
+          - off: Disable the setting
 
 Options:
   -j, --json

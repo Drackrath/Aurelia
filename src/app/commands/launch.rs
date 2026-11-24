@@ -254,6 +254,24 @@ pub(crate) async fn cmd_play(
     no_update: bool,
     json: bool,
 ) -> Result<()> {
+    let cfg = load_launcher_config().await?;
+    let session =
+        aurelia::core::session_env::resolve_for_launch(&cfg.display, cfg.game_display(app_id))
+            .context("could not resolve the configured display session")?;
+    tracing::info!(appid = app_id, "launch display: {}", session.describe());
+    let play = play_in_session(app_id, run, target, wait, no_update, json);
+    aurelia::core::session_env::scoped(session, play).await
+}
+
+/// `play` under the resolved session env.
+async fn play_in_session(
+    app_id: u32,
+    run: PlayRun,
+    target: PlayTarget,
+    wait: PlayWait,
+    no_update: bool,
+    json: bool,
+) -> Result<()> {
     let PlayRun {
         proton,
         windows,
@@ -501,6 +519,15 @@ pub(crate) async fn cmd_play(
     if let Some(mode) = target.steam_mode {
         apply_steam_mode(user_config.get_or_insert_with(Default::default), mode);
     }
+    if !force_windows {
+        apply_wayland_native(
+            &launcher_config,
+            app_id,
+            proton_path.as_deref(),
+            &mut user_config,
+            json,
+        );
+    }
     let user_config = user_config.as_ref();
 
     // Report a silently overridden mode.
@@ -563,6 +590,56 @@ pub(crate) async fn cmd_play(
         cli_println!("Finished playing {}.", game.name);
     }
     Ok(())
+}
+
+/// Wayland opt-in env, or a hint.
+fn apply_wayland_native(
+    cfg: &aurelia::core::config::LauncherConfig,
+    app_id: u32,
+    proton: Option<&str>,
+    user_config: &mut Option<aurelia::core::models::UserAppConfig>,
+    json: bool,
+) {
+    use aurelia::launch::wayland_native::{WaylandPlan, apply, plan};
+    let library = std::path::Path::new(&cfg.steam_library_path);
+    let root = proton
+        .and_then(|p| aurelia::core::runner::resolve_runner_opt(p, library))
+        .map(|p| aurelia::core::runner::derive_runner_root(&p));
+    if proton.is_some() && root.is_none() {
+        // Pipeline reports unresolved runners.
+        return;
+    }
+    let plan = plan(root.as_deref());
+    if !cfg.wayland_native(app_id) {
+        let session = aurelia::core::session_env::current();
+        if session.is_wayland_only() && matches!(plan, WaylandPlan::Enable(_)) {
+            let hint = format!(
+                "no X server in this session; native Wayland may work: \
+                 `aurelia config game {app_id} --wayland-native on`"
+            );
+            if json {
+                tracing::warn!(appid = app_id, "{hint}");
+            } else {
+                cli_println!("⚠ {hint}");
+            }
+        }
+        return;
+    }
+    match plan {
+        WaylandPlan::Enable(vars) => {
+            tracing::info!(appid = app_id, ?vars, "native Wayland enabled");
+            let ua = user_config.get_or_insert_with(Default::default);
+            apply(&mut ua.env_variables, &vars);
+        }
+        WaylandPlan::Unsupported(why) => {
+            let msg = format!("wayland-native is on but {why}; using X11");
+            if json {
+                tracing::warn!(appid = app_id, "{msg}");
+            } else {
+                cli_println!("⚠ {msg}");
+            }
+        }
+    }
 }
 
 /// `aurelia running`: list the games Aurelia currently has running (stale records

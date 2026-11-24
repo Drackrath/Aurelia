@@ -3,3 +3,4 @@ mod client_install;
 mod launcher;
 #[cfg(target_os = "linux")]
 mod logon;
+mod x11_guard;
