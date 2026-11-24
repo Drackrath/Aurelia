@@ -190,6 +190,11 @@ fn launch_master_steam(
     Ok(())
 }
 
+/// Proton switch that turns off its ntdll `steamclient` -> lsteamclient rebinding.
+/// Needed wherever the real Windows `steamclient.dll` must load (the in-Wine Steam
+/// client and games talking to it).
+pub(crate) const PROTON_DISABLE_LSTEAMCLIENT: &str = "PROTON_DISABLE_LSTEAMCLIENT";
+
 /// Environment shared by the installer and the background Steam client.
 fn apply_master_steam_env(
     cmd: &mut Command,
@@ -203,6 +208,10 @@ fn apply_master_steam_env(
     let fake_env = crate::core::steam_host::setup_fake_steam_trap(base_dir)?;
     cmd.env("STEAM_COMPAT_CLIENT_INSTALL_PATH", &fake_env);
     cmd.env("WINEDLLOVERRIDES", "vstdlib_s=n;tier0_s=n;steamclient=n;steamclient64=n;steam_api=n;steam_api64=n;lsteamclient=");
+    // Proton's ntdll rebinds every `steamclient*.dll` load to its lsteamclient bridge;
+    // for the real Windows Steam client that leaves steamclient64.dll with unresolved
+    // tier0 imports and Steam asserts at startup. Turn the hook off.
+    cmd.env(PROTON_DISABLE_LSTEAMCLIENT, "1");
 
     // Forward the display environment so the Steam client can actually draw a window.
     // XAUTHORITY is essential on X servers that use cookie authentication (most modern

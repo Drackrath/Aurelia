@@ -88,6 +88,9 @@ pub(super) async fn build_env(
     );
     tracing::info!("Final WINEDLLOVERRIDES: {}", dll_overrides);
     env.insert("WINEDLLOVERRIDES".to_string(), dll_overrides);
+    if let Some((key, val)) = steamclient_hook_env(steam_mode) {
+        env.insert(key.to_string(), val.to_string());
+    }
 
     insert_wine_dll_paths(&mut env, ctx, flags, use_symlinks, proton, library_root);
     expose_steam_client(&mut env, ctx, &layout)?;
@@ -650,4 +653,11 @@ fn push_dll_dir_once(dirs: &mut Vec<String>, path: &Path) {
     if !dirs.contains(&s) {
         dirs.push(s);
     }
+}
+
+/// Env that keeps Proton's ntdll from rebinding `steamclient*.dll` to lsteamclient.
+/// Only the in-Wine runtime needs it: there the game loads the in-Wine Steam's real
+/// steamclient.dll, whose tier0 imports break under the rebinding.
+pub(super) fn steamclient_hook_env(mode: SteamMode) -> Option<(&'static str, &'static str)> {
+    (mode == SteamMode::InWineRuntime).then_some((crate::launch::PROTON_DISABLE_LSTEAMCLIENT, "1"))
 }

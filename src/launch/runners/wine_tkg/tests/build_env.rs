@@ -326,3 +326,15 @@ async fn test_wine_tkg_runner_stubs() {
     let env = runner.build_env(&ctx).await.unwrap();
     assert_eq!(env.get("SteamAppId").unwrap(), "123");
 }
+
+#[test]
+fn test_only_in_wine_runtime_disables_proton_steamclient_hook() {
+    use crate::launch::runners::wine_tkg::env::steamclient_hook_env;
+    use crate::launch::runners::wine_tkg::steam_mode::SteamMode;
+    assert_eq!(
+        steamclient_hook_env(SteamMode::InWineRuntime),
+        Some(("PROTON_DISABLE_LSTEAMCLIENT", "1"))
+    );
+    assert_eq!(steamclient_hook_env(SteamMode::HostBridge), None);
+    assert_eq!(steamclient_hook_env(SteamMode::Standalone), None);
+}

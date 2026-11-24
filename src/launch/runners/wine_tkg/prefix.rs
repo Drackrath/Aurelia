@@ -283,6 +283,7 @@ async fn start_background_steam(
                  GameOverlayRenderer=n;GameOverlayRenderer64=n",
         )
         .env("WINEPATH", "C:\\Program Files (x86)\\Steam")
+        .env(crate::launch::PROTON_DISABLE_LSTEAMCLIENT, "1")
         .env("STEAM_DISABLE_BROWSER", "1")
         .env("STEAM_NO_BROWSER", "1")
         .env("STEAMCMD", "1") // tells Steam it's running as a cmd tool
