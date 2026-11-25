@@ -2,17 +2,30 @@
 
 use super::*;
 
-/// Prefer the Windows depot; Proton runs it on Linux.
+/// Prefer the Windows depot off a Mac; Proton runs it on Linux.
 ///
 /// Native Linux builds are often older or fussier than the Windows build under
-/// Proton/DXVK, so Windows is the default everywhere; `--platform linux` opts
-/// into the native build explicitly.
-pub(super) fn auto_select_platform(platforms: &[DepotPlatform]) -> DepotPlatform {
-    platforms
+/// Proton/DXVK, so `--platform linux` opts into the native build explicitly.
+/// A Mac prefers its native build, which runs without the translation layer a
+/// Windows build needs there.
+pub(super) fn auto_select_platform(
+    platforms: &[DepotPlatform],
+    host: DepotPlatform,
+) -> DepotPlatform {
+    let preferred: &[DepotPlatform] = match host {
+        DepotPlatform::Macos => &[
+            DepotPlatform::Macos,
+            DepotPlatform::Windows,
+            DepotPlatform::Linux,
+        ],
+        DepotPlatform::Windows | DepotPlatform::Linux => {
+            &[DepotPlatform::Windows, DepotPlatform::Linux]
+        }
+    };
+    preferred
         .iter()
         .copied()
-        .find(|p| *p == DepotPlatform::Windows)
-        .or_else(|| platforms.first().copied())
+        .find(|p| platforms.contains(p))
         .unwrap_or(DepotPlatform::Windows)
 }
 
@@ -36,6 +49,7 @@ pub(crate) async fn cmd_install(command: InstallCommand, json: bool) -> Result<(
         library,
         language,
     } = command;
+    let platform = platform.map(Into::into);
     // `--dry-run` reports the size estimate and stops — it never touches Steam or
     // downloads anything.
     if dry_run {
@@ -57,7 +71,7 @@ pub(crate) async fn cmd_install(command: InstallCommand, json: bool) -> Result<(
 /// One install, fresh or resumed.
 pub(crate) struct InstallRequest {
     pub(crate) app_id: u32,
-    pub(crate) platform: Option<PlatformArg>,
+    pub(crate) platform: Option<DepotPlatform>,
     pub(crate) restart_steam: bool,
     pub(crate) library: Option<String>,
     /// Bytes a resume already has.
@@ -84,13 +98,13 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
     let is_dlc = client.resolve_dlc_parent(app_id).await.is_some();
 
     let (platform, cached_vdf) = match platform {
-        Some(p) => (p.into(), None),
+        Some(p) => (p, None),
         None => {
             let (platforms, buffer) = client
                 .get_available_platforms(app_id)
                 .await
                 .context("failed to detect available platforms")?;
-            let chosen = auto_select_platform(&platforms);
+            let chosen = auto_select_platform(&platforms, DepotPlatform::host());
             if !json {
                 cli_println!("Auto-selected platform: {chosen:?}");
             }
@@ -157,13 +171,12 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
     let manage_steam = steam_guard_stop_optional(restart_steam && is_dlc, json)?;
 
     // Recorded first, so a crash stays resumable.
-    let platform_name = format!("{platform:?}").to_lowercase();
     let started = aurelia::core::time::now_unix();
     let mut record = backlog::BacklogEntry {
         app_id,
         name: String::new(),
         state: backlog::BacklogState::Interrupted,
-        platform: platform_name,
+        platform: platform.as_str().to_string(),
         library: library_root.clone(),
         install_dir: None,
         is_dlc,
@@ -316,17 +329,17 @@ pub(super) fn finish_backlog(
 pub(crate) async fn cmd_install_dry_run(
     client: &mut SteamClient,
     app_id: u32,
-    platform: Option<PlatformArg>,
+    platform: Option<DepotPlatform>,
     json: bool,
 ) -> Result<()> {
-    let platform: DepotPlatform = match platform {
-        Some(p) => p.into(),
+    let platform = match platform {
+        Some(p) => p,
         None => {
             let (platforms, _) = client
                 .get_available_platforms(app_id)
                 .await
                 .context("failed to detect available platforms")?;
-            auto_select_platform(&platforms)
+            auto_select_platform(&platforms, DepotPlatform::host())
         }
     };
 
@@ -336,9 +349,9 @@ pub(crate) async fn cmd_install_dry_run(
         .with_context(|| format!("failed to estimate install size for app {app_id}"))?;
     let est = &preview.estimate;
 
-    let platform_str = format!("{platform:?}").to_lowercase();
+    let platform_str = platform.as_str();
     if json {
-        print_json(&dry_run_json(app_id, &platform_str, &preview));
+        print_json(&dry_run_json(app_id, platform_str, &preview));
     } else {
         cli_println!("Install estimate for app {app_id} ({platform_str}):");
         cli_println!("  Download size: {}", human_bytes(est.download_size));
@@ -437,11 +450,9 @@ pub(crate) async fn resume_entries(ids: &[u32], auto: bool, json: bool) -> Resul
         };
         let request = InstallRequest {
             app_id,
-            platform: Some(if entry.platform == "linux" {
-                PlatformArg::Linux
-            } else {
-                PlatformArg::Windows
-            }),
+            platform: Some(
+                DepotPlatform::from_name(&entry.platform).unwrap_or(DepotPlatform::Windows),
+            ),
             restart_steam: entry.restart_steam,
             library: Some(entry.library.clone()),
             on_disk: entry.downloaded_bytes,

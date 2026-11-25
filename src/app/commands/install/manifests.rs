@@ -187,7 +187,7 @@ pub(crate) async fn cmd_downgrade(args: DowngradeArgs, json: bool) -> Result<()>
         .get_available_platforms(args.app_id)
         .await
         .context("failed to detect available platforms")?;
-    let platform = platforms.first().copied().unwrap_or(DepotPlatform::Windows);
+    let platform = auto_select_platform(&platforms, DepotPlatform::host());
 
     if !json {
         cli_println!(

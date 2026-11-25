@@ -42,9 +42,7 @@ pub(crate) fn platform_depot_rows<'a, 'text>(
 
 pub fn should_keep_depot(oslist: Option<&str>, target: DepotPlatform) -> bool {
     oslist.is_none_or(|os| {
-        target.in_oslist(os)
-            || !(DepotPlatform::ALL.iter().any(|p| p.in_oslist(os))
-                || os.to_lowercase().contains("macos"))
+        target.in_oslist(os) || !DepotPlatform::ALL.iter().any(|p| p.in_oslist(os))
     })
 }
 

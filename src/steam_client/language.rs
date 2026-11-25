@@ -19,16 +19,27 @@ pub(crate) struct LanguagePlan {
 }
 
 /// Platform of the installed depots.
+///
+/// A Windows install can hold depots shared with macOS, so macOS also needs
+/// every tagged depot to be one a macOS install keeps.
 pub(crate) fn installed_platform(rows: &Obj<'_>, installed: &HashMap<u64, u64>) -> DepotPlatform {
-    let linux = installed.keys().any(|depot| {
-        rows.get(&depot.to_string())
-            .and_then(|row| row.get_obj(&["config"]))
-            .and_then(|c| c.get("oslist"))
-            .and_then(|o| o.as_str())
-            .is_some_and(|os| DepotPlatform::Linux.in_oslist(os))
-    });
-    if linux {
+    let oslists: Vec<&str> = installed
+        .keys()
+        .filter_map(|depot| {
+            rows.get(&depot.to_string())
+                .and_then(|row| row.get_obj(&["config"]))
+                .and_then(|c| c.get("oslist"))
+                .and_then(|o| o.as_str())
+        })
+        .collect();
+    if oslists.iter().any(|os| DepotPlatform::Linux.in_oslist(os)) {
         DepotPlatform::Linux
+    } else if oslists.iter().any(|os| DepotPlatform::Macos.in_oslist(os))
+        && oslists
+            .iter()
+            .all(|os| should_keep_depot(Some(os), DepotPlatform::Macos))
+    {
+        DepotPlatform::Macos
     } else {
         DepotPlatform::Windows
     }
