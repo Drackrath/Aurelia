@@ -7,7 +7,7 @@ use async_trait::async_trait;
 
 use crate::launch::runners::{CommandSpec, LaunchContext, Runner};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 pub struct ResolveComponentsStage;
 
@@ -54,6 +54,17 @@ impl Runner for NativeRunner {
             .map(str::to_string)
             .collect();
         let program = PathBuf::from(install_path).join(&exe_rel);
+        // Steam names most Mac builds by their bundle, which can't be exec'd.
+        let bundled = if ctx.launch_info.target == crate::steam_client::LaunchTarget::NativeMacos {
+            bundle_program(&program).await?
+        } else {
+            None
+        };
+        // LaunchServices starts apps in `/`, and Mac games locate their data through the bundle.
+        let (program, cwd) = match bundled {
+            Some(binary) => (binary, PathBuf::from("/")),
+            None => (program, PathBuf::from(install_path)),
+        };
         // Only mutated on Linux.
         #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
         let mut env = self.build_env(ctx).await?;
@@ -84,7 +95,7 @@ impl Runner for NativeRunner {
         Ok(CommandSpec {
             program,
             args,
-            cwd: Some(PathBuf::from(install_path)),
+            cwd: Some(cwd),
             env,
         })
     }
@@ -132,6 +143,59 @@ impl Runner for NativeRunner {
             LaunchError::new(LaunchErrorKind::Process, "Native launch failed")
                 .with_source(anyhow::anyhow!(e))
         })
+    }
+}
+
+/// The `CFBundleExecutable` binary that runs `program`, when `program` is an `.app` bundle.
+async fn bundle_program(program: &Path) -> std::result::Result<Option<PathBuf>, LaunchError> {
+    let is_bundle = program
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("app"))
+        && tokio::fs::metadata(program)
+            .await
+            .is_ok_and(|meta| meta.is_dir());
+    if !is_bundle {
+        return Ok(None);
+    }
+    let plist = program.join("Contents/Info.plist");
+    let unreadable = || {
+        LaunchError::new(
+            LaunchErrorKind::GameData,
+            format!("can't read CFBundleExecutable from {}", plist.display()),
+        )
+    };
+    let output = tokio::process::Command::new("/usr/bin/plutil")
+        .args(["-extract", "CFBundleExecutable", "raw"])
+        .args(["-expect", "string", "-o", "-"])
+        .arg(&plist)
+        .output()
+        .await
+        .map_err(|e| unreadable().with_source(anyhow::anyhow!(e)))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(unreadable().with_context("plutil", stderr.trim()));
+    }
+    let binary = bundle_binary(program, &output.stdout).ok_or_else(|| {
+        unreadable().with_context(
+            "CFBundleExecutable",
+            String::from_utf8_lossy(&output.stdout),
+        )
+    })?;
+    Ok(Some(binary))
+}
+
+/// The `Contents/MacOS` binary that plutil's raw `CFBundleExecutable` output names.
+///
+/// `None` unless the name is a single path component, which keeps the binary inside
+/// the bundle, where preflight's lexical install-dir check allows a chmod.
+fn bundle_binary(bundle: &Path, cf_bundle_executable: &[u8]) -> Option<PathBuf> {
+    let raw = cf_bundle_executable
+        .strip_suffix(b"\n")
+        .unwrap_or(cf_bundle_executable);
+    let mut parts = Path::new(std::str::from_utf8(raw).ok()?).components();
+    match (parts.next(), parts.next()) {
+        (Some(Component::Normal(name)), None) => Some(bundle.join("Contents/MacOS").join(name)),
+        _ => None,
     }
 }
 
