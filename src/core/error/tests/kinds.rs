@@ -92,7 +92,7 @@ fn storage_full_is_disk_full() {
 #[cfg(unix)]
 #[test]
 fn enospc_and_edquot_are_disk_full() {
-    for code in [28, 122] {
+    for code in [libc::ENOSPC, libc::EDQUOT] {
         let err = anyhow::Error::new(std::io::Error::from_raw_os_error(code));
         assert_eq!(classify(&err).kind, ErrorKind::DiskFull, "errno {code}");
     }
