@@ -14,6 +14,19 @@ Aurelia is a pure-Rust command-line Steam client. If you're new to the codebase,
 with the [README](README.md) for the big picture and the [Usage page on the wiki](https://github.com/Drackrath/Aurelia/wiki/Usage) for what the
 CLI actually does.
 
+## Repositories
+
+Aurelia is spread over several repositories. Send a change to the one that holds the code:
+
+| Repository | What lives there |
+| --- | --- |
+| [Drackrath/Aurelia](https://github.com/Drackrath/Aurelia) | The `aurelia` command and its library (this repository) |
+| [Drackrath/aurelia-steam-vent](https://github.com/Drackrath/aurelia-steam-vent) ([Codeberg mirror](https://codeberg.org/Drackrath/aurelia-steam-vent)) | Steam network protocol client, with the `-core` and `-crypto` crates |
+| [Drackrath/aurelia-steam-cdn](https://github.com/Drackrath/aurelia-steam-cdn) | Depot downloads |
+| [Drackrath/aurelia-steam-vent-chat](https://codeberg.org/Drackrath/aurelia-steam-vent-chat) | Friend chat |
+| [Drackrath/proto](https://codeberg.org/Drackrath/proto) | Steam protobuf messages (`aurelia-steam-vent-proto`) |
+| [Drackrath/Aurelia-TUI](https://github.com/Drackrath/Aurelia-TUI) | Terminal UI for your Steam library, built on `aurelia` |
+
 ## Getting set up
 
 You'll need a [Rust toolchain](https://rustup.rs/) (edition 2024). On Linux, install the
