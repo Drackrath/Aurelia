@@ -62,17 +62,66 @@ fn write_bundle(install: &Path, name: &str, entries: &str, binaries: &[&str]) ->
     bundle
 }
 
-#[test]
-fn bundle_binary_stays_inside_the_bundle() {
-    let bundle = Path::new("/games/Balatro.app");
-    assert_eq!(
-        bundle_binary(bundle, b"love\n"),
-        Some(bundle.join("Contents/MacOS/love"))
-    );
-    for name in ["../x", "a/b", "/bin/sh", "", ".", ".."] {
-        assert_eq!(bundle_binary(bundle, name.as_bytes()), None, "{name:?}");
+fn bundle_with(binaries: &[&str]) -> (tempfile::TempDir, PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let bundle = tmp.path().join("Game.app");
+    for binary in binaries {
+        let path = bundle.join("Contents").join(binary);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "").unwrap();
     }
-    assert_eq!(bundle_binary(bundle, b"\xff\n"), None);
+    (tmp, bundle)
+}
+
+fn named(name: &str) -> BundleExecutable {
+    BundleExecutable::Named(name.to_string())
+}
+
+#[test]
+fn bundle_binary_follows_subfolders_inside_the_bundle() {
+    let (_tmp, bundle) = bundle_with(&["MacOS/bin/game", "Resources/run.sh"]);
+
+    assert_eq!(
+        bundle_binary(&bundle, named("bin/game")),
+        Some(bundle.join("Contents/MacOS/bin/game"))
+    );
+    assert_eq!(
+        bundle_binary(&bundle, named("../Resources/run.sh")),
+        Some(bundle.join("Contents/MacOS/../Resources/run.sh"))
+    );
+}
+
+#[test]
+fn bundle_binary_rejects_files_outside_the_bundle() {
+    let (tmp, bundle) = bundle_with(&["MacOS/Game"]);
+    std::fs::write(tmp.path().join("outside"), "").unwrap();
+
+    assert_eq!(bundle_binary(&bundle, named("../../../outside")), None);
+}
+
+#[test]
+fn bundle_binary_rejects_missing_or_invalid_executables() {
+    let (_tmp, bundle) = bundle_with(&["MacOS/Game"]);
+
+    assert_eq!(bundle_binary(&bundle, named("love")), None);
+    assert_eq!(bundle_binary(&bundle, named(".")), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn bundle_binary_follows_symlinks_only_inside_the_bundle() {
+    let (tmp, bundle) = bundle_with(&["Resources/game"]);
+    std::fs::write(tmp.path().join("outside"), "").unwrap();
+    let binaries = bundle.join("Contents/MacOS");
+    std::fs::create_dir_all(&binaries).unwrap();
+    std::os::unix::fs::symlink("../Resources/game", binaries.join("inside")).unwrap();
+    std::os::unix::fs::symlink(tmp.path().join("outside"), binaries.join("escape")).unwrap();
+
+    assert_eq!(
+        bundle_binary(&bundle, named("inside")),
+        Some(binaries.join("inside"))
+    );
+    assert_eq!(bundle_binary(&bundle, named("escape")), None);
 }
 
 #[tokio::test]
@@ -139,23 +188,74 @@ async fn native_runner_reads_binary_info_plists() {
 
 #[cfg(target_os = "macos")]
 #[tokio::test]
-async fn native_runner_rejects_a_bundle_without_an_executable_name() {
+async fn native_runner_runs_the_bundle_name_without_an_executable_key() {
     let tmp = tempfile::tempdir().unwrap();
     let bundles = [
-        ("NoKey.app", "<key>CFBundleName</key><string>Game</string>"),
+        ("NoKey", "<key>CFBundleName</key><string>Game</string>"),
+        ("Empty", "<key>CFBundleExecutable</key><string></string>"),
+    ];
+    for (name, entries) in bundles {
+        let bundle = write_bundle(tmp.path(), &format!("{name}.app"), entries, &[name]);
+
+        let ctx = mac_launch(tmp.path(), &format!("{name}.app"));
+        let spec = NativeRunner.build_command(&ctx).await.unwrap();
+
+        assert_eq!(spec.program, bundle.join("Contents/MacOS").join(name));
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn native_runner_runs_the_bundle_name_without_an_info_plist() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bundle = write_bundle(tmp.path(), "Game.app", "", &["Game"]);
+    std::fs::remove_file(bundle.join("Contents/Info.plist")).unwrap();
+
+    let ctx = mac_launch(tmp.path(), "Game.app");
+    let spec = NativeRunner.build_command(&ctx).await.unwrap();
+
+    assert_eq!(spec.program, bundle.join("Contents/MacOS/Game"));
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn native_runner_rereads_info_plist_after_an_update() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ctx = mac_launch(tmp.path(), "Isaac.app");
+    for binary in ["Rebirth", "Afterbirth+"] {
+        let entries = format!("<key>CFBundleExecutable</key><string>{binary}</string>");
+        let bundle = write_bundle(
+            tmp.path(),
+            "Isaac.app",
+            &entries,
+            &["Rebirth", "Afterbirth+"],
+        );
+
+        let spec = NativeRunner.build_command(&ctx).await.unwrap();
+
+        assert_eq!(spec.program, bundle.join("Contents/MacOS").join(binary));
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn native_runner_rejects_a_bundle_macos_would_not_launch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bundles = [
         (
-            "Number.app",
+            "Number",
             "<key>CFBundleExecutable</key><integer>7</integer>",
         ),
         (
-            "Escape.app",
-            "<key>CFBundleExecutable</key><string>../../../bin/sh</string>",
+            "Shell",
+            "<key>CFBundleExecutable</key><string>/bin/sh</string>",
         ),
     ];
     for (name, entries) in bundles {
-        write_bundle(tmp.path(), name, entries, &[]);
+        // The bundle-name binary exists, so falling back to it would launch.
+        write_bundle(tmp.path(), &format!("{name}.app"), entries, &[name]);
 
-        let ctx = mac_launch(tmp.path(), name);
+        let ctx = mac_launch(tmp.path(), &format!("{name}.app"));
         let error = NativeRunner.build_command(&ctx).await.unwrap_err();
 
         assert_eq!(error.kind, LaunchErrorKind::GameData, "{name}");
