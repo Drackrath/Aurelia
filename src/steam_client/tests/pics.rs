@@ -19,11 +19,42 @@ fn parses_linux_launch_section_from_vdf() {
   }
 }"#;
 
-    let launch_options = parse_launch_info_from_vdf(10, raw).expect("parse launch info");
+    let launch_options =
+        parse_launch_info_from_vdf(10, raw, DepotPlatform::Linux).expect("parse launch info");
     let launch = &launch_options[0];
     assert_eq!(launch.target, LaunchTarget::NativeLinux);
     assert_eq!(launch.executable, "linux/game.sh");
     assert_eq!(launch.arguments, "-foo -bar");
+}
+
+fn launch_vdf(entries: &str) -> String {
+    format!(r#""appinfo" {{ "config" {{ "launch" {{ {entries} }} }} }}"#)
+}
+
+fn parsed_targets(vdf: &str, host: DepotPlatform) -> Vec<LaunchTarget> {
+    parse_launch_info_from_vdf(10, vdf, host)
+        .expect("parse launch info")
+        .into_iter()
+        .map(|o| o.target)
+        .collect()
+}
+
+#[test]
+fn untagged_entry_target_follows_the_host() {
+    use LaunchTarget::{NativeLinux, WindowsProton};
+    let vdf = launch_vdf(r#""0" { "executable" "game" } "1" { "executable" "game.exe" }"#);
+    assert_eq!(
+        parsed_targets(&vdf, DepotPlatform::Linux),
+        [NativeLinux, WindowsProton]
+    );
+    assert_eq!(
+        parsed_targets(&vdf, DepotPlatform::Windows),
+        [WindowsProton, WindowsProton]
+    );
+    assert_eq!(
+        parsed_targets(&vdf, DepotPlatform::Macos),
+        [WindowsProton, WindowsProton]
+    );
 }
 
 #[test]
