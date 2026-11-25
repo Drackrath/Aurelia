@@ -121,6 +121,9 @@ const MAC_ROWS: &str = r#""depots"
 	"22" { "config" { "oslist" "windows" "language" "english" } }
 	"23" { "config" { "oslist" "windows" "language" "german" } }
 	"30" { "config" { "oslist" "windows,macos" } }
+	"31" { "config" { "oslist" "linux,macos" } }
+	"42" { "config" { "oslist" "linux" "language" "english" } }
+	"43" { "config" { "oslist" "linux" "language" "german" } }
 }
 "#;
 
@@ -137,6 +140,9 @@ fn mac_remote() -> HashMap<u64, u64> {
         (22, 22),
         (23, 23),
         (30, 30),
+        (31, 31),
+        (42, 42),
+        (43, 43),
     ])
 }
 
@@ -160,6 +166,27 @@ fn windows_install_with_shared_mac_depot_stays_windows() {
     assert_eq!(plan.remove, vec![(22, 22)]);
     assert_eq!(plan.add, vec![(23, 23)]);
     assert_eq!(plan.keep, vec![(21, 21), (30, 30)]);
+}
+
+#[test]
+fn install_of_only_shared_mac_depots_stays_windows() {
+    let vdf = mac_rows();
+    let rows = vdf.as_obj().unwrap();
+    let installed = map(&[(30, 30)]);
+    let plan = plan_language_switch(rows, 10, &installed, &mac_remote(), "german").unwrap();
+    assert_eq!(plan.add, vec![(23, 23)]);
+    assert_eq!(plan.keep, vec![(30, 30)]);
+}
+
+#[test]
+fn mac_install_with_shared_linux_depot_stays_mac() {
+    let vdf = mac_rows();
+    let rows = vdf.as_obj().unwrap();
+    let installed = map(&[(11, 11), (12, 12), (31, 31)]);
+    let plan = plan_language_switch(rows, 10, &installed, &mac_remote(), "german").unwrap();
+    assert_eq!(plan.remove, vec![(12, 12)]);
+    assert_eq!(plan.add, vec![(13, 13)]);
+    assert_eq!(plan.keep, vec![(11, 11), (31, 31)]);
 }
 
 #[test]
