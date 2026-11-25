@@ -81,7 +81,7 @@ fn find_launch_option_returns_the_requested_entry() {
     let error = launch::find_launch_option(&options, "9")
         .unwrap_err()
         .to_string();
-    assert!(error.contains("macOS-only"), "{error}");
+    assert!(error.contains("doesn't run on this OS"), "{error}");
     assert!(error.contains("available: 0, 3"), "{error}");
 }
 
@@ -102,6 +102,7 @@ fn launch_option_target_conflicts_are_rejected() {
         .to_string();
     assert!(error.contains("--platform linux"), "{error}");
     assert!(error.contains("starts the Windows build"), "{error}");
+    assert!(error.contains("requires the native Linux build"), "{error}");
 
     let proton = Some((LaunchTarget::WindowsProton, "--proton"));
     let error = launch::check_launch_option_target(&linux, proton)
@@ -380,4 +381,60 @@ fn launch_targets_lists_installed_builds_and_steam_modes() {
         ids(&targets),
         ["windows-runtime", "windows-host", "windows-standalone"]
     );
+}
+
+#[test]
+fn launch_targets_lists_an_installed_macos_build() {
+    use crate::launch::runners::wine_tkg::steam_mode::SteamMode;
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("Balatro.app/Contents/MacOS")).unwrap();
+    let options = vec![launch_option("0", "Balatro.app", LaunchTarget::NativeMacos)];
+    let app = LibraryGame {
+        app_id: 2379780,
+        name: "Balatro".to_string(),
+        install_path: Some(tmp.path().to_string_lossy().to_string()),
+        is_installed: true,
+        playtime_forever_minutes: None,
+        active_branch: "public".to_string(),
+        update_available: false,
+        steam_config_mismatch: false,
+        update_queued: false,
+        local_manifest_ids: HashMap::new(),
+        is_owned: true,
+        is_family_shared: false,
+        online_required: None,
+        platform: None,
+        from_windows_steam: false,
+        size_on_disk: None,
+    };
+    let list = || {
+        launch_targets(
+            &options,
+            &app,
+            false,
+            false,
+            false,
+            Some(LaunchTarget::NativeMacos),
+            SteamMode::Standalone,
+        )
+    };
+
+    assert_eq!(
+        list(),
+        [LaunchTargetChoice {
+            id: "macos",
+            platform: "macos",
+            steam_mode: None,
+            flags: Vec::new(),
+            available: true,
+            missing: None,
+            default: true,
+        }]
+    );
+
+    // A missing build is never the default.
+    std::fs::remove_dir_all(tmp.path().join("Balatro.app")).unwrap();
+    let targets = list();
+    assert_eq!(targets[0].missing, Some("build"));
+    assert!(!targets[0].default);
 }

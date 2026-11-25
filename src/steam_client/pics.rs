@@ -109,12 +109,14 @@ pub(super) fn parse_launch_info_from_vdf(
         // Pick the launch target from the entry's oslist, falling back to the
         // executable extension and finally the host OS.
         let target = if let Some(os) = os_list {
-            if os.contains("linux") {
+            if host == DepotPlatform::Macos && os.contains("macos") {
+                LaunchTarget::NativeMacos
+            } else if os.contains("linux") {
                 LaunchTarget::NativeLinux
             } else if os.contains("windows") {
                 LaunchTarget::WindowsProton
             } else if os.contains("macos") {
-                continue; // we don't launch macOS builds
+                LaunchTarget::NativeMacos
             } else {
                 LaunchTarget::WindowsProton
             }
@@ -123,11 +125,12 @@ pub(super) fn parse_launch_info_from_vdf(
         } else if exe.contains("linux") || exe.ends_with(".sh") {
             LaunchTarget::NativeLinux
         } else {
-            match host {
-                DepotPlatform::Linux => LaunchTarget::NativeLinux,
-                DepotPlatform::Windows | DepotPlatform::Macos => LaunchTarget::WindowsProton,
-            }
+            LaunchTarget::from(host)
         };
+        // Only a Mac runs Mac builds, and a Mac runs no others since Proton is Linux-only.
+        if (target == LaunchTarget::NativeMacos) != (host == DepotPlatform::Macos) {
+            continue;
+        }
 
         options.push(LaunchInfo {
             app_id: appid,

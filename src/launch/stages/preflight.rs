@@ -30,11 +30,12 @@ fn preflight_error(kind: LaunchErrorKind, details: &str) -> LaunchError {
     LaunchError::new(kind, format!("[Preflight] {}", details))
 }
 
-/// Native Linux launch target?
+/// Native Linux or macOS launch target?
 fn is_native_target(ctx: &PipelineContext) -> bool {
+    use crate::steam_client::LaunchTarget;
     matches!(
         ctx.launch_info.as_ref().map(|i| i.target),
-        Some(crate::steam_client::LaunchTarget::NativeLinux)
+        Some(LaunchTarget::NativeLinux | LaunchTarget::NativeMacos)
     )
 }
 

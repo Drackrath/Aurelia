@@ -292,7 +292,9 @@ impl PipelineStage for ResolveComponentsStage {
                 ));
             };
             ctx.runner = Some(match info.target {
-                LaunchTarget::NativeLinux => Box::new(NativeRunner) as Box<dyn Runner>,
+                LaunchTarget::NativeLinux | LaunchTarget::NativeMacos => {
+                    Box::new(NativeRunner) as Box<dyn Runner>
+                }
                 LaunchTarget::WindowsProton => Box::new(WineTkgRunner),
             });
         }

@@ -24,7 +24,7 @@ Commands:
   update          List installed games with an update available, or update one by app id
   play            Launch a game and wait for it to exit
   shaders         Pre-compile a game's Vulkan shaders from its Steam pipeline cache (`steamapps/shadercache/<appid>`), as Steam's "Processing Vulkan shaders" does. `play` does this automatically unless `config shader-precache off`
-  launch-targets  List the ways an installed game can be launched: each installed build (native Linux / Windows) and, for Windows, each available Steam mode, with the `play` flags selecting it and which one plain `play` would pick
+  launch-targets  List the ways an installed game can be launched: each installed build (native Linux, native macOS or Windows) and, for Windows, each available Steam mode, with the `play` flags selecting it and which one plain `play` would pick
   stop            Stop a running game previously launched with `aurelia play`
   running         List the games Aurelia is currently running
   uninstall       Uninstall a game
@@ -1367,7 +1367,7 @@ Options:
   -h, --help        Print help
 
 ===== aurelia launch-targets =====
-List the ways an installed game can be launched: each installed build (native Linux / Windows) and, for Windows, each available Steam mode, with the `play` flags selecting it and which one plain `play` would pick
+List the ways an installed game can be launched: each installed build (native Linux, native macOS or Windows) and, for Windows, each available Steam mode, with the `play` flags selecting it and which one plain `play` would pick
 
 Usage: aurelia launch-targets [OPTIONS] <APP_ID>
 

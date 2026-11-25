@@ -257,6 +257,15 @@ async fn test_preflight_native_ignores_path_like_argument() {
     );
     assert_eq!(ctx.resolved_executable_path, Some(exe));
     assert!(ctx.executable_exists);
+
+    // Mac builds are native too.
+    ctx.launch_info.as_mut().unwrap().target = LaunchTarget::NativeMacos;
+    let res = stage.execute(&mut ctx).await;
+    assert!(
+        res.is_ok(),
+        "Mac args must not be treated as exe: {:?}",
+        res.err()
+    );
 }
 
 #[tokio::test]

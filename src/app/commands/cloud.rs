@@ -232,12 +232,8 @@ async fn cloud_target_os(
     let prefer_windows =
         platform == Some("windows") || game_cfg.is_some_and(|c| c.forced_proton_version.is_some());
     let prefer_native = platform == Some("linux");
-    match aurelia::steam_client::select_launch_entry(&options, &game, prefer_windows, prefer_native)
-        .map(|e| e.target)
-    {
-        Some(aurelia::steam_client::LaunchTarget::NativeLinux) => "linux",
-        _ => "windows",
-    }
+    aurelia::steam_client::select_launch_entry(&options, &game, prefer_windows, prefer_native)
+        .map_or("windows", |e| e.target.platform().as_str())
 }
 
 /// How many skipped filenames to print before collapsing into a count — enough to

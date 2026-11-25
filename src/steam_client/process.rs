@@ -654,9 +654,9 @@ NoSavePersonalInfo=1
                     .map(crate::logging::relay::attach)
                     .context("failed to spawn native linux game")
             }
-            LaunchTarget::WindowsProton => {
+            target @ (LaunchTarget::WindowsProton | LaunchTarget::NativeMacos) => {
                 bail!(
-                    "WindowsProton targets must be launched via the Pipeline and Runner abstraction. Ad-hoc bypass is prohibited."
+                    "{target:?} targets must be launched via the Pipeline and Runner abstraction. Ad-hoc bypass is prohibited."
                 );
             }
         }

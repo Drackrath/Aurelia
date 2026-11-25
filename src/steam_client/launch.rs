@@ -69,7 +69,7 @@ pub fn find_launch_option<'a>(options: &'a [LaunchInfo], id: &str) -> Result<&'a
     options.iter().find(|o| o.id == id).ok_or_else(|| {
         let known: Vec<&str> = options.iter().map(|o| o.id.as_str()).collect();
         anyhow!(
-            "launch option {id} can't be started: it doesn't exist or is macOS-only (available: {})",
+            "launch option {id} can't be started: it doesn't exist or doesn't run on this OS (available: {})",
             known.join(", ")
         )
     })
@@ -86,13 +86,16 @@ pub fn check_launch_option_target(
         return Ok(());
     };
     if entry.target != target {
-        let (build, needed) = match entry.target {
-            LaunchTarget::NativeLinux => ("native Linux", "Windows"),
-            LaunchTarget::WindowsProton => ("Windows", "native Linux"),
+        let build = |t: LaunchTarget| match t {
+            LaunchTarget::NativeLinux => "native Linux",
+            LaunchTarget::WindowsProton => "Windows",
+            LaunchTarget::NativeMacos => "native macOS",
         };
         bail!(
-            "launch option {} starts the {build} build, but {source} requires the {needed} build",
-            entry.id
+            "launch option {} starts the {} build, but {source} requires the {} build",
+            entry.id,
+            build(entry.target),
+            build(target)
         );
     }
     Ok(())
@@ -152,7 +155,7 @@ fn target_installed(
 pub struct LaunchTargetChoice {
     /// Stable id, e.g. `windows-host`.
     pub id: &'static str,
-    /// `linux` or `windows`.
+    /// `linux`, `macos` or `windows`.
     pub platform: &'static str,
     /// `runtime`, `host` or `none`.
     pub steam_mode: Option<&'static str>,
@@ -183,21 +186,29 @@ pub fn launch_targets(
     let offers = |target: LaunchTarget| launch_options.iter().any(|o| o.target == target);
     let mut targets = Vec::new();
 
-    if offers(LaunchTarget::NativeLinux) {
-        let installed = target_installed(launch_options, app, LaunchTarget::NativeLinux);
-        let mut f = flags(&["--platform", "linux"]);
+    let native = |target: LaunchTarget, platform_flags: &[&str]| {
+        let installed = target_installed(launch_options, app, target);
+        let mut f = flags(platform_flags);
         if steam_flag {
             f.push("--steam".to_string());
         }
-        targets.push(LaunchTargetChoice {
-            id: "linux",
-            platform: "linux",
+        let platform = target.platform().as_str();
+        LaunchTargetChoice {
+            id: platform,
+            platform,
             steam_mode: None,
             flags: f,
             available: installed,
             missing: (!installed).then_some("build"),
-            default: installed && default_entry == Some(LaunchTarget::NativeLinux),
-        });
+            default: installed && default_entry == Some(target),
+        }
+    };
+    if offers(LaunchTarget::NativeLinux) {
+        targets.push(native(LaunchTarget::NativeLinux, &["--platform", "linux"]));
+    }
+    // There is no `--platform macos`, so plain `play` selects the Mac build.
+    if offers(LaunchTarget::NativeMacos) {
+        targets.push(native(LaunchTarget::NativeMacos, &[]));
     }
 
     if offers(LaunchTarget::WindowsProton) {
@@ -255,11 +266,11 @@ fn pick_launch_entry(
 ) -> Option<LaunchInfo> {
     let exe_exists =
         |o: &LaunchInfo| -> bool { !o.executable.is_empty() && on_disk(&o.executable).is_some() };
-    let installed_target = app.platform.as_deref().and_then(|p| match p {
-        "linux" => Some(LaunchTarget::NativeLinux),
-        "windows" => Some(LaunchTarget::WindowsProton),
-        _ => None,
-    });
+    let installed_target = app
+        .platform
+        .as_deref()
+        .and_then(DepotPlatform::from_name)
+        .map(LaunchTarget::from);
 
     // Explicit per-game preference beats the manifest.
     if prefer_native_target
@@ -394,6 +405,12 @@ impl SteamClient {
                     "resolved launch platform: native Linux"
                 );
             }
+            LaunchTarget::NativeMacos => {
+                tracing::info!(
+                    app_id = app.app_id,
+                    "resolved launch platform: native macOS"
+                );
+            }
             LaunchTarget::WindowsProton => {
                 tracing::info!(
                     app_id = app.app_id,
@@ -403,7 +420,7 @@ impl SteamClient {
             }
         }
 
-        // None = native (Linux, or Windows without Proton); Some = the Proton runner.
+        // None = native (Linux, macOS, or Windows without Proton); Some = the Proton runner.
         if let Some(cb) = on_target_resolved {
             cb(match launch_info.target {
                 LaunchTarget::WindowsProton if !native_windows => {
@@ -417,7 +434,7 @@ impl SteamClient {
             None
         } else {
             match launch_info.target {
-                LaunchTarget::NativeLinux => None,
+                LaunchTarget::NativeLinux | LaunchTarget::NativeMacos => None,
                 LaunchTarget::WindowsProton => {
                     proton_path.or(Some(launcher_config.proton_version.as_str()))
                 }
@@ -428,7 +445,15 @@ impl SteamClient {
             self.ensure_anticheat_runtimes(app).await;
         }
 
-        let cloud_enabled = launcher_config.cloud_sync_enabled(app.app_id) && !self.is_offline();
+        let mut cloud_enabled =
+            launcher_config.cloud_sync_enabled(app.app_id) && !self.is_offline();
+        if cloud_enabled && launch_info.target == LaunchTarget::NativeMacos {
+            tracing::info!(
+                appid = app.app_id,
+                "Skipping Cloud sync: macOS builds don't sync through Aurelia yet"
+            );
+            cloud_enabled = false;
+        }
         let mut cloud_client = None;
         let mut cloud_resolver = None;
         let mut cloud_specs: Vec<crate::library::cloud_sync::UfsSaveSpec> = Vec::new();
@@ -441,8 +466,11 @@ impl SteamClient {
             let cloud_user_configs = crate::core::config::load_user_configs().await?;
             // UFS rules and overrides; best-effort.
             let ufs = self.fetch_ufs_config(app.app_id).await.unwrap_or_default();
-            let runs_windows = native_windows || chosen_proton_path.is_some();
-            let target_os = if runs_windows { "windows" } else { "linux" };
+            let target_os = if native_windows {
+                "windows"
+            } else {
+                launch_info.target.platform().as_str()
+            };
             // Native Linux builds have no prefix.
             let wine_prefix = chosen_proton_path.is_some().then(|| {
                 crate::core::paths::game_save_prefix(

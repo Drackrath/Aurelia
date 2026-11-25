@@ -6,6 +6,28 @@ use super::*;
 pub enum LaunchTarget {
     NativeLinux,
     WindowsProton,
+    NativeMacos,
+}
+
+impl LaunchTarget {
+    /// The OS the build is for.
+    pub const fn platform(self) -> DepotPlatform {
+        match self {
+            Self::NativeLinux => DepotPlatform::Linux,
+            Self::WindowsProton => DepotPlatform::Windows,
+            Self::NativeMacos => DepotPlatform::Macos,
+        }
+    }
+}
+
+impl From<DepotPlatform> for LaunchTarget {
+    fn from(value: DepotPlatform) -> Self {
+        match value {
+            DepotPlatform::Linux => Self::NativeLinux,
+            DepotPlatform::Windows => Self::WindowsProton,
+            DepotPlatform::Macos => Self::NativeMacos,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
