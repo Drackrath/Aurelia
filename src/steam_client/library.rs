@@ -369,7 +369,12 @@ impl SteamClient {
         Ok(apps)
     }
 
-    pub async fn get_product_info(&mut self, appid: u32) -> Result<Vec<LaunchInfo>> {
+    /// Launch entries for `app`, and the platform its installed depots pin down.
+    pub async fn get_product_info(
+        &mut self,
+        app: &LibraryGame,
+    ) -> Result<(Vec<LaunchInfo>, Option<DepotPlatform>)> {
+        let appid = app.app_id;
         let buffer = match self
             .pics_buffer(
                 appid,
@@ -399,14 +404,31 @@ impl SteamClient {
             }
             Err(err) => return Err(err),
         };
+        self.product_info_from_buffer(app, &buffer, DepotPlatform::host())
+    }
 
-        let raw_vdf = String::from_utf8_lossy(&buffer);
+    pub(super) fn product_info_from_buffer(
+        &self,
+        app: &LibraryGame,
+        buffer: &[u8],
+        host: DepotPlatform,
+    ) -> Result<(Vec<LaunchInfo>, Option<DepotPlatform>)> {
+        let appid = app.app_id;
+        let raw_vdf = String::from_utf8_lossy(buffer);
         if raw_vdf.trim().is_empty() {
             bail!("empty appinfo payload returned for app {appid}")
         }
 
-        parse_launch_info_from_vdf(appid, &raw_vdf, DepotPlatform::host())
-            .context("failed to parse launch metadata from PICS appinfo")
+        let options = parse_launch_info_from_vdf(appid, &raw_vdf, host)
+            .context("failed to parse launch metadata from PICS appinfo")?;
+        Ok((options, self.installed_depot_platform(app, buffer)))
+    }
+
+    fn installed_depot_platform(&self, app: &LibraryGame, buffer: &[u8]) -> Option<DepotPlatform> {
+        let (installed, ..) = self.local_manifest_info(app).ok()?;
+        let vdf = find_vdf_in_pics(buffer).ok()?;
+        let rows = pics_depots_value(&vdf)?.as_obj()?;
+        pics::installed_depot_platform(rows, app.app_id, &installed)
     }
 }
 

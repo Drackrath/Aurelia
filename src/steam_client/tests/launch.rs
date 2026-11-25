@@ -19,7 +19,7 @@ fn select_launch_entry_prefers_installed_platform() {
         entry("0", "hl.exe", LaunchTarget::WindowsProton),
         entry("1", "hl.sh", LaunchTarget::NativeLinux),
     ];
-    let mut app = LibraryGame {
+    let app = LibraryGame {
         app_id: 70,
         name: "Half-Life".to_string(),
         install_path: Some(tmp.path().to_string_lossy().to_string()),
@@ -39,21 +39,21 @@ fn select_launch_entry_prefers_installed_platform() {
     };
 
     // Installed platform wins over declared order and stale files.
-    let picked = launch::select_launch_entry(&options, &app, false, false).unwrap();
+    let linux = Some(DepotPlatform::Linux);
+    let picked = launch::select_launch_entry(&options, &app, linux, false, false).unwrap();
     assert_eq!(picked.id, "1");
 
     // Explicit Proton/Windows request still picks the Windows entry.
-    let picked = launch::select_launch_entry(&options, &app, true, false).unwrap();
+    let picked = launch::select_launch_entry(&options, &app, linux, true, false).unwrap();
     assert_eq!(picked.id, "0");
 
     // Explicit native preference beats the windows manifest.
-    app.platform = Some("windows".to_string());
-    let picked = launch::select_launch_entry(&options, &app, false, true).unwrap();
+    let windows = Some(DepotPlatform::Windows);
+    let picked = launch::select_launch_entry(&options, &app, windows, false, true).unwrap();
     assert_eq!(picked.id, "1");
 
     // Unknown installed platform: first existing executable.
-    app.platform = None;
-    let picked = launch::select_launch_entry(&options, &app, false, false).unwrap();
+    let picked = launch::select_launch_entry(&options, &app, None, false, false).unwrap();
     assert_eq!(picked.id, "0");
 }
 
@@ -231,7 +231,8 @@ fn select_launch_entry_matches_executable_case_insensitively() {
     };
 
     // Proton request finds the lowercase exe.
-    let picked = launch::select_launch_entry(&options, &app, true, false).unwrap();
+    let linux = Some(DepotPlatform::Linux);
+    let picked = launch::select_launch_entry(&options, &app, linux, true, false).unwrap();
     assert_eq!(picked.id, "1");
     // Compared as paths: the on-disk spelling uses the host's separator.
     assert_eq!(
@@ -244,7 +245,7 @@ fn select_launch_entry_matches_executable_case_insensitively() {
     );
 
     // Native default is unaffected.
-    let picked = launch::select_launch_entry(&options, &app, false, false).unwrap();
+    let picked = launch::select_launch_entry(&options, &app, linux, false, false).unwrap();
     assert_eq!(picked.id, "3");
 }
 
@@ -437,4 +438,93 @@ fn launch_targets_lists_an_installed_macos_build() {
     let targets = list();
     assert_eq!(targets[0].missing, Some("build"));
     assert!(!targets[0].default);
+}
+
+const DUAL_BUILD_APPINFO: &str = r#""appinfo"
+{
+	"appid"	"70"
+	"config"
+	{
+		"launch"
+		{
+			"0" { "executable" "hl.exe" "config" { "oslist" "windows" } }
+			"1" { "executable" "hl_linux" "config" { "oslist" "linux" } }
+		}
+	}
+	"depots"
+	{
+		"71" { "config" { "oslist" "windows" } }
+		"72" { "config" { "oslist" "linux" } }
+		"73" { "maxsize" "1" }
+		"74" { "config" { "oslist" "windows,linux" } }
+		"75" { "config" { "oslist" "windows" } "dlcappid" "80" }
+	}
+}"#;
+
+#[test]
+fn launch_selection_follows_the_installed_depots() {
+    let cases = [
+        (
+            "Linux install over a stale Windows exe",
+            vec![(72, 2, 1), (73, 3, 1)],
+            Some(DepotPlatform::Linux),
+            "1",
+        ),
+        (
+            "Windows install with a shared depot and a leftover Linux binary",
+            vec![(71, 1, 1), (74, 4, 1)],
+            Some(DepotPlatform::Windows),
+            "0",
+        ),
+        (
+            "Linux install with a carried-over Windows DLC depot",
+            vec![(72, 2, 1), (75, 5, 1)],
+            Some(DepotPlatform::Linux),
+            "1",
+        ),
+        ("untagged depots only", vec![(73, 3, 1)], None, "0"),
+    ];
+    let client = SteamClient::new().unwrap();
+    for (case, installed_depots, platform, id) in cases {
+        let tmp = tempfile::tempdir().unwrap();
+        let steamapps = tmp.path().join("steamapps");
+        let install = steamapps.join("common").join("Half-Life");
+        std::fs::create_dir_all(&install).unwrap();
+        std::fs::write(install.join("hl.exe"), "x").unwrap();
+        std::fs::write(install.join("hl_linux"), "x").unwrap();
+        let spec = AppManifestSpec {
+            appid: 70,
+            game_name: "Half-Life",
+            installdir: "Half-Life",
+            installed_depots,
+            fully_installed: true,
+            ..Default::default()
+        };
+        SteamClient::write_appmanifest(&steamapps.join("appmanifest_70.acf"), spec).unwrap();
+        let app = LibraryGame {
+            app_id: 70,
+            name: "Half-Life".to_string(),
+            install_path: Some(install.to_string_lossy().into_owned()),
+            is_installed: true,
+            playtime_forever_minutes: None,
+            active_branch: "public".to_string(),
+            update_available: false,
+            steam_config_mismatch: false,
+            update_queued: false,
+            local_manifest_ids: HashMap::new(),
+            is_owned: true,
+            is_family_shared: false,
+            online_required: None,
+            platform: None,
+            from_windows_steam: false,
+            size_on_disk: None,
+        };
+
+        let (options, installed) = client
+            .product_info_from_buffer(&app, DUAL_BUILD_APPINFO.as_bytes(), DepotPlatform::Linux)
+            .unwrap();
+        assert_eq!(installed, platform, "{case}");
+        let picked = launch::select_launch_entry(&options, &app, installed, false, false).unwrap();
+        assert_eq!(picked.id, id, "{case}");
+    }
 }

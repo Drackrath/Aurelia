@@ -41,6 +41,28 @@ pub fn should_keep_depot(oslist: Option<&str>, target: DepotPlatform) -> bool {
     })
 }
 
+/// The one platform whose install keeps every installed non-DLC depot, if any.
+pub(crate) fn installed_depot_platform(
+    rows: &steam_vdf_parser::Obj<'_>,
+    app_id: u32,
+    installed: &HashMap<u64, u64>,
+) -> Option<DepotPlatform> {
+    let oslists: Vec<&str> = installed
+        .keys()
+        .filter_map(|depot| rows.get(&depot.to_string()))
+        .filter(|row| depots::dlc_app(row, app_id).is_none())
+        .filter_map(depots::depot_oslist)
+        .collect();
+    let fits: Vec<DepotPlatform> = DepotPlatform::ALL
+        .into_iter()
+        .filter(|&p| oslists.iter().all(|&os| should_keep_depot(Some(os), p)))
+        .collect();
+    match fits[..] {
+        [platform] => Some(platform),
+        _ => None,
+    }
+}
+
 /// Platforms some depot's oslist names, in `ALL` order. `[Windows]` when none does.
 pub(crate) fn available_platforms(
     depots: Option<&steam_vdf_parser::Obj<'_>>,

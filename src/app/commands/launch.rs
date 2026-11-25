@@ -166,8 +166,8 @@ pub(crate) async fn cmd_launch_targets(app_id: u32, steam: bool, json: bool) -> 
     if !game.is_installed {
         bail!("{} is not installed", game.name);
     }
-    let options = client
-        .get_product_info(app_id)
+    let (options, installed) = client
+        .get_product_info(&game)
         .await
         .with_context(|| format!("failed to load launch options for app {app_id}"))?;
 
@@ -179,9 +179,14 @@ pub(crate) async fn cmd_launch_targets(app_id: u32, steam: bool, json: bool) -> 
         || platform_preference == Some("windows")
         || game_cfg.is_some_and(|c| c.forced_proton_version.is_some());
     let prefer_native = platform_preference == Some("linux") && !cfg!(target_os = "windows");
-    let default_entry =
-        aurelia::steam_client::select_launch_entry(&options, &game, prefer_windows, prefer_native)
-            .map(|e| e.target);
+    let default_entry = aurelia::steam_client::select_launch_entry(
+        &options,
+        &game,
+        installed,
+        prefer_windows,
+        prefer_native,
+    )
+    .map(|e| e.target);
 
     let user_configs = load_user_configs().await?;
     let steam = steam || aurelia::steam_client::forced_steam_reason(&game).is_some();
@@ -391,8 +396,8 @@ pub(crate) async fn cmd_play(
             }
             None => None,
         };
-        let options = client
-            .get_product_info(app_id)
+        let (options, _) = client
+            .get_product_info(&game)
             .await
             .with_context(|| format!("failed to load launch options for app {app_id}"))?;
         let entry = aurelia::steam_client::find_launch_option(&options, id)?;
