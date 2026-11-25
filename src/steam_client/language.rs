@@ -19,15 +19,22 @@ pub(crate) struct LanguagePlan {
 }
 
 /// Platform of the installed depots.
+///
+/// Windows and Linux installs never download a Mac-only depot, so one marks a
+/// macOS install. Depots shared with macOS say nothing.
 pub(crate) fn installed_platform(rows: &Obj<'_>, installed: &HashMap<u64, u64>) -> DepotPlatform {
-    let linux = installed.keys().any(|depot| {
-        rows.get(&depot.to_string())
-            .and_then(|row| row.get_obj(&["config"]))
-            .and_then(|c| c.get("oslist"))
-            .and_then(|o| o.as_str())
-            .is_some_and(|os| os.to_lowercase().contains("linux"))
-    });
-    if linux {
+    let oslists: Vec<&str> = installed
+        .keys()
+        .filter_map(|depot| rows.get(&depot.to_string()).and_then(depots::depot_oslist))
+        .collect();
+    let mac_only = |os: &&str| {
+        DepotPlatform::Macos.in_oslist(os)
+            && !DepotPlatform::Windows.in_oslist(os)
+            && !DepotPlatform::Linux.in_oslist(os)
+    };
+    if oslists.iter().any(mac_only) {
+        DepotPlatform::Macos
+    } else if oslists.iter().any(|os| DepotPlatform::Linux.in_oslist(os)) {
         DepotPlatform::Linux
     } else {
         DepotPlatform::Windows
@@ -36,13 +43,9 @@ pub(crate) fn installed_platform(rows: &Obj<'_>, installed: &HashMap<u64, u64>) 
 
 /// Language depots of the base game.
 fn is_language_row(row: &Value<'_>, app_id: u32, platform: DepotPlatform) -> bool {
-    let oslist = row
-        .get_obj(&["config"])
-        .and_then(|c| c.get("oslist"))
-        .and_then(|o| o.as_str());
     depots::depot_language(row).is_some()
         && depots::required_depot(row, app_id)
-        && should_keep_depot(oslist, platform)
+        && should_keep_depot(depots::depot_oslist(row), platform)
 }
 
 /// Languages with their own depots.
@@ -144,13 +147,7 @@ pub(crate) fn plan_language_switch(
     let platform = installed_platform(rows, installed);
     let language = validate_language(rows, app_id, platform, language)?;
 
-    let on_platform = |row: &Value<'_>| {
-        let oslist = row
-            .get_obj(&["config"])
-            .and_then(|c| c.get("oslist"))
-            .and_then(|o| o.as_str());
-        should_keep_depot(oslist, platform)
-    };
+    let on_platform = |row: &Value<'_>| should_keep_depot(depots::depot_oslist(row), platform);
     let owner = |row: &Value<'_>| depots::dlc_app(row, app_id).unwrap_or(app_id);
     // Base game plus installed DLC.
     let mut owners: HashSet<u32> = installed

@@ -44,3 +44,67 @@ fn installdir_missing_is_none() {
     let vdf = find_vdf_in_pics(raw.as_bytes()).expect("parse pics vdf");
     assert_eq!(pics_installdir(pics_app_section(vdf.value())), None);
 }
+
+#[test]
+fn windows_and_linux_selection_unchanged() {
+    let cases = [
+        (None, true, true),
+        (Some("windows"), true, false),
+        (Some("linux"), false, true),
+        (Some("macos"), false, false),
+        (Some("windows,linux"), true, true),
+        (Some("Windows"), true, false),
+        (Some("solaris"), true, true),
+    ];
+    for (oslist, windows, linux) in cases {
+        assert_eq!(
+            should_keep_depot(oslist, DepotPlatform::Windows),
+            windows,
+            "{oslist:?}"
+        );
+        assert_eq!(
+            should_keep_depot(oslist, DepotPlatform::Linux),
+            linux,
+            "{oslist:?}"
+        );
+    }
+}
+
+#[test]
+fn macos_target_keeps_mac_and_shared_depots() {
+    let mac = DepotPlatform::Macos;
+    assert!(should_keep_depot(Some("macos"), mac));
+    assert!(should_keep_depot(Some("MacOS"), mac));
+    assert!(should_keep_depot(Some("windows,macos"), mac));
+    assert!(should_keep_depot(None, mac));
+    assert!(should_keep_depot(Some("solaris"), mac));
+    assert!(!should_keep_depot(Some("windows"), mac));
+    assert!(!should_keep_depot(Some("linux"), mac));
+}
+
+fn platforms_of(depots: &str) -> Vec<DepotPlatform> {
+    let vdf = steam_vdf_parser::parse_text(depots).unwrap();
+    available_platforms(vdf.as_obj())
+}
+
+#[test]
+fn available_platforms_lists_mac_depots() {
+    assert_eq!(
+        platforms_of(
+            r#""depots" {
+                "1" { "config" { "oslist" "macos" } }
+                "2" { "config" { "oslist" "windows" } }
+            }"#
+        ),
+        vec![DepotPlatform::Windows, DepotPlatform::Macos]
+    );
+    assert_eq!(
+        platforms_of(r#""depots" { "1" { "config" { "oslist" "macos" } } }"#),
+        vec![DepotPlatform::Macos]
+    );
+    assert_eq!(
+        platforms_of(r#""depots" { "1" { "config" { "language" "" } } }"#),
+        vec![DepotPlatform::Windows]
+    );
+    assert_eq!(available_platforms(None), vec![DepotPlatform::Windows]);
+}

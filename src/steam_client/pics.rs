@@ -22,12 +22,7 @@ pub(crate) fn platform_depot_rows<'a, 'text>(
         if obj.get("dlcappid").is_some() {
             continue;
         }
-        let oslist = obj
-            .get("config")
-            .and_then(|v| v.as_obj())
-            .and_then(|c| c.get("oslist"))
-            .and_then(|v| v.as_str());
-        if !should_keep_depot(oslist, platform) {
+        if !should_keep_depot(depots::depot_oslist(value), platform) {
             continue;
         }
         let public = obj
@@ -41,33 +36,28 @@ pub(crate) fn platform_depot_rows<'a, 'text>(
 }
 
 pub fn should_keep_depot(oslist: Option<&str>, target: DepotPlatform) -> bool {
-    match target {
-        DepotPlatform::Windows => match oslist {
-            Some(os) => {
-                let os = os.to_lowercase();
-                if os.contains("windows") {
-                    return true;
-                }
-                if os.contains("linux") || os.contains("macos") {
-                    return false;
-                }
-                true
-            }
-            None => true,
-        },
-        DepotPlatform::Linux => match oslist {
-            Some(os) => {
-                let os = os.to_lowercase();
-                if os.contains("linux") {
-                    return true;
-                }
-                if os.contains("windows") || os.contains("macos") {
-                    return false;
-                }
-                true
-            }
-            None => true,
-        },
+    oslist.is_none_or(|os| {
+        target.in_oslist(os) || !DepotPlatform::ALL.iter().any(|p| p.in_oslist(os))
+    })
+}
+
+/// Platforms some depot's oslist names, in `ALL` order. `[Windows]` when none does.
+pub(crate) fn available_platforms(
+    depots: Option<&steam_vdf_parser::Obj<'_>>,
+) -> Vec<DepotPlatform> {
+    let oslists: Vec<&str> = depots
+        .into_iter()
+        .flat_map(|depots| depots.values())
+        .filter_map(depots::depot_oslist)
+        .collect();
+    let platforms: Vec<DepotPlatform> = DepotPlatform::ALL
+        .into_iter()
+        .filter(|p| oslists.iter().any(|os| p.in_oslist(os)))
+        .collect();
+    if platforms.is_empty() {
+        vec![DepotPlatform::Windows]
+    } else {
+        platforms
     }
 }
 

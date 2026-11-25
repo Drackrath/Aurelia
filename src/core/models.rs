@@ -259,6 +259,41 @@ pub enum ExecutableArchitecture {
 pub enum DepotPlatform {
     Linux,
     Windows,
+    Macos,
+}
+
+impl DepotPlatform {
+    /// Every platform, in detection order.
+    pub const ALL: [Self; 3] = [Self::Windows, Self::Linux, Self::Macos];
+
+    /// The platform's name in a depot `oslist`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Linux => "linux",
+            Self::Windows => "windows",
+            Self::Macos => "macos",
+        }
+    }
+
+    /// The platform [`as_str`](Self::as_str) names.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.as_str() == name)
+    }
+
+    pub(crate) fn in_oslist(self, oslist: &str) -> bool {
+        oslist.to_lowercase().contains(self.as_str())
+    }
+
+    /// The platform Aurelia runs on.
+    pub const fn host() -> Self {
+        if cfg!(target_os = "macos") {
+            Self::Macos
+        } else if cfg!(target_os = "windows") {
+            Self::Windows
+        } else {
+            Self::Linux
+        }
+    }
 }
 
 pub struct ManifestSelection {
@@ -478,3 +513,6 @@ pub struct WorkshopQueryPage {
     pub total: u32,
     pub next_cursor: String,
 }
+
+#[cfg(test)]
+mod tests;

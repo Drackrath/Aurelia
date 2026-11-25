@@ -54,7 +54,7 @@ pub struct BacklogEntry {
     #[serde(default)]
     pub name: String,
     pub state: BacklogState,
-    /// `windows` or `linux`, as resolved.
+    /// `windows`, `linux` or `macos`, as resolved.
     pub platform: String,
     /// Library root it installs into.
     pub library: String,
