@@ -542,18 +542,44 @@ impl SteamClient {
             _ => (HashSet::new(), HashSet::new()),
         };
 
-        let mut out = Vec::with_capacity(dlc_ids.len());
-        for &dlc_id in dlc_ids {
-            // An ownership ticket is only issued for apps the account is licensed for.
-            let owned = self.get_app_ticket(dlc_id).await.is_ok();
-            out.push(DlcState {
+        let owned = self.owned_among(dlc_ids).await;
+        Ok(dlc_ids
+            .iter()
+            .zip(owned)
+            .map(|(&dlc_id, owned)| DlcState {
                 app_id: dlc_id,
                 owned,
                 installed: installed.contains(&dlc_id),
                 disabled: disabled.contains(&dlc_id),
-            });
+            })
+            .collect())
+    }
+
+    /// Ownership per app, eight tickets at once.
+    ///
+    /// Steam issues an ownership ticket only for licensed apps. Without a
+    /// connection every app reads as not owned.
+    async fn owned_among(&self, app_ids: &[u32]) -> Vec<bool> {
+        let mut owned = vec![false; app_ids.len()];
+        let Some(connection) = self.connection() else {
+            return owned;
+        };
+        for (chunk_index, chunk) in app_ids.chunks(8).enumerate() {
+            let mut set = tokio::task::JoinSet::new();
+            for (offset, &app_id) in chunk.iter().enumerate() {
+                let connection = connection.clone();
+                set.spawn(async move {
+                    let ok = super::client::app_ticket(&connection, app_id).await.is_ok();
+                    (chunk_index * 8 + offset, ok)
+                });
+            }
+            while let Some(joined) = set.join_next().await {
+                if let Ok((index, ok)) = joined {
+                    owned[index] = ok;
+                }
+            }
         }
-        Ok(out)
+        owned
     }
 }
 

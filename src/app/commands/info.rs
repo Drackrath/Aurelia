@@ -587,7 +587,13 @@ pub(crate) async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
         .unwrap_or_default();
     let country = resolve_steam_country(None).await?;
     let lang = resolve_steam_language(None).await;
-    let store = resolve_dlc_store_info(&steam, &dlc_ids, &lang, &country).await;
+    // Store records and ownership in parallel.
+    let (store, states) = tokio::join!(
+        resolve_dlc_store_info(&steam, &dlc_ids, &lang, &country),
+        steam.dlc_states(app_id, &dlc_ids),
+    );
+    let states =
+        states.with_context(|| format!("failed to resolve DLC status for app {app_id}"))?;
     let mut dlc: Vec<(u32, Option<String>)> = dlc_ids
         .iter()
         .map(|&id| {
@@ -601,10 +607,6 @@ pub(crate) async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
         })
         .collect();
     dlc.sort_by_key(|(id, _)| *id);
-    let states = steam
-        .dlc_states(app_id, &dlc_ids)
-        .await
-        .with_context(|| format!("failed to resolve DLC status for app {app_id}"))?;
     let state_by_id: std::collections::HashMap<u32, &aurelia::core::models::DlcState> =
         states.iter().map(|s| (s.app_id, s)).collect();
 
