@@ -89,18 +89,31 @@ pub(crate) fn detect_installed_platform_set(install_path: &str) -> Option<(bool,
 }
 
 /// Best-effort detection of the platform whose depot is installed for a game, by
-/// looking for a Windows executable in its install directory: a Windows depot
-/// always ships a `.exe`, a native Linux/macOS build never does. Breadth-first so
-/// a Windows game's top-level `.exe` is found immediately; the walk is bounded so
-/// a large native install can't stall `list`. Returns `None` when the directory
-/// can't be read or the budget is exhausted before a verdict (the caller then
-/// leaves the platform unknown rather than guessing).
+/// looking for an app bundle or a Windows executable in its install directory: a
+/// macOS build ships an `.app` bundle, a Windows depot always ships a `.exe`, and
+/// a native Linux build has neither. Breadth-first so a Windows game's top-level
+/// `.exe` is found immediately, and a bundle's `Contents/Info.plist` before any
+/// `.exe` a Mono port keeps deeper inside it; the walk is bounded so a large native
+/// install can't stall `list`. Returns `None` when the directory can't be read or
+/// the budget is exhausted before a verdict (the caller then leaves the platform
+/// unknown rather than guessing).
 pub(crate) fn detect_installed_platform(install_path: &str) -> Option<String> {
-    let outcome = walk_install_dir(install_path, |path| {
+    let has_extension = |path: &std::path::Path, extension: &str| {
         path.extension()
             .and_then(|e| e.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
-            .then(|| "windows".to_string())
+            .is_some_and(|e| e.eq_ignore_ascii_case(extension))
+    };
+    let outcome = walk_install_dir(install_path, |path| {
+        let bundle_plist = path.ends_with("Contents/Info.plist")
+            && path
+                .parent()
+                .and_then(std::path::Path::parent)
+                .is_some_and(|bundle| has_extension(bundle, "app"));
+        if bundle_plist {
+            Some("macos".to_string())
+        } else {
+            has_extension(path, "exe").then(|| "windows".to_string())
+        }
     });
     match outcome {
         WalkOutcome::Found(platform) => Some(platform),
@@ -449,3 +462,6 @@ pub(crate) async fn cmd_libraries(json: bool) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;
