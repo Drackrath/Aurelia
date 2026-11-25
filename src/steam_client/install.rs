@@ -380,10 +380,7 @@ impl SteamClient {
                     if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
                         for (key, value) in depots.iter() {
                             if let Ok(d_id) = key.parse::<u32>() {
-                                let oslist = value
-                                    .get_obj(&["config"])
-                                    .and_then(|c| c.get("oslist"))
-                                    .and_then(|o| o.as_str());
+                                let oslist = depots::depot_oslist(value);
 
                                 if oslist.is_some_and(|os| DepotPlatform::Windows.in_oslist(os)) {
                                     has_windows = true;

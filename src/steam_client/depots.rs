@@ -128,6 +128,14 @@ pub(crate) fn depot_language<'a>(value: &'a Value<'_>) -> Option<&'a str> {
         .filter(|l| !l.is_empty())
 }
 
+/// A depot row's `config/oslist`, if set.
+pub(crate) fn depot_oslist<'a>(value: &'a Value<'_>) -> Option<&'a str> {
+    value
+        .get_obj(&["config"])
+        .and_then(|c| c.get("oslist"))
+        .and_then(|o| o.as_str())
+}
+
 /// Whether a depot serves `language`.
 pub(crate) fn depot_matches_language(value: &Value<'_>, language: &str) -> bool {
     depot_language(value).is_none_or(|l| l.eq_ignore_ascii_case(language))

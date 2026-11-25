@@ -22,12 +22,7 @@ pub(crate) fn platform_depot_rows<'a, 'text>(
         if obj.get("dlcappid").is_some() {
             continue;
         }
-        let oslist = obj
-            .get("config")
-            .and_then(|v| v.as_obj())
-            .and_then(|c| c.get("oslist"))
-            .and_then(|v| v.as_str());
-        if !should_keep_depot(oslist, platform) {
+        if !should_keep_depot(depots::depot_oslist(value), platform) {
             continue;
         }
         let public = obj
@@ -53,12 +48,7 @@ pub(crate) fn available_platforms(
     let oslists: Vec<&str> = depots
         .into_iter()
         .flat_map(|depots| depots.values())
-        .filter_map(|depot| {
-            depot
-                .get_obj(&["config"])
-                .and_then(|c| c.get("oslist"))
-                .and_then(|o| o.as_str())
-        })
+        .filter_map(depots::depot_oslist)
         .collect();
     let platforms: Vec<DepotPlatform> = DepotPlatform::ALL
         .into_iter()
