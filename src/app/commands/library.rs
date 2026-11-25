@@ -100,7 +100,6 @@ pub(crate) fn detect_installed_platform_set(install_path: &str) -> Option<(bool,
 pub(crate) fn detect_installed_platform(install_path: &str) -> Option<String> {
     let has_extension = |path: &std::path::Path, extension: &str| {
         path.extension()
-            .and_then(|e| e.to_str())
             .is_some_and(|e| e.eq_ignore_ascii_case(extension))
     };
     let outcome = walk_install_dir(install_path, |path| {

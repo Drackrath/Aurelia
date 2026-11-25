@@ -31,7 +31,7 @@ fn exe_inside_a_bundle_stays_macos() {
 #[test]
 fn exe_is_windows_and_anything_else_linux() {
     assert_eq!(
-        platform(&["Game.exe", "data/pak0"]).as_deref(),
+        platform(&["Game.EXE", "Other.app/Contents/Info.plist"]).as_deref(),
         Some("windows")
     );
     assert_eq!(
