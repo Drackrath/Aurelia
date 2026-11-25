@@ -25,7 +25,7 @@ pub(crate) fn installed_platform(rows: &Obj<'_>, installed: &HashMap<u64, u64>) 
             .and_then(|row| row.get_obj(&["config"]))
             .and_then(|c| c.get("oslist"))
             .and_then(|o| o.as_str())
-            .is_some_and(|os| os.to_lowercase().contains("linux"))
+            .is_some_and(|os| DepotPlatform::Linux.in_oslist(os))
     });
     if linux {
         DepotPlatform::Linux

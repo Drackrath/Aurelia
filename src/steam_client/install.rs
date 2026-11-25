@@ -164,51 +164,16 @@ impl SteamClient {
             .await?;
         let appinfo_vdf_text = String::from_utf8_lossy(&buffer);
 
-        let mut has_linux = false;
-        let mut has_windows = false;
-
         let vdf_res = steam_vdf_parser::parse_binary(&buffer)
             .or_else(|_| steam_vdf_parser::parse_text(&appinfo_vdf_text).map(|v| v.into_owned()));
 
-        if let Ok(vdf) = vdf_res {
-            let depots_val = pics_depots_value(&vdf);
-
-            if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
-                for value in depots.values() {
-                    let oslist = value
-                        .get_obj(&["config"])
-                        .and_then(|c| c.get("oslist"))
-                        .and_then(|o| o.as_str());
-
-                    if let Some(os) = oslist {
-                        let os = os.to_lowercase();
-                        if os.contains("linux") {
-                            has_linux = true;
-                        }
-                        if os.contains("windows") {
-                            has_windows = true;
-                        }
-                    }
-                }
-            }
-        } else {
+        let Ok(vdf) = vdf_res else {
             tracing::warn!(
                 "get_available_platforms: VDF parse failed for {appid}, using fallback discovery"
             );
             return Ok((vec![DepotPlatform::Windows, DepotPlatform::Linux], buffer));
-        }
-
-        let mut platforms = Vec::new();
-        if has_windows {
-            platforms.push(DepotPlatform::Windows);
-        }
-        if has_linux {
-            platforms.push(DepotPlatform::Linux);
-        }
-
-        if platforms.is_empty() {
-            platforms.push(DepotPlatform::Windows);
-        }
+        };
+        let platforms = available_platforms(pics_depots_value(&vdf).and_then(|v| v.as_obj()));
 
         Ok((platforms, buffer))
     }
@@ -420,7 +385,7 @@ impl SteamClient {
                                     .and_then(|c| c.get("oslist"))
                                     .and_then(|o| o.as_str());
 
-                                if oslist.is_some_and(|os| os.to_lowercase().contains("windows")) {
+                                if oslist.is_some_and(|os| DepotPlatform::Windows.in_oslist(os)) {
                                     has_windows = true;
                                 }
 

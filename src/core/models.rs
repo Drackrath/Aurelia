@@ -261,6 +261,23 @@ pub enum DepotPlatform {
     Windows,
 }
 
+impl DepotPlatform {
+    /// Every platform, in detection order.
+    pub const ALL: [Self; 2] = [Self::Windows, Self::Linux];
+
+    /// The platform's name in a depot `oslist`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Linux => "linux",
+            Self::Windows => "windows",
+        }
+    }
+
+    pub(crate) fn in_oslist(self, oslist: &str) -> bool {
+        oslist.to_lowercase().contains(self.as_str())
+    }
+}
+
 pub struct ManifestSelection {
     pub app_id: u32,
     pub depot_id: u32,
@@ -478,3 +495,6 @@ pub struct WorkshopQueryPage {
     pub total: u32,
     pub next_cursor: String,
 }
+
+#[cfg(test)]
+mod tests;

@@ -44,3 +44,28 @@ fn installdir_missing_is_none() {
     let vdf = find_vdf_in_pics(raw.as_bytes()).expect("parse pics vdf");
     assert_eq!(pics_installdir(pics_app_section(vdf.value())), None);
 }
+
+#[test]
+fn windows_and_linux_selection_unchanged() {
+    let cases = [
+        (None, true, true),
+        (Some("windows"), true, false),
+        (Some("linux"), false, true),
+        (Some("macos"), false, false),
+        (Some("windows,linux"), true, true),
+        (Some("Windows"), true, false),
+        (Some("solaris"), true, true),
+    ];
+    for (oslist, windows, linux) in cases {
+        assert_eq!(
+            should_keep_depot(oslist, DepotPlatform::Windows),
+            windows,
+            "{oslist:?}"
+        );
+        assert_eq!(
+            should_keep_depot(oslist, DepotPlatform::Linux),
+            linux,
+            "{oslist:?}"
+        );
+    }
+}
