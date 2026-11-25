@@ -691,6 +691,17 @@ Read the disclaimer at the top of this README before using it. Use at your own r
 Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. By
 participating, you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md).
 
+Aurelia is spread over several repositories. Send a change to the one that holds the code:
+
+| Repository | What lives there |
+| --- | --- |
+| [Drackrath/Aurelia](https://github.com/Drackrath/Aurelia) | The `aurelia` command and its library (this repository) |
+| [Drackrath/aurelia-steam-vent](https://github.com/Drackrath/aurelia-steam-vent) ([Codeberg mirror](https://codeberg.org/Drackrath/aurelia-steam-vent)) | Steam network protocol client, with the `-core` and `-crypto` crates |
+| [Drackrath/aurelia-steam-cdn](https://github.com/Drackrath/aurelia-steam-cdn) | Depot downloads |
+| [Drackrath/aurelia-steam-vent-chat](https://codeberg.org/Drackrath/aurelia-steam-vent-chat) | Friend chat |
+| [Drackrath/proto](https://codeberg.org/Drackrath/proto) | Steam protobuf messages (`aurelia-steam-vent-proto`) |
+| [Drackrath/Aurelia-TUI](https://github.com/Drackrath/Aurelia-TUI) | Terminal UI for your Steam library, built on `aurelia` |
+
 ## Acknowledgments
 
 Aurelia grew directly out of **[SteamFlow](https://github.com/weter11/SteamFlow)**, the
