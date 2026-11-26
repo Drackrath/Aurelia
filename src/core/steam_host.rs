@@ -401,6 +401,7 @@ pub async fn wait_for_steam_logged_on(_timeout: std::time::Duration) -> bool {
 }
 
 /// The in-Wine Steam client in the master prefix has an account signed in.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn master_steam_is_logged_on() -> bool {
     let Some(steam_exe) = get_master_steam_config().steam_exe else {
         return false;
@@ -412,6 +413,11 @@ pub fn master_steam_is_logged_on() -> bool {
         return false;
     };
     connection_log_logged_on(&text).unwrap_or(false)
+}
+
+#[cfg(target_os = "windows")]
+pub fn master_steam_is_logged_on() -> bool {
+    false
 }
 
 #[derive(Debug, Clone)]
