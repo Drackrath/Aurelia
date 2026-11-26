@@ -55,7 +55,7 @@ pub(super) async fn build_env(
         .map(|c| c.steam_launch_config.no_overlay)
         .unwrap_or(true);
 
-    let (_install_dir, executable, _game_working_dir) = ctx.game_paths()?;
+    let game = ctx.launch_info.command(ctx.install_dir()?);
 
     // Resolve proton version for component detection and DLL path building
     let proton = forced_proton(ctx)
@@ -82,7 +82,7 @@ pub(super) async fn build_env(
         ctx,
         flags,
         no_overlay,
-        executable.parent(),
+        game.program.parent(),
         host_bridge,
         use_symlinks,
     );

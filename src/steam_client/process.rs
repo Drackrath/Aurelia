@@ -420,22 +420,18 @@ NoSavePersonalInfo=1
     }
 
     /// Launch a Windows game's executable directly, with no Proton/Wine layer.
-    /// Resolve install dir, executable, args, workingdir.
+    /// The entry's command, plus the user's launch-option arguments.
     async fn resolve_exec_plan(
         &self,
         app: &LibraryGame,
         launch_info: &LaunchInfo,
         user_config: Option<&crate::core::models::UserAppConfig>,
-    ) -> Result<(PathBuf, PathBuf, Vec<String>, PathBuf)> {
+    ) -> Result<GameCommand> {
         let install_dir = match app.install_path.as_ref().map(PathBuf::from) {
             Some(p) if p.exists() => p,
             _ => self.install_root_for_app(app.app_id).await?,
         };
-
-        // Normalize VDF backslash paths.
-        let exe_relative = launch_info.executable.replace('\\', "/");
-        let executable = install_dir.join(&exe_relative);
-        let mut args = split_args(&launch_info.arguments);
+        let mut game = launch_info.command(&install_dir);
 
         if let Some(config) = user_config.filter(|c| !c.launch_options.trim().is_empty()) {
             use crate::launch::stages::user_launch_options::parse_launch_options;
@@ -447,19 +443,10 @@ NoSavePersonalInfo=1
                     "launch option environment and wrappers are ignored for direct Windows launches"
                 );
             }
-            args.extend(options.args);
+            game.args.extend(options.args);
         }
 
-        // Workingdir, exe parent, install dir.
-        let game_working_dir: PathBuf = launch_info
-            .workingdir
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .map(|wd| install_dir.join(wd.replace('\\', "/")))
-            .or_else(|| executable.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| install_dir.clone());
-
-        Ok((install_dir, executable, args, game_working_dir))
+        Ok(game)
     }
 
     /// Used on Windows hosts (and when `--windows` is forced), where the game's
@@ -470,7 +457,11 @@ NoSavePersonalInfo=1
         launch_info: &LaunchInfo,
         user_config: Option<&crate::core::models::UserAppConfig>,
     ) -> Result<crate::launch::game_process::GameProcess> {
-        let (_install_dir, executable, args, game_working_dir) = self
+        let GameCommand {
+            program: executable,
+            args,
+            cwd: game_working_dir,
+        } = self
             .resolve_exec_plan(app, launch_info, user_config)
             .await?;
 
@@ -603,7 +594,11 @@ NoSavePersonalInfo=1
         _launcher_config: &crate::core::config::LauncherConfig,
         user_config: Option<&crate::core::models::UserAppConfig>,
     ) -> Result<std::process::Child> {
-        let (install_dir, executable, args, game_working_dir) = self
+        let GameCommand {
+            program: executable,
+            args,
+            cwd: game_working_dir,
+        } = self
             .resolve_exec_plan(app, launch_info, user_config)
             .await?;
 
@@ -623,7 +618,7 @@ NoSavePersonalInfo=1
 
                 let mut cmd = Command::new(&executable);
                 cmd.args(&args);
-                cmd.current_dir(&install_dir);
+                cmd.current_dir(&game_working_dir);
 
                 let bin_dir = executable.parent().unwrap_or_else(|| Path::new("."));
                 let existing_ld = std::env::var("LD_LIBRARY_PATH").unwrap_or_default();

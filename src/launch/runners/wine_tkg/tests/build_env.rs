@@ -180,6 +180,20 @@ async fn wine_env_keeps_dlls_the_game_ships_next_to_its_exe() {
 }
 
 #[tokio::test]
+async fn wine_runner_starts_in_the_install_dir_without_a_workingdir() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut ctx = mock_context();
+    ctx.app.install_path = Some(tmp.path().to_string_lossy().into_owned());
+    ctx.launch_info.executable = "x64/game.exe".into();
+    ctx.use_umu = true;
+    ctx.umu_run = Some(PathBuf::from("/usr/bin/umu-run"));
+
+    let spec = WineTkgRunner.build_command(&ctx).await.unwrap();
+
+    assert_eq!(spec.cwd.as_deref(), Some(tmp.path()));
+}
+
+#[tokio::test]
 async fn test_fixup_fragments_merged_into_build_env() {
     // A game with fixups should have both env and DLL-override fragments merged
     // into the built environment.
