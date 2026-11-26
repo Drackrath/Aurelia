@@ -235,6 +235,19 @@ impl SteamClient {
         let needle = format!("STEAM_COMPAT_APP_ID={app_id}");
         let signal = if force { libc::SIGKILL } else { libc::SIGTERM };
 
+        #[cfg(target_os = "macos")]
+        {
+            for (pid, _cmd, env, _cwd) in Self::macos_process_list() {
+                if env.split(' ').any(|entry| entry == needle) {
+                    unsafe {
+                        libc::kill(pid, signal);
+                    }
+                }
+            }
+            return;
+        }
+
+        #[cfg(not(target_os = "macos"))]
         // Match a NUL-separated environ entry exactly.
         Self::sweep_proc_pids(signal, |pid_path| {
             std::fs::read(pid_path.join("environ")).is_ok_and(|environ| {
@@ -250,7 +263,7 @@ impl SteamClient {
     /// it yields `Some`; returns `None` if `/proc` is unreadable or no entry
     /// matched. Centralizes the directory scan + numeric-pid filter shared by the
     /// prefix-scanning helpers so each caller only expresses its own match logic.
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     fn scan_proc_pids<T>(mut f: impl FnMut(&Path, &str) -> Option<T>) -> Option<T> {
         let proc_dir = std::fs::read_dir("/proc").ok()?;
         for entry in proc_dir.flatten() {
@@ -269,21 +282,57 @@ impl SteamClient {
     }
 
     /// Lossily-decoded environ, if readable.
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     fn proc_environ(pid_path: &Path) -> Option<String> {
         let bytes = std::fs::read(pid_path.join("environ")).ok()?;
         Some(String::from_utf8_lossy(&bytes).into_owned())
     }
 
     /// Cmdline with NULs as spaces.
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     fn proc_cmdline(pid_path: &Path) -> Option<String> {
         let bytes = std::fs::read(pid_path.join("cmdline")).ok()?;
         Some(String::from_utf8_lossy(&bytes).replace('\0', " "))
     }
 
+    /// `(pid, cmdline, environ, cwd)` for every visible process, on macOS.
+    #[cfg(target_os = "macos")]
+    fn macos_process_list() -> Vec<(i32, String, String, Option<String>)> {
+        use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+        let Ok(mut sys) = System::new() else {
+            return Vec::new();
+        };
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing()
+                .with_cmd(UpdateKind::OnlyIfNotSet)
+                .with_environ(UpdateKind::OnlyIfNotSet)
+                .with_cwd(UpdateKind::OnlyIfNotSet),
+        );
+        sys.processes()
+            .iter()
+            .map(|(pid, process)| {
+                let cmd = process
+                    .cmd()
+                    .iter()
+                    .map(|part| part.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let env = process
+                    .environ()
+                    .iter()
+                    .map(|entry| entry.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let cwd = process.cwd().map(|dir| dir.to_string_lossy().into_owned());
+                (pid.as_u32() as i32, cmd, env, cwd)
+            })
+            .collect()
+    }
+
     /// Signal every process matching `pred`.
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     fn sweep_proc_pids(signal: i32, mut pred: impl FnMut(&Path) -> bool) {
         Self::scan_proc_pids(|pid_path, pid_str| {
             if pred(pid_path)
@@ -307,6 +356,23 @@ impl SteamClient {
         let prefix_str = wineprefix.to_string_lossy().to_string();
         let signal = if force { libc::SIGKILL } else { libc::SIGTERM };
 
+        #[cfg(target_os = "macos")]
+        {
+            for (pid, _cmd, env, cwd) in Self::macos_process_list() {
+                if env.contains(&prefix_str)
+                    || cwd
+                        .as_deref()
+                        .is_some_and(|dir| dir.starts_with(&prefix_str))
+                {
+                    unsafe {
+                        libc::kill(pid, signal);
+                    }
+                }
+            }
+            return;
+        }
+
+        #[cfg(not(target_os = "macos"))]
         Self::sweep_proc_pids(signal, |pid_path| {
             Self::proc_environ(pid_path).is_some_and(|env| env.contains(&prefix_str))
         });
@@ -317,6 +383,26 @@ impl SteamClient {
         {
             let prefix_str = wineprefix.to_string_lossy().to_string();
 
+            #[cfg(target_os = "macos")]
+            {
+                for (pid, cmd, env, cwd) in Self::macos_process_list() {
+                    let cmd = cmd.to_lowercase();
+                    let in_prefix = env.contains(&prefix_str)
+                        || cwd
+                            .as_deref()
+                            .is_some_and(|dir| dir.starts_with(&prefix_str))
+                        || env.is_empty();
+                    if (cmd.contains("steam.exe") || cmd.contains("steamwebhelper.exe"))
+                        && in_prefix
+                    {
+                        unsafe {
+                            libc::kill(pid, libc::SIGTERM);
+                        }
+                    }
+                }
+            }
+
+            #[cfg(not(target_os = "macos"))]
             // Kill Steam processes in this prefix.
             Self::sweep_proc_pids(libc::SIGTERM, |pid_path| {
                 let Some(cmdline) = Self::proc_cmdline(pid_path) else {
@@ -338,6 +424,24 @@ impl SteamClient {
         #[cfg(unix)]
         {
             let prefix_str = wineprefix.to_string_lossy().to_string();
+
+            #[cfg(target_os = "macos")]
+            {
+                return Self::macos_process_list()
+                    .into_iter()
+                    .any(|(_, cmd, env, cwd)| {
+                        let cmd = cmd.to_lowercase();
+                        let in_prefix = env.contains(&prefix_str)
+                            || cwd
+                                .as_deref()
+                                .is_some_and(|dir| dir.starts_with(&prefix_str))
+                            || env.is_empty();
+                        (cmd.contains("fossilize-replay") || cmd.contains("fossilize_replay"))
+                            && in_prefix
+                    });
+            }
+
+            #[cfg(not(target_os = "macos"))]
             Self::scan_proc_pids(|pid_path, _pid_str| {
                 // `bin\fossilize-replay64.exe` in Windows Steam.
                 let cmdline = Self::proc_cmdline(pid_path)?.to_lowercase();
@@ -363,6 +467,21 @@ impl SteamClient {
         {
             let prefix_str = wineprefix.to_string_lossy().to_string();
 
+            #[cfg(target_os = "macos")]
+            {
+                return Self::macos_process_list()
+                    .into_iter()
+                    .any(|(_, cmd, env, cwd)| {
+                        let in_prefix = env.contains(&prefix_str)
+                            || cwd
+                                .as_deref()
+                                .is_some_and(|dir| dir.starts_with(&prefix_str))
+                            || env.is_empty();
+                        cmd.to_lowercase().contains("steam.exe") && in_prefix
+                    });
+            }
+
+            #[cfg(not(target_os = "macos"))]
             Self::scan_proc_pids(|pid_path, _pid_str| {
                 // Must have steam.exe in cmdline
                 if !Self::proc_cmdline(pid_path)?
@@ -402,6 +521,27 @@ impl SteamClient {
             if needle.is_empty() {
                 return false;
             }
+
+            #[cfg(target_os = "macos")]
+            {
+                return Self::macos_process_list()
+                    .into_iter()
+                    .any(|(_, cmd, env, cwd)| {
+                        let cmd = cmd.to_lowercase();
+                        let in_prefix = env.contains(&prefix_str)
+                            || cwd
+                                .as_deref()
+                                .is_some_and(|dir| dir.starts_with(&prefix_str))
+                            || env.is_empty();
+                        cmd.contains(&needle)
+                            && cmd.contains(".exe")
+                            && !cmd.contains("steam.exe")
+                            && !cmd.contains("steamwebhelper")
+                            && in_prefix
+                    });
+            }
+
+            #[cfg(not(target_os = "macos"))]
             Self::scan_proc_pids(|pid_path, _pid_str| {
                 let cmdline_str = Self::proc_cmdline(pid_path)?.to_lowercase();
                 if !(cmdline_str.contains(&needle) && cmdline_str.contains(".exe")) {

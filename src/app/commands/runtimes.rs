@@ -493,6 +493,7 @@ pub(crate) async fn cmd_steam_runtime_status(json: bool) -> Result<()> {
             "layout_kind": steam_cfg.layout_kind,
             "steam_exe": steam_cfg.steam_exe,
             "steam_exe_present": steam_exe_present,
+            "logged_in": aurelia::core::steam_host::master_steam_is_logged_on(),
             "steam_runtime_runner": runner_configured.then_some(runner.clone()),
             "steam_runtime_runner_configured": runner_configured,
             "supported": aurelia::core::runner::STEAM_RUNTIME_SUPPORTED,
@@ -510,6 +511,14 @@ pub(crate) async fn cmd_steam_runtime_status(json: bool) -> Result<()> {
         cli_println!(
             "steam.exe present : {}",
             if steam_exe_present { "yes" } else { "no" }
+        );
+        cli_println!(
+            "Logged in         : {}",
+            if aurelia::core::steam_host::master_steam_is_logged_on() {
+                "yes"
+            } else {
+                "no"
+            }
         );
         if let Some(exe) = &steam_cfg.steam_exe {
             cli_println!("steam.exe path    : {}", exe.display());
