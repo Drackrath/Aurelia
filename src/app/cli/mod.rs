@@ -294,8 +294,8 @@ pub(crate) enum Command {
         force: bool,
     },
     /// List the ways an installed game can be launched: each installed build
-    /// (native Linux / Windows) and, for Windows, each available Steam mode, with
-    /// the `play` flags selecting it and which one plain `play` would pick.
+    /// (native Linux, native macOS or Windows) and, for Windows, each available Steam
+    /// mode, with the `play` flags selecting it and which one plain `play` would pick.
     LaunchTargets {
         app_id: u32,
         /// Compute the default as for `play --steam`.

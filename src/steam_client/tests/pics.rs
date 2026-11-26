@@ -19,11 +19,79 @@ fn parses_linux_launch_section_from_vdf() {
   }
 }"#;
 
-    let launch_options = parse_launch_info_from_vdf(10, raw).expect("parse launch info");
+    let launch_options =
+        parse_launch_info_from_vdf(10, raw, DepotPlatform::Linux).expect("parse launch info");
     let launch = &launch_options[0];
     assert_eq!(launch.target, LaunchTarget::NativeLinux);
     assert_eq!(launch.executable, "linux/game.sh");
     assert_eq!(launch.arguments, "-foo -bar");
+}
+
+fn launch_vdf(entries: &str) -> String {
+    format!(r#""appinfo" {{ "config" {{ "launch" {{ {entries} }} }} }}"#)
+}
+
+fn parsed_targets(vdf: &str, host: DepotPlatform) -> Vec<LaunchTarget> {
+    parse_launch_info_from_vdf(10, vdf, host)
+        .expect("parse launch info")
+        .into_iter()
+        .map(|o| o.target)
+        .collect()
+}
+
+#[test]
+fn untagged_entry_target_follows_the_host() {
+    use LaunchTarget::{NativeLinux, NativeMacos, WindowsProton};
+    let vdf = launch_vdf(r#""0" { "executable" "game" } "1" { "executable" "game.exe" }"#);
+    assert_eq!(
+        parsed_targets(&vdf, DepotPlatform::Linux),
+        [NativeLinux, WindowsProton]
+    );
+    assert_eq!(
+        parsed_targets(&vdf, DepotPlatform::Windows),
+        [WindowsProton, WindowsProton]
+    );
+    assert_eq!(parsed_targets(&vdf, DepotPlatform::Macos), [NativeMacos]);
+}
+
+#[test]
+fn mac_builds_run_only_on_a_mac() {
+    use LaunchTarget::{NativeLinux, NativeMacos, WindowsProton};
+    let vdf = launch_vdf(
+        r#""0" { "executable" "Balatro.exe" "config" { "oslist" "windows" } }
+           "1" { "executable" "Balatro.app" "config" { "oslist" "macos" } }
+           "2" { "executable" "balatro.sh" "config" { "oslist" "linux" } }"#,
+    );
+    assert_eq!(parsed_targets(&vdf, DepotPlatform::Macos), [NativeMacos]);
+    assert_eq!(
+        parsed_targets(&vdf, DepotPlatform::Linux),
+        [WindowsProton, NativeLinux]
+    );
+    assert_eq!(
+        parsed_targets(&vdf, DepotPlatform::Windows),
+        [WindowsProton, NativeLinux]
+    );
+
+    let mac_only =
+        launch_vdf(r#""0" { "executable" "Balatro.app" "config" { "oslist" "macos" } }"#);
+    assert!(parse_launch_info_from_vdf(10, &mac_only, DepotPlatform::Linux).is_err());
+}
+
+#[test]
+fn mixed_oslist_is_the_mac_build_on_a_mac() {
+    use LaunchTarget::{NativeLinux, NativeMacos, WindowsProton};
+    let vdf = launch_vdf(
+        r#""0" { "executable" "game" "config" { "oslist" "macos,linux" } }
+           "1" { "executable" "game" "config" { "oslist" "windows,macos" } }"#,
+    );
+    assert_eq!(
+        parsed_targets(&vdf, DepotPlatform::Macos),
+        [NativeMacos, NativeMacos]
+    );
+    assert_eq!(
+        parsed_targets(&vdf, DepotPlatform::Linux),
+        [NativeLinux, WindowsProton]
+    );
 }
 
 #[test]

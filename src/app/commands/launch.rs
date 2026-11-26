@@ -217,13 +217,16 @@ pub(crate) async fn cmd_launch_targets(app_id: u32, steam: bool, json: bool) -> 
     }
 
     if targets.is_empty() {
-        cli_println!("{} has no Linux or Windows launch entries.", game.name);
+        cli_println!("{} has no launch entries this OS can run.", game.name);
         return Ok(());
     }
     cli_println!("Launch targets for {} (* = default):", game.name);
     for t in &targets {
         let mark = if t.default { "*" } else { " " };
         match t.missing {
+            None if t.flags.is_empty() => {
+                cli_println!(" {mark} {:<20} aurelia play {app_id}", t.id)
+            }
             None => cli_println!(
                 " {mark} {:<20} aurelia play {app_id} {}",
                 t.id,
@@ -284,6 +287,11 @@ pub(crate) async fn cmd_play(
     }
     if linux_target && !cfg!(target_os = "linux") {
         bail!("--platform linux runs the native Linux build, which only runs on Linux");
+    }
+    if matches!(target.platform, Some(PlatformArg::Windows)) && cfg!(target_os = "macos") {
+        bail!(
+            "--platform windows runs the Windows build, which needs Proton on Linux or a Windows host"
+        );
     }
     if matches!(target.steam_mode, Some(SteamModeArg::Runtime))
         && !aurelia::core::runner::STEAM_RUNTIME_SUPPORTED
@@ -524,6 +532,7 @@ pub(crate) async fn cmd_play(
         &|proton: Option<&str>| match proton {
             Some(p) => cli_println!("Platform: Windows via Proton ({p})"),
             None if cfg!(target_os = "windows") => cli_println!("Platform: Windows (native)"),
+            None if cfg!(target_os = "macos") => cli_println!("Platform: native macOS"),
             None => cli_println!("Platform: native Linux"),
         };
     client

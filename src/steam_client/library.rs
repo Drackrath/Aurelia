@@ -405,7 +405,7 @@ impl SteamClient {
             bail!("empty appinfo payload returned for app {appid}")
         }
 
-        parse_launch_info_from_vdf(appid, &raw_vdf)
+        parse_launch_info_from_vdf(appid, &raw_vdf, DepotPlatform::host())
             .context("failed to parse launch metadata from PICS appinfo")
     }
 }

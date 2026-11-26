@@ -69,6 +69,10 @@ protobuf-codegen = "3.7.2"
 # Shell/Registry/Threading/WindowsAndMessaging: UAC-elevated game launch.
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10" # Read app bundles' Info.plist; keyring already links it
+core-foundation-sys = "0.8" # CFBundleCopyInfoDictionaryForURL, which core-foundation doesn't wrap
+
 [profile.release]
 opt-level = "z"      # optimize for size
 lto = "thin"          # whole-program inlining + cross-crate dead-code elimination
