@@ -445,15 +445,7 @@ impl SteamClient {
             self.ensure_anticheat_runtimes(app).await;
         }
 
-        let mut cloud_enabled =
-            launcher_config.cloud_sync_enabled(app.app_id) && !self.is_offline();
-        if cloud_enabled && launch_info.target == LaunchTarget::NativeMacos {
-            tracing::info!(
-                appid = app.app_id,
-                "Skipping Cloud sync: macOS builds don't sync through Aurelia yet"
-            );
-            cloud_enabled = false;
-        }
+        let cloud_enabled = launcher_config.cloud_sync_enabled(app.app_id) && !self.is_offline();
         let mut cloud_client = None;
         let mut cloud_resolver = None;
         let mut cloud_specs: Vec<crate::library::cloud_sync::UfsSaveSpec> = Vec::new();
@@ -471,7 +463,7 @@ impl SteamClient {
             } else {
                 launch_info.target.platform().as_str()
             };
-            // Native Linux builds have no prefix.
+            // Native builds have no prefix.
             let wine_prefix = chosen_proton_path.is_some().then(|| {
                 crate::core::paths::game_save_prefix(
                     &launcher_config,
