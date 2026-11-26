@@ -157,7 +157,42 @@ fn proc_entry_is_live(proc_dir: &Path) -> bool {
         .is_some_and(|state| state.trim_start().starts_with('Z'))
 }
 
-#[cfg(not(target_os = "linux"))]
+/// Whether this user's Steam client is running. Scans the process list because
+/// `SteamPID` in `registry.vdf` lags startup and a second `steam_osx` overwrites it.
+#[cfg(target_os = "macos")]
+pub fn is_steam_running() -> bool {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    let Ok(mut sys) = System::new() else {
+        return false;
+    };
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing().with_user(UpdateKind::OnlyIfNotSet),
+    );
+    let uid = unsafe { libc::getuid() };
+    steam_running_among(
+        sys.processes()
+            .values()
+            .map(|p| (p.name(), p.user_id().map(|u| **u))),
+        uid,
+    )
+}
+
+/// Testable core of the macOS [`is_steam_running`]. `Steam Helper` exits with the
+/// `steam_osx` client and launchd respawns `ipcserver` after every quit, so neither
+/// counts.
+#[cfg(target_os = "macos")]
+fn steam_running_among<N: AsRef<std::ffi::OsStr>>(
+    processes: impl IntoIterator<Item = (N, Option<u32>)>,
+    uid: u32,
+) -> bool {
+    processes
+        .into_iter()
+        .any(|(name, owner)| name.as_ref() == "steam_osx" && owner == Some(uid))
+}
+
+#[cfg(target_os = "windows")]
 pub fn is_steam_running() -> bool {
     false
 }
