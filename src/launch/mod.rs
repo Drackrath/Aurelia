@@ -82,6 +82,9 @@ pub async fn install_master_steam(config: &LauncherConfig) -> Result<()> {
     // Bare-wine prefixes miss the runner's dxvk/vkd3d PE libs the Steam CEF UI
     // needs (see ensure_steam_runtime_prefix_libs) — sync them before launching.
     crate::core::runner::ensure_steam_runtime_prefix_libs(&wine, &steam_cfg.wine_prefix);
+    if !config.steam_library_path.is_empty() {
+        register_library_root_in_master_steam(&steam_cfg, Path::new(&config.steam_library_path));
+    }
 
     launch_master_steam(&wine, &steam_exe, &steam_cfg, &base_dir)
 }
@@ -391,6 +394,9 @@ pub async fn relogin_master_steam(config: &LauncherConfig) -> Result<()> {
     // The CEF login UI needs the runner's dxvk/vkd3d PE libs in the prefix (a
     // bare-wine prefix misses them and the UI crash-loops invisibly).
     crate::core::runner::ensure_steam_runtime_prefix_libs(&wine, &steam_cfg.wine_prefix);
+    if !config.steam_library_path.is_empty() {
+        register_library_root_in_master_steam(&steam_cfg, Path::new(&config.steam_library_path));
+    }
 
     launch_master_steam(&wine, &steam_exe, &steam_cfg, &base_dir)
 }
@@ -413,22 +419,18 @@ pub async fn relogin_master_steam(config: &LauncherConfig) -> Result<()> {
 /// Make the in-Wine Steam client aware of the library a host-installed game lives
 /// in, so `steam.exe -applaunch` can find its appmanifest. Games installed *into*
 /// the master Steam library are already visible.
-fn register_library_in_master_steam(steam_cfg: &MasterSteamConfig, install_path: &Path) {
+fn register_library_root_in_master_steam(
+    steam_cfg: &MasterSteamConfig,
+    library_root: &Path,
+) -> bool {
     let Some(steam_exe) = steam_cfg.steam_exe.as_ref() else {
-        return;
+        return false;
     };
     let Some(steam_dir) = steam_exe.parent() else {
-        return;
-    };
-    let Some(library_root) = install_path.ancestors().find_map(|path| {
-        (path.file_name().and_then(|name| name.to_str()) == Some("steamapps"))
-            .then(|| path.parent())
-            .flatten()
-    }) else {
-        return;
+        return false;
     };
     if library_root.starts_with(&steam_cfg.wine_prefix) {
-        return;
+        return false;
     }
 
     let steamapps = steam_dir.join("steamapps");
@@ -438,7 +440,7 @@ fn register_library_in_master_steam(steam_cfg: &MasterSteamConfig, install_path:
 
     let existing = std::fs::read_to_string(&vdf_path).unwrap_or_default();
     if existing.contains(&format!("\"{escaped}\"")) {
-        return;
+        return false;
     }
 
     let entry = |index: u32| {
@@ -477,13 +479,27 @@ fn register_library_in_master_steam(steam_cfg: &MasterSteamConfig, install_path:
             "could not register {} in the in-Wine Steam library folders: {error:#}",
             library_root.display()
         );
+        false
     } else {
         tracing::info!(
             "registered {} in the in-Wine Steam library folders ({})",
             library_root.display(),
             vdf_path.display()
         );
+        true
     }
+}
+
+/// Register the library containing `install_path` in the in-Wine Steam client.
+fn register_library_in_master_steam(steam_cfg: &MasterSteamConfig, install_path: &Path) -> bool {
+    let Some(library_root) = install_path.ancestors().find_map(|path| {
+        (path.file_name().and_then(|name| name.to_str()) == Some("steamapps"))
+            .then(|| path.parent())
+            .flatten()
+    }) else {
+        return false;
+    };
+    register_library_root_in_master_steam(steam_cfg, library_root)
 }
 
 pub async fn launch_game_via_master_steam(
@@ -497,7 +513,13 @@ pub async fn launch_game_via_master_steam(
     let steam_cfg = crate::core::steam_host::get_master_steam_config();
     let steam_exe = require_steam_exe(&steam_cfg)?;
 
-    register_library_in_master_steam(&steam_cfg, install_path);
+    let mut registered = register_library_in_master_steam(&steam_cfg, install_path);
+    if !config.steam_library_path.is_empty() {
+        registered |= register_library_root_in_master_steam(
+            &steam_cfg,
+            Path::new(&config.steam_library_path),
+        );
+    }
 
     let wine = resolve_runtime_wine(config)?;
 
@@ -507,7 +529,13 @@ pub async fn launch_game_via_master_steam(
 
     // The in-Wine Steam client must be up to authorise the launch and serve DRM. If it
     // isn't, start it silently and wait for it to come up before dispatching.
-    if !SteamClient::is_steam_running_in_prefix(&steam_cfg.wine_prefix) {
+    let mut running = SteamClient::is_steam_running_in_prefix(&steam_cfg.wine_prefix);
+    if registered && running {
+        tracing::info!("a new Steam library was registered; restarting the in-Wine Steam client");
+        stop_prefix_processes(&steam_cfg.wine_prefix);
+        running = false;
+    }
+    if !running {
         tracing::info!("in-Wine Steam not running; starting it before -applaunch");
         launch_master_steam(&wine, &steam_exe, &steam_cfg, &base_dir)?;
         let mut ready = false;
