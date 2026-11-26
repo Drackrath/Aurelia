@@ -456,12 +456,11 @@ fn register_library_in_master_steam(steam_cfg: &MasterSteamConfig, install_path:
         let mut next = 1u32;
         for line in existing.lines() {
             let trimmed = line.trim();
-            if depth == 1 {
-                if let Some(key) = trimmed.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
-                    if let Ok(index) = key.parse::<u32>() {
-                        next = next.max(index + 1);
-                    }
-                }
+            if depth == 1
+                && let Some(key) = trimmed.strip_prefix('"').and_then(|s| s.strip_suffix('"'))
+                && let Ok(index) = key.parse::<u32>()
+            {
+                next = next.max(index + 1);
             }
             depth += trimmed.matches('{').count() as i32;
             depth -= trimmed.matches('}').count() as i32;

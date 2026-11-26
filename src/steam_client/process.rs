@@ -244,7 +244,6 @@ impl SteamClient {
                     }
                 }
             }
-            return;
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -369,7 +368,6 @@ impl SteamClient {
                     }
                 }
             }
-            return;
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -427,7 +425,7 @@ impl SteamClient {
 
             #[cfg(target_os = "macos")]
             {
-                return Self::macos_process_list()
+                Self::macos_process_list()
                     .into_iter()
                     .any(|(_, cmd, env, cwd)| {
                         let cmd = cmd.to_lowercase();
@@ -438,7 +436,7 @@ impl SteamClient {
                             || env.is_empty();
                         (cmd.contains("fossilize-replay") || cmd.contains("fossilize_replay"))
                             && in_prefix
-                    });
+                    })
             }
 
             #[cfg(not(target_os = "macos"))]
@@ -469,7 +467,7 @@ impl SteamClient {
 
             #[cfg(target_os = "macos")]
             {
-                return Self::macos_process_list()
+                Self::macos_process_list()
                     .into_iter()
                     .any(|(_, cmd, env, cwd)| {
                         let in_prefix = env.contains(&prefix_str)
@@ -478,7 +476,7 @@ impl SteamClient {
                                 .is_some_and(|dir| dir.starts_with(&prefix_str))
                             || env.is_empty();
                         cmd.to_lowercase().contains("steam.exe") && in_prefix
-                    });
+                    })
             }
 
             #[cfg(not(target_os = "macos"))]
@@ -524,7 +522,7 @@ impl SteamClient {
 
             #[cfg(target_os = "macos")]
             {
-                return Self::macos_process_list()
+                Self::macos_process_list()
                     .into_iter()
                     .any(|(_, cmd, env, cwd)| {
                         let cmd = cmd.to_lowercase();
@@ -538,7 +536,7 @@ impl SteamClient {
                             && !cmd.contains("steam.exe")
                             && !cmd.contains("steamwebhelper")
                             && in_prefix
-                    });
+                    })
             }
 
             #[cfg(not(target_os = "macos"))]
