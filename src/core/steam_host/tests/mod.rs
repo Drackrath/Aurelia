@@ -3,5 +3,5 @@ mod client_install;
 mod detection;
 #[cfg(target_os = "linux")]
 mod launcher;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod logon;

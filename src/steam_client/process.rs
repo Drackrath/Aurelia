@@ -45,16 +45,21 @@ impl SteamClient {
             .is_some_and(|user| user != 0)
     }
 
+    #[cfg(target_os = "macos")]
+    pub fn steam_is_logged_on() -> bool {
+        crate::core::steam_host::steam_is_logged_on()
+    }
+
     /// Make sure the desktop Steam client is up for a `--steam` launch: start it
     /// silently if it isn't running, then wait (up to `timeout`) for it to sign in
     /// so Steamworks/DRM can initialise. Best-effort, like the Linux path: on
     /// failure or timeout the game launches anyway and the reason is logged.
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     pub async fn ensure_host_steam_ready(timeout: std::time::Duration) {
         if SteamClient::steam_is_running() {
             tracing::info!("Steam client already running; not starting it");
         } else {
-            tracing::info!("Steam client not running; starting `steam.exe -silent` (tray)");
+            tracing::info!("Steam client not running; starting it with -silent");
             if let Err(e) = SteamClient::start_steam() {
                 tracing::warn!("could not start Steam client: {e:#}");
                 return;

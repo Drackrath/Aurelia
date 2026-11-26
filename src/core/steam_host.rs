@@ -331,7 +331,7 @@ pub fn start_steam_detached(args: &[&str]) -> Result<()> {
 }
 
 /// Latest logged-on state in connection-log text.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn connection_log_logged_on(text: &str) -> Option<bool> {
     let mut state = None;
     for line in text.lines() {
@@ -345,7 +345,7 @@ fn connection_log_logged_on(text: &str) -> Option<bool> {
 }
 
 /// Read the final `max_bytes` of a file.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn read_tail(path: &Path, max_bytes: u64) -> Option<String> {
     use std::io::{Read, Seek, SeekFrom};
     let mut f = std::fs::File::open(path).ok()?;
@@ -358,7 +358,7 @@ fn read_tail(path: &Path, max_bytes: u64) -> Option<String> {
 }
 
 /// Host Steam finished logging on.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn steam_is_logged_on() -> bool {
     let Some(root) = crate::core::config::detect_steam_path() else {
         return false;
@@ -370,7 +370,7 @@ pub fn steam_is_logged_on() -> bool {
     connection_log_logged_on(&text).unwrap_or(false)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
 pub fn steam_is_logged_on() -> bool {
     true
 }
