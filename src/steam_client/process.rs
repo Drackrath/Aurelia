@@ -465,6 +465,8 @@ NoSavePersonalInfo=1
             .resolve_exec_plan(app, launch_info, user_config)
             .await?;
 
+        // Steam creates a missing workingdir.
+        tokio::fs::create_dir_all(&game_working_dir).await?;
         // Standard Steam identity fallback so the game can resolve its app id.
         crate::core::fsutil::ensure_steam_appid_logged(&game_working_dir, app.app_id);
 
