@@ -253,7 +253,7 @@ pub(super) fn resolve_root_token(
     }
 }
 
-/// Linux mapping. `%Win*%` tokens belong to a game running under Proton, so they
+/// `%Win*%` tokens belong to a game running under Proton, so they
 /// resolve inside that game's wine prefix (`drive_c/users/steamuser/...`) — the path
 /// the Windows build actually writes to. With no prefix known they resolve to `None`
 /// and the file is skipped with a warning.
@@ -263,11 +263,35 @@ pub(super) fn resolve_root_token(
     install_dir: Option<&Path>,
     wine_prefix: Option<&Path>,
 ) -> Option<PathBuf> {
-    let home = || std::env::var_os("HOME").map(PathBuf::from);
     // Proton runs the game as the fixed `steamuser` account inside the prefix.
     let win_user = || wine_prefix.map(|p| p.join("drive_c/users/steamuser"));
     match token {
         "GameInstall" => install_dir.map(Path::to_path_buf),
+        "WinMyDocuments" | "WinDocuments" => win_user().map(|u| u.join("Documents")),
+        "WinAppDataLocal" => win_user().map(|u| u.join("AppData/Local")),
+        "WinAppDataLocalLow" => win_user().map(|u| u.join("AppData/LocalLow")),
+        "WinAppDataRoaming" => win_user().map(|u| u.join("AppData/Roaming")),
+        "WinSavedGames" => win_user().map(|u| u.join("Saved Games")),
+        _ => resolve_native_root_token(token),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn resolve_native_root_token(token: &str) -> Option<PathBuf> {
+    let home = || std::env::var_os("HOME").map(PathBuf::from);
+    match token {
+        "MacHome" => home(),
+        "MacAppSupport" => home().map(|h| h.join("Library/Application Support")),
+        "MacDocuments" => home().map(|h| h.join("Documents")),
+        "MacCaches" => home().map(|h| h.join("Library/Caches")),
+        _ => None,
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn resolve_native_root_token(token: &str) -> Option<PathBuf> {
+    let home = || std::env::var_os("HOME").map(PathBuf::from);
+    match token {
         "LinuxHome" => home(),
         "LinuxXdgDataHome" => std::env::var_os("XDG_DATA_HOME")
             .map(PathBuf::from)
@@ -275,11 +299,6 @@ pub(super) fn resolve_root_token(
         "LinuxXdgConfigHome" => std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
             .or_else(|| home().map(|h| h.join(".config"))),
-        "WinMyDocuments" | "WinDocuments" => win_user().map(|u| u.join("Documents")),
-        "WinAppDataLocal" => win_user().map(|u| u.join("AppData/Local")),
-        "WinAppDataLocalLow" => win_user().map(|u| u.join("AppData/LocalLow")),
-        "WinAppDataRoaming" => win_user().map(|u| u.join("AppData/Roaming")),
-        "WinSavedGames" => win_user().map(|u| u.join("Saved Games")),
         _ => None,
     }
 }
@@ -287,8 +306,13 @@ pub(super) fn resolve_root_token(
 pub fn default_cloud_root(steam_id: u64, appid: u32) -> Result<PathBuf> {
     let home = crate::core::config::home_dir()?;
     let account_id = steam_id as u32;
+    let userdata = if cfg!(target_os = "macos") {
+        "Library/Application Support/Steam/userdata"
+    } else {
+        ".local/share/Steam/userdata"
+    };
     Ok(home
-        .join(".local/share/Steam/userdata")
+        .join(userdata)
         .join(account_id.to_string())
         .join(appid.to_string()))
 }
