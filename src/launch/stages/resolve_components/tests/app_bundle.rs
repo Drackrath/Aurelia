@@ -138,6 +138,20 @@ async fn native_runner_keeps_a_path_inside_a_bundle() {
     assert_eq!(spec.cwd.as_deref(), Some(tmp.path()));
 }
 
+#[tokio::test]
+async fn native_runner_starts_in_the_entry_workingdir() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut ctx = mac_launch(tmp.path(), "SlayTheSpire.app/Contents/MacOS/SlayTheSpire");
+    ctx.launch_info.workingdir = Some("SlayTheSpire.app/Contents/Resources".into());
+
+    let spec = NativeRunner.build_command(&ctx).await.unwrap();
+
+    assert_eq!(
+        spec.cwd,
+        Some(tmp.path().join("SlayTheSpire.app/Contents/Resources"))
+    );
+}
+
 #[cfg(target_os = "macos")]
 #[tokio::test]
 async fn native_runner_runs_the_named_bundle_executable() {
@@ -160,6 +174,21 @@ async fn native_runner_runs_the_named_bundle_executable() {
         spec.program,
         bundle.join("Contents/MacOS/The Binding of Isaac Afterbirth+")
     );
+    assert_eq!(spec.cwd.as_deref(), Some(Path::new("/")));
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn native_runner_starts_bundles_in_root_despite_a_workingdir() {
+    // Steam opens bundles through LaunchServices, which ignores workingdir (measured with
+    // Old School RuneScape's "bin/osx/").
+    let tmp = tempfile::tempdir().unwrap();
+    write_bundle(tmp.path(), "Game.app", "", &["Game"]);
+    let mut ctx = mac_launch(tmp.path(), "Game.app");
+    ctx.launch_info.workingdir = Some("osx".into());
+
+    let spec = NativeRunner.build_command(&ctx).await.unwrap();
+
     assert_eq!(spec.cwd.as_deref(), Some(Path::new("/")));
 }
 

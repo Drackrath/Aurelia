@@ -41,6 +41,47 @@ pub struct LaunchInfo {
     pub target: LaunchTarget,
 }
 
+/// What Steam starts for one launch entry.
+#[derive(Debug, Clone)]
+pub struct GameCommand {
+    pub program: PathBuf,
+    pub args: Vec<String>,
+    /// Where the game starts, and so where `steam_appid.txt` belongs.
+    pub cwd: PathBuf,
+}
+
+impl LaunchInfo {
+    /// Steam's rule for this entry under `install_dir`.
+    ///
+    /// Every path is install-relative, even with a leading separator. The game starts in
+    /// `workingdir`, else in `install_dir`.
+    pub fn command(&self, install_dir: &Path) -> GameCommand {
+        let cwd = self
+            .workingdir
+            .as_deref()
+            .map(install_relative)
+            .filter(|wd| !wd.as_os_str().is_empty())
+            .map_or_else(|| install_dir.to_path_buf(), |wd| install_dir.join(wd));
+        GameCommand {
+            program: install_dir.join(install_relative(&self.executable)),
+            args: self
+                .arguments
+                .split_whitespace()
+                .map(str::to_string)
+                .collect(),
+            cwd,
+        }
+    }
+}
+
+/// `raw` as a path under the install dir. Steam takes either separator and reads a leading
+/// separator or a `.` part as nothing.
+fn install_relative(raw: &str) -> PathBuf {
+    raw.split(['/', '\\'])
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect()
+}
+
 #[derive(Debug, Clone)]
 pub struct RawLaunchOption {
     pub executable: String,

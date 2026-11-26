@@ -41,19 +41,9 @@ impl Runner for NativeRunner {
         &self,
         ctx: &LaunchContext,
     ) -> std::result::Result<CommandSpec, LaunchError> {
-        let install_path =
-            ctx.app.install_path.as_ref().ok_or_else(|| {
-                LaunchError::new(LaunchErrorKind::GameData, "Install path missing")
-            })?;
-
-        let exe_rel = ctx.launch_info.executable.replace('\\', "/");
-        let args: Vec<String> = ctx
-            .launch_info
-            .arguments
-            .split_whitespace()
-            .map(str::to_string)
-            .collect();
-        let program = PathBuf::from(install_path).join(&exe_rel);
+        let install_dir = ctx.install_dir()?;
+        let crate::steam_client::GameCommand { program, args, cwd } =
+            ctx.launch_info.command(install_dir);
         // Steam names most Mac builds by their bundle, which can't be exec'd.
         let bundled = if ctx.launch_info.target == crate::steam_client::LaunchTarget::NativeMacos {
             bundle_program(&program).await?
@@ -63,7 +53,7 @@ impl Runner for NativeRunner {
         // LaunchServices starts apps in `/`, and Mac games locate their data through the bundle.
         let (program, cwd) = match bundled {
             Some(binary) => (binary, PathBuf::from("/")),
-            None => (program, PathBuf::from(install_path)),
+            None => (program, cwd),
         };
         // Only mutated on Linux.
         #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
@@ -71,7 +61,7 @@ impl Runner for NativeRunner {
 
         // 32-bit natives need scout runtime libraries.
         #[cfg(target_os = "linux")]
-        if needs_scout_libs(&program, std::path::Path::new(install_path)) {
+        if needs_scout_libs(&program, install_dir) {
             if let Some(libs) = scout_library_path() {
                 let existing = env
                     .get("LD_LIBRARY_PATH")

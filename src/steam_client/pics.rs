@@ -463,10 +463,6 @@ pub(super) struct ProductLaunchConfigInner {
     oslist: Option<String>,
 }
 
-pub(super) fn split_args(args: &str) -> Vec<String> {
-    args.split_whitespace().map(ToString::to_string).collect()
-}
-
 /// One-app PICS `ProductInfo` buffer request.
 pub(crate) async fn pics_app_buffer(
     connection: &Connection,

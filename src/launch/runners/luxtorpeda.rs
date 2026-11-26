@@ -91,20 +91,18 @@ impl Runner for LuxtorpedaRunner {
                 .with_source(e)
             })?;
 
-        let (_install_dir, executable, game_working_dir) = ctx.game_paths()?;
+        let game = ctx.launch_info.command(ctx.install_dir()?);
 
-        let mut args = vec!["run".to_string(), executable.to_string_lossy().to_string()];
-        args.extend(
-            ctx.launch_info
-                .arguments
-                .split_whitespace()
-                .map(ToString::to_string),
-        );
+        let mut args = vec![
+            "run".to_string(),
+            game.program.to_string_lossy().to_string(),
+        ];
+        args.extend(game.args);
 
         Ok(CommandSpec {
             program: entry,
             args,
-            cwd: Some(game_working_dir),
+            cwd: Some(game.cwd),
             env: self.build_env(ctx).await?,
         })
     }

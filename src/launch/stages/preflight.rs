@@ -39,16 +39,17 @@ fn is_native_target(ctx: &PipelineContext) -> bool {
     )
 }
 
-/// Game-owned binary safe to auto-chmod?
-#[cfg(unix)]
-fn native_game_binary(ctx: &PipelineContext, program: &Path) -> bool {
-    if !is_native_target(ctx) {
-        return false;
-    }
+fn in_install_dir(ctx: &PipelineContext, path: &Path) -> bool {
     ctx.app
         .as_ref()
         .and_then(|app| app.install_path.as_ref())
-        .is_some_and(|install_path| program.starts_with(install_path))
+        .is_some_and(|install_path| path.starts_with(install_path))
+}
+
+/// Game-owned binary safe to auto-chmod?
+#[cfg(unix)]
+fn native_game_binary(ctx: &PipelineContext, program: &Path) -> bool {
+    is_native_target(ctx) && in_install_dir(ctx, program)
 }
 
 #[async_trait]
@@ -187,7 +188,27 @@ impl PipelineStage for PreflightStage {
                 status: true,
                 details: "OK".into(),
             };
-            if !cwd.exists() {
+            if !cwd.exists() && in_install_dir(ctx, cwd) {
+                // Steam creates a missing workingdir, like The Powder Toy's `userdata`.
+                match tokio::fs::create_dir_all(cwd).await {
+                    Ok(()) => {
+                        check.details = format!("Created working directory: {}", cwd.display());
+                    }
+                    Err(e) => {
+                        check.status = false;
+                        check.details = format!(
+                            "Working directory could not be created ({}): {}",
+                            e,
+                            cwd.display()
+                        );
+                        final_res = Err(preflight_error(
+                            LaunchErrorKind::Environment,
+                            &check.details,
+                        )
+                        .with_context("cwd", cwd.to_string_lossy()));
+                    }
+                }
+            } else if !cwd.exists() {
                 check.status = false;
                 check.details = format!("Working directory does not exist: {}", cwd.display());
                 final_res = Err(

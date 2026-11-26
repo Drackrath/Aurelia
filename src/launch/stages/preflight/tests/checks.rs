@@ -44,6 +44,52 @@ async fn test_preflight_missing_cwd() {
 }
 
 #[tokio::test]
+async fn test_preflight_creates_missing_cwd_in_install_dir() {
+    use crate::core::models::LibraryGame;
+
+    let tmp = tempdir().unwrap();
+    let exe = tmp.path().join("powder");
+    fs::write(&exe, "dummy").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&exe, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let mut ctx = PipelineContext::new(1148350);
+    ctx.app = Some(LibraryGame {
+        app_id: 1148350,
+        name: "The Powder Toy".to_string(),
+        playtime_forever_minutes: None,
+        is_installed: true,
+        install_path: Some(tmp.path().to_string_lossy().to_string()),
+        local_manifest_ids: Default::default(),
+        update_available: false,
+        steam_config_mismatch: false,
+        update_queued: false,
+        active_branch: "public".to_string(),
+        is_owned: true,
+        is_family_shared: false,
+        online_required: None,
+        platform: None,
+        from_windows_steam: false,
+        size_on_disk: None,
+    });
+    let spec = CommandSpec {
+        program: exe,
+        cwd: Some(tmp.path().join("userdata")),
+        ..Default::default()
+    };
+    ctx.command_spec = Some(spec);
+
+    let stage = PreflightStage;
+    let res = stage.execute(&mut ctx).await;
+
+    assert!(res.is_ok(), "{:?}", res.err());
+    assert!(tmp.path().join("userdata").is_dir());
+}
+
+#[tokio::test]
 async fn test_preflight_missing_prefix() {
     let tmp = tempdir().unwrap();
     let exe = tmp.path().join("game.exe");

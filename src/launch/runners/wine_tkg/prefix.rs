@@ -56,9 +56,9 @@ pub(super) async fn prepare_prefix(ctx: &LaunchContext) -> std::result::Result<(
     }
 
     // Keep any shipped steam_appid.txt
-    let (_install_dir, _executable, game_working_dir) = ctx.game_paths()?;
+    let game = ctx.launch_info.command(ctx.install_dir()?);
 
-    crate::core::fsutil::ensure_steam_appid_logged(&game_working_dir, ctx.app.app_id);
+    crate::core::fsutil::ensure_steam_appid_logged(&game.cwd, ctx.app.app_id);
 
     Ok(())
 }
