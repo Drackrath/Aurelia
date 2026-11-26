@@ -340,14 +340,14 @@ pub(crate) enum Command {
     Enable {
         app_id: u32,
         /// Stop Steam while applying the change, then restart it, so the running
-        /// client picks it up (Windows and Linux). Steam reads DLC state only at startup.
+        /// client picks it up. Steam reads DLC state only at startup.
         #[arg(short = 'r', long)]
         restart_steam: bool,
     },
     /// Disable a DLC for its base game.
     Disable {
         app_id: u32,
-        /// Stop Steam while applying the change, then restart it (Windows and Linux).
+        /// Stop Steam while applying the change, then restart it.
         #[arg(short = 'r', long)]
         restart_steam: bool,
     },

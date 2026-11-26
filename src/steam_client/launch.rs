@@ -357,7 +357,7 @@ impl SteamClient {
         // With Steam integration the game talks to the host Steam client; make sure
         // one is running (start it silently if not) so Steamworks/Family-Sharing can
         // initialise. Best-effort.
-        #[cfg(target_os = "windows")]
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
         if steam_enabled {
             SteamClient::ensure_host_steam_ready(std::time::Duration::from_secs(30)).await;
         }
