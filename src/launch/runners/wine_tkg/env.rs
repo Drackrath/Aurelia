@@ -55,7 +55,7 @@ pub(super) async fn build_env(
         .map(|c| c.steam_launch_config.no_overlay)
         .unwrap_or(true);
 
-    let (_install_dir, _executable, game_working_dir) = ctx.game_paths()?;
+    let (_install_dir, executable, _game_working_dir) = ctx.game_paths()?;
 
     // Resolve proton version for component detection and DLL path building
     let proton = forced_proton(ctx)
@@ -82,7 +82,7 @@ pub(super) async fn build_env(
         ctx,
         flags,
         no_overlay,
-        &game_working_dir,
+        executable.parent(),
         host_bridge,
         use_symlinks,
     );
@@ -202,7 +202,7 @@ fn wine_dll_overrides(
     ctx: &LaunchContext,
     flags: GraphicsFlags,
     no_overlay: bool,
-    game_working_dir: &Path,
+    game_exe_dir: Option<&Path>,
     host_bridge: bool,
     use_symlinks: bool,
 ) -> String {
@@ -220,7 +220,7 @@ fn wine_dll_overrides(
             vkd3d_active: effective_vkd3d,
             no_overlay,
             force_builtin_d3d,
-            game_dir: Some(game_working_dir),
+            game_dir: game_exe_dir,
             strict_dxvk,
             steam_enabled: host_bridge,
         },

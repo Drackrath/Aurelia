@@ -155,6 +155,31 @@ async fn test_wine_tkg_runner_graphics_policy_autodetect() {
 }
 
 #[tokio::test]
+async fn wine_env_keeps_dlls_the_game_ships_next_to_its_exe() {
+    use crate::core::models::UserAppConfig;
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("bin/x64")).unwrap();
+    let mut ctx = mock_context();
+    ctx.app.install_path = Some(tmp.path().to_string_lossy().into_owned());
+    ctx.launch_info.executable = "bin/x64/game.exe".into();
+    ctx.launch_info.workingdir = Some("bin".into());
+    let mut user = UserAppConfig::default();
+    user.graphics_layers.dxvk_enabled = true;
+    ctx.user_config = Some(user);
+    let d3d11 = |env: &HashMap<String, String>| {
+        crate::core::dll_overrides::dll_override_mode(&env["WINEDLLOVERRIDES"], "d3d11")
+    };
+
+    let env = WineTkgRunner.build_env(&ctx).await.unwrap();
+    assert_eq!(d3d11(&env).as_deref(), Some("n,b"));
+
+    // Wine loads a game's own DLLs from its exe's folder, not its working dir.
+    std::fs::write(tmp.path().join("bin/x64/d3d11.dll"), "").unwrap();
+    let env = WineTkgRunner.build_env(&ctx).await.unwrap();
+    assert_eq!(d3d11(&env), None);
+}
+
+#[tokio::test]
 async fn test_fixup_fragments_merged_into_build_env() {
     // A game with fixups should have both env and DLL-override fragments merged
     // into the built environment.
