@@ -129,6 +129,9 @@ impl CloudPathResolver {
     }
 }
 
+/// Steam writes this into Auto-Cloud folders and never uploads it.
+const AUTOCLOUD_MARKER: &str = "steam_autocloud.vdf";
+
 /// Discover local save files matching the app's UFS `savefiles` rules and pair each
 /// with the cloud filename Steam would store it under (`%Root%<sub-path>`). Lets
 /// `sync_up` upload brand-new saves that aren't in the cloud yet. Rules whose root
@@ -139,12 +142,13 @@ pub(super) fn discover_local_saves(
 ) -> Vec<(String, PathBuf)> {
     let mut out = Vec::new();
     for spec in specs {
-        let Some(base) = resolver.resolve_root(&spec.root) else {
+        let root = RootToken::from_name(&spec.root).map_or(spec.root.as_str(), |t| t.as_str());
+        let Some(base) = resolver.resolve_root(root) else {
             continue;
         };
         // Cloud names keep the untransformed path.
         let spec_path = normalize_rel(&resolver.substitute_ids(&spec.path));
-        let search_root = join_relative(&base, &resolver.transform_path(&spec.root, &spec_path));
+        let search_root = join_relative(&base, &resolver.transform_path(root, &spec_path));
         if !search_root.is_dir() {
             continue;
         }
@@ -161,7 +165,7 @@ pub(super) fn discover_local_saves(
             .filter(|e| e.file_type().is_file())
         {
             let name = entry.file_name().to_string_lossy();
-            if !glob_matches(&spec.pattern, &name) {
+            if name == AUTOCLOUD_MARKER || !glob_matches(&spec.pattern, &name) {
                 continue;
             }
             let Ok(rel) = entry.path().strip_prefix(&search_root) else {
@@ -169,9 +173,9 @@ pub(super) fn discover_local_saves(
             };
             let rel = rel.to_string_lossy().replace('\\', "/");
             let cloud_name = if spec_path.is_empty() {
-                format!("%{}%{rel}", spec.root)
+                format!("%{root}%{rel}")
             } else {
-                format!("%{}%{spec_path}/{rel}", spec.root)
+                format!("%{root}%{spec_path}/{rel}")
             };
             out.push((cloud_name, entry.path().to_path_buf()));
         }
@@ -308,9 +312,12 @@ impl RootToken {
         }
     }
 
-    /// The token [`as_str`](Self::as_str) names.
+    /// The token [`as_str`](Self::as_str) names. Steam matches names in any case,
+    /// and many PICS rules spell `GameInstall` as `gameinstall`.
     fn from_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|t| t.as_str() == name)
+        Self::ALL
+            .into_iter()
+            .find(|t| t.as_str().eq_ignore_ascii_case(name))
     }
 }
 

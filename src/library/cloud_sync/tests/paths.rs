@@ -87,6 +87,28 @@ fn discovers_local_saves_from_ufs_specs() {
     );
 }
 
+#[test]
+fn discovery_matches_steam_on_root_case_and_marker() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("userdata")).unwrap();
+    std::fs::write(tmp.path().join("userdata/powder.pref"), b"x").unwrap();
+    std::fs::write(tmp.path().join("userdata/steam_autocloud.vdf"), b"x").unwrap();
+
+    let resolver = CloudPathResolver::new(PathBuf::from("/unused"), Some(tmp.path().to_path_buf()));
+    let specs = [UfsSaveSpec {
+        root: "gameinstall".into(),
+        path: "userdata".into(),
+        pattern: "*".into(),
+        recursive: true,
+    }];
+
+    let names: Vec<_> = discover_local_saves(&specs, &resolver)
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect();
+    assert_eq!(names, vec!["%GameInstall%userdata/powder.pref".to_string()]);
+}
+
 // Adding a variant breaks this match.
 fn ordinal(token: RootToken) -> usize {
     match token {
