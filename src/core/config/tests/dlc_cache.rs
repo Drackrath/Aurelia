@@ -44,17 +44,26 @@ fn stale_list_refreshes_both() {
     );
 }
 
-#[tokio::test]
-async fn dlc_cache_round_trips_per_language() {
-    let mut cached = record(5, 6);
-    cached.dlc_ids = vec![2778580, 3655690];
-    cached.owned = vec![2778580];
-    save_dlc_cache(1245620, "english", "DE", &cached)
-        .await
+#[test]
+fn dlc_cache_round_trips_per_language() {
+    // Own dir; env guard serialises tests.
+    let tmp = tempfile::tempdir().unwrap();
+    let _env =
+        crate::test_support::EnvGuard::set(&[("AURELIA_CONFIG_DIR", Some(tmp.path().as_os_str()))]);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
         .unwrap();
-    let back = load_dlc_cache(1245620, "english", "DE").await.unwrap();
-    assert_eq!(back.dlc_ids, cached.dlc_ids);
-    assert_eq!(back.owned, cached.owned);
-    assert_eq!((back.fetched_at, back.owned_at), (5, 6));
-    assert!(load_dlc_cache(1245620, "german", "DE").await.is_none());
+    runtime.block_on(async {
+        let mut cached = record(5, 6);
+        cached.dlc_ids = vec![2778580, 3655690];
+        cached.owned = vec![2778580];
+        save_dlc_cache(1245620, "english", "DE", &cached)
+            .await
+            .unwrap();
+        let back = load_dlc_cache(1245620, "english", "DE").await.unwrap();
+        assert_eq!(back.dlc_ids, cached.dlc_ids);
+        assert_eq!(back.owned, cached.owned);
+        assert_eq!((back.fetched_at, back.owned_at), (5, 6));
+        assert!(load_dlc_cache(1245620, "german", "DE").await.is_none());
+    });
 }
