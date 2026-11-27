@@ -542,44 +542,29 @@ impl SteamClient {
             _ => (HashSet::new(), HashSet::new()),
         };
 
-        let owned = self.owned_among(dlc_ids).await;
+        let owned = self.owned_among(dlc_ids).await?;
         Ok(dlc_ids
             .iter()
-            .zip(owned)
-            .map(|(&dlc_id, owned)| DlcState {
+            .map(|&dlc_id| DlcState {
                 app_id: dlc_id,
-                owned,
+                owned: owned.contains(&dlc_id),
                 installed: installed.contains(&dlc_id),
                 disabled: disabled.contains(&dlc_id),
             })
             .collect())
     }
 
-    /// Ownership per app, eight tickets at once.
+    /// Owned apps among `app_ids`, from one batched token request.
     ///
-    /// Steam issues an ownership ticket only for licensed apps. Without a
-    /// connection every app reads as not owned.
-    async fn owned_among(&self, app_ids: &[u32]) -> Vec<bool> {
-        let mut owned = vec![false; app_ids.len()];
+    /// Without a connection every app reads as not owned.
+    async fn owned_among(&self, app_ids: &[u32]) -> Result<HashSet<u32>> {
         let Some(connection) = self.connection() else {
-            return owned;
+            return Ok(HashSet::new());
         };
-        for (chunk_index, chunk) in app_ids.chunks(8).enumerate() {
-            let mut set = tokio::task::JoinSet::new();
-            for (offset, &app_id) in chunk.iter().enumerate() {
-                let connection = connection.clone();
-                set.spawn(async move {
-                    let ok = super::client::app_ticket(&connection, app_id).await.is_ok();
-                    (chunk_index * 8 + offset, ok)
-                });
-            }
-            while let Some(joined) = set.join_next().await {
-                if let Ok((index, ok)) = joined {
-                    owned[index] = ok;
-                }
-            }
+        if app_ids.is_empty() {
+            return Ok(HashSet::new());
         }
-        owned
+        super::pics::pics_access_grants(connection, app_ids).await
     }
 }
 
