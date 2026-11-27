@@ -154,6 +154,20 @@ pub(crate) fn library_art(
     })
 }
 
+/// Store type, else `music/` means Soundtrack.
+pub(crate) fn library_app_type(
+    game: &aurelia::core::models::LibraryGame,
+    cached: Option<&aurelia::core::config::CachedArt>,
+) -> Option<String> {
+    cached.and_then(|c| c.app_type.clone()).or_else(|| {
+        game.install_path
+            .as_deref()
+            .map(std::path::Path::new)
+            .is_some_and(aurelia::library::is_music_install)
+            .then(|| "Soundtrack".to_string())
+    })
+}
+
 /// Cached art, fetching missing apps once.
 async fn resolve_library_art(
     client: &aurelia::steam_client::SteamClient,
@@ -173,12 +187,13 @@ async fn resolve_library_art(
     match client.fetch_store_art(&missing, &country).await {
         Ok(mut found) => {
             for id in missing {
-                let assets = found.remove(&id);
+                let art = found.remove(&id).unwrap_or_default();
                 cache.insert(
                     id,
                     CachedArt {
                         fetched_at: now,
-                        assets,
+                        assets: art.assets,
+                        app_type: art.app_type,
                     },
                 );
             }
@@ -327,6 +342,10 @@ pub(crate) async fn cmd_list(
                 let mut v = serde_json::to_value(g).unwrap_or_default();
                 if let Some(obj) = v.as_object_mut() {
                     obj.insert("assets".into(), library_art(g.app_id, art.get(&g.app_id)));
+                    obj.insert(
+                        "type".into(),
+                        serde_json::json!(library_app_type(g, art.get(&g.app_id))),
+                    );
                     obj.insert(
                         "store_url".into(),
                         serde_json::json!(steam_urls::store_url(g.app_id)),

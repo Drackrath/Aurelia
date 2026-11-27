@@ -300,14 +300,14 @@ impl SteamClient {
         Ok(category_online_required(&categories))
     }
 
-    /// Store artwork only, batched.
+    /// Store artwork and type, batched.
     ///
     /// Unknown ids are absent.
     pub async fn fetch_store_art(
         &self,
         app_ids: &[u32],
         country: &str,
-    ) -> Result<HashMap<u32, StoreAppAssets>> {
+    ) -> Result<HashMap<u32, StoreArt>> {
         let connection = self.require_connection()?;
         let mut art = HashMap::new();
         for chunk in app_ids.chunks(STORE_ART_BATCH) {
@@ -329,14 +329,7 @@ impl SteamClient {
                 .await
                 .context("failed calling StoreBrowse.GetItems for artwork")?;
             for item in response.store_items.iter().filter(|i| i.appid() != 0) {
-                // Hashed paths only exist here.
-                if item
-                    .assets
-                    .as_ref()
-                    .is_some_and(|a| !a.asset_url_format().is_empty())
-                {
-                    art.insert(item.appid(), store_assets(item));
-                }
+                art.insert(item.appid(), store_art(item));
             }
         }
         Ok(art)

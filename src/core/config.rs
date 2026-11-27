@@ -938,12 +938,16 @@ pub struct CachedArt {
     pub fetched_at: u64,
     /// `None`: store has no hashed art.
     pub assets: Option<crate::steam_client::StoreAppAssets>,
+    /// Store app type, e.g. "Soundtrack".
+    #[serde(default)]
+    pub app_type: Option<String>,
 }
 
 impl CachedArt {
-    /// Older than `ttl` seconds.
+    /// Expired, or cached before types.
     pub fn is_stale(&self, now: u64, ttl: u64) -> bool {
-        now.saturating_sub(self.fetched_at) >= ttl
+        let untyped = self.assets.is_some() && self.app_type.is_none();
+        untyped || now.saturating_sub(self.fetched_at) >= ttl
     }
 }
 

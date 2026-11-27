@@ -72,7 +72,7 @@ impl SteamClient {
             let raw = std::fs::read_to_string(&manifest_path)
                 .with_context(|| format!("failed reading {}", manifest_path.display()))?;
             if let Some(installdir) = acf::parse_app_manifest(&raw).install_dir {
-                let p = steamapps.join("common").join(&installdir);
+                let p = crate::library::resolve_install_dir(&steamapps, &installdir);
                 if p.exists() {
                     return Ok(p);
                 }

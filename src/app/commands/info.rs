@@ -744,6 +744,10 @@ pub(crate) async fn cmd_dlc(app_id: u32, all: bool, no_cache: bool, json: bool) 
                     "image_fallback_url": dlc_fallback_image(store.get(id), *id),
                     "store_url": steam_urls::store_url(*id),
                     "retired": store_ok.then(|| retired(id)),
+                    "type": store
+                        .get(id)
+                        .map(|i| i.app_type.clone())
+                        .filter(|t| !t.is_empty()),
                 })
             }).collect::<Vec<_>>(),
         });

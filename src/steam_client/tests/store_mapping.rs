@@ -60,3 +60,26 @@ fn missing_assets_fall_back_to_flat_cdn() {
         Some("https://cdn.cloudflare.steamstatic.com/steam/apps/10/capsule_231x87.jpg")
     );
 }
+
+#[test]
+fn store_art_reads_music_type_and_hashed_assets() {
+    let mut item = item_with_assets(
+        "steam/apps/2387900/${FILENAME}",
+        "abc/header.jpg",
+        "abc/capsule_231x87.jpg",
+    );
+    item.set_type(EStoreAppType::k_EStoreAppType_Music);
+    let art = store_art(&item);
+    assert_eq!(art.app_type.as_deref(), Some("Soundtrack"));
+    assert!(art.assets.is_some());
+}
+
+#[test]
+fn store_art_without_type_or_format_stays_empty() {
+    let mut item = StoreItem::new();
+    item.set_appid(10);
+    let art = store_art(&item);
+    // Unset type is not Game.
+    assert_eq!(art.app_type, None);
+    assert_eq!(art.assets, None);
+}

@@ -493,6 +493,32 @@ pub(super) fn store_assets(item: &StoreItem) -> StoreAppAssets {
     }
 }
 
+/// Store art and app type.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StoreArt {
+    /// `None`: no hashed art.
+    pub assets: Option<StoreAppAssets>,
+    /// `None`: store sent no type.
+    pub app_type: Option<String>,
+}
+
+/// Art and type of an item.
+pub(super) fn store_art(item: &StoreItem) -> StoreArt {
+    StoreArt {
+        // Hashed paths only exist here.
+        assets: item
+            .assets
+            .as_ref()
+            .is_some_and(|a| !a.asset_url_format().is_empty())
+            .then(|| store_assets(item)),
+        // Unset reads as Game; skip it.
+        app_type: item
+            .type_
+            .is_some()
+            .then(|| store_app_type_label(item.type_())),
+    }
+}
+
 /// Human-readable label for a `StoreBrowse` app type.
 pub(super) fn store_app_type_label(t: EStoreAppType) -> String {
     match t {

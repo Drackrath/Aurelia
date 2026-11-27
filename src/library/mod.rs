@@ -733,6 +733,30 @@ fn unescape_vdf(value: &str) -> String {
     out
 }
 
+/// Install folder: `common/` or `music/`.
+pub fn resolve_install_dir(steamapps: &Path, installdir: &str) -> PathBuf {
+    let common = steamapps.join("common").join(installdir);
+    if !common.is_dir() {
+        let music = steamapps.join("music").join(installdir);
+        if music.is_dir() {
+            return music;
+        }
+    }
+    common
+}
+
+/// Installed under `steamapps/music/`.
+pub fn is_music_install(path: &Path) -> bool {
+    path.parent()
+        .and_then(Path::file_name)
+        .is_some_and(|n| n == "music")
+        && path
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::file_name)
+            .is_some_and(|n| n == "steamapps")
+}
+
 /// Find the install folder for `appid` under `<steamapps>/common` by its
 /// `steam_appid.txt` marker. Used when a manifest's `installdir` is stale.
 pub fn probe_install_dir_by_appid(steamapps: &Path, appid: u32) -> Option<PathBuf> {
@@ -773,7 +797,7 @@ async fn parse_app_manifest_info(path: &Path) -> Result<Option<(u32, InstalledAp
         return Ok(None);
     }
     let steamapps = path.parent().map(Path::to_path_buf).unwrap_or_default();
-    let mut install_path = steamapps.join("common").join(&dir);
+    let mut install_path = resolve_install_dir(&steamapps, &dir);
     // A manifest whose `installdir` no longer matches the folder on disk
     if !install_path.is_dir()
         && let Some(found) = probe_install_dir_by_appid(&steamapps, id)
