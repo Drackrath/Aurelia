@@ -55,3 +55,21 @@ fn all_lists_retired_dlc() {
 fn live_dlc_is_always_listed() {
     assert!(dlc_is_listed(false, None, false));
 }
+
+#[test]
+fn dlc_image_prefers_store_assets() {
+    let mut info = store("Tarnished Pack");
+    info.assets.header = Some("https://example/hashed/header.jpg".into());
+    info.assets.small_capsule = Some("https://example/hashed/capsule.jpg".into());
+    assert_eq!(dlc_image(Some(&info), 3655690), "https://example/hashed/header.jpg");
+    assert_eq!(
+        dlc_fallback_image(Some(&info), 3655690),
+        "https://example/hashed/capsule.jpg"
+    );
+}
+
+#[test]
+fn dlc_image_without_store_item_uses_cdn() {
+    assert_eq!(dlc_image(None, 10), steam_urls::header_url(10));
+    assert_eq!(dlc_fallback_image(None, 10), steam_urls::small_capsule_url(10));
+}

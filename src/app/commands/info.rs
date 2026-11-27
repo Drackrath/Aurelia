@@ -578,6 +578,22 @@ pub(crate) fn dlc_is_retired(store: Option<&StoreAppInfo>) -> bool {
     store.is_none_or(|i| i.name.trim().is_empty())
 }
 
+/// Store header, else the flat CDN path.
+///
+/// Newer apps keep art under hashed folders only.
+pub(crate) fn dlc_image(store: Option<&StoreAppInfo>, id: u32) -> String {
+    store
+        .and_then(|i| i.assets.header.clone())
+        .unwrap_or_else(|| steam_urls::header_url(id))
+}
+
+/// Store small capsule, else the CDN path.
+pub(crate) fn dlc_fallback_image(store: Option<&StoreAppInfo>, id: u32) -> String {
+    store
+        .and_then(|i| i.assets.small_capsule.clone())
+        .unwrap_or_else(|| steam_urls::small_capsule_url(id))
+}
+
 /// Whether `aurelia dlc` lists this DLC.
 ///
 /// Retired DLC stay listed while the user owns, installed or disabled them.
@@ -647,8 +663,8 @@ pub(crate) async fn cmd_dlc(app_id: u32, all: bool, json: bool) -> Result<()> {
                         .map(|t| aurelia::core::time::unix_to_ymd(t as i64)),
                     "release_date": store.get(id).and_then(|i| i.release_date.clone()),
                     "reviews": store.get(id).and_then(|i| i.review_summary.clone()),
-                    "image_url": steam_urls::header_url(*id),
-                    "image_fallback_url": steam_urls::small_capsule_url(*id),
+                    "image_url": dlc_image(store.get(id), *id),
+                    "image_fallback_url": dlc_fallback_image(store.get(id), *id),
                     "store_url": steam_urls::store_url(*id),
                     "retired": retired(id),
                 })
