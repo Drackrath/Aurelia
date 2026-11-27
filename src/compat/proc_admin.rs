@@ -102,6 +102,59 @@ pub fn kill_process_tree(pid: u32, force: bool) {
     }
 }
 
+/// One process from [`macos_process_list`].
+#[cfg(target_os = "macos")]
+pub struct MacProcess {
+    pub pid: i32,
+    /// Arguments joined by spaces.
+    pub cmd: String,
+    /// Entries joined by spaces. Empty when unreadable: another user's process,
+    /// or an Apple binary such as `/bin/sh`, whose environment macOS hides.
+    pub env: String,
+    pub cwd: Option<String>,
+}
+
+/// Every visible process, since macOS has no `/proc` to scan.
+#[cfg(target_os = "macos")]
+pub fn macos_process_list() -> Vec<MacProcess> {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, UpdateKind};
+    let Ok(mut sys) = System::new() else {
+        return Vec::new();
+    };
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing()
+            .with_cmd(UpdateKind::OnlyIfNotSet)
+            .with_environ(UpdateKind::OnlyIfNotSet)
+            .with_cwd(UpdateKind::OnlyIfNotSet),
+    );
+    sys.processes()
+        .iter()
+        .map(|(pid, process)| {
+            let cmd = process
+                .cmd()
+                .iter()
+                .map(|part| part.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let env = process
+                .environ()
+                .iter()
+                .map(|entry| entry.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let cwd = process.cwd().map(|dir| dir.to_string_lossy().into_owned());
+            MacProcess {
+                pid: pid.as_u32() as i32,
+                cmd,
+                env,
+                cwd,
+            }
+        })
+        .collect()
+}
+
 /// Root pid plus live descendants.
 #[cfg(unix)]
 fn process_tree_pids(root: i32) -> Vec<i32> {
