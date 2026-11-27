@@ -528,6 +528,7 @@ impl SteamClient {
             cloud_specs = ufs.savefiles;
         }
 
+        let steam_exit_sync = crate::core::steam_host::SteamExitSync::before_launch(app.app_id);
         let mut child = if native_windows {
             self.spawn_windows_native(app, &launch_info, user_config)
                 .await?
@@ -604,6 +605,7 @@ impl SteamClient {
         if cloud_enabled
             && let (Some(client), Some(resolver)) = (cloud_client.as_ref(), cloud_resolver.as_ref())
         {
+            steam_exit_sync.wait().await;
             // The game has already run and exited, so a cloud-upload failure must not
             // be surfaced as a launch failure. Log it and continue (this mirrors the
             // best-effort sync_down before launch).

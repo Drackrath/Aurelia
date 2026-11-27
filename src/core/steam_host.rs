@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 pub fn setup_fake_steam_trap(config_dir: &Path) -> Result<PathBuf> {
     let trap_dir = config_dir.join("fake_env");
@@ -418,6 +419,202 @@ pub fn master_steam_is_logged_on() -> bool {
 #[cfg(target_os = "windows")]
 pub fn master_steam_is_logged_on() -> bool {
     false
+}
+
+/// Steam's own cloud upload when a game it tracks exits. Steam begins an app upload
+/// batch, and the server refuses it ("Too many pending") while one of our uploads is
+/// open. Mark before the game starts, wait after it exits, then upload.
+pub struct SteamExitSync {
+    app_id: u32,
+    /// `None` without a Steam install, so `wait` returns at once.
+    logs: Option<SteamLogMarks>,
+}
+
+struct SteamLogMarks {
+    gameprocess: LogMark,
+    cloud: LogMark,
+}
+
+impl SteamExitSync {
+    /// Marks the ends of Steam's logs. Call it before the game spawns.
+    pub fn before_launch(app_id: u32) -> Self {
+        let logs = crate::core::config::detect_steam_path().map(|root| {
+            let dir = root.join("logs");
+            SteamLogMarks {
+                gameprocess: LogMark::at_end(dir.join("gameprocess_log.txt")),
+                cloud: LogMark::at_end(dir.join("cloud_log.txt")),
+            }
+        });
+        Self { app_id, logs }
+    }
+
+    /// Returns once Steam has no exit upload left to begin for this run. Returns at
+    /// once when Steam never tracked the run, never fails, and waits at most 42 s.
+    pub async fn wait(self) {
+        let Some(logs) = self.logs else { return };
+        let mut furthest = ExitSyncState::Untracked;
+        let mut deadline = Instant::now();
+        loop {
+            let state = ExitSyncState::from_logs(
+                &logs.gameprocess.appended(),
+                &logs.cloud.appended(),
+                self.app_id,
+            );
+            let Some(patience) = state.patience() else {
+                if state == ExitSyncState::Done {
+                    tracing::info!(appid = self.app_id, "Steam finished its own cloud sync");
+                }
+                return;
+            };
+            // Only forward progress moves the deadline, so a relaunch can't stretch it.
+            if state > furthest {
+                if furthest == ExitSyncState::Untracked {
+                    tracing::info!(
+                        appid = self.app_id,
+                        "waiting for Steam's own cloud sync before uploading"
+                    );
+                }
+                furthest = state;
+                deadline = Instant::now() + patience;
+            }
+            if Instant::now() >= deadline {
+                tracing::warn!(
+                    appid = self.app_id,
+                    ?state,
+                    "Steam's cloud sync did not finish in time; uploading anyway"
+                );
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    }
+}
+
+/// A Steam log and its length when the game launched.
+struct LogMark {
+    path: PathBuf,
+    len: u64,
+}
+
+impl LogMark {
+    fn at_end(path: PathBuf) -> Self {
+        let len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        Self { path, len }
+    }
+
+    /// Text appended since the mark. A file shorter than the mark was rotated, so all
+    /// of it is new. A missing or unreadable file reads as empty.
+    fn appended(&self) -> String {
+        use std::io::{Read, Seek, SeekFrom};
+        let Ok(mut f) = std::fs::File::open(&self.path) else {
+            return String::new();
+        };
+        let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+        let start = if len < self.len { 0 } else { self.len };
+        let mut buf = Vec::new();
+        if f.seek(SeekFrom::Start(start))
+            .and_then(|_| f.read_to_end(&mut buf))
+            .is_err()
+        {
+            return String::new();
+        }
+        String::from_utf8_lossy(&buf).into_owned()
+    }
+}
+
+/// Where Steam is in one run's exit sync, in the order Steam moves through them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ExitSyncState {
+    Untracked,
+    Playing,
+    Exited,
+    Uploading,
+    Done,
+}
+
+impl ExitSyncState {
+    fn from_logs(gameprocess: &str, cloud: &str, app_id: u32) -> Self {
+        let tracked = format!("AppID {app_id} adding PID ");
+        let removed = format!("Remove {app_id} from running list");
+        let tag = format!("[AppID {app_id}] ");
+
+        // A launcher can register and exit before the game does, so only the latest
+        // exit counts.
+        let mut seen_tracked = false;
+        let mut exit_stamp = None;
+        for (stamp, msg) in stamped_lines(gameprocess) {
+            if msg.starts_with(&tracked) {
+                seen_tracked = true;
+                exit_stamp = None;
+            } else if msg.trim_end() == removed {
+                exit_stamp = Some(stamp);
+            }
+        }
+        if !seen_tracked {
+            return Self::Untracked;
+        }
+        let Some(exit_stamp) = exit_stamp else {
+            return Self::Playing;
+        };
+
+        // Both logs use a fixed-width local stamp, so string order is time order.
+        let mut started = false;
+        for (stamp, rest) in stamped_lines(cloud) {
+            if stamp < exit_stamp {
+                continue;
+            }
+            let Some((_, msg)) = rest.split_once(&tag) else {
+                continue;
+            };
+            if !started {
+                started = is_upload_start(msg);
+            } else if [
+                "Upload complete",
+                "Upload failed",
+                "Failed sync for",
+                "Job Canceled",
+            ]
+            .iter()
+            .any(|end| msg.starts_with(end))
+            {
+                return Self::Done;
+            }
+        }
+        if started {
+            Self::Uploading
+        } else {
+            Self::Exited
+        }
+    }
+
+    fn patience(self) -> Option<Duration> {
+        match self {
+            Self::Untracked | Self::Done => None,
+            // Steam logs an exit about 2 s after the game's process ends.
+            Self::Playing => Some(Duration::from_secs(10)),
+            // Steam starts its upload in the second it logs the exit. A game without
+            // Steam Cloud starts none.
+            Self::Exited => Some(Duration::from_secs(2)),
+            Self::Uploading => Some(Duration::from_secs(30)),
+        }
+    }
+}
+
+/// `(stamp, message)` of each `[YYYY-MM-DD HH:MM:SS] message` line. Other lines,
+/// including a half-written last line, are skipped.
+fn stamped_lines(text: &str) -> impl Iterator<Item = (&str, &str)> {
+    text.lines().filter_map(|line| {
+        let (stamp, msg) = line.strip_prefix('[')?.split_once("] ")?;
+        (stamp.len() == "YYYY-MM-DD HH:MM:SS".len()).then_some((stamp, msg))
+    })
+}
+
+/// `Starting sync (up,AC Exit,)`, `(AC Exit,Sync Disabled,)` or `(up,)`, but never a
+/// download-only session.
+fn is_upload_start(msg: &str) -> bool {
+    msg.strip_prefix("Starting sync (")
+        .and_then(|rest| rest.split_once(')'))
+        .is_some_and(|(tags, _)| tags.split(',').any(|t| t == "up" || t == "AC Exit"))
 }
 
 #[derive(Debug, Clone)]
