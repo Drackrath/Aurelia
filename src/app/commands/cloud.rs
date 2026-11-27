@@ -224,7 +224,7 @@ async fn cloud_target_os(
     let Ok(game) = find_game(client, app_id).await else {
         return "windows";
     };
-    let Ok(options) = client.get_product_info(app_id).await else {
+    let Ok((options, installed)) = client.get_product_info(&game).await else {
         return "windows";
     };
     let game_cfg = launcher_config.game_configs.get(&app_id);
@@ -232,8 +232,14 @@ async fn cloud_target_os(
     let prefer_windows =
         platform == Some("windows") || game_cfg.is_some_and(|c| c.forced_proton_version.is_some());
     let prefer_native = platform == Some("linux");
-    aurelia::steam_client::select_launch_entry(&options, &game, prefer_windows, prefer_native)
-        .map_or("windows", |e| e.target.platform().as_str())
+    aurelia::steam_client::select_launch_entry(
+        &options,
+        &game,
+        installed,
+        prefer_windows,
+        prefer_native,
+    )
+    .map_or("windows", |e| e.target.platform().as_str())
 }
 
 /// How many skipped filenames to print before collapsing into a count — enough to

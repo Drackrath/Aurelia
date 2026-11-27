@@ -28,7 +28,8 @@ pub struct LaunchFlags {
 /// installed. After a platform switch, files from the previous platform may also
 /// still be on disk, so "executable exists" alone is not enough either — prefer
 /// the entry matching the *installed* platform, then any entry whose executable
-/// exists, then the declared order.
+/// exists, then the declared order. `installed` is the platform of the installed
+/// depots, when known.
 ///
 /// With `prefer_windows_target` (a native Windows launch or an explicit/configured
 /// Proton runner), the Windows entry wins whenever its executable is installed —
@@ -37,13 +38,14 @@ pub struct LaunchFlags {
 pub fn select_launch_entry(
     launch_options: &[LaunchInfo],
     app: &LibraryGame,
+    installed: Option<DepotPlatform>,
     prefer_windows_target: bool,
     prefer_native_target: bool,
 ) -> Option<LaunchInfo> {
     let on_disk = |rel: &str| on_disk_path(app, rel);
     pick_launch_entry(
         launch_options,
-        app,
+        installed,
         prefer_windows_target,
         prefer_native_target,
         &on_disk,
@@ -259,18 +261,14 @@ pub fn launch_targets(
 
 fn pick_launch_entry(
     launch_options: &[LaunchInfo],
-    app: &LibraryGame,
+    installed: Option<DepotPlatform>,
     prefer_windows_target: bool,
     prefer_native_target: bool,
     on_disk: &dyn Fn(&str) -> Option<String>,
 ) -> Option<LaunchInfo> {
     let exe_exists =
         |o: &LaunchInfo| -> bool { !o.executable.is_empty() && on_disk(&o.executable).is_some() };
-    let installed_target = app
-        .platform
-        .as_deref()
-        .and_then(DepotPlatform::from_name)
-        .map(LaunchTarget::from);
+    let installed_target = installed.map(LaunchTarget::from);
 
     // Explicit per-game preference beats the manifest.
     if prefer_native_target
@@ -344,7 +342,7 @@ impl SteamClient {
         let steam_enabled = steam_enabled || forced_steam_reason(app).is_some();
 
         // Reject bad entries before starting Steam.
-        let launch_options = self.get_product_info(app.app_id).await?;
+        let (launch_options, installed) = self.get_product_info(app).await?;
         let launch_options = match launch_option {
             Some(id) => {
                 let entry = find_launch_option(&launch_options, id)?;
@@ -380,6 +378,7 @@ impl SteamClient {
         let launch_info = select_launch_entry(
             &launch_options,
             app,
+            installed,
             prefer_windows_target,
             prefer_native_target,
         )
