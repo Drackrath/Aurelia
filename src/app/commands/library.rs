@@ -334,8 +334,9 @@ pub(crate) async fn cmd_list(
         }
     }
 
+    // Art cache also carries app types.
+    let art = resolve_library_art(&client, &games).await;
     if json {
-        let art = resolve_library_art(&client, &games).await;
         let enriched: Vec<serde_json::Value> = games
             .iter()
             .map(|g| {
@@ -369,19 +370,21 @@ pub(crate) async fn cmd_list(
 
     if online {
         cli_println!(
-            "{:>9}  {:<10}  {:<13}  {:<7}  {:<20}  NAME",
+            "{:>9}  {:<10}  {:<13}  {:<11}  {:<7}  {:<20}  NAME",
             "APPID",
             "STATUS",
             "LICENSE",
+            "TYPE",
             "ONLINE",
             "COLLECTIONS"
         );
     } else {
         cli_println!(
-            "{:>9}  {:<10}  {:<13}  {:<20}  NAME",
+            "{:>9}  {:<10}  {:<13}  {:<11}  {:<20}  NAME",
             "APPID",
             "STATUS",
             "LICENSE",
+            "TYPE",
             "COLLECTIONS"
         );
     }
@@ -411,6 +414,7 @@ pub(crate) async fn cmd_list(
         if g.from_windows_steam {
             branch.push_str(" [wine]");
         }
+        let kind = library_app_type(g, art.get(&g.app_id)).unwrap_or_else(|| "-".to_string());
         let cols = game_collections(g.app_id);
         let cols = if cols.is_empty() {
             "-".to_string()
@@ -424,10 +428,11 @@ pub(crate) async fn cmd_list(
                 None => "?",
             };
             cli_println!(
-                "{:>9}  {:<10}  {:<13}  {:<7}  {:<20}  {}{}",
+                "{:>9}  {:<10}  {:<13}  {:<11}  {:<7}  {:<20}  {}{}",
                 g.app_id,
                 status,
                 license,
+                kind,
                 online_col,
                 cols,
                 g.name,
@@ -435,10 +440,11 @@ pub(crate) async fn cmd_list(
             );
         } else {
             cli_println!(
-                "{:>9}  {:<10}  {:<13}  {:<20}  {}{}",
+                "{:>9}  {:<10}  {:<13}  {:<11}  {:<20}  {}{}",
                 g.app_id,
                 status,
                 license,
+                kind,
                 cols,
                 g.name,
                 branch
