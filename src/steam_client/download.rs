@@ -50,6 +50,8 @@ pub(crate) struct DepotLoopOpts {
     pub grand_total_bytes: u64,
     /// Depot-pinned manifests; failures become hard errors.
     pub manifest_overrides: Option<std::collections::HashMap<u32, u64>>,
+    /// Each depot's share of `grand_total_bytes`, dropped when its key is denied.
+    pub depot_sizes: std::collections::HashMap<u32, u64>,
 }
 
 /// Depot fetch loop; `None` reports failure.
@@ -105,57 +107,62 @@ pub(crate) async fn run_depot_loop(
     let mut successful_depots = Vec::new();
     let required_selected = selections.iter().any(|selection| selection.required);
     let mut required_successful = 0;
-    for selection in selections {
-        tracing::info!(
-            "Starting download for Depot {} (GID: {})...",
-            selection.depot_id,
-            selection.manifest_id
-        );
-        // Reset the current-depot counters so per-depot progress restarts.
-        if let Ok(mut state) = shared_state.write() {
-            state.status_text = format!("{verb} depot {}", selection.depot_id);
-            state.depot_id = selection.depot_id;
-            state.depot_downloaded_bytes = 0;
-            state.depot_total_bytes = 0;
-        }
-
+    let is_override = |selection: &ManifestSelection| {
+        opts.manifest_overrides
+            .as_ref()
+            .is_some_and(|m| m.contains_key(&selection.depot_id))
+    };
+    for selection in selections.iter().filter(|selection| is_override(selection)) {
         // A downgrade names this depot's manifest explicitly, so a request
         // code that comes back 401/empty (typical for very old manifests) is a
         // hard, clearly-reported failure rather than a silent skip.
-        let is_override = opts
-            .manifest_overrides
-            .as_ref()
-            .is_some_and(|m| m.contains_key(&selection.depot_id));
-        if is_override {
-            let ok = matches!(
-                client
-                    .get_manifest_request_code(selection.app_id, selection.depot_id, selection.manifest_id)
-                    .await,
-                Ok(code) if code != 0
-            );
-            if !ok {
-                emit_failed(
-                    tx,
-                    format!(
-                        "Steam declined a request code for manifest {} on depot {} — it may be too old, or require owning the game with a non-anonymous login",
-                        selection.manifest_id, selection.depot_id
-                    ),
-                )
-                .await;
-                return None;
-            }
+        let ok = matches!(
+            client
+                .get_manifest_request_code(selection.app_id, selection.depot_id, selection.manifest_id)
+                .await,
+            Ok(code) if code != 0
+        );
+        if !ok {
+            emit_failed(
+                tx,
+                format!(
+                    "Steam declined a request code for manifest {} on depot {} — it may be too old, or require owning the game with a non-anonymous login",
+                    selection.manifest_id, selection.depot_id
+                ),
+            )
+            .await;
+            return None;
         }
+    }
 
+    // Resolve every depot key up front, concurrently, so the whole-app total only
+    // counts content this account can access, as Steam does.
+    let mut requests = tokio::task::JoinSet::new();
+    for (index, selection) in selections.iter().enumerate() {
+        let client = client.clone();
+        let (app_id, depot_id) = (selection.app_id, selection.depot_id);
+        requests.spawn(async move { (index, client.get_depot_key(app_id, depot_id).await) });
+    }
+    let mut keys: Vec<Option<Result<Vec<u8>>>> = selections.iter().map(|_| None).collect();
+    while let Some(joined) = requests.join_next().await {
+        let Ok((index, key)) = joined else {
+            emit_failed(tx, "Depot key request task failed").await;
+            return None;
+        };
+        keys[index] = Some(key);
+    }
+
+    let mut keyed = Vec::with_capacity(selections.len());
+    let mut skipped = Vec::new();
+    for (selection, key) in selections.into_iter().zip(keys) {
         // Appinfo can advertise mutually exclusive depots from different packages.
         // Only an explicit access denial permits skipping automatically selected content.
-        let key = match client
-            .get_depot_key(selection.app_id, selection.depot_id)
-            .await
-        {
+        let key = match key.unwrap_or_else(|| Err(anyhow!("no depot key response"))) {
             Ok(k) => k,
             Err(e) => {
-                if depots::skip_key_failure(&e, is_override, selection.required) {
+                if depots::skip_key_failure(&e, is_override(&selection), selection.required) {
                     tracing::warn!("Skipping depot {}: {e:#}", selection.depot_id);
+                    skipped.push(selection.depot_id);
                     continue;
                 }
                 emit_failed(
@@ -169,6 +176,28 @@ pub(crate) async fn run_depot_loop(
                 return None;
             }
         };
+        keyed.push((selection, key));
+    }
+    if !skipped.is_empty()
+        && let Ok(mut state) = shared_state.write()
+    {
+        state.total_bytes =
+            depots::accessible_total(state.total_bytes, &opts.depot_sizes, &skipped);
+    }
+    for (selection, key) in keyed {
+        tracing::info!(
+            "Starting download for Depot {} (GID: {})...",
+            selection.depot_id,
+            selection.manifest_id
+        );
+        // Reset the current-depot counters so per-depot progress restarts.
+        if let Ok(mut state) = shared_state.write() {
+            state.status_text = format!("{verb} depot {}", selection.depot_id);
+            state.depot_id = selection.depot_id;
+            state.depot_downloaded_bytes = 0;
+            state.depot_total_bytes = 0;
+        }
+
         // A valid depot key is exactly 32 bytes; a short/all-zero key would
         // decrypt chunks to garbage (the chunk path then fails the zip parse
         // with "Could not find EOCD").

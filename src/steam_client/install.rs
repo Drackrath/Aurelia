@@ -338,6 +338,7 @@ impl SteamClient {
             // Sum of all selected depots' max (uncompressed) sizes — the whole-app total
             // used to report overall download progress across depots.
             let mut grand_total_bytes: u64 = 0;
+            let mut depot_sizes = HashMap::new();
             // UserConfig language, if chosen.
             let mut recorded_language = None;
 
@@ -418,7 +419,7 @@ impl SteamClient {
                                     // depot-level "maxsize" is absent/zero). For an
                                     // overridden (older) manifest this is only the
                                     // current build's size — a progress-bar estimate.
-                                    grand_total_bytes += value
+                                    let depot_size = value
                                         .get_obj(&["manifests", "public"])
                                         .and_then(|m| m.get("size"))
                                         .and_then(|v| v.as_str())
@@ -430,6 +431,8 @@ impl SteamClient {
                                                 .and_then(|s| s.parse::<u64>().ok())
                                         })
                                         .unwrap_or(0);
+                                    grand_total_bytes += depot_size;
+                                    depot_sizes.insert(d_id, depot_size);
                                     selections.push(ManifestSelection {
                                         app_id: resolved.source_app(d_id),
                                         depot_id: d_id,
@@ -546,6 +549,7 @@ impl SteamClient {
                             verify_mode: false,
                             grand_total_bytes,
                             manifest_overrides,
+                            depot_sizes,
                         },
                     )
                     .await
