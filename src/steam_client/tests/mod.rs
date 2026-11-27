@@ -8,6 +8,7 @@ mod install_dir;
 mod launch;
 mod launch_command;
 mod launch_legacy;
+mod licence_list;
 mod licences;
 mod login;
 mod pics;

@@ -78,14 +78,19 @@ pub(super) async fn access_with_retry(
             logon_id,
             "Authenticating with stored refresh token ..."
         );
-        match tokio::time::timeout(
-            CM_CONNECT_TIMEOUT,
-            Connection::login_with_refresh_token_and_logon_id(server_list, &token, logon_id),
-        )
-        .await
-        {
-            Ok(Ok(connection)) => {
+        let logon = async {
+            let unauthenticated =
+                steam_vent::connection::UnAuthenticatedConnection::connect(server_list).await?;
+            let licences = super::licence_list::subscribe(&unauthenticated);
+            let connection = unauthenticated
+                .login_with_refresh_token_and_logon_id(&token, logon_id)
+                .await?;
+            Ok::<_, ConnectionError>((connection, licences))
+        };
+        match tokio::time::timeout(CM_CONNECT_TIMEOUT, logon).await {
+            Ok(Ok((connection, licences))) => {
                 tracing::debug!("Refresh-token authentication succeeded");
+                super::licence_list::watch(licences, u64::from(connection.steam_id()));
                 return Ok(connection);
             }
             // Retrying these only deepens a lockout.

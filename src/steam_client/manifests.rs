@@ -529,7 +529,7 @@ impl SteamClient {
     /// licensed apps). `installed` and `disabled` are read from the base game's
     /// appmanifest — if the base game isn't installed, both are `false` for every DLC.
     pub async fn dlc_states(&self, base_appid: u32, dlc_ids: &[u32]) -> Result<Vec<DlcState>> {
-        let owned = self.owned_among(dlc_ids).await?;
+        let owned = self.owned_among(base_appid, dlc_ids).await?;
         self.dlc_states_with_owned(base_appid, dlc_ids, &owned)
             .await
     }
@@ -564,12 +564,31 @@ impl SteamClient {
             .collect())
     }
 
-    /// Owned apps among `app_ids`, via tickets.
-    pub async fn owned_among(&self, app_ids: &[u32]) -> Result<HashSet<u32>> {
-        let mut owned = HashSet::new();
+    /// Owned DLC of `base_appid` among `app_ids`.
+    pub async fn owned_among(&self, base_appid: u32, app_ids: &[u32]) -> Result<HashSet<u32>> {
         let Some(connection) = self.connection() else {
-            return Ok(owned);
+            return Ok(HashSet::new());
         };
+        if app_ids.is_empty() {
+            return Ok(HashSet::new());
+        }
+        match super::licence_list::owned_apps(connection).await {
+            Ok(Some(apps)) => {
+                return Ok(app_ids
+                    .iter()
+                    .copied()
+                    .filter(|&id| apps.owns_dlc(base_appid, id))
+                    .collect());
+            }
+            Ok(None) => tracing::debug!("no licence list; checking ownership tickets"),
+            Err(e) => tracing::warn!("licence list lookup failed ({e:#}); checking tickets"),
+        }
+        Self::owned_by_tickets(connection, app_ids).await
+    }
+
+    /// Ownership tickets, eight at once.
+    async fn owned_by_tickets(connection: &Connection, app_ids: &[u32]) -> Result<HashSet<u32>> {
+        let mut owned = HashSet::new();
         for chunk in app_ids.chunks(8) {
             let mut set = tokio::task::JoinSet::new();
             for &app_id in chunk {

@@ -600,8 +600,11 @@ pub(crate) async fn cmd_dlc(app_id: u32, all: bool, no_cache: bool, json: bool) 
         .await
         .ok()
         .and_then(|s| s.steam_id);
+    // Daemon knows the live licence list.
+    let licences = account.and_then(aurelia::steam_client::licence_list::current_fingerprint);
     let cached = cached.map(|mut c| {
         c.bind_account(account);
+        c.bind_licences(licences);
         c
     });
     let need = cached.as_ref().map_or(
@@ -658,11 +661,13 @@ pub(crate) async fn cmd_dlc(app_id: u32, all: bool, no_cache: bool, json: bool) 
         record.fetched_at = now;
     }
     if check_owned {
-        match steam.owned_among(&record.dlc_ids).await {
+        match steam.owned_among(app_id, &record.dlc_ids).await {
             Ok(owned) => {
                 record.owned = owned.into_iter().collect();
                 record.owned_at = now;
                 record.retry_after = 0;
+                record.licence_fingerprint =
+                    account.and_then(aurelia::steam_client::licence_list::current_fingerprint);
             }
             Err(e) => {
                 let kind = classify(&e).kind;

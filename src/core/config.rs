@@ -859,6 +859,9 @@ pub struct CachedDlcList {
     /// Account the ownership set belongs to.
     #[serde(default)]
     pub steam_id: Option<u64>,
+    /// Licence list behind `owned`.
+    #[serde(default)]
+    pub licence_fingerprint: Option<u64>,
 }
 
 /// DLC cache parts to fetch.
@@ -884,6 +887,13 @@ impl CachedDlcList {
             self.owned.clear();
             self.owned_at = 0;
             self.steam_id = steam_id;
+        }
+    }
+
+    /// Newer licence list: ownership is stale.
+    pub fn bind_licences(&mut self, live: Option<u64>) {
+        if live.is_some() && self.licence_fingerprint != live {
+            self.owned_at = 0;
         }
     }
 

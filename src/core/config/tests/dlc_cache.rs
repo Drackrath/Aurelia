@@ -124,3 +124,20 @@ fn config_without_dlc_cache_keys_uses_defaults() {
     assert_eq!(cfg.dlc_list_cache_secs, DLC_LIST_TTL_SECS);
     assert_eq!(cfg.dlc_owned_cache_secs, DLC_OWNED_TTL_SECS);
 }
+
+#[test]
+fn newer_licence_list_makes_ownership_stale() {
+    let mut cached = record(1000, 1000);
+    cached.licence_fingerprint = Some(1);
+    cached.bind_licences(Some(2));
+    assert!(cached.refresh_needed(1000, 86_400, 3600).owned);
+}
+
+#[test]
+fn same_or_unknown_licence_list_keeps_ownership() {
+    let mut cached = record(1000, 1000);
+    cached.licence_fingerprint = Some(1);
+    cached.bind_licences(Some(1));
+    cached.bind_licences(None);
+    assert!(!cached.refresh_needed(1000, 86_400, 3600).owned);
+}
