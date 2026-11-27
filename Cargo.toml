@@ -57,6 +57,7 @@ chacha20poly1305 = "0.11"
 argon2 = "0.6"
 zeroize = "1" # Wipe secrets on drop
 keyring = { version = "3", default-features = false, features = ["sync-secret-service", "crypto-rust", "windows-native", "apple-native"] }
+unicode-width = "0.2" # Display width for CLI table columns
 
 [build-dependencies]
 # Pure-Rust protobuf codegen (no protoc) for the CloudConfigStore messages used by

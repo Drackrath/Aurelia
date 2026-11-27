@@ -1,6 +1,7 @@
 //! Store price lookups (`price`).
 
 use crate::app::commands::common::*;
+use crate::app::output::table::Table;
 
 use anyhow::Result;
 use aurelia::core::error::{ErrorKind, TypedError};
@@ -140,18 +141,17 @@ pub(crate) async fn cmd_price(
     }
 
     cli_println!("{}  (app {app_id})", name.unwrap_or_default());
-    cli_println!(
-        "{:<8} {:<14} {:<9} {:<14} {}",
-        "Country",
-        "Price",
-        "Discount",
-        "Original",
-        "Ends"
-    );
+    let mut table = Table::new()
+        .left("Country")
+        .left("Price")
+        .left("Discount")
+        .left("Original")
+        .left("Ends")
+        .left("Note");
     for q in &quotes {
         if !q.available {
             let why = q.error.as_deref().unwrap_or("not sold in this region");
-            cli_println!("{:<8} {why}", q.country);
+            table.row([q.country.as_str(), "-", "-", "-", "-", why]);
             continue;
         }
         let price = q.price.clone().unwrap_or_else(|| "Free".to_string());
@@ -165,14 +165,16 @@ pub(crate) async fn cmd_price(
             .discount_end_date
             .clone()
             .unwrap_or_else(|| "-".to_string());
-        cli_println!(
-            "{:<8} {:<14} {:<9} {:<14} {ends}",
-            q.country,
+        table.row([
+            q.country.clone(),
             price,
             discount,
-            original
-        );
+            original,
+            ends,
+            String::new(),
+        ]);
     }
+    table.print();
 
     // Packages and bundles, for the first priced region.
     if let Some(q) = quotes
@@ -180,6 +182,11 @@ pub(crate) async fn cmd_price(
         .find(|q| q.available && q.purchase_options.len() > 1)
     {
         cli_println!("\nPurchase options [{}]:", q.country);
+        let mut options = Table::new()
+            .left("Kind")
+            .left("Name")
+            .left("Price")
+            .left("Note");
         for o in &q.purchase_options {
             let price = o.price.clone().unwrap_or_else(|| "-".to_string());
             let mut note = String::new();
@@ -195,13 +202,14 @@ pub(crate) async fn cmd_price(
             if let Some(end) = o.discount_end {
                 note.push_str(&format!("  until {}", unix_to_ymd(end as i64)));
             }
-            cli_println!(
-                "  {:<8} {:<44} {:<12}{note}",
-                o.kind,
+            options.row([
+                o.kind.clone(),
                 truncate(&o.name, 44),
-                price
-            );
+                price,
+                note.trim_start().to_string(),
+            ]);
         }
+        options.print();
     }
     Ok(())
 }
@@ -362,13 +370,12 @@ fn store_row_json(a: &StoreAppInfo) -> serde_json::Value {
 
 /// Human table for listings.
 fn print_store_table(records: &[StoreAppInfo]) {
-    cli_println!(
-        "{:>9}  {:<14} {:<9} {:<11} NAME",
-        "APPID",
-        "PRICE",
-        "DISCOUNT",
-        "ENDS"
-    );
+    let mut table = Table::new()
+        .right("AppId")
+        .left("Price")
+        .left("Discount")
+        .left("Ends")
+        .left("Name");
     for a in records {
         let price = a.price.clone().unwrap_or_else(|| "-".to_string());
         let discount = if a.discount_pct > 0 {
@@ -385,15 +392,15 @@ fn print_store_table(records: &[StoreAppInfo]) {
         } else {
             format!("  [{}]", a.app_type)
         };
-        cli_println!(
-            "{:>9}  {:<14} {:<9} {:<11} {}{kind}",
-            a.app_id,
+        table.row([
+            a.app_id.to_string(),
             price,
             discount,
             ends,
-            a.name
-        );
+            format!("{}{kind}", a.name),
+        ]);
     }
+    table.print();
 }
 
 /// `aurelia search TERM`: find app ids by title.
@@ -527,7 +534,11 @@ pub(crate) async fn cmd_events(country: Option<String>, json: bool) -> Result<()
         cli_println!("No active store events for {country}.");
         return Ok(());
     }
-    cli_println!("{:<12} {:<11} {:<11} TITLE", "TYPE", "START", "END");
+    let mut table = Table::new()
+        .left("Type")
+        .left("Start")
+        .left("End")
+        .left("Title");
     for e in &events {
         let start = if e.start > 0 {
             unix_to_ymd(e.start as i64)
@@ -544,8 +555,9 @@ pub(crate) async fn cmd_events(country: Option<String>, json: bool) -> Result<()
         } else {
             format!("  ({})", e.associated_name)
         };
-        cli_println!("{:<12} {start:<11} {end:<11} {}{assoc}", e.kind, e.title);
+        table.row([e.kind.clone(), start, end, format!("{}{assoc}", e.title)]);
     }
+    table.print();
     Ok(())
 }
 
@@ -717,14 +729,13 @@ pub(crate) async fn cmd_wishlist(
         offset + 1,
         offset + page.len()
     );
-    cli_println!(
-        "{:>4}  {:>9}  {:<14} {:<9} {:<11} NAME",
-        "#",
-        "APPID",
-        "PRICE",
-        "DISCOUNT",
-        "ADDED"
-    );
+    let mut table = Table::new()
+        .right("Rank")
+        .right("AppId")
+        .left("Price")
+        .left("Discount")
+        .left("Added")
+        .left("Name");
     for e in &page {
         let rank = if e.priority > 0 {
             e.priority.to_string()
@@ -747,12 +758,16 @@ pub(crate) async fn cmd_wishlist(
                 "-".to_string(),
             ),
         };
-        cli_println!(
-            "{rank:>4}  {:>9}  {price:<14} {discount:<9} {:<11} {name}",
-            e.app_id,
-            unix_to_ymd(e.date_added as i64)
-        );
+        table.row([
+            rank,
+            e.app_id.to_string(),
+            price,
+            discount,
+            unix_to_ymd(e.date_added as i64),
+            name,
+        ]);
     }
+    table.print();
     Ok(())
 }
 
@@ -807,9 +822,11 @@ pub(crate) async fn cmd_tags(dump: bool, json: bool) -> Result<()> {
         return Ok(());
     }
     if !dump {
+        let mut table = Table::new().right("Id").left("Name");
         for (id, name) in &tags {
-            cli_println!("{id:>6}  {name}");
+            table.row([id.to_string(), name.to_string()]);
         }
+        table.print();
         return Ok(());
     }
     let today = unix_to_ymd(aurelia::core::time::now_unix() as i64);

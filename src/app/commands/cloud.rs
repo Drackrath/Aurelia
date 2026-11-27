@@ -2,6 +2,7 @@
 
 use crate::app::cli::*;
 use crate::app::commands::common::*;
+use crate::app::output::table::Table;
 
 use anyhow::{Context, Result};
 use std::path::PathBuf;
@@ -275,17 +276,17 @@ pub(crate) async fn cmd_cloud_list(app_id: u32, json: bool) -> Result<()> {
         cli_println!("No Steam Cloud files for app {app_id}.");
         return Ok(());
     }
-    cli_println!("{:>12}  {:<19}  NAME", "SIZE", "MODIFIED");
+    let mut table = Table::new().right("Size").left("Modified").left("Name");
     let mut total = 0u64;
     for f in &files {
         total += f.size;
-        cli_println!(
-            "{:>12}  {:<19}  {}",
+        table.row([
             human_bytes(f.size),
             format_unix_timestamp(f.timestamp),
-            f.filename
-        );
+            f.filename.clone(),
+        ]);
     }
+    table.print();
     cli_println!("\n{} file(s), {}.", files.len(), human_bytes(total));
     Ok(())
 }
