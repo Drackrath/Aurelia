@@ -563,6 +563,19 @@ pub(crate) async fn cmd_login_json(
     let account = username.clone();
 
     let mut client = SteamClient::new()?;
+    // Steam reveals the allowed methods before blocking, so a driver can tell an
+    // email/authenticator code from a mobile-app approval while it waits.
+    client.set_confirmation_hook(std::sync::Arc::new(
+        |prompts: &[aurelia::steam_client::ConfirmationPrompt]| {
+            let methods: Vec<&str> = prompts
+                .iter()
+                .map(|p| confirmation_method_name(&p.requirement))
+                .collect();
+            eprint_json_line(
+                &serde_json::json!({ "event": "confirmation_methods", "methods": methods }),
+            );
+        },
+    ));
 
     // The login call below blocks inside steam-vent while it waits for the Guard
     // code / mobile confirmation. Emit this first so the driver can immediately
@@ -621,6 +634,16 @@ pub(crate) async fn cmd_login_json(
                 Err(err).context("login failed")
             }
         }
+    }
+}
+
+/// A Steam Guard method's `--json` name, matching `guard_required`'s `type`.
+fn confirmation_method_name(requirement: &aurelia::core::models::SteamGuardReq) -> &'static str {
+    use aurelia::core::models::SteamGuardReq::{DeviceCode, DeviceConfirmation, EmailCode};
+    match requirement {
+        EmailCode { .. } => "email",
+        DeviceCode => "device",
+        DeviceConfirmation => "device_confirmation",
     }
 }
 
