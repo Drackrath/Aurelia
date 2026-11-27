@@ -90,7 +90,7 @@ pub(crate) async fn cmd_config_persona_wait(seconds: Option<u64>, json: bool) ->
     Ok(())
 }
 
-/// View or set the DLC cache times.
+/// View or set DLC cache times.
 pub(crate) async fn cmd_config_dlc_cache(
     list: Option<u64>,
     owned: Option<u64>,

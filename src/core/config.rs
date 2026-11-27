@@ -836,19 +836,17 @@ pub async fn save_info_cache(
     write_json_pretty(&info_cache_path(app_id, language, country)?, &record).await
 }
 
-/// Default seconds a DLC list stays fresh.
+/// Default DLC list cache seconds.
 pub const DLC_LIST_TTL_SECS: u64 = 24 * 3600;
 /// Default seconds DLC ownership stays fresh.
 pub const DLC_OWNED_TTL_SECS: u64 = 3600;
 /// Pause after Steam throttled ownership checks.
 pub const DLC_OWNED_BACKOFF_SECS: u64 = 600;
 
-/// A cached `aurelia dlc` result, minus local state.
-///
-/// Installed/disabled come from the appmanifest on every call.
+/// Cached DLC result, minus local state.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CachedDlcList {
-    /// When ids and store data were fetched.
+    /// When ids and store were fetched.
     pub fetched_at: u64,
     pub dlc_ids: Vec<u32>,
     pub store: Vec<crate::steam_client::StoreAppInfo>,
@@ -863,7 +861,7 @@ pub struct CachedDlcList {
     pub steam_id: Option<u64>,
 }
 
-/// Which parts of a DLC cache need fetching.
+/// DLC cache parts to fetch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DlcRefresh {
     pub list: bool,
@@ -871,11 +869,11 @@ pub struct DlcRefresh {
 }
 
 impl CachedDlcList {
-    /// Stale parts at `now` for the given TTLs.
+    /// Stale parts at `now`.
     pub fn refresh_needed(&self, now: u64, list_ttl: u64, owned_ttl: u64) -> DlcRefresh {
         // TTL 0 means always fetch.
         let list = now.saturating_sub(self.fetched_at) >= list_ttl;
-        // New ids need a fresh ownership check.
+        // New ids need fresh ownership.
         let owned = list || self.owned_at == 0 || now.saturating_sub(self.owned_at) >= owned_ttl;
         DlcRefresh { list, owned }
     }
@@ -904,7 +902,7 @@ fn dlc_cache_path(app_id: u32, language: &str, country: &str) -> Result<PathBuf>
     Ok(info_cache_dir()?.join("dlc").join(name))
 }
 
-/// Cached DLC list for `app_id`, any age.
+/// Cached DLC list, any age.
 pub async fn load_dlc_cache(app_id: u32, language: &str, country: &str) -> Option<CachedDlcList> {
     let path = dlc_cache_path(app_id, language, country).ok()?;
     let raw = fs::read_to_string(&path).await.ok()?;

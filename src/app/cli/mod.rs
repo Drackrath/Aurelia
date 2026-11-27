@@ -337,10 +337,10 @@ pub(crate) enum Command {
     /// List a game's DLC.
     Dlc {
         app_id: u32,
-        /// Also list retired DLC the store no longer has.
+        /// Also list retired DLC.
         #[arg(long)]
         all: bool,
-        /// Skip the DLC cache and fetch fresh.
+        /// Skip the DLC cache.
         #[arg(long)]
         no_cache: bool,
     },

@@ -551,30 +551,26 @@ pub(crate) async fn resolve_dlc_names_via_store(
     dlc
 }
 
-/// No store item with a name: retired DLC.
+/// No named store item: retired.
 pub(crate) fn dlc_is_retired(store: Option<&StoreAppInfo>) -> bool {
     store.is_none_or(|i| i.name.trim().is_empty())
 }
 
-/// Store header, else the flat CDN path.
-///
-/// Newer apps keep art under hashed folders only.
+/// Store header, else flat CDN path.
 pub(crate) fn dlc_image(store: Option<&StoreAppInfo>, id: u32) -> String {
     store
         .and_then(|i| i.assets.header.clone())
         .unwrap_or_else(|| steam_urls::header_url(id))
 }
 
-/// Store small capsule, else the CDN path.
+/// Store small capsule, else CDN.
 pub(crate) fn dlc_fallback_image(store: Option<&StoreAppInfo>, id: u32) -> String {
     store
         .and_then(|i| i.assets.small_capsule.clone())
         .unwrap_or_else(|| steam_urls::small_capsule_url(id))
 }
 
-/// Whether `aurelia dlc` lists this DLC.
-///
-/// Retired DLC stay listed while the user owns, installed or disabled them.
+/// Listed unless retired and untouched.
 pub(crate) fn dlc_is_listed(
     retired: bool,
     state: Option<&aurelia::core::models::DlcState>,
@@ -644,7 +640,7 @@ pub(crate) async fn cmd_dlc(app_id: u32, all: bool, no_cache: bool, json: bool) 
     // Store data failed: retirement is unknown.
     let mut store_ok = true;
     if need.list {
-        // DLC ids from PICS, store data from StoreBrowse.
+        // Ids from PICS, data from StoreBrowse.
         let ids = steam
             .get_extended_app_info(app_id)
             .await
