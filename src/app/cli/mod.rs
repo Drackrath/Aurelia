@@ -335,7 +335,12 @@ pub(crate) enum Command {
     /// Show account details for the logged-in user.
     Account,
     /// List a game's DLC.
-    Dlc { app_id: u32 },
+    Dlc {
+        app_id: u32,
+        /// Also list retired DLC the store no longer has.
+        #[arg(long)]
+        all: bool,
+    },
     /// Enable an installed DLC for its base game.
     Enable {
         app_id: u32,

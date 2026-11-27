@@ -573,7 +573,23 @@ pub(crate) async fn resolve_dlc_store_info(
         .collect()
 }
 
-pub(crate) async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
+/// No store item with a name: retired DLC.
+pub(crate) fn dlc_is_retired(store: Option<&StoreAppInfo>) -> bool {
+    store.is_none_or(|i| i.name.trim().is_empty())
+}
+
+/// Whether `aurelia dlc` lists this DLC.
+///
+/// Retired DLC stay listed while the user owns, installed or disabled them.
+pub(crate) fn dlc_is_listed(
+    retired: bool,
+    state: Option<&aurelia::core::models::DlcState>,
+    all: bool,
+) -> bool {
+    all || !retired || state.is_some_and(|s| s.owned || s.installed || s.disabled)
+}
+
+pub(crate) async fn cmd_dlc(app_id: u32, all: bool, json: bool) -> Result<()> {
     // Ownership status requires an authenticated connection; installed/disabled status
     // is read from the local appmanifest.
     let steam = authed_client().await?;
@@ -609,6 +625,8 @@ pub(crate) async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
     dlc.sort_by_key(|(id, _)| *id);
     let state_by_id: std::collections::HashMap<u32, &aurelia::core::models::DlcState> =
         states.iter().map(|s| (s.app_id, s)).collect();
+    let retired = |id: &u32| dlc_is_retired(store.get(id));
+    dlc.retain(|(id, _)| dlc_is_listed(retired(id), state_by_id.get(id).copied(), all));
 
     if json {
         let value = serde_json::json!({
@@ -632,6 +650,7 @@ pub(crate) async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
                     "image_url": steam_urls::header_url(*id),
                     "image_fallback_url": steam_urls::small_capsule_url(*id),
                     "store_url": steam_urls::store_url(*id),
+                    "retired": retired(id),
                 })
             }).collect::<Vec<_>>(),
         });
@@ -651,9 +670,12 @@ pub(crate) async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
         "PRICE"
     );
     for (id, name) in &dlc {
-        let name = name
+        let mut name = name
             .clone()
             .unwrap_or_else(|| "(name unavailable)".to_string());
+        if retired(id) {
+            name.push_str(" (retired)");
+        }
         let price = store
             .get(id)
             .map(|i| {
@@ -981,3 +1003,6 @@ pub(crate) async fn cmd_image(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;
