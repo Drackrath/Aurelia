@@ -97,8 +97,8 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
     // Note whether this is a DLC so we can refresh Steam's view afterward.
     let is_dlc = client.resolve_dlc_parent(app_id).await.is_some();
 
-    let (platform, cached_vdf) = match platform {
-        Some(p) => (p, None),
+    let (platform, mut cached_vdf, mut platforms) = match platform {
+        Some(p) => (p, None, None),
         None => {
             let (platforms, buffer) = client
                 .get_available_platforms(app_id)
@@ -108,8 +108,31 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
             if !json {
                 cli_println!("Auto-selected platform: {chosen:?}");
             }
-            (chosen, Some(buffer))
+            (chosen, Some(buffer), Some(platforms))
         }
+    };
+    // Steam swaps dual-platform installs to Linux.
+    let host = DepotPlatform::host();
+    let could_swap =
+        windows_build::steam_prefers_linux(host, platform, &[DepotPlatform::Linux], is_dlc);
+    if could_swap && platforms.is_none() {
+        let (found, buffer) = client
+            .get_available_platforms(app_id)
+            .await
+            .context("failed to detect available platforms")?;
+        platforms = Some(found);
+        cached_vdf = Some(buffer);
+    }
+    let platform_override = windows_build::steam_prefers_linux(
+        host,
+        platform,
+        platforms.as_deref().unwrap_or_default(),
+        is_dlc,
+    );
+    let pending_mapping = if platform_override {
+        windows_build::plan_mapping(app_id, restart_steam)?
+    } else {
+        None
     };
 
     // Fail before any download.
@@ -168,7 +191,11 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
     let _install_guard = InstallGuard::register(app_id, Arc::clone(&state))?;
 
     // Stop late; nothing below `?`-returns.
-    let manage_steam = steam_guard_stop_optional(restart_steam && is_dlc, json)?;
+    let manage_steam =
+        steam_guard_stop_optional(restart_steam && (is_dlc || pending_mapping.is_some()), json)?;
+    let compat_tool = pending_mapping
+        .as_ref()
+        .and_then(|p| windows_build::apply_mapping(p, app_id, json));
 
     // Recorded first, so a crash stays resumable.
     let started = aurelia::core::time::now_unix();
@@ -199,6 +226,7 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
                 cached_vdf,
                 library_override: Some(library_root.clone()),
                 language,
+                platform_override,
                 ..Default::default()
             },
             Arc::clone(&state),
@@ -255,6 +283,7 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
             "dlc": is_dlc,
             "steam_restart_required": steam_restart_required,
             "steam_restarted": steam_restarted,
+            "compat_tool": compat_tool,
         }));
     }
     Ok(())
