@@ -13,6 +13,7 @@ fn hashed(fetched_at: u64) -> CachedArt {
             header: Some(HASHED.to_string()),
             ..Default::default()
         }),
+        app_type: Some("Game".to_string()),
     }
 }
 
@@ -30,6 +31,7 @@ fn unknown_or_artless_apps_keep_flat_paths() {
     let none = CachedArt {
         fetched_at: 1,
         assets: None,
+        app_type: None,
     };
     for cached in [None, Some(&none)] {
         let art = library_art(10, cached);
@@ -49,8 +51,50 @@ fn only_missing_or_stale_art_is_fetched() {
             CachedArt {
                 fetched_at: now,
                 assets: None,
+                app_type: None,
             },
         ),
     ]);
     assert_eq!(art_to_fetch(&[1, 2, 3, 4], &cache, now), vec![2, 4]);
+}
+
+fn installed_at(path: &str) -> aurelia::core::models::LibraryGame {
+    aurelia::core::models::LibraryGame {
+        app_id: 2387900,
+        name: "Lords of the Fallen Soundtrack".to_string(),
+        install_path: Some(path.to_string()),
+        is_installed: true,
+        playtime_forever_minutes: None,
+        active_branch: "public".to_string(),
+        update_available: false,
+        steam_config_mismatch: false,
+        update_queued: false,
+        local_manifest_ids: HashMap::new(),
+        is_owned: true,
+        is_family_shared: false,
+        online_required: None,
+        platform: None,
+        from_windows_steam: false,
+        size_on_disk: None,
+    }
+}
+
+#[test]
+fn store_type_wins() {
+    let game = installed_at("/lib/steamapps/common/Game");
+    let mut art = hashed(1);
+    art.app_type = Some("Soundtrack".to_string());
+    assert_eq!(
+        library_app_type(&game, Some(&art)).as_deref(),
+        Some("Soundtrack")
+    );
+}
+
+#[test]
+fn music_folder_means_soundtrack_without_store_type() {
+    let game =
+        installed_at("/home/u/.local/share/Steam/steamapps/music/Lords of the Fallen - Soundtrack");
+    assert_eq!(library_app_type(&game, None).as_deref(), Some("Soundtrack"));
+    let game = installed_at("/lib/steamapps/common/Lords of the Fallen");
+    assert_eq!(library_app_type(&game, None), None);
 }
