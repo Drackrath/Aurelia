@@ -824,6 +824,8 @@ pub async fn save_info_cache(
 pub const DLC_LIST_TTL_SECS: u64 = 24 * 3600;
 /// Hour DLC ownership stays fresh.
 pub const DLC_OWNED_TTL_SECS: u64 = 3600;
+/// Pause after Steam throttled ownership checks.
+pub const DLC_OWNED_BACKOFF_SECS: u64 = 600;
 
 /// A cached `aurelia dlc` result, minus local state.
 ///
@@ -837,6 +839,9 @@ pub struct CachedDlcList {
     /// When ownership was checked.
     pub owned_at: u64,
     pub owned: Vec<u32>,
+    /// No ownership checks before this time.
+    #[serde(default)]
+    pub retry_after: u64,
 }
 
 /// Which parts of a DLC cache need fetching.
@@ -853,6 +858,11 @@ impl CachedDlcList {
         // New ids need a fresh ownership check.
         let owned = list || now.saturating_sub(self.owned_at) > owned_ttl;
         DlcRefresh { list, owned }
+    }
+
+    /// Steam throttled us recently; don't ask.
+    pub fn ownership_paused(&self, now: u64) -> bool {
+        now < self.retry_after
     }
 }
 

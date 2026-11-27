@@ -67,3 +67,18 @@ fn dlc_cache_round_trips_per_language() {
         assert!(load_dlc_cache(1245620, "german", "DE").await.is_none());
     });
 }
+
+#[test]
+fn ownership_paused_until_retry_after() {
+    let mut cached = record(0, 0);
+    cached.retry_after = 2000;
+    assert!(cached.ownership_paused(1999));
+    assert!(!cached.ownership_paused(2000));
+}
+
+#[test]
+fn old_cache_without_retry_after_parses() {
+    let raw = r#"{"fetched_at":1,"dlc_ids":[],"store":[],"owned_at":1,"owned":[]}"#;
+    let cached: CachedDlcList = serde_json::from_str(raw).unwrap();
+    assert_eq!(cached.retry_after, 0);
+}

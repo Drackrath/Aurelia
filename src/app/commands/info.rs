@@ -585,8 +585,10 @@ pub(crate) fn dlc_is_listed(
 
 pub(crate) async fn cmd_dlc(app_id: u32, all: bool, no_cache: bool, json: bool) -> Result<()> {
     use aurelia::core::config::{
-        DLC_LIST_TTL_SECS, DLC_OWNED_TTL_SECS, DlcRefresh, load_dlc_cache, save_dlc_cache,
+        DLC_LIST_TTL_SECS, DLC_OWNED_BACKOFF_SECS, DLC_OWNED_TTL_SECS, DlcRefresh, load_dlc_cache,
+        save_dlc_cache,
     };
+    use aurelia::core::error::{ErrorKind, TypedError, classify};
     let country = resolve_steam_country(None).await?;
     let lang = resolve_steam_language(None).await;
     let now = aurelia::core::time::now_unix();
@@ -603,8 +605,23 @@ pub(crate) async fn cmd_dlc(app_id: u32, all: bool, no_cache: bool, json: bool) 
         |c| c.refresh_needed(now, DLC_LIST_TTL_SECS, DLC_OWNED_TTL_SECS),
     );
     let mut record = cached.unwrap_or_default();
+    // Throttled: keep old ownership, ask later.
+    let paused = need.owned && record.ownership_paused(now);
+    if paused {
+        let wait = record.retry_after.saturating_sub(now);
+        if record.owned_at == 0 {
+            return Err(TypedError::new(
+                ErrorKind::RateLimited,
+                format!("Steam throttled DLC ownership checks; retry in {wait} s"),
+            )
+            .with_retry_after(Some(std::time::Duration::from_secs(wait)))
+            .into());
+        }
+        tracing::warn!("Steam throttled DLC ownership checks; showing ownership from the cache");
+    }
+    let check_owned = need.owned && !paused;
     // Fresh cache: no logon at all.
-    let steam = if need.list || need.owned {
+    let steam = if need.list || check_owned {
         authed_client().await?
     } else {
         SteamClient::new()?
@@ -619,32 +636,43 @@ pub(crate) async fn cmd_dlc(app_id: u32, all: bool, no_cache: bool, json: bool) 
             .await
             .with_context(|| format!("failed to read the DLC list of app {app_id}"))?
             .dlcs;
-        let (store, owned) = tokio::join!(
-            steam.fetch_store_apps(&ids, &lang, &country),
-            steam.owned_among(&ids),
-        );
-        record.store = store.unwrap_or_else(|e| {
-            tracing::warn!("could not fetch DLC store records: {e:#}");
-            store_ok = false;
-            Vec::new()
-        });
+        record.store = steam
+            .fetch_store_apps(&ids, &lang, &country)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("could not fetch DLC store records: {e:#}");
+                store_ok = false;
+                Vec::new()
+            });
         record.dlc_ids = ids;
         record.fetched_at = now;
-        record.owned = owned
-            .with_context(|| format!("failed to resolve DLC status for app {app_id}"))?
-            .into_iter()
-            .collect();
-        record.owned_at = now;
-    } else if need.owned {
-        record.owned = steam
-            .owned_among(&record.dlc_ids)
-            .await
-            .with_context(|| format!("failed to resolve DLC status for app {app_id}"))?
-            .into_iter()
-            .collect();
-        record.owned_at = now;
     }
-    if (need.list || need.owned)
+    if check_owned {
+        match steam.owned_among(&record.dlc_ids).await {
+            Ok(owned) => {
+                record.owned = owned.into_iter().collect();
+                record.owned_at = now;
+                record.retry_after = 0;
+            }
+            Err(e) => {
+                let kind = classify(&e).kind;
+                if matches!(
+                    kind,
+                    ErrorKind::RateLimited | ErrorKind::NetworkTimeout | ErrorKind::Offline
+                ) {
+                    // Remember the pause for later calls.
+                    record.retry_after = now + DLC_OWNED_BACKOFF_SECS;
+                    if store_ok
+                        && let Err(save) = save_dlc_cache(app_id, &lang, &country, &record).await
+                    {
+                        tracing::warn!("could not write the DLC cache: {save:#}");
+                    }
+                }
+                return Err(e.context(format!("failed to resolve DLC status for app {app_id}")));
+            }
+        }
+    }
+    if (need.list || check_owned)
         && store_ok
         && let Err(e) = save_dlc_cache(app_id, &lang, &country, &record).await
     {
