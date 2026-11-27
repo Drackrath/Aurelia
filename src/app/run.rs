@@ -134,6 +134,11 @@ async fn async_main() {
                 print_banner_and_help();
                 std::process::exit(0);
             }
+            // Version line omits the program name.
+            if e.kind() == ErrorKind::DisplayVersion {
+                cli_println!("{}", aurelia::core::version::DISPLAY);
+                std::process::exit(0);
+            }
             // Everything else (genuine parse errors, --help, --version) keeps clap's
             // default rendering and exit codes.
             e.exit();
@@ -198,10 +203,13 @@ pub(crate) async fn run_argv(argv: Vec<String>) -> i32 {
             use clap::error::ErrorKind;
             let rendered = e.render().to_string();
             match e.kind() {
-                // --help / --version are "errors" that print to stdout, exit 0.
-                ErrorKind::DisplayHelp
-                | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
-                | ErrorKind::DisplayVersion => {
+                // Version line omits the program name.
+                ErrorKind::DisplayVersion => {
+                    cli_println!("{}", aurelia::core::version::DISPLAY);
+                    0
+                }
+                // --help prints to stdout.
+                ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
                     cli_print!("{rendered}");
                     0
                 }

@@ -103,7 +103,7 @@ pub(crate) fn current_build_id() -> Option<String> {
 /// clients conservatively restart the daemon.
 fn write_daemon_info() {
     let info = DaemonInfo {
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: aurelia::core::version::NUMBER.to_string(),
         pid: std::process::id(),
         build_id: current_build_id(),
     };

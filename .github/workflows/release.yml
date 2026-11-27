@@ -154,9 +154,11 @@ jobs:
           case "$GITHUB_REF_NAME" in
             *-rc*|*-beta*|*-alpha*|*-pre*) pre=(--prerelease) ;;
           esac
+          # Codename from the version module.
+          codename=$(sed -n '/macro_rules! codename/,/^}/s/^ *"\(.*\)"$/\1/p' src/core/version.rs)
           gh release create "$GITHUB_REF_NAME" "$asset" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "Aurelia $GITHUB_REF_NAME" \
+            --title "Aurelia $GITHUB_REF_NAME${codename:+ $codename}" \
             --generate-notes "${pre[@]}" 2>/dev/null \
           || gh release upload "$GITHUB_REF_NAME" "$asset" --repo "$GITHUB_REPOSITORY" --clobber
 

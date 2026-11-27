@@ -40,7 +40,7 @@ pub async fn try_forward() -> Result<Forwarded> {
 /// fresh one before forwarding.
 async fn connect_or_spawn() -> Option<impl AsyncRead + AsyncWrite + Unpin + Send> {
     if let Ok(stream) = transport::connect().await {
-        let current = env!("CARGO_PKG_VERSION");
+        let current = aurelia::core::version::NUMBER;
         let info = super::read_daemon_info();
         if !daemon_needs_restart(info.as_ref(), current) {
             return Some(stream);

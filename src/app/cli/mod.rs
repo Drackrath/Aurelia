@@ -28,7 +28,7 @@ pub(crate) use workshop::*;
 #[derive(Parser)]
 #[command(
     name = "aurelia",
-    version,
+    version = aurelia::core::version::DISPLAY,
     about,
     long_about = None,
     // Default template, with a "Version: x.y.z" line inserted under the about text.

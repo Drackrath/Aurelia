@@ -16,3 +16,4 @@ pub mod session_crypto;
 pub mod steam_host;
 pub mod sysinfo;
 pub mod time;
+pub mod version;
