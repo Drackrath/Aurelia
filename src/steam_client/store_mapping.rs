@@ -500,6 +500,104 @@ pub struct StoreArt {
     pub assets: Option<StoreAppAssets>,
     /// `None`: store sent no type.
     pub app_type: Option<String>,
+    /// Raw store status fields.
+    pub status: StoreStatus,
+}
+
+/// Store status, sent with every item.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct StoreStatus {
+    /// Steam `EResult`; 1 is OK.
+    pub success: u32,
+    pub visible: bool,
+    pub region_restricted: bool,
+    pub unlisted: bool,
+    /// 0 when the store dropped it.
+    pub appid: u32,
+    pub name: String,
+    pub store_url_path: String,
+    pub is_free: bool,
+    pub is_free_temporarily: bool,
+    pub is_early_access: bool,
+    pub included_appids: Vec<u32>,
+    pub content_descriptor_ids: Vec<i32>,
+    pub supported_player_category_ids: Vec<u32>,
+    pub feature_category_ids: Vec<u32>,
+    pub controller_category_ids: Vec<u32>,
+    pub best_purchase: Option<StorePurchase>,
+}
+
+/// Cheapest way to buy it.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct StorePurchase {
+    pub package_id: i32,
+    pub bundle_id: i32,
+    pub name: String,
+    pub final_price_cents: i64,
+    pub original_price_cents: i64,
+    pub formatted_final_price: String,
+    pub discount_pct: i32,
+}
+
+impl StoreStatus {
+    /// Store entry gone entirely.
+    pub fn is_removed(&self) -> bool {
+        self.success == 15 && self.appid == 0 && self.name.trim().is_empty()
+    }
+
+    /// Hidden, but not removed.
+    pub fn is_delisted(&self) -> bool {
+        !self.visible && !self.is_removed()
+    }
+
+    /// "Removed", "Delisted", else `None`.
+    pub fn availability_label(&self) -> Option<&'static str> {
+        if self.is_removed() {
+            Some("Removed")
+        } else if self.is_delisted() {
+            Some("Delisted")
+        } else {
+            None
+        }
+    }
+}
+
+/// Status fields of an item.
+pub(super) fn store_status(item: &StoreItem) -> StoreStatus {
+    let categories = item.categories.as_ref();
+    let cats = |f: fn(&_) -> &Vec<u32>| categories.map(f).cloned().unwrap_or_default();
+    StoreStatus {
+        success: item.success(),
+        visible: item.visible(),
+        region_restricted: item.unvailable_for_country_restriction(),
+        unlisted: item.unlisted(),
+        appid: item.appid(),
+        name: item.name().to_string(),
+        store_url_path: item.store_url_path().to_string(),
+        is_free: item.is_free(),
+        is_free_temporarily: item.is_free_temporarily(),
+        is_early_access: item.is_early_access(),
+        included_appids: item.included_appids.clone(),
+        content_descriptor_ids: item
+            .content_descriptorids
+            .iter()
+            .map(|d| d.value())
+            .collect(),
+        supported_player_category_ids: cats(|c| &c.supported_player_categoryids),
+        feature_category_ids: cats(|c| &c.feature_categoryids),
+        controller_category_ids: cats(|c| &c.controller_categoryids),
+        best_purchase: item.best_purchase_option.as_ref().map(|p| StorePurchase {
+            package_id: p.packageid(),
+            bundle_id: p.bundleid(),
+            name: p.purchase_option_name().to_string(),
+            final_price_cents: p.final_price_in_cents(),
+            original_price_cents: p.original_price_in_cents(),
+            formatted_final_price: p.formatted_final_price().to_string(),
+            discount_pct: p.discount_pct(),
+        }),
+    }
 }
 
 /// Art and type of an item.
@@ -516,6 +614,7 @@ pub(super) fn store_art(item: &StoreItem) -> StoreArt {
             .type_
             .is_some()
             .then(|| store_app_type_label(item.type_())),
+        status: store_status(item),
     }
 }
 

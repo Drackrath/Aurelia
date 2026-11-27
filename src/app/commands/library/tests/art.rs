@@ -1,5 +1,5 @@
 use super::super::*;
-use aurelia::core::config::{ART_CACHE_TTL_SECS, CachedArt};
+use aurelia::core::config::{ART_CACHE_TTL_SECS, ART_CACHE_VERSION, CachedArt};
 use aurelia::steam_client::StoreAppAssets;
 use std::collections::HashMap;
 
@@ -14,6 +14,8 @@ fn hashed(fetched_at: u64) -> CachedArt {
             ..Default::default()
         }),
         app_type: Some("Game".to_string()),
+        status: None,
+        version: ART_CACHE_VERSION,
     }
 }
 
@@ -32,6 +34,8 @@ fn unknown_or_artless_apps_keep_flat_paths() {
         fetched_at: 1,
         assets: None,
         app_type: None,
+        status: None,
+        version: ART_CACHE_VERSION,
     };
     for cached in [None, Some(&none)] {
         let art = library_art(10, cached);
@@ -52,6 +56,8 @@ fn only_missing_or_stale_art_is_fetched() {
                 fetched_at: now,
                 assets: None,
                 app_type: None,
+                status: None,
+                version: ART_CACHE_VERSION,
             },
         ),
     ]);
@@ -97,4 +103,37 @@ fn music_folder_means_soundtrack_without_store_type() {
     assert_eq!(library_app_type(&game, None).as_deref(), Some("Soundtrack"));
     let game = installed_at("/lib/steamapps/common/Lords of the Fallen");
     assert_eq!(library_app_type(&game, None), None);
+}
+
+#[test]
+fn availability_wins_over_store_type() {
+    let game = installed_at("/lib/steamapps/music/OST");
+    let mut art = hashed(1);
+    art.app_type = Some("Soundtrack".to_string());
+    art.status = Some(aurelia::steam_client::StoreStatus {
+        success: 15,
+        ..Default::default()
+    });
+    assert_eq!(
+        library_app_type(&game, Some(&art)).as_deref(),
+        Some("Removed")
+    );
+    art.status = Some(aurelia::steam_client::StoreStatus {
+        success: 15,
+        appid: 2387900,
+        name: "OST".to_string(),
+        ..Default::default()
+    });
+    assert_eq!(
+        library_app_type(&game, Some(&art)).as_deref(),
+        Some("Delisted")
+    );
+    art.status = Some(aurelia::steam_client::StoreStatus {
+        visible: true,
+        ..Default::default()
+    });
+    assert_eq!(
+        library_app_type(&game, Some(&art)).as_deref(),
+        Some("Soundtrack")
+    );
 }

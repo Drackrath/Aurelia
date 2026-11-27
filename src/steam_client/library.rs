@@ -328,8 +328,16 @@ impl SteamClient {
                 .service_method(request)
                 .await
                 .context("failed calling StoreBrowse.GetItems for artwork")?;
-            for item in response.store_items.iter().filter(|i| i.appid() != 0) {
-                art.insert(item.appid(), store_art(item));
+            // Removed apps echo only `id`.
+            for item in &response.store_items {
+                let id = if item.appid() != 0 {
+                    item.appid()
+                } else {
+                    item.id()
+                };
+                if id != 0 {
+                    art.insert(id, store_art(item));
+                }
             }
         }
         Ok(art)

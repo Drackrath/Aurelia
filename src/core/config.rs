@@ -941,13 +941,26 @@ pub struct CachedArt {
     /// Store app type, e.g. "Soundtrack".
     #[serde(default)]
     pub app_type: Option<String>,
+    /// `None`: not in the reply.
+    #[serde(default)]
+    pub status: Option<crate::steam_client::StoreStatus>,
+    /// Entry layout; older ones refetch.
+    #[serde(default)]
+    pub version: u32,
 }
 
+/// Current art cache entry layout.
+pub const ART_CACHE_VERSION: u32 = 2;
+
 impl CachedArt {
-    /// Expired, or cached before types.
+    /// Expired, or an older layout.
     pub fn is_stale(&self, now: u64, ttl: u64) -> bool {
-        let untyped = self.assets.is_some() && self.app_type.is_none();
-        untyped || now.saturating_sub(self.fetched_at) >= ttl
+        self.version < ART_CACHE_VERSION || now.saturating_sub(self.fetched_at) >= ttl
+    }
+
+    /// "Removed" or "Delisted", if so.
+    pub fn availability_label(&self) -> Option<&'static str> {
+        self.status.as_ref().and_then(|s| s.availability_label())
     }
 }
 
