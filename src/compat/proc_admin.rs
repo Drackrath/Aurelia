@@ -106,6 +106,7 @@ pub fn kill_process_tree(pid: u32, force: bool) {
 #[cfg(target_os = "macos")]
 pub struct MacProcess {
     pub pid: i32,
+    pub parent: Option<i32>,
     /// Arguments joined by spaces.
     pub cmd: String,
     /// Entries joined by spaces. Empty when unreadable: another user's process,
@@ -147,6 +148,7 @@ pub fn macos_process_list() -> Vec<MacProcess> {
             let cwd = process.cwd().map(|dir| dir.to_string_lossy().into_owned());
             MacProcess {
                 pid: pid.as_u32() as i32,
+                parent: process.parent().map(|p| p.as_u32() as i32),
                 cmd,
                 env,
                 cwd,
@@ -159,6 +161,13 @@ pub fn macos_process_list() -> Vec<MacProcess> {
 #[cfg(unix)]
 fn process_tree_pids(root: i32) -> Vec<i32> {
     let mut parent_of: Vec<(i32, i32)> = Vec::new();
+    #[cfg(target_os = "macos")]
+    parent_of.extend(
+        macos_process_list()
+            .into_iter()
+            .filter_map(|p| Some((p.pid, p.parent?))),
+    );
+    #[cfg(not(target_os = "macos"))]
     if let Ok(dir) = std::fs::read_dir("/proc") {
         for entry in dir.flatten() {
             let name = entry.file_name();

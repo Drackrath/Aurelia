@@ -152,9 +152,19 @@ pub fn list() -> Vec<RunningGame> {
 /// (`hl.sh`-style) exit while the game keeps running.
 pub fn processes_for_app(app_id: u32) -> Vec<u32> {
     #[cfg(unix)]
+    let compat = format!("STEAM_COMPAT_APP_ID={app_id}");
+    #[cfg(unix)]
+    let native = format!("SteamAppId={app_id}");
+    #[cfg(target_os = "macos")]
     {
-        let compat = format!("STEAM_COMPAT_APP_ID={app_id}");
-        let native = format!("SteamAppId={app_id}");
+        crate::compat::proc_admin::macos_process_list()
+            .into_iter()
+            .filter(|p| p.env.split(' ').any(|e| e == compat || e == native))
+            .map(|p| p.pid as u32)
+            .collect()
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
         let mut pids = Vec::new();
         let Ok(proc_dir) = std::fs::read_dir("/proc") else {
             return pids;
