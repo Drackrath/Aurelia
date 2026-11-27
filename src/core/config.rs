@@ -929,6 +929,44 @@ pub async fn save_dlc_cache(
     write_json_pretty(&dlc_cache_path(app_id, language, country)?, record).await
 }
 
+/// Seconds cached library art stays fresh.
+pub const ART_CACHE_TTL_SECS: u64 = 14 * 24 * 3600;
+
+/// Store artwork of one app.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CachedArt {
+    pub fetched_at: u64,
+    /// `None`: store has no hashed art.
+    pub assets: Option<crate::steam_client::StoreAppAssets>,
+}
+
+impl CachedArt {
+    /// Older than `ttl` seconds.
+    pub fn is_stale(&self, now: u64, ttl: u64) -> bool {
+        now.saturating_sub(self.fetched_at) >= ttl
+    }
+}
+
+fn art_cache_path() -> Result<PathBuf> {
+    Ok(info_cache_dir()?.join("art_cache.json"))
+}
+
+/// Library art cache; empty if unreadable.
+pub async fn load_art_cache() -> HashMap<u32, CachedArt> {
+    let Ok(path) = art_cache_path() else {
+        return HashMap::new();
+    };
+    let Ok(raw) = fs::read_to_string(&path).await else {
+        return HashMap::new();
+    };
+    serde_json::from_str(&raw).unwrap_or_default()
+}
+
+/// Persist the library art cache.
+pub async fn save_art_cache(cache: &HashMap<u32, CachedArt>) -> Result<()> {
+    write_json_pretty(&art_cache_path()?, cache).await
+}
+
 fn tag_name_cache_path(language: &str) -> Result<PathBuf> {
     let lang: String = language
         .chars()

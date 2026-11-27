@@ -153,7 +153,7 @@ pub(super) fn purchase_option_summary(
 /// Artwork URLs for a store app. Built from the StoreBrowse `assets` block when
 /// present, falling back to Steam's conventional per-appid CDN paths so a caller
 /// (e.g. Heroic) always has usable URLs instead of guessing them itself.
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct StoreAppAssets {
     /// Wide store header / capsule (`header.jpg`).
     pub header: Option<String>,
