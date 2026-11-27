@@ -1,5 +1,6 @@
 //! `info` command handlers.
 
+use crate::app::output::table::Table;
 use crate::app::steam_urls;
 
 use crate::app::commands::common::*;
@@ -514,12 +515,14 @@ pub(crate) fn print_info_human(
     // --- DLC ---
     if !dlc.is_empty() {
         cli_println!("\nDLC ({}):", dlc.len());
+        let mut table = Table::new().right("AppId").left("Name");
         for (id, name) in dlc {
             let name = name
                 .clone()
                 .unwrap_or_else(|| "(name unavailable)".to_string());
-            cli_println!("  {id:>9}  {name}");
+            table.row([id.to_string(), name]);
         }
+        table.print();
     }
 }
 
@@ -759,13 +762,12 @@ pub(crate) async fn cmd_dlc(app_id: u32, all: bool, no_cache: bool, json: bool) 
         cli_println!("No DLC for app {app_id}.");
         return Ok(());
     }
-    cli_println!(
-        "{:>9}  {:<5}  {:<13}  {:<16}  NAME",
-        "APPID",
-        "OWNED",
-        "STATUS",
-        "PRICE"
-    );
+    let mut table = Table::new()
+        .right("AppId")
+        .left("Owned")
+        .left("Status")
+        .left("Price")
+        .left("Name");
     for (id, name) in &dlc {
         let mut name = name
             .clone()
@@ -797,8 +799,15 @@ pub(crate) async fn cmd_dlc(app_id: u32, all: bool, no_cache: bool, json: bool) 
             Some(_) => "enabled",
             None => "?",
         };
-        cli_println!("{id:>9}  {owned:<5}  {status:<13}  {price:<16}  {name}");
+        table.row([
+            id.to_string(),
+            owned.to_string(),
+            status.to_string(),
+            price,
+            name,
+        ]);
     }
+    table.print();
     Ok(())
 }
 
@@ -908,7 +917,11 @@ pub(crate) async fn cmd_achievements(app_id: u32, lang: Option<String>, json: bo
         cli_println!("No achievements for app {app_id}.");
         return Ok(());
     }
-    cli_println!("{:<2}  {:>6}  {:<19}  NAME", "", "RARITY", "UNLOCKED");
+    let mut table = Table::new()
+        .left("Done")
+        .right("Rarity")
+        .left("Unlocked")
+        .left("Name");
     for a in &achievements {
         let mark = if a.unlocked { "✓" } else { " " };
         let when = a
@@ -920,8 +933,14 @@ pub(crate) async fn cmd_achievements(app_id: u32, lang: Option<String>, json: bo
         } else {
             a.name.clone()
         };
-        cli_println!("{mark:<2}  {:>5.1}%  {when:<19}  {name}", a.global_percent);
+        table.row([
+            mark.to_string(),
+            format!("{:.1}%", a.global_percent),
+            when,
+            name,
+        ]);
     }
+    table.print();
     cli_println!("\n{unlocked}/{} unlocked.", achievements.len());
     Ok(())
 }
@@ -955,10 +974,11 @@ pub(crate) async fn cmd_depots(app_id: u32, json: bool) -> Result<()> {
         cli_println!("No depots reported.");
         return Ok(());
     }
-    cli_println!("{:>12}  {:>14}  NAME", "DEPOT", "SIZE(bytes)");
+    let mut table = Table::new().right("Depot").right("Bytes").left("Name");
     for d in &depots {
-        cli_println!("{:>12}  {:>14}  {}", d.id, d.size, d.name);
+        table.row([d.id.to_string(), d.size.to_string(), d.name.clone()]);
     }
+    table.print();
     Ok(())
 }
 
@@ -1017,7 +1037,11 @@ pub(crate) async fn cmd_launch_options(app_id: u32, json: bool) -> Result<()> {
         cli_println!("No launch options for app {app_id}.");
         return Ok(());
     }
-    cli_println!("{:>3}  {:<10}  NAME / COMMAND", "ID", "OS");
+    let mut table = Table::new()
+        .right("Id")
+        .left("Os")
+        .left("Name")
+        .left("Command");
     for o in &options {
         let os = if o.oslist.is_empty() {
             "any"
@@ -1029,13 +1053,15 @@ pub(crate) async fn cmd_launch_options(app_id: u32, json: bool) -> Result<()> {
         } else {
             &o.description
         };
-        cli_println!("{:>3}  {:<10}  {}", o.id, os, desc);
         let cmd = format!("{} {}", o.executable, o.arguments);
-        let cmd = cmd.trim();
-        if !cmd.is_empty() {
-            cli_println!("       {cmd}");
-        }
+        table.row([
+            o.id.to_string(),
+            os.to_string(),
+            desc.to_string(),
+            cmd.trim().to_string(),
+        ]);
     }
+    table.print();
     Ok(())
 }
 

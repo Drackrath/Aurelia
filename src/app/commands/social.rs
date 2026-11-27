@@ -2,6 +2,7 @@
 
 use crate::app::daemon;
 use crate::app::output;
+use crate::app::output::table::Table;
 
 use crate::app::commands::common::*;
 
@@ -45,7 +46,11 @@ pub(crate) async fn cmd_friends(json: bool) -> Result<()> {
         return Ok(());
     }
 
-    cli_println!("{:<20}  {:<17}  {:<12}  GAME", "STATUS", "STEAMID", "NAME");
+    let mut table = Table::new()
+        .left("Status")
+        .left("SteamId")
+        .left("Name")
+        .left("Game");
     for f in &friends {
         let name = f.persona_name.as_deref().unwrap_or("?");
         let game = match (&f.game_name, f.game_app_id) {
@@ -53,14 +58,14 @@ pub(crate) async fn cmd_friends(json: bool) -> Result<()> {
             (None, Some(id)) => format!("app {id}"),
             (None, None) => String::new(),
         };
-        cli_println!(
-            "{:<20}  {:<17}  {:<12}  {}",
-            persona_state_label(f.persona_state),
-            f.steam_id,
-            name,
-            game
-        );
+        table.row([
+            persona_state_label(f.persona_state).to_string(),
+            f.steam_id.to_string(),
+            name.to_string(),
+            game,
+        ]);
     }
+    table.print();
     cli_println!("\n{} friend(s).", friends.len());
     Ok(())
 }

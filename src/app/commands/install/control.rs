@@ -1,6 +1,7 @@
 //! Stop, pause, list, forget and uninstall.
 
 use super::*;
+use crate::app::output::table::Table;
 
 /// `aurelia install stop <app_id>`: signal a running install (tracked in this
 /// process's registry) to abort. The download loops poll `abort_signal`.
@@ -164,13 +165,12 @@ pub(crate) async fn cmd_install_list(json: bool) -> Result<()> {
         return Ok(());
     }
 
-    cli_println!(
-        "{:>9}  {:<11}  {:>20}  {:>6}  NAME / STATUS",
-        "APPID",
-        "STATE",
-        "PROGRESS",
-        ""
-    );
+    let mut table = Table::new()
+        .right("AppId")
+        .left("State")
+        .right("Progress")
+        .right("Percent")
+        .left("Name");
     for r in &rows {
         let progress = format!("{} / {}", human_bytes(r.done), human_bytes(r.total));
         let label = match (r.name.is_empty(), r.status.is_empty()) {
@@ -179,15 +179,15 @@ pub(crate) async fn cmd_install_list(json: bool) -> Result<()> {
             (false, false) if r.state == "running" => r.name.clone(),
             (false, false) => format!("{} ({})", r.name, r.status),
         };
-        cli_println!(
-            "{:>9}  {:<11}  {:>20}  {:>5.1}%  {}",
-            r.app_id,
-            r.state,
+        table.row([
+            r.app_id.to_string(),
+            r.state.to_string(),
             progress,
-            percent_of(r.done, r.total),
-            label
-        );
+            format!("{:.1}%", percent_of(r.done, r.total)),
+            label,
+        ]);
     }
+    table.print();
     Ok(())
 }
 

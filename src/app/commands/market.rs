@@ -1,6 +1,7 @@
 //! `market` command handlers.
 
 use crate::app::commands::common::*;
+use crate::app::output::table::Table;
 
 use anyhow::Result;
 
@@ -16,16 +17,20 @@ pub(crate) async fn cmd_inventory(app_id: u32, context: u32, json: bool) -> Resu
         cli_println!("No items in your inventory for app {app_id} (context {context}).");
         return Ok(());
     }
-    cli_println!("{:>6}  {:<5}  {:<5}  NAME", "AMOUNT", "TRADE", "MKT");
+    let mut table = Table::new()
+        .right("Amount")
+        .left("Tradable")
+        .left("Marketable")
+        .left("Name");
     for it in &items {
-        cli_println!(
-            "{:>6}  {:<5}  {:<5}  {}",
-            it.amount,
-            yesno(it.tradable),
-            yesno(it.marketable),
-            it.name
-        );
+        table.row([
+            it.amount.to_string(),
+            yesno(it.tradable).to_string(),
+            yesno(it.marketable).to_string(),
+            it.name.clone(),
+        ]);
     }
+    table.print();
     cli_println!("\n{} item stack(s).", items.len());
     Ok(())
 }
@@ -94,16 +99,15 @@ pub(crate) async fn cmd_market_search(
         cli_println!("No market results.");
         return Ok(());
     }
-    cli_println!("{:>12}  {:>5}  NAME", "PRICE", "LIST");
+    let mut table = Table::new().right("Price").right("Listings").left("Name");
     for r in &results {
-        cli_println!(
-            "{:>12}  {:>5}  {} [{}]",
-            r.sell_price_text,
-            r.sell_listings,
-            r.name,
-            r.app_name
-        );
+        table.row([
+            r.sell_price_text.clone(),
+            r.sell_listings.to_string(),
+            format!("{} [{}]", r.name, r.app_name),
+        ]);
     }
+    table.print();
     cli_println!("\nShowing {} of {} result(s).", results.len(), total);
     Ok(())
 }

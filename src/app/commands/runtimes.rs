@@ -1,6 +1,7 @@
 //! `runtimes` command handlers.
 
 use crate::app::commands::common::*;
+use crate::app::output::table::Table;
 
 use anyhow::{Context, Result, bail};
 use aurelia::core::config::load_launcher_config;
@@ -31,11 +32,12 @@ pub(crate) async fn cmd_proton_list(installed_only: bool, json: bool) -> Result<
             cli_println!("No Proton/Wine runtimes installed.");
             return Ok(());
         }
-        cli_println!("Installed runtimes:");
+        let mut table = Table::new().left("Name").left("Location").left("Default");
         for i in &installed {
-            let star = if i.name == default { "  * default" } else { "" };
-            cli_println!("  {:<28} ({}){star}", i.name, i.location);
+            let star = if i.name == default { "*" } else { "" };
+            table.row([i.name.clone(), i.location.to_string(), star.to_string()]);
         }
+        table.print();
         return Ok(());
     }
 
@@ -51,7 +53,11 @@ pub(crate) async fn cmd_proton_list(installed_only: bool, json: bool) -> Result<
         return Ok(());
     }
 
-    cli_println!("{:<10}  {:<28}  {:>10}  STATUS", "SOURCE", "NAME", "SIZE");
+    let mut table = Table::new()
+        .left("Source")
+        .left("Name")
+        .right("Size")
+        .left("Status");
     for pkg in &available {
         let size = if pkg.size > 0 {
             human_bytes(pkg.size)
@@ -65,13 +71,12 @@ pub(crate) async fn cmd_proton_list(installed_only: bool, json: bool) -> Result<
         if pkg.name == default {
             status.push_str(" *default");
         }
-        cli_println!(
-            "{:<10}  {:<28}  {:>10}  {}",
-            pkg.label,
-            pkg.name,
+        table.row([
+            pkg.label.to_string(),
+            pkg.name.clone(),
             size,
-            status.trim()
-        );
+            status.trim().to_string(),
+        ]);
     }
     // Surface any installed runtime not present in the available list (e.g. an old GE
     // build no longer in recent releases) so the user still sees everything on disk.
@@ -81,14 +86,15 @@ pub(crate) async fn cmd_proton_list(installed_only: bool, json: bool) -> Result<
             .any(|p| p.name.eq_ignore_ascii_case(&i.name))
         {
             let star = if i.name == default { " *default" } else { "" };
-            cli_println!(
-                "{:<10}  {:<28}  {:>10}  installed{star}",
-                "(local)",
-                i.name,
-                "-"
-            );
+            table.row([
+                "(local)".to_string(),
+                i.name.clone(),
+                "-".to_string(),
+                format!("installed{star}"),
+            ]);
         }
     }
+    table.print();
     cli_println!("\nInstall with `aurelia proton install <NAME>`.");
     warn_dangling_mappings();
     Ok(())
@@ -152,11 +158,12 @@ pub(crate) async fn cmd_proton_mappings(json: bool) -> Result<()> {
         cli_println!("Steam has no compatibility tool mappings.");
         return Ok(());
     }
-    cli_println!("{:<28}  {:<32}  STATUS", "TARGET", "TOOL");
+    let mut table = Table::new().left("Target").left("Tool").left("Status");
     for m in &mappings {
         let status = if m.known { "ok" } else { "missing" };
-        cli_println!("{:<28}  {:<32}  {status}", mapping_target(m.app_id), m.tool);
+        table.row([mapping_target(m.app_id), m.tool.clone(), status.to_string()]);
     }
+    table.print();
     if dangling > 0 {
         cli_println!(
             "\n{dangling} mapping(s) name a tool that isn't installed. Steam then has no \

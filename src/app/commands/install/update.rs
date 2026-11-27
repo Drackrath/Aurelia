@@ -1,6 +1,7 @@
 //! Verify, update, language and update checks.
 
 use super::*;
+use crate::app::output::table::Table;
 
 pub(crate) async fn cmd_verify(app_id: u32, json: bool) -> Result<()> {
     let client = authed_client().await?;
@@ -124,11 +125,14 @@ pub(crate) async fn cmd_check_updates(json: bool) -> Result<()> {
     if updates.is_empty() {
         cli_println!("All installed games are up to date.");
     } else {
-        cli_println!("{:>9}  NAME", "APPID");
+        let mut table = Table::new().right("AppId").left("Name");
         for g in &updates {
-            let branch = branch_suffix(g);
-            cli_println!("{:>9}  {}{}", g.app_id, g.name, branch);
+            table.row([
+                g.app_id.to_string(),
+                format!("{}{}", g.name, branch_suffix(g)),
+            ]);
         }
+        table.print();
         cli_println!(
             "\n{} game(s) need an update. Run `aurelia update <app_id>` to install one.",
             updates.len()
@@ -140,16 +144,20 @@ pub(crate) async fn cmd_check_updates(json: bool) -> Result<()> {
             "\nSteam wants a different depot set (language or compatibility tool), \
              not a newer build; `aurelia update` can't fix these:"
         );
+        let mut table = Table::new().right("AppId").left("Name");
         for g in &mismatched {
-            cli_println!("{:>9}  {}", g.app_id, g.name);
+            table.row([g.app_id.to_string(), g.name.clone()]);
         }
+        table.print();
     }
 
     if !pinned.is_empty() {
         cli_println!("\nPinned (held at a fixed version; `aurelia unpin <app_id>` to release):");
+        let mut table = Table::new().right("AppId").left("Name");
         for g in &pinned {
-            cli_println!("{:>9}  {}", g.app_id, g.name);
+            table.row([g.app_id.to_string(), g.name.clone()]);
         }
+        table.print();
     }
     Ok(())
 }

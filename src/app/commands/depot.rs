@@ -2,6 +2,7 @@
 
 use crate::app::cli::{DepotManifestArgs, DepotsCommand};
 use crate::app::commands::common::*;
+use crate::app::output::table::Table;
 
 use anyhow::Result;
 use aurelia::library::depot_browser::{
@@ -61,7 +62,7 @@ struct FilesRequest {
 }
 
 /// One text row with markers.
-pub(crate) fn entry_line(entry: &ManifestFileEntry) -> String {
+pub(crate) fn entry_cells(entry: &ManifestFileEntry) -> [String; 2] {
     let size = match entry.kind {
         EntryKind::Directory => "<dir>".to_string(),
         EntryKind::Symlink => "<link>".to_string(),
@@ -73,7 +74,7 @@ pub(crate) fn entry_line(entry: &ManifestFileEntry) -> String {
         (EntryKind::File, _) if entry.executable => "*".to_string(),
         _ => String::new(),
     };
-    format!("{size:>12}  {}{suffix}", entry.filename)
+    [size, format!("{}{suffix}", entry.filename)]
 }
 
 /// `depots files --json` payload.
@@ -138,10 +139,11 @@ async fn cmd_depot_files(request: FilesRequest, json: bool) -> Result<()> {
         );
         return Ok(());
     }
-    cli_println!("{:>12}  PATH", "SIZE");
+    let mut table = Table::new().right("Size").left("Path");
     for f in &files {
-        cli_println!("{}", entry_line(f));
+        table.row(entry_cells(f));
     }
+    table.print();
     let count = files.iter().filter(|f| f.kind == EntryKind::File).count();
     cli_println!(
         "\n{count} files, {}",

@@ -1,5 +1,6 @@
 //! `launch` command handlers.
 
+use crate::app::output::table::Table;
 use aurelia::compat::proc_admin;
 
 use crate::app::commands::common::*;
@@ -644,10 +645,11 @@ pub(crate) fn cmd_running(json: bool) -> Result<()> {
     if running.is_empty() {
         cli_println!("No games are running (none launched via `aurelia play`).");
     } else {
-        cli_println!("{:>9}  {:>8}  NAME", "APPID", "PID");
+        let mut table = Table::new().right("AppId").right("Pid").left("Name");
         for g in &running {
-            cli_println!("{:>9}  {:>8}  {}", g.app_id, g.pid, g.name);
+            table.row([g.app_id.to_string(), g.pid.to_string(), g.name.clone()]);
         }
+        table.print();
     }
     Ok(())
 }
@@ -743,9 +745,10 @@ pub(crate) fn cmd_daemon_list(json: bool) -> Result<()> {
         cli_println!("No aurelia daemon is running.");
         return Ok(());
     }
-    cli_println!("{:>8}  COMMAND", "PID");
+    let mut table = Table::new().right("Pid").left("Command");
     for d in &daemons {
-        cli_println!("{:>8}  {}", d.pid, d.command);
+        table.row([d.pid.to_string(), d.command.clone()]);
     }
+    table.print();
     Ok(())
 }

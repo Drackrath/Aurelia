@@ -2,6 +2,7 @@
 
 use crate::app::cli::*;
 use crate::app::commands::common::*;
+use crate::app::output::table::Table;
 
 use anyhow::{Context, Result, bail};
 use aurelia::core::models::DownloadState;
@@ -52,15 +53,16 @@ pub(crate) async fn cmd_workshop_browse(
         cli_println!("No Workshop items found.");
         return Ok(());
     }
-    cli_println!("{:>12}  {:>10}  TITLE", "ID", "SIZE");
+    let mut table = Table::new().right("Id").right("Size").left("Title");
     for item in &page.items {
         let size = if item.file_size > 0 {
             human_bytes(item.file_size)
         } else {
             "-".to_string()
         };
-        cli_println!("{:>12}  {:>10}  {}", item.id, size, item.title);
+        table.row([item.id.to_string(), size, item.title.clone()]);
     }
+    table.print();
     cli_println!(
         "\nShowing {} of {} result(s).",
         page.items.len(),
@@ -120,15 +122,15 @@ pub(crate) async fn cmd_workshop_list(app_id: u32, json: bool) -> Result<()> {
         cli_println!("No subscribed Workshop items for app {app_id}.");
         return Ok(());
     }
-    cli_println!("{:>12}  {:>12}  TITLE", "ID", "SIZE");
+    let mut table = Table::new().right("Id").right("Size").left("Title");
     for item in &items {
-        cli_println!(
-            "{:>12}  {:>12}  {}",
-            item.id,
+        table.row([
+            item.id.to_string(),
             human_bytes(item.file_size),
-            item.title
-        );
+            item.title.clone(),
+        ]);
     }
+    table.print();
     cli_println!("\n{} subscribed item(s).", items.len());
     Ok(())
 }
@@ -390,23 +392,22 @@ pub(crate) async fn cmd_workshop_status(app_id: u32, json: bool) -> Result<()> {
         cli_println!("No installed or subscribed Workshop items for app {app_id}.");
         return Ok(());
     }
-    cli_println!(
-        "{:>12}  {:<9}  {:<10}  {:<7}  TITLE",
-        "ID",
-        "INSTALLED",
-        "SUBSCRIBED",
-        "UPDATE"
-    );
+    let mut table = Table::new()
+        .right("Id")
+        .left("Installed")
+        .left("Subscribed")
+        .left("Update")
+        .left("Title");
     for r in &rows {
-        cli_println!(
-            "{:>12}  {:<9}  {:<10}  {:<7}  {}",
-            r.id,
-            if r.installed { "yes" } else { "no" },
-            if r.subscribed { "yes" } else { "no" },
-            if r.update { "yes" } else { "-" },
-            r.title,
-        );
+        table.row([
+            r.id.to_string(),
+            if r.installed { "yes" } else { "no" }.to_string(),
+            if r.subscribed { "yes" } else { "no" }.to_string(),
+            if r.update { "yes" } else { "-" }.to_string(),
+            r.title.clone(),
+        ]);
     }
+    table.print();
     Ok(())
 }
 

@@ -1,6 +1,7 @@
 //! `collections` command handlers.
 
 use crate::app::commands::common::*;
+use crate::app::output::table::Table;
 
 use anyhow::Result;
 use aurelia::library::collections::{self, CollectionsStore};
@@ -49,7 +50,11 @@ pub(crate) async fn cmd_collections_list(json: bool) -> Result<()> {
         return Ok(());
     }
 
-    cli_println!("{:<14}  {:<9}  {:>7}  NAME", "ID", "KIND", "GAMES");
+    let mut table = Table::new()
+        .left("Id")
+        .left("Kind")
+        .right("Games")
+        .left("Name");
     for c in &visible {
         let members = c.added.iter().filter(|a| !c.removed.contains(a)).count();
         let count = if c.is_dynamic() {
@@ -57,14 +62,14 @@ pub(crate) async fn cmd_collections_list(json: bool) -> Result<()> {
         } else {
             members.to_string()
         };
-        cli_println!(
-            "{:<14}  {:<9}  {:>7}  {}",
-            c.id,
-            collection_kind(c),
+        table.row([
+            c.id.to_string(),
+            collection_kind(c).to_string(),
             count,
-            c.name
-        );
+            c.name.clone(),
+        ]);
     }
+    table.print();
     cli_println!("\n{} collection(s).", visible.len());
     Ok(())
 }

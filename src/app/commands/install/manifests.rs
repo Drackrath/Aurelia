@@ -1,6 +1,7 @@
 //! Manifest listing, downgrade and pinning.
 
 use super::*;
+use crate::app::output::table::Table;
 
 pub(crate) async fn cmd_available(app_id: u32, json: bool) -> Result<()> {
     // `is_game_available` only reads the local appmanifest and checks the files on
@@ -138,23 +139,22 @@ pub(crate) async fn cmd_manifests(app_id: u32, depot: Option<u32>, json: bool) -
         return Ok(());
     }
 
-    cli_println!(
-        "{:>9}  {:<14}  {:>20}  {:>12}  NAME",
-        "DEPOT",
-        "BRANCH",
-        "MANIFEST_ID",
-        "SIZE"
-    );
+    let mut table = Table::new()
+        .right("Depot")
+        .left("Branch")
+        .right("ManifestId")
+        .right("Size")
+        .left("Name");
     for m in &manifests {
-        cli_println!(
-            "{:>9}  {:<14}  {:>20}  {:>12}  {}",
-            m.depot_id,
-            m.branch,
-            m.manifest_id,
+        table.row([
+            m.depot_id.to_string(),
+            m.branch.clone(),
+            m.manifest_id.to_string(),
             human_bytes(m.size),
-            m.depot_name.as_deref().unwrap_or("")
-        );
+            m.depot_name.clone().unwrap_or_default(),
+        ]);
     }
+    table.print();
 
     // Historical ids aren't in Steam's data — point at each depot's SteamDB page.
     let mut depot_ids: Vec<u32> = manifests.iter().map(|m| m.depot_id).collect();

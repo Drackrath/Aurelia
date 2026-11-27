@@ -13,20 +13,20 @@ fn entry(path: &str, kind: EntryKind, executable: bool, link: Option<&str>) -> M
 }
 
 #[test]
-fn entry_lines_carry_markers() {
+fn entry_cells_carry_markers() {
     let file = entry("bin/data.pak", EntryKind::File, false, None);
     assert_eq!(
-        entry_line(&file),
-        format!("{:>12}  bin/data.pak", human_bytes(2048))
+        entry_cells(&file),
+        [human_bytes(2048), "bin/data.pak".to_string()]
     );
     let exe = entry("bin/game", EntryKind::File, true, None);
-    assert!(entry_line(&exe).ends_with("  bin/game*"));
+    assert_eq!(entry_cells(&exe)[1], "bin/game*");
     let dir = entry("bin", EntryKind::Directory, false, None);
-    assert_eq!(entry_line(&dir), format!("{:>12}  bin/", "<dir>"));
+    assert_eq!(entry_cells(&dir), ["<dir>".to_string(), "bin/".to_string()]);
     let link = entry("lib.so", EntryKind::Symlink, false, Some("lib.so.1"));
     assert_eq!(
-        entry_line(&link),
-        format!("{:>12}  lib.so -> lib.so.1", "<link>")
+        entry_cells(&link),
+        ["<link>".to_string(), "lib.so -> lib.so.1".to_string()]
     );
 }
 

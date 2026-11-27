@@ -286,5 +286,16 @@ macro_rules! cli_eprint {
     };
 }
 
+pub(crate) mod table;
+
+/// `$COLUMNS`, else a safe default.
+pub(crate) fn terminal_width() -> usize {
+    std::env::var("COLUMNS")
+        .ok()
+        .and_then(|c| c.parse().ok())
+        .filter(|&c: &usize| c >= 40)
+        .unwrap_or(120)
+}
+
 #[cfg(test)]
 mod tests;

@@ -1,5 +1,6 @@
 //! `capabilities`: what this build supports.
 
+use crate::app::output::table::Table;
 use anyhow::Result;
 use clap::CommandFactory;
 use serde_json::{Map, Value, json};
@@ -53,7 +54,10 @@ pub(crate) fn cmd_capabilities(path: &[String], json: bool) -> Result<()> {
         if json {
             print_json_line(&detail);
         } else {
-            cli_print!("{}", render_detail(&detail, terminal_width()));
+            cli_print!(
+                "{}",
+                render_detail(&detail, crate::app::output::terminal_width())
+            );
         }
         return Ok(());
     }
@@ -61,7 +65,10 @@ pub(crate) fn cmd_capabilities(path: &[String], json: bool) -> Result<()> {
     if json {
         print_json_line(&report);
     } else {
-        cli_print!("{}", render_report(&report, terminal_width()));
+        cli_print!(
+            "{}",
+            render_report(&report, crate::app::output::terminal_width())
+        );
     }
     Ok(())
 }
@@ -208,70 +215,17 @@ pub(crate) fn render_detail(detail: &Value, width: usize) -> String {
     out
 }
 
-/// Left-aligned `Format-Table`; last column wraps.
+/// Flags as a `Format-Table`.
 fn table(head: &[&str; 4], rows: &[[String; 4]], width: usize) -> String {
-    let w: Vec<usize> = (0..3)
-        .map(|i| {
-            rows.iter()
-                .map(|r| r[i].len())
-                .max()
-                .unwrap_or(0)
-                .max(head[i].len())
-        })
-        .collect();
-    let lead = w.iter().sum::<usize>() + 3;
-    let room = width.saturating_sub(lead).max(20);
-    let line = |c: [&str; 4]| {
-        format!(
-            "{:<a$} {:<b$} {:<c$} {}",
-            c[0],
-            c[1],
-            c[2],
-            c[3],
-            a = w[0],
-            b = w[1],
-            c = w[2]
-        )
-        .trim_end()
-        .to_string()
-    };
-    let rule = head.map(|h| "-".repeat(h.len()));
-    let mut out = format!(
-        "{}\n{}\n",
-        line(*head),
-        line([&rule[0], &rule[1], &rule[2], &rule[3]])
-    );
+    let mut t = Table::new()
+        .left(head[0])
+        .left(head[1])
+        .left(head[2])
+        .left(head[3]);
     for r in rows {
-        let mut help = wrap_words(&r[3], room).into_iter();
-        out.push_str(&line([
-            &r[0],
-            &r[1],
-            &r[2],
-            &help.next().unwrap_or_default(),
-        ]));
-        out.push('\n');
-        for more in help {
-            out.push_str(&format!("{}{more}\n", " ".repeat(lead)));
-        }
+        t.row(r.iter());
     }
-    out
-}
-
-/// Greedy word wrap to `room`.
-fn wrap_words(text: &str, room: usize) -> Vec<String> {
-    let mut lines = vec![String::new()];
-    for word in text.split_whitespace() {
-        let last = lines.last_mut().unwrap();
-        if !last.is_empty() && last.len() + 1 + word.len() > room {
-            lines.push(word.to_string());
-        } else {
-            if !last.is_empty() {
-                last.push(' ');
-            }
-            last.push_str(word);
-        }
-    }
-    lines
+    t.render(width)
 }
 
 /// Labels for the list view.
@@ -286,15 +240,6 @@ const LIST_FIELDS: &[(&str, &str)] = &[
     ("Events", "events"),
     ("Commands", "commands"),
 ];
-
-/// `$COLUMNS`, else a safe default.
-fn terminal_width() -> usize {
-    std::env::var("COLUMNS")
-        .ok()
-        .and_then(|c| c.parse().ok())
-        .filter(|&c: &usize| c >= 40)
-        .unwrap_or(120)
-}
 
 /// PowerShell-style list, then error table.
 pub(crate) fn render_report(report: &Value, width: usize) -> String {
@@ -312,6 +257,7 @@ pub(crate) fn render_report(report: &Value, width: usize) -> String {
     out.push('\n');
     out.push_str(&error_table(
         report["errors"].as_array().map_or(&[][..], Vec::as_slice),
+        width,
     ));
     out.push('\n');
     out
@@ -344,31 +290,16 @@ fn wrap_field(prefix: &str, value: &str, width: usize) -> String {
 }
 
 /// Errors as a `Format-Table`.
-fn error_table(errors: &[Value]) -> String {
-    let rows: Vec<(&str, String, &str)> = errors
-        .iter()
-        .map(|e| {
-            (
-                e["type"].as_str().unwrap_or_default(),
-                e["exit_code"].to_string(),
-                e["hint"].as_str().unwrap_or_default(),
-            )
-        })
-        .collect();
-    let tw = rows
-        .iter()
-        .map(|r| r.0.len())
-        .max()
-        .unwrap_or(0)
-        .max("Type".len());
-    let cw = "ExitCode".len();
-    let mut out = format!("{:<tw$} {:>cw$} Hint\n", "Type", "ExitCode");
-    out.push_str(&format!("{:<tw$} {:>cw$} ----\n", "----", "--------"));
-    for (ty, code, hint) in rows {
-        out.push_str(format!("{ty:<tw$} {code:>cw$} {hint}").trim_end());
-        out.push('\n');
+fn error_table(errors: &[Value], width: usize) -> String {
+    let mut t = Table::new().left("Type").right("ExitCode").left("Hint");
+    for e in errors {
+        t.row([
+            e["type"].as_str().unwrap_or_default().to_string(),
+            e["exit_code"].to_string(),
+            e["hint"].as_str().unwrap_or_default().to_string(),
+        ]);
     }
-    out
+    t.render(width)
 }
 
 /// The full capability document.

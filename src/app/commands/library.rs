@@ -1,5 +1,6 @@
 //! `library` command handlers.
 
+use crate::app::output::table::Table;
 use crate::app::steam_urls;
 
 use crate::app::commands::common::*;
@@ -368,26 +369,15 @@ pub(crate) async fn cmd_list(
         return Ok(());
     }
 
+    let mut table = Table::new()
+        .right("AppId")
+        .left("Status")
+        .left("License")
+        .left("Type");
     if online {
-        cli_println!(
-            "{:>9}  {:<10}  {:<13}  {:<11}  {:<7}  {:<20}  NAME",
-            "APPID",
-            "STATUS",
-            "LICENSE",
-            "TYPE",
-            "ONLINE",
-            "COLLECTIONS"
-        );
-    } else {
-        cli_println!(
-            "{:>9}  {:<10}  {:<13}  {:<11}  {:<20}  NAME",
-            "APPID",
-            "STATUS",
-            "LICENSE",
-            "TYPE",
-            "COLLECTIONS"
-        );
+        table = table.left("Online");
     }
+    let mut table = table.left("Collections").left("Name");
     for g in &games {
         let status = if g.is_installed {
             if g.update_available {
@@ -421,36 +411,25 @@ pub(crate) async fn cmd_list(
         } else {
             cols.join(", ")
         };
+        let mut row = vec![
+            g.app_id.to_string(),
+            status.to_string(),
+            license.to_string(),
+            kind,
+        ];
         if online {
             let online_col = match g.online_required {
                 Some(true) => "yes",
                 Some(false) => "no",
                 None => "?",
             };
-            cli_println!(
-                "{:>9}  {:<10}  {:<13}  {:<11}  {:<7}  {:<20}  {}{}",
-                g.app_id,
-                status,
-                license,
-                kind,
-                online_col,
-                cols,
-                g.name,
-                branch
-            );
-        } else {
-            cli_println!(
-                "{:>9}  {:<10}  {:<13}  {:<11}  {:<20}  {}{}",
-                g.app_id,
-                status,
-                license,
-                kind,
-                cols,
-                g.name,
-                branch
-            );
+            row.push(online_col.to_string());
         }
+        row.push(cols);
+        row.push(format!("{}{}", g.name, branch));
+        table.row(row);
     }
+    table.print();
 
     let shared = games.iter().filter(|g| g.is_family_shared).count();
     if shared > 0 {
