@@ -842,6 +842,9 @@ pub struct CachedDlcList {
     /// No ownership checks before this time.
     #[serde(default)]
     pub retry_after: u64,
+    /// Account the ownership set belongs to.
+    #[serde(default)]
+    pub steam_id: Option<u64>,
 }
 
 /// Which parts of a DLC cache need fetching.
@@ -856,8 +859,17 @@ impl CachedDlcList {
     pub fn refresh_needed(&self, now: u64, list_ttl: u64, owned_ttl: u64) -> DlcRefresh {
         let list = now.saturating_sub(self.fetched_at) > list_ttl;
         // New ids need a fresh ownership check.
-        let owned = list || now.saturating_sub(self.owned_at) > owned_ttl;
+        let owned = list || self.owned_at == 0 || now.saturating_sub(self.owned_at) > owned_ttl;
         DlcRefresh { list, owned }
+    }
+
+    /// Drop ownership cached for another account.
+    pub fn bind_account(&mut self, steam_id: Option<u64>) {
+        if self.steam_id != steam_id {
+            self.owned.clear();
+            self.owned_at = 0;
+            self.steam_id = steam_id;
+        }
     }
 
     /// Steam throttled us recently; don't ask.

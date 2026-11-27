@@ -597,6 +597,15 @@ pub(crate) async fn cmd_dlc(app_id: u32, all: bool, no_cache: bool, json: bool) 
     } else {
         load_dlc_cache(app_id, &lang, &country).await
     };
+    // Ownership is per account.
+    let account = aurelia::core::config::load_session()
+        .await
+        .ok()
+        .and_then(|s| s.steam_id);
+    let cached = cached.map(|mut c| {
+        c.bind_account(account);
+        c
+    });
     let need = cached.as_ref().map_or(
         DlcRefresh {
             list: true,
@@ -604,7 +613,10 @@ pub(crate) async fn cmd_dlc(app_id: u32, all: bool, no_cache: bool, json: bool) 
         },
         |c| c.refresh_needed(now, DLC_LIST_TTL_SECS, DLC_OWNED_TTL_SECS),
     );
-    let mut record = cached.unwrap_or_default();
+    let mut record = cached.unwrap_or_else(|| aurelia::core::config::CachedDlcList {
+        steam_id: account,
+        ..Default::default()
+    });
     // Throttled: keep old ownership, ask later.
     let paused = need.owned && record.ownership_paused(now);
     if paused {
@@ -728,7 +740,7 @@ pub(crate) async fn cmd_dlc(app_id: u32, all: bool, no_cache: bool, json: bool) 
                     "image_url": dlc_image(store.get(id), *id),
                     "image_fallback_url": dlc_fallback_image(store.get(id), *id),
                     "store_url": steam_urls::store_url(*id),
-                    "retired": retired(id),
+                    "retired": store_ok.then(|| retired(id)),
                 })
             }).collect::<Vec<_>>(),
         });

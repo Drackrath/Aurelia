@@ -82,3 +82,26 @@ fn old_cache_without_retry_after_parses() {
     let cached: CachedDlcList = serde_json::from_str(raw).unwrap();
     assert_eq!(cached.retry_after, 0);
 }
+
+#[test]
+fn other_account_drops_cached_ownership() {
+    let mut cached = record(1000, 1000);
+    cached.steam_id = Some(1);
+    cached.owned = vec![2778580];
+    cached.bind_account(Some(2));
+    assert!(cached.owned.is_empty());
+    assert_eq!(cached.steam_id, Some(2));
+    // Ownership now counts as stale.
+    assert!(cached.refresh_needed(1000, 86_400, 3600).owned);
+    assert!(!cached.refresh_needed(1000, 86_400, 3600).list);
+}
+
+#[test]
+fn same_account_keeps_cached_ownership() {
+    let mut cached = record(1000, 1000);
+    cached.steam_id = Some(1);
+    cached.owned = vec![2778580];
+    cached.bind_account(Some(1));
+    assert_eq!(cached.owned, vec![2778580]);
+    assert!(!cached.refresh_needed(1000, 86_400, 3600).owned);
+}
