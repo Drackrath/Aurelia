@@ -445,6 +445,7 @@ Commands:
   presence                         View or set the Steam presence the daemon announces for friends/chat
   language                         View or set the default Steam API language
   persona-wait                     View or set `user` status wait
+  dlc-cache                        View or set how long `aurelia dlc` caches
   country                          View or set the price country
   experimental                     View or set the experimental-features gate
   steam-runtime-runner             View or set the Wine/Proton runner that hosts the Windows Steam runtime
@@ -534,6 +535,29 @@ Options:
   -j, --json        Emit output (and errors) as JSON. Works with every command
   -v, --verbose...  Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
   -h, --help        Print help
+
+===== aurelia config dlc-cache =====
+View or set how long `aurelia dlc` caches.
+
+`--list` covers the DLC ids and store data, so a newly released DLC shows after at most that long. `--owned` covers ownership, so a bought DLC shows as owned after at most that long. 0 always fetches. Omit both to print the current values.
+
+Usage: aurelia config dlc-cache [OPTIONS]
+
+Options:
+      --list <LIST>
+          Seconds for the DLC list (default 86400)
+
+      --owned <OWNED>
+          Seconds for ownership (default 3600)
+
+  -j, --json
+          Emit output (and errors) as JSON. Works with every command
+
+  -v, --verbose...
+          Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
+
+  -h, --help
+          Print help (see a summary with '-h')
 
 ===== aurelia config download-limit =====
 View or set the global download limit.

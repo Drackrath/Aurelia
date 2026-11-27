@@ -32,6 +32,20 @@ pub(crate) enum ConfigCommand {
         #[arg(value_parser = clap::value_parser!(u64).range(1..=300))]
         seconds: Option<u64>,
     },
+    /// View or set how long `aurelia dlc` caches.
+    ///
+    /// `--list` covers the DLC ids and store data, so a newly released DLC
+    /// shows after at most that long. `--owned` covers ownership, so a bought
+    /// DLC shows as owned after at most that long. 0 always fetches. Omit
+    /// both to print the current values.
+    DlcCache {
+        /// Seconds for the DLC list (default 86400).
+        #[arg(long, value_parser = clap::value_parser!(u64).range(0..=2_592_000))]
+        list: Option<u64>,
+        /// Seconds for ownership (default 3600).
+        #[arg(long, value_parser = clap::value_parser!(u64).range(0..=2_592_000))]
+        owned: Option<u64>,
+    },
     /// View or set the price country.
     #[command(alias = "cc")]
     Country {

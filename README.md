@@ -398,6 +398,7 @@ aurelia config protons               # list detected Proton and Wine runtimes
 aurelia config presence online       # appear online for chat (default: invisible)
 aurelia config language german       # default language for info and achievements text
 aurelia config country DE            # default store region for prices (unset: system locale, else US)
+aurelia config dlc-cache --list 86400 --owned 3600   # `dlc` cache seconds: DLC list / ownership (0: always fetch)
 aurelia config game 1245620 --proton GE-Proton9-20  # pin a Proton version for one game
 aurelia config game 1245620 --launch-options "gamemoderun %command% -novid"  # Steam-style launch options
 aurelia config game 1245620 --prefix ~/Games/Prefixes/Elden  # own Wine prefix (DIR/pfx) instead of compatdata

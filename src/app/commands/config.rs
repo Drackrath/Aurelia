@@ -90,6 +90,38 @@ pub(crate) async fn cmd_config_persona_wait(seconds: Option<u64>, json: bool) ->
     Ok(())
 }
 
+/// View or set the DLC cache times.
+pub(crate) async fn cmd_config_dlc_cache(
+    list: Option<u64>,
+    owned: Option<u64>,
+    json: bool,
+) -> Result<()> {
+    let value = (list.is_some() || owned.is_some()).then_some((list, owned));
+    let (config, changed) = view_or_set(value, |c, (list, owned)| {
+        if let Some(secs) = list {
+            c.dlc_list_cache_secs = secs;
+        }
+        if let Some(secs) = owned {
+            c.dlc_owned_cache_secs = secs;
+        }
+    })
+    .await?;
+    let (list, owned) = (config.dlc_list_cache_secs, config.dlc_owned_cache_secs);
+    if json {
+        print_json(&serde_json::json!({
+            "dlc_list_cache_secs": list,
+            "dlc_owned_cache_secs": owned,
+        }));
+    } else {
+        cli_println!("DLC list cache: {list}s");
+        cli_println!("DLC ownership cache: {owned}s");
+        if changed {
+            cli_println!("Saved.");
+        }
+    }
+    Ok(())
+}
+
 /// View or set the price country.
 pub(crate) async fn cmd_config_country(country: Option<String>, json: bool) -> Result<()> {
     use aurelia::core::error::{ErrorKind, TypedError};

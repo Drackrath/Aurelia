@@ -579,6 +579,9 @@ async fn run(mut cli: Cli) -> Result<()> {
             ConfigCommand::Language { lang } => cmd_config_language(lang, json).await,
             ConfigCommand::Country { country } => cmd_config_country(country, json).await,
             ConfigCommand::PersonaWait { seconds } => cmd_config_persona_wait(seconds, json).await,
+            ConfigCommand::DlcCache { list, owned } => {
+                cmd_config_dlc_cache(list, owned, json).await
+            }
             ConfigCommand::Experimental { enabled } => cmd_config_experimental(enabled, json).await,
             ConfigCommand::SteamRuntimePolicy { policy } => {
                 cmd_config_steam_runtime_policy(policy, json).await

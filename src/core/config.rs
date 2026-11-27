@@ -200,6 +200,12 @@ pub struct LauncherConfig {
     /// Global download limit in kbit/s; 0 is unlimited.
     #[serde(default)]
     pub download_limit_kbit: u64,
+    /// Seconds a DLC list stays cached.
+    #[serde(default = "default_dlc_list_cache_secs")]
+    pub dlc_list_cache_secs: u64,
+    /// Seconds DLC ownership stays cached.
+    #[serde(default = "default_dlc_owned_cache_secs")]
+    pub dlc_owned_cache_secs: u64,
     /// Unknown keys, kept on save.
     #[serde(flatten)]
     pub extra: ExtraKeys,
@@ -215,6 +221,14 @@ pub const DEFAULT_PERSONA_WAIT_SECS: u64 = 30;
 
 fn default_persona_wait_secs() -> u64 {
     DEFAULT_PERSONA_WAIT_SECS
+}
+
+fn default_dlc_list_cache_secs() -> u64 {
+    DLC_LIST_TTL_SECS
+}
+
+fn default_dlc_owned_cache_secs() -> u64 {
+    DLC_OWNED_TTL_SECS
 }
 
 impl LauncherConfig {
@@ -286,6 +300,8 @@ impl Default for LauncherConfig {
             encrypt_session: false,
             persona_wait_secs: DEFAULT_PERSONA_WAIT_SECS,
             download_limit_kbit: 0,
+            dlc_list_cache_secs: DLC_LIST_TTL_SECS,
+            dlc_owned_cache_secs: DLC_OWNED_TTL_SECS,
             extra: ExtraKeys::new(),
         }
     }
@@ -820,9 +836,9 @@ pub async fn save_info_cache(
     write_json_pretty(&info_cache_path(app_id, language, country)?, &record).await
 }
 
-/// Hours an `aurelia dlc` list stays fresh.
+/// Default seconds a DLC list stays fresh.
 pub const DLC_LIST_TTL_SECS: u64 = 24 * 3600;
-/// Hour DLC ownership stays fresh.
+/// Default seconds DLC ownership stays fresh.
 pub const DLC_OWNED_TTL_SECS: u64 = 3600;
 /// Pause after Steam throttled ownership checks.
 pub const DLC_OWNED_BACKOFF_SECS: u64 = 600;
@@ -857,9 +873,10 @@ pub struct DlcRefresh {
 impl CachedDlcList {
     /// Stale parts at `now` for the given TTLs.
     pub fn refresh_needed(&self, now: u64, list_ttl: u64, owned_ttl: u64) -> DlcRefresh {
-        let list = now.saturating_sub(self.fetched_at) > list_ttl;
+        // TTL 0 means always fetch.
+        let list = now.saturating_sub(self.fetched_at) >= list_ttl;
         // New ids need a fresh ownership check.
-        let owned = list || self.owned_at == 0 || now.saturating_sub(self.owned_at) > owned_ttl;
+        let owned = list || self.owned_at == 0 || now.saturating_sub(self.owned_at) >= owned_ttl;
         DlcRefresh { list, owned }
     }
 

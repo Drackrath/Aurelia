@@ -585,8 +585,7 @@ pub(crate) fn dlc_is_listed(
 
 pub(crate) async fn cmd_dlc(app_id: u32, all: bool, no_cache: bool, json: bool) -> Result<()> {
     use aurelia::core::config::{
-        DLC_LIST_TTL_SECS, DLC_OWNED_BACKOFF_SECS, DLC_OWNED_TTL_SECS, DlcRefresh, load_dlc_cache,
-        save_dlc_cache,
+        DLC_OWNED_BACKOFF_SECS, DlcRefresh, load_dlc_cache, load_launcher_config, save_dlc_cache,
     };
     use aurelia::core::error::{ErrorKind, TypedError, classify};
     let country = resolve_steam_country(None).await?;
@@ -597,6 +596,9 @@ pub(crate) async fn cmd_dlc(app_id: u32, all: bool, no_cache: bool, json: bool) 
     } else {
         load_dlc_cache(app_id, &lang, &country).await
     };
+    // Cache times from `config dlc-cache`.
+    let config = load_launcher_config().await.unwrap_or_default();
+    let (list_ttl, owned_ttl) = (config.dlc_list_cache_secs, config.dlc_owned_cache_secs);
     // Ownership is per account.
     let account = aurelia::core::config::load_session()
         .await
@@ -611,7 +613,7 @@ pub(crate) async fn cmd_dlc(app_id: u32, all: bool, no_cache: bool, json: bool) 
             list: true,
             owned: true,
         },
-        |c| c.refresh_needed(now, DLC_LIST_TTL_SECS, DLC_OWNED_TTL_SECS),
+        |c| c.refresh_needed(now, list_ttl, owned_ttl),
     );
     let mut record = cached.unwrap_or_else(|| aurelia::core::config::CachedDlcList {
         steam_id: account,

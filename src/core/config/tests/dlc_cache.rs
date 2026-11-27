@@ -105,3 +105,22 @@ fn same_account_keeps_cached_ownership() {
     assert_eq!(cached.owned, vec![2778580]);
     assert!(!cached.refresh_needed(1000, 86_400, 3600).owned);
 }
+
+#[test]
+fn zero_ttl_always_refreshes() {
+    let need = record(1000, 1000).refresh_needed(1000, 0, 0);
+    assert!(need.list && need.owned);
+    let need = record(1000, 1000).refresh_needed(1000, 86_400, 0);
+    assert!(!need.list && need.owned);
+}
+
+#[test]
+fn config_without_dlc_cache_keys_uses_defaults() {
+    let mut old = serde_json::to_value(LauncherConfig::default()).unwrap();
+    let obj = old.as_object_mut().unwrap();
+    obj.remove("dlc_list_cache_secs");
+    obj.remove("dlc_owned_cache_secs");
+    let cfg: LauncherConfig = serde_json::from_value(old).unwrap();
+    assert_eq!(cfg.dlc_list_cache_secs, DLC_LIST_TTL_SECS);
+    assert_eq!(cfg.dlc_owned_cache_secs, DLC_OWNED_TTL_SECS);
+}
