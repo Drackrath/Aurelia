@@ -83,3 +83,32 @@ fn store_art_without_type_or_format_stays_empty() {
     assert_eq!(art.app_type, None);
     assert_eq!(art.assets, None);
 }
+
+#[test]
+fn store_art_captures_status_fields() {
+    let mut item = StoreItem::new();
+    item.set_id(353130);
+    item.set_appid(353130);
+    item.set_success(1);
+    item.set_visible(true);
+    item.set_unlisted(true);
+    item.set_name("Time of Dragons".to_string());
+    item.set_store_url_path("app/353130/Time_of_Dragons".to_string());
+    let status = store_art(&item).status;
+    assert!(status.unlisted && status.visible);
+    assert_eq!(status.success, 1);
+    assert_eq!(status.store_url_path, "app/353130/Time_of_Dragons");
+    assert_eq!(status.best_purchase, None);
+    assert!(!status.is_delisted());
+}
+
+#[test]
+fn removed_item_reads_as_removed() {
+    // Firefall: id echoed, appid zero.
+    let mut item = StoreItem::new();
+    item.set_id(227700);
+    item.set_success(15);
+    let status = store_art(&item).status;
+    assert_eq!(status.appid, 0);
+    assert_eq!(status.availability_label(), Some("Removed"));
+}

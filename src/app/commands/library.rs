@@ -155,11 +155,14 @@ pub(crate) fn library_art(
     })
 }
 
-/// Store type, else `music/` means Soundtrack.
+/// Removed/Delisted, store type, else `music/`.
 pub(crate) fn library_app_type(
     game: &aurelia::core::models::LibraryGame,
     cached: Option<&aurelia::core::config::CachedArt>,
 ) -> Option<String> {
+    if let Some(label) = cached.and_then(|c| c.availability_label()) {
+        return Some(label.to_string());
+    }
     cached.and_then(|c| c.app_type.clone()).or_else(|| {
         game.install_path
             .as_deref()
@@ -174,7 +177,7 @@ async fn resolve_library_art(
     client: &aurelia::steam_client::SteamClient,
     games: &[aurelia::core::models::LibraryGame],
 ) -> std::collections::HashMap<u32, aurelia::core::config::CachedArt> {
-    use aurelia::core::config::{CachedArt, load_art_cache, save_art_cache};
+    use aurelia::core::config::{ART_CACHE_VERSION, CachedArt, load_art_cache, save_art_cache};
     let mut cache = load_art_cache().await;
     let now = aurelia::core::time::now_unix();
     let ids: Vec<u32> = games.iter().map(|g| g.app_id).collect();
@@ -188,13 +191,15 @@ async fn resolve_library_art(
     match client.fetch_store_art(&missing, &country).await {
         Ok(mut found) => {
             for id in missing {
-                let art = found.remove(&id).unwrap_or_default();
+                let art = found.remove(&id);
                 cache.insert(
                     id,
                     CachedArt {
                         fetched_at: now,
-                        assets: art.assets,
-                        app_type: art.app_type,
+                        assets: art.as_ref().and_then(|a| a.assets.clone()),
+                        app_type: art.as_ref().and_then(|a| a.app_type.clone()),
+                        status: art.map(|a| a.status),
+                        version: ART_CACHE_VERSION,
                     },
                 );
             }
