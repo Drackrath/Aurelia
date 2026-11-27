@@ -296,9 +296,9 @@ pub(crate) fn validate_steam_runtime_runner_path(path: &Path) -> Result<()> {
 }
 
 /// Whether this build can host the self-contained Windows Steam runtime. It runs
-/// `steam.exe` under a Proton/Wine runner, and those ship Linux (ELF) binaries:
-/// Windows rejects them with OS error 193 ("not a valid Win32 application").
-pub const STEAM_RUNTIME_SUPPORTED: bool = cfg!(target_os = "linux");
+/// `steam.exe` under a Proton/Wine runner. Linux uses a Proton/Wine tree; macOS
+/// uses a native Wine build (GPTK, CrossOver or Wine Staging).
+pub const STEAM_RUNTIME_SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "macos"));
 
 /// Why the Windows Steam runtime is unavailable on this platform, with the
 /// alternative to use instead.
@@ -307,12 +307,11 @@ pub fn steam_runtime_unsupported_msg() -> String {
         "On Windows Aurelia uses your installed Steam client instead: install Steam and \
          run games with `aurelia play <APP_ID> --steam`."
     } else {
-        "Run Aurelia on Linux to use it."
+        "Run Aurelia on Linux or macOS to use it."
     };
     format!(
-        "the self-contained Windows Steam runtime is only supported on Linux: it runs \
-         Steam under a Proton/Wine runner, whose binaries are Linux executables and \
-         cannot be started on {}. {alternative}",
+        "the self-contained Windows Steam runtime is only supported on Linux and macOS: it \
+         runs Steam under a Wine runner, which cannot be started on {}. {alternative}",
         std::env::consts::OS
     )
 }

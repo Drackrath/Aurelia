@@ -44,13 +44,13 @@ fn unresolvable_name_falls_back_to_itself() {
 }
 
 #[test]
-fn steam_runtime_is_linux_only() {
+fn steam_runtime_is_supported_on_desktop_targets() {
     let result = ensure_steam_runtime_supported();
-    if cfg!(target_os = "linux") {
+    if cfg!(any(target_os = "linux", target_os = "macos")) {
         assert!(result.is_ok());
     } else {
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("only supported on Linux"), "{msg}");
+        assert!(msg.contains("only supported on Linux and macOS"), "{msg}");
         assert!(msg.contains(std::env::consts::OS), "{msg}");
     }
 }

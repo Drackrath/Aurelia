@@ -288,9 +288,13 @@ pub(crate) async fn cmd_play(
     if linux_target && !cfg!(target_os = "linux") {
         bail!("--platform linux runs the native Linux build, which only runs on Linux");
     }
-    if matches!(target.platform, Some(PlatformArg::Windows)) && cfg!(target_os = "macos") {
+    if matches!(target.platform, Some(PlatformArg::Windows))
+        && cfg!(target_os = "macos")
+        && !matches!(target.steam_mode, Some(SteamModeArg::Runtime))
+    {
         bail!(
-            "--platform windows runs the Windows build, which needs Proton on Linux or a Windows host"
+            "--platform windows runs the Windows build, which needs Proton on Linux, a Windows host, \
+             or `--steam-mode runtime` on macOS"
         );
     }
     if matches!(target.steam_mode, Some(SteamModeArg::Runtime))
@@ -377,6 +381,52 @@ pub(crate) async fn cmd_play(
             "{} is not installed — install it with `aurelia install {app_id}`",
             game.name
         );
+    }
+
+    // macOS: a host-installed Windows build can be handed to the in-Wine Steam
+    // client, which provides the Steamworks/DRM context Steam games expect.
+    #[cfg(target_os = "macos")]
+    if matches!(target.platform, Some(PlatformArg::Windows))
+        && matches!(target.steam_mode, Some(SteamModeArg::Runtime))
+    {
+        if target.launch_option.is_some() {
+            tracing::warn!(
+                "in-Wine Steam picks the launch option itself; ignoring --launch-option"
+            );
+        }
+        let launcher_config = load_launcher_config().await?;
+        let install_path = game.install_path.clone().unwrap_or_default();
+        if !json {
+            cli_println!("Launching {} via the in-Wine Steam ...", game.name);
+        }
+        let status = |message: &str| {
+            if json {
+                eprint_json_line(&serde_json::json!({ "event": "message", "message": message }));
+            } else {
+                cli_println!("{message}");
+            }
+        };
+        let timeout = wait.launch_timeout.unwrap_or(DEFAULT_LAUNCH_TIMEOUT_SECS);
+        aurelia::launch::launch_game_via_master_steam(
+            &launcher_config,
+            app_id,
+            std::path::Path::new(&install_path),
+            std::time::Duration::from_secs(timeout),
+            Some(&status),
+        )
+        .await
+        .with_context(|| format!("failed to launch {} via the in-Wine Steam", game.name))?;
+        if json {
+            print_json(&serde_json::json!({
+                "app_id": app_id,
+                "name": game.name,
+                "status": "finished",
+                "runtime": "in-wine-steam",
+            }));
+        } else {
+            cli_println!("Finished playing {}.", game.name);
+        }
+        return Ok(());
     }
 
     // Reject bad entries before any update.

@@ -485,6 +485,8 @@ pub(crate) async fn cmd_steam_runtime_status(json: bool) -> Result<()> {
     let steam_exe_present = steam_cfg.steam_exe.is_some();
     let runner = config.steam_runtime_runner.to_string_lossy().to_string();
     let runner_configured = !runner.is_empty();
+    let running =
+        aurelia::steam_client::SteamClient::is_steam_running_in_prefix(&steam_cfg.wine_prefix);
 
     if json {
         print_json(&serde_json::json!({
@@ -493,6 +495,9 @@ pub(crate) async fn cmd_steam_runtime_status(json: bool) -> Result<()> {
             "layout_kind": steam_cfg.layout_kind,
             "steam_exe": steam_cfg.steam_exe,
             "steam_exe_present": steam_exe_present,
+            "logged_in": running
+                && aurelia::core::steam_host::master_steam_is_logged_on(),
+            "running": running,
             "steam_runtime_runner": runner_configured.then_some(runner.clone()),
             "steam_runtime_runner_configured": runner_configured,
             "supported": aurelia::core::runner::STEAM_RUNTIME_SUPPORTED,
@@ -511,6 +516,15 @@ pub(crate) async fn cmd_steam_runtime_status(json: bool) -> Result<()> {
             "steam.exe present : {}",
             if steam_exe_present { "yes" } else { "no" }
         );
+        cli_println!(
+            "Logged in         : {}",
+            if running && aurelia::core::steam_host::master_steam_is_logged_on() {
+                "yes"
+            } else {
+                "no"
+            }
+        );
+        cli_println!("Steam running     : {}", if running { "yes" } else { "no" });
         if let Some(exe) = &steam_cfg.steam_exe {
             cli_println!("steam.exe path    : {}", exe.display());
         }

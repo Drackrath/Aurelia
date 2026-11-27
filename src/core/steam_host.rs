@@ -400,6 +400,26 @@ pub async fn wait_for_steam_logged_on(_timeout: std::time::Duration) -> bool {
     true
 }
 
+/// The in-Wine Steam client in the master prefix has an account signed in.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub fn master_steam_is_logged_on() -> bool {
+    let Some(steam_exe) = get_master_steam_config().steam_exe else {
+        return false;
+    };
+    let Some(steam_dir) = steam_exe.parent() else {
+        return false;
+    };
+    let Some(text) = read_tail(&steam_dir.join("logs/connection_log.txt"), 64 * 1024) else {
+        return false;
+    };
+    connection_log_logged_on(&text).unwrap_or(false)
+}
+
+#[cfg(target_os = "windows")]
+pub fn master_steam_is_logged_on() -> bool {
+    false
+}
+
 #[derive(Debug, Clone)]
 pub struct MasterSteamConfig {
     pub root_dir: PathBuf,    // e.g. ~/.config/Aurelia/master_steam_prefix
