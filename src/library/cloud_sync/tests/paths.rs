@@ -230,10 +230,14 @@ fn win_token_maps_into_wine_prefix() {
         resolver.resolve("%WinSavedGames%b.sav").unwrap(),
         steamuser.join("Saved Games").join("b.sav"),
     );
-    // Linux-native roots keep working and ignore the prefix entirely.
+    let home_token = if cfg!(target_os = "macos") {
+        "%MacHome%"
+    } else {
+        "%LinuxHome%"
+    };
     assert!(
         resolver
-            .resolve("%LinuxHome%.local/share/x.sav")
+            .resolve(&format!("{home_token}.local/share/x.sav"))
             .unwrap()
             .starts_with(std::env::var("HOME").unwrap())
     );
@@ -246,4 +250,32 @@ fn win_token_without_prefix_is_still_an_error() {
     // rather than resolve to some plausible-looking path in the Linux home.
     let resolver = CloudPathResolver::new(PathBuf::from("/r/remote"), None);
     assert!(resolver.resolve("%WinAppDataLocal%a/b.sav").is_err());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn mac_override_maps_windows_save_into_app_support() {
+    let hades = UfsRootOverride {
+        root: "WinMyDocuments".into(),
+        os: "MacOS".into(),
+        use_instead: "MacAppSupport".into(),
+        path_transforms: vec![("Saved Games/Hades".into(), "Supergiant Games/Hades".into())],
+        ..Default::default()
+    };
+    let resolver = CloudPathResolver::new(PathBuf::from("/r/remote"), None)
+        .with_root_overrides(&[hades], "macos");
+    assert_eq!(
+        resolver
+            .resolve("%WinMyDocuments%Saved Games/Hades/Profile1.sav")
+            .unwrap(),
+        Path::new(&std::env::var("HOME").unwrap())
+            .join("Library/Application Support/Supergiant Games/Hades/Profile1.sav"),
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn default_cloud_root_is_mac_steam_userdata() {
+    let root = default_cloud_root(76561197960287930, 1145360).unwrap();
+    assert!(root.ends_with("Library/Application Support/Steam/userdata/22202/1145360"));
 }
