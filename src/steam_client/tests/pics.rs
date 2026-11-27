@@ -176,35 +176,3 @@ fn available_platforms_lists_mac_depots() {
     );
     assert_eq!(available_platforms(None), vec![DepotPlatform::Windows]);
 }
-
-fn token_response(granted: &[u32], denied: &[u32]) -> CMsgClientPICSAccessTokenResponse {
-    use steam_vent_proto::steammessages_clientserver_appinfo::cmsg_client_picsaccess_token_response::AppToken;
-    let mut response = CMsgClientPICSAccessTokenResponse::new();
-    for &id in granted {
-        let mut token = AppToken::new();
-        token.set_appid(id);
-        token.set_access_token(0);
-        response.app_access_tokens.push(token);
-    }
-    response.app_denied_tokens.extend_from_slice(denied);
-    response
-}
-
-#[test]
-fn granted_apps_keeps_tokens_without_denial() {
-    let response = token_response(&[10, 20, 30], &[40]);
-    let granted = granted_apps(&response, &[10, 20, 40]);
-    assert_eq!(granted, HashSet::from([10, 20]));
-}
-
-#[test]
-fn granted_apps_drops_apps_both_granted_and_denied() {
-    let response = token_response(&[10, 20], &[20]);
-    assert_eq!(granted_apps(&response, &[10, 20]), HashSet::from([10]));
-}
-
-#[test]
-fn granted_apps_empty_when_all_denied() {
-    let response = token_response(&[], &[10, 20]);
-    assert!(granted_apps(&response, &[10, 20]).is_empty());
-}

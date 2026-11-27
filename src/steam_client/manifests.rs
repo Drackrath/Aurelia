@@ -564,17 +564,32 @@ impl SteamClient {
             .collect())
     }
 
-    /// Owned apps among `app_ids`, from one batched token request.
+    /// Owned apps among `app_ids`, eight tickets at once.
     ///
+    /// Steam issues an ownership ticket only for licensed apps. PICS access
+    /// tokens are no substitute: Steam grants them for unowned DLC too.
     /// Without a connection every app reads as not owned.
     pub async fn owned_among(&self, app_ids: &[u32]) -> Result<HashSet<u32>> {
+        let mut owned = HashSet::new();
         let Some(connection) = self.connection() else {
-            return Ok(HashSet::new());
+            return Ok(owned);
         };
-        if app_ids.is_empty() {
-            return Ok(HashSet::new());
+        for chunk in app_ids.chunks(8) {
+            let mut set = tokio::task::JoinSet::new();
+            for &app_id in chunk {
+                let connection = connection.clone();
+                set.spawn(async move {
+                    let ok = super::client::app_ticket(&connection, app_id).await.is_ok();
+                    (app_id, ok)
+                });
+            }
+            while let Some(joined) = set.join_next().await {
+                if let Ok((app_id, true)) = joined {
+                    owned.insert(app_id);
+                }
+            }
         }
-        super::pics::pics_access_grants(connection, app_ids).await
+        Ok(owned)
     }
 }
 

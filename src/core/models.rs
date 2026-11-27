@@ -238,7 +238,7 @@ pub struct GameLibrary {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DlcState {
     pub app_id: u32,
-    /// The account holds a license for this DLC (Steam grants its PICS token).
+    /// The account holds a license for this DLC (an app ownership ticket was issued).
     pub owned: bool,
     /// The DLC's content is present on disk (its depots are recorded in the base
     /// game's appmanifest, tagged with this DLC's appid).

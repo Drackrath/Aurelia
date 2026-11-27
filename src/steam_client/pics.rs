@@ -516,44 +516,6 @@ pub(super) async fn pics_app_info(
         .ok_or_else(|| anyhow!("missing appinfo payload for app {appid}"))
 }
 
-/// Apps one token request may ask for.
-const ACCESS_TOKEN_BATCH: usize = 100;
-
-/// Apps Steam grants a PICS access token for, one job per 100 ids.
-///
-/// Steam denies tokens for apps the account has no licence for, so the granted
-/// set doubles as an ownership check without one ticket job per app.
-pub(super) async fn pics_access_grants(
-    connection: &Connection,
-    appids: &[u32],
-) -> Result<HashSet<u32>> {
-    let mut granted = HashSet::new();
-    for chunk in appids.chunks(ACCESS_TOKEN_BATCH) {
-        let mut request = CMsgClientPICSAccessTokenRequest::new();
-        request.appids.extend_from_slice(chunk);
-        let response: CMsgClientPICSAccessTokenResponse = connection
-            .job(request)
-            .await
-            .context("failed requesting PICS access tokens")?;
-        granted.extend(granted_apps(&response, chunk));
-    }
-    Ok(granted)
-}
-
-/// Requested apps with a token and no denial.
-pub(super) fn granted_apps(
-    response: &CMsgClientPICSAccessTokenResponse,
-    requested: &[u32],
-) -> HashSet<u32> {
-    let denied: HashSet<u32> = response.app_denied_tokens.iter().copied().collect();
-    response
-        .app_access_tokens
-        .iter()
-        .map(|t| t.appid())
-        .filter(|id| requested.contains(id) && !denied.contains(id))
-        .collect()
-}
-
 /// PICS access token for one app.
 pub(super) async fn pics_access_token(connection: &Connection, appid: u32) -> Result<u64> {
     let mut request = CMsgClientPICSAccessTokenRequest::new();
