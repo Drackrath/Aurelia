@@ -14,6 +14,7 @@ use crate::app::commands::common::*;
 pub(crate) const EVENTS: &[&str] = &[
     "awaiting_confirmation",
     "closed",
+    "confirmation_methods",
     "echo",
     "error",
     "game_invite",

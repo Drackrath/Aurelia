@@ -23,8 +23,9 @@ use std::time::{Duration, Instant};
 
 use protobuf::{Message, MessageField};
 use steam_vent::auth::{
-    AuthConfirmationHandler, ClientInfo, ConfirmationMethod, DeviceConfirmationHandler,
-    FileGuardDataStore, RefreshToken, UserProvidedAuthConfirmationHandler,
+    AuthConfirmationHandler, ClientInfo, ConfirmationAction, ConfirmationMethod,
+    DeviceConfirmationHandler, FileGuardDataStore, RefreshToken,
+    UserProvidedAuthConfirmationHandler,
 };
 use steam_vent::connection::Connection;
 use steam_vent::{ConnectionError, ConnectionTrait, LoginError, ServerList};
@@ -96,6 +97,8 @@ pub struct SteamClient {
     active_cm: Option<SocketAddr>,
     server_list: Option<ServerList>,
     pending_confirmations: Vec<ConfirmationPrompt>,
+    /// Told which confirmation methods Steam allows during a password login.
+    confirmation_hook: Option<ConfirmationHook>,
     /// Why the last session restore failed.
     restore_error: Option<Arc<anyhow::Error>>,
 }
@@ -107,7 +110,7 @@ mod chat;
 
 mod client;
 
-pub use client::CodeReader;
+pub use client::{CodeReader, ConfirmationHook};
 
 mod friends;
 

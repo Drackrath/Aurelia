@@ -6,6 +6,28 @@ use crate::core::error::{ErrorKind, TypedError};
 use steam_vent_proto::steammessages_clientserver_friends::CMsgClientPersonaState;
 use tokio_stream::StreamExt;
 
+/// Receives the confirmation methods Steam allows for a password login.
+pub type ConfirmationHook = Arc<dyn Fn(&[ConfirmationPrompt]) + Send + Sync>;
+
+/// Reports Steam's allowed confirmation methods, then defers to `inner`.
+struct ReportingHandler<H> {
+    inner: H,
+    hook: Option<ConfirmationHook>,
+}
+
+impl<H: AuthConfirmationHandler + Send> AuthConfirmationHandler for ReportingHandler<H> {
+    fn handle_confirmation<'this>(
+        &'this mut self,
+        allowed_confirmations: &[ConfirmationMethod],
+    ) -> Box<dyn std::future::Future<Output = Option<ConfirmationAction>> + Send + 'this> {
+        if let Some(hook) = &self.hook {
+            let prompts: Vec<_> = allowed_confirmations.iter().map(map_confirmation).collect();
+            hook(&prompts);
+        }
+        self.inner.handle_confirmation(allowed_confirmations)
+    }
+}
+
 /// One input line; `None` at EOF.
 pub type CodeReader =
     std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<Option<String>>> + Send>>;
@@ -41,6 +63,7 @@ impl SteamClient {
             active_cm: None,
             server_list: None,
             pending_confirmations: Vec::new(),
+            confirmation_hook: None,
             restore_error: None,
         })
     }
@@ -58,8 +81,14 @@ impl SteamClient {
             active_cm: None,
             server_list: None,
             pending_confirmations: Vec::new(),
+            confirmation_hook: None,
             restore_error: None,
         }
+    }
+
+    /// Report the confirmation methods Steam allows during later password logins.
+    pub fn set_confirmation_hook(&mut self, hook: ConfirmationHook) {
+        self.confirmation_hook = Some(hook);
     }
 
     pub fn is_authenticated(&self) -> bool {
@@ -393,6 +422,7 @@ impl SteamClient {
         self.state = LoginState::AwaitingAccessTokenLogon;
 
         let guard_path = crate::core::config::guard_data_path()?;
+        let hook = self.confirmation_hook.clone();
         // One login, three guard handlers.
         async fn login_with<H: AuthConfirmationHandler + Send>(
             guard_path: &std::path::Path,
@@ -400,13 +430,17 @@ impl SteamClient {
             account_name: &str,
             password: &str,
             handler: H,
+            hook: Option<ConfirmationHook>,
         ) -> std::result::Result<Connection, ConnectionError> {
             Connection::login_with_logon_id(
                 server_list,
                 account_name,
                 password,
                 FileGuardDataStore::new(guard_path.to_path_buf()),
-                handler,
+                ReportingHandler {
+                    inner: handler,
+                    hook,
+                },
                 &ClientInfo::default(),
                 super::logon_id(),
             )
@@ -432,6 +466,7 @@ impl SteamClient {
                 &account_name,
                 password.expose(),
                 handler,
+                hook,
             )
             .await
         } else if let Some(read_code) = interactive_pin {
@@ -449,6 +484,7 @@ impl SteamClient {
                 &account_name,
                 password.expose(),
                 handler,
+                hook,
             );
             feed_code_while(login, read_code, writer).await
         } else {
@@ -458,6 +494,7 @@ impl SteamClient {
                 &account_name,
                 password.expose(),
                 DeviceConfirmationHandler,
+                hook,
             )
             .await
         };
