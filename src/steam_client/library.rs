@@ -5,6 +5,9 @@ use super::*;
 use crate::core::acf;
 
 /// Owned games, free licences included.
+/// Apps per artwork request.
+const STORE_ART_BATCH: usize = 250;
+
 pub(crate) fn owned_games_request(steamid: u64) -> CPlayer_GetOwnedGames_Request {
     CPlayer_GetOwnedGames_Request {
         steamid: Some(steamid),
@@ -295,6 +298,48 @@ impl SteamClient {
         }
 
         Ok(category_online_required(&categories))
+    }
+
+    /// Store artwork only, batched.
+    ///
+    /// Unknown ids are absent.
+    pub async fn fetch_store_art(
+        &self,
+        app_ids: &[u32],
+        country: &str,
+    ) -> Result<HashMap<u32, StoreAppAssets>> {
+        let connection = self.require_connection()?;
+        let mut art = HashMap::new();
+        for chunk in app_ids.chunks(STORE_ART_BATCH) {
+            let mut data = StoreBrowseItemDataRequest::new();
+            data.set_include_assets(true);
+            let mut context = StoreBrowseContext::new();
+            context.set_language("english".to_string());
+            context.set_country_code(country.to_string());
+            let mut request = CStoreBrowse_GetItems_Request::new();
+            request.context = MessageField::some(context);
+            request.data_request = MessageField::some(data);
+            for &id in chunk {
+                let mut item_id = StoreItemID::new();
+                item_id.set_appid(id);
+                request.ids.push(item_id);
+            }
+            let response: CStoreBrowse_GetItems_Response = connection
+                .service_method(request)
+                .await
+                .context("failed calling StoreBrowse.GetItems for artwork")?;
+            for item in response.store_items.iter().filter(|i| i.appid() != 0) {
+                // Hashed paths only exist here.
+                if item
+                    .assets
+                    .as_ref()
+                    .is_some_and(|a| !a.asset_url_format().is_empty())
+                {
+                    art.insert(item.appid(), store_assets(item));
+                }
+            }
+        }
+        Ok(art)
     }
 
     /// Fetch human-facing store metadata for one or more apps via the

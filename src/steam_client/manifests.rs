@@ -529,6 +529,18 @@ impl SteamClient {
     /// licensed apps). `installed` and `disabled` are read from the base game's
     /// appmanifest — if the base game isn't installed, both are `false` for every DLC.
     pub async fn dlc_states(&self, base_appid: u32, dlc_ids: &[u32]) -> Result<Vec<DlcState>> {
+        let owned = self.owned_among(base_appid, dlc_ids).await?;
+        self.dlc_states_with_owned(base_appid, dlc_ids, &owned)
+            .await
+    }
+
+    /// DLC states from a known set.
+    pub async fn dlc_states_with_owned(
+        &self,
+        base_appid: u32,
+        dlc_ids: &[u32],
+        owned: &HashSet<u32>,
+    ) -> Result<Vec<DlcState>> {
         // Local install/enable state lives in the base game's appmanifest.
         let (installed, disabled) = match self.appmanifest_path(base_appid).await {
             Ok(path) if path.exists() => {
@@ -541,20 +553,75 @@ impl SteamClient {
             }
             _ => (HashSet::new(), HashSet::new()),
         };
-
-        let mut out = Vec::with_capacity(dlc_ids.len());
-        for &dlc_id in dlc_ids {
-            // An ownership ticket is only issued for apps the account is licensed for.
-            let owned = self.get_app_ticket(dlc_id).await.is_ok();
-            out.push(DlcState {
+        Ok(dlc_ids
+            .iter()
+            .map(|&dlc_id| DlcState {
                 app_id: dlc_id,
-                owned,
+                owned: owned.contains(&dlc_id),
                 installed: installed.contains(&dlc_id),
                 disabled: disabled.contains(&dlc_id),
-            });
-        }
-        Ok(out)
+            })
+            .collect())
     }
+
+    /// Owned DLC of `base_appid` among `app_ids`.
+    pub async fn owned_among(&self, base_appid: u32, app_ids: &[u32]) -> Result<HashSet<u32>> {
+        let Some(connection) = self.connection() else {
+            return Ok(HashSet::new());
+        };
+        if app_ids.is_empty() {
+            return Ok(HashSet::new());
+        }
+        match super::licence_list::owned_apps(connection).await {
+            Ok(Some(apps)) => {
+                return Ok(app_ids
+                    .iter()
+                    .copied()
+                    .filter(|&id| apps.owns_dlc(base_appid, id))
+                    .collect());
+            }
+            Ok(None) => tracing::debug!("no licence list; checking ownership tickets"),
+            Err(e) => tracing::warn!("licence list lookup failed ({e:#}); checking tickets"),
+        }
+        Self::owned_by_tickets(connection, app_ids).await
+    }
+
+    /// Ownership tickets, eight at once.
+    async fn owned_by_tickets(connection: &Connection, app_ids: &[u32]) -> Result<HashSet<u32>> {
+        let mut owned = HashSet::new();
+        for chunk in app_ids.chunks(8) {
+            let mut set = tokio::task::JoinSet::new();
+            for &app_id in chunk {
+                let connection = connection.clone();
+                set.spawn(async move {
+                    let result = super::client::app_ticket(&connection, app_id).await;
+                    (app_id, result)
+                });
+            }
+            while let Some(joined) = set.join_next().await {
+                let (app_id, result) = joined.context("ownership check task failed")?;
+                match result {
+                    Ok(_) => {
+                        owned.insert(app_id);
+                    }
+                    Err(e) if ownership_check_inconclusive(&e) => {
+                        return Err(e.context(format!("could not check ownership of app {app_id}")));
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+        Ok(owned)
+    }
+}
+
+/// Failure says nothing about the licence.
+pub(super) fn ownership_check_inconclusive(err: &anyhow::Error) -> bool {
+    use crate::core::error::{ErrorKind, classify};
+    matches!(
+        classify(err).kind,
+        ErrorKind::RateLimited | ErrorKind::NetworkTimeout | ErrorKind::Offline
+    )
 }
 
 /// One lexical token of VDF text.

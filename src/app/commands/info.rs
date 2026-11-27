@@ -551,43 +551,158 @@ pub(crate) async fn resolve_dlc_names_via_store(
     dlc
 }
 
-/// DLC store records keyed by id.
-pub(crate) async fn resolve_dlc_store_info(
-    client: &SteamClient,
-    dlc_ids: &[u32],
-    language: &str,
-    country: &str,
-) -> std::collections::HashMap<u32, StoreAppInfo> {
-    if dlc_ids.is_empty() {
-        return Default::default();
-    }
-    client
-        .fetch_store_apps(dlc_ids, language, country)
-        .await
-        .unwrap_or_else(|e| {
-            tracing::warn!("could not fetch DLC store records: {e:#}");
-            Vec::new()
-        })
-        .into_iter()
-        .map(|i| (i.app_id, i))
-        .collect()
+/// No named store item: retired.
+pub(crate) fn dlc_is_retired(store: Option<&StoreAppInfo>) -> bool {
+    store.is_none_or(|i| i.name.trim().is_empty())
 }
 
-pub(crate) async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
-    // Ownership status requires an authenticated connection; installed/disabled status
-    // is read from the local appmanifest.
-    let steam = authed_client().await?;
+/// Store header, else flat CDN path.
+pub(crate) fn dlc_image(store: Option<&StoreAppInfo>, id: u32) -> String {
+    store
+        .and_then(|i| i.assets.header.clone())
+        .unwrap_or_else(|| steam_urls::header_url(id))
+}
 
-    // DLC ids come from PICS appinfo (`common.dlc`); names from a batched
-    // StoreBrowse call — both over the Steam CM connection, no storefront API.
-    let dlc_ids: Vec<u32> = steam
-        .get_extended_app_info(app_id)
-        .await
-        .map(|e| e.dlcs)
-        .unwrap_or_default();
+/// Store small capsule, else CDN.
+pub(crate) fn dlc_fallback_image(store: Option<&StoreAppInfo>, id: u32) -> String {
+    store
+        .and_then(|i| i.assets.small_capsule.clone())
+        .unwrap_or_else(|| steam_urls::small_capsule_url(id))
+}
+
+/// Listed unless retired and untouched.
+pub(crate) fn dlc_is_listed(
+    retired: bool,
+    state: Option<&aurelia::core::models::DlcState>,
+    all: bool,
+) -> bool {
+    all || !retired || state.is_some_and(|s| s.owned || s.installed || s.disabled)
+}
+
+pub(crate) async fn cmd_dlc(app_id: u32, all: bool, no_cache: bool, json: bool) -> Result<()> {
+    use aurelia::core::config::{
+        DLC_OWNED_BACKOFF_SECS, DlcRefresh, load_dlc_cache, load_launcher_config, save_dlc_cache,
+    };
+    use aurelia::core::error::{ErrorKind, TypedError, classify};
     let country = resolve_steam_country(None).await?;
     let lang = resolve_steam_language(None).await;
-    let store = resolve_dlc_store_info(&steam, &dlc_ids, &lang, &country).await;
+    let now = aurelia::core::time::now_unix();
+    let cached = if no_cache {
+        None
+    } else {
+        load_dlc_cache(app_id, &lang, &country).await
+    };
+    // Cache times from `config dlc-cache`.
+    let config = load_launcher_config().await.unwrap_or_default();
+    let (list_ttl, owned_ttl) = (config.dlc_list_cache_secs, config.dlc_owned_cache_secs);
+    // Ownership is per account.
+    let account = aurelia::core::config::load_session()
+        .await
+        .ok()
+        .and_then(|s| s.steam_id);
+    // Daemon knows the live licence list.
+    let licences = account.and_then(aurelia::steam_client::licence_list::current_fingerprint);
+    let cached = cached.map(|mut c| {
+        c.bind_account(account);
+        c.bind_licences(licences);
+        c
+    });
+    let need = cached.as_ref().map_or(
+        DlcRefresh {
+            list: true,
+            owned: true,
+        },
+        |c| c.refresh_needed(now, list_ttl, owned_ttl),
+    );
+    let mut record = cached.unwrap_or_else(|| aurelia::core::config::CachedDlcList {
+        steam_id: account,
+        ..Default::default()
+    });
+    // Throttled: keep old ownership, ask later.
+    let paused = need.owned && record.ownership_paused(now);
+    if paused {
+        let wait = record.retry_after.saturating_sub(now);
+        if record.owned_at == 0 {
+            return Err(TypedError::new(
+                ErrorKind::RateLimited,
+                format!("Steam throttled DLC ownership checks; retry in {wait} s"),
+            )
+            .with_retry_after(Some(std::time::Duration::from_secs(wait)))
+            .into());
+        }
+        tracing::warn!("Steam throttled DLC ownership checks; showing ownership from the cache");
+    }
+    let check_owned = need.owned && !paused;
+    // Fresh cache: no logon at all.
+    let steam = if need.list || check_owned {
+        authed_client().await?
+    } else {
+        SteamClient::new()?
+    };
+
+    // Store data failed: retirement is unknown.
+    let mut store_ok = true;
+    if need.list {
+        // Ids from PICS, data from StoreBrowse.
+        let ids = steam
+            .get_extended_app_info(app_id)
+            .await
+            .with_context(|| format!("failed to read the DLC list of app {app_id}"))?
+            .dlcs;
+        record.store = steam
+            .fetch_store_apps(&ids, &lang, &country)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("could not fetch DLC store records: {e:#}");
+                store_ok = false;
+                Vec::new()
+            });
+        record.dlc_ids = ids;
+        record.fetched_at = now;
+    }
+    if check_owned {
+        match steam.owned_among(app_id, &record.dlc_ids).await {
+            Ok(owned) => {
+                record.owned = owned.into_iter().collect();
+                record.owned_at = now;
+                record.retry_after = 0;
+                record.licence_fingerprint =
+                    account.and_then(aurelia::steam_client::licence_list::current_fingerprint);
+            }
+            Err(e) => {
+                let kind = classify(&e).kind;
+                if matches!(
+                    kind,
+                    ErrorKind::RateLimited | ErrorKind::NetworkTimeout | ErrorKind::Offline
+                ) {
+                    // Remember the pause for later calls.
+                    record.retry_after = now + DLC_OWNED_BACKOFF_SECS;
+                    if store_ok
+                        && let Err(save) = save_dlc_cache(app_id, &lang, &country, &record).await
+                    {
+                        tracing::warn!("could not write the DLC cache: {save:#}");
+                    }
+                }
+                return Err(e.context(format!("failed to resolve DLC status for app {app_id}")));
+            }
+        }
+    }
+    if (need.list || check_owned)
+        && store_ok
+        && let Err(e) = save_dlc_cache(app_id, &lang, &country, &record).await
+    {
+        tracing::warn!("could not write the DLC cache: {e:#}");
+    }
+
+    let dlc_ids = record.dlc_ids.clone();
+    let owned: std::collections::HashSet<u32> = record.owned.iter().copied().collect();
+    let store: std::collections::HashMap<u32, StoreAppInfo> =
+        record.store.into_iter().map(|i| (i.app_id, i)).collect();
+    // Installed/disabled: always fresh, local only.
+    let states = steam
+        .dlc_states_with_owned(app_id, &dlc_ids, &owned)
+        .await
+        .with_context(|| format!("failed to resolve DLC status for app {app_id}"))?;
     let mut dlc: Vec<(u32, Option<String>)> = dlc_ids
         .iter()
         .map(|&id| {
@@ -601,12 +716,10 @@ pub(crate) async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
         })
         .collect();
     dlc.sort_by_key(|(id, _)| *id);
-    let states = steam
-        .dlc_states(app_id, &dlc_ids)
-        .await
-        .with_context(|| format!("failed to resolve DLC status for app {app_id}"))?;
     let state_by_id: std::collections::HashMap<u32, &aurelia::core::models::DlcState> =
         states.iter().map(|s| (s.app_id, s)).collect();
+    let retired = |id: &u32| store_ok && dlc_is_retired(store.get(id));
+    dlc.retain(|(id, _)| dlc_is_listed(retired(id), state_by_id.get(id).copied(), all));
 
     if json {
         let value = serde_json::json!({
@@ -627,9 +740,10 @@ pub(crate) async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
                         .map(|t| aurelia::core::time::unix_to_ymd(t as i64)),
                     "release_date": store.get(id).and_then(|i| i.release_date.clone()),
                     "reviews": store.get(id).and_then(|i| i.review_summary.clone()),
-                    "image_url": steam_urls::header_url(*id),
-                    "image_fallback_url": steam_urls::small_capsule_url(*id),
+                    "image_url": dlc_image(store.get(id), *id),
+                    "image_fallback_url": dlc_fallback_image(store.get(id), *id),
                     "store_url": steam_urls::store_url(*id),
+                    "retired": store_ok.then(|| retired(id)),
                 })
             }).collect::<Vec<_>>(),
         });
@@ -649,9 +763,12 @@ pub(crate) async fn cmd_dlc(app_id: u32, json: bool) -> Result<()> {
         "PRICE"
     );
     for (id, name) in &dlc {
-        let name = name
+        let mut name = name
             .clone()
             .unwrap_or_else(|| "(name unavailable)".to_string());
+        if retired(id) {
+            name.push_str(" (retired)");
+        }
         let price = store
             .get(id)
             .map(|i| {
@@ -979,3 +1096,6 @@ pub(crate) async fn cmd_image(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

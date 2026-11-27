@@ -545,7 +545,11 @@ async fn run(mut cli: Cli) -> Result<()> {
             max_length,
         } => cmd_news(app_id, count, max_length, json).await,
         Command::Reviews(args) => cmd_reviews(args, json).await,
-        Command::Dlc { app_id } => cmd_dlc(app_id, json).await,
+        Command::Dlc {
+            app_id,
+            all,
+            no_cache,
+        } => cmd_dlc(app_id, all, no_cache, json).await,
         Command::Achievements { app_id, lang } => cmd_achievements(app_id, lang, json).await,
         Command::Depots(args) => match (args.command, args.app_id) {
             (Some(command), _) => cmd_depots_command(command, json).await,
@@ -575,6 +579,9 @@ async fn run(mut cli: Cli) -> Result<()> {
             ConfigCommand::Language { lang } => cmd_config_language(lang, json).await,
             ConfigCommand::Country { country } => cmd_config_country(country, json).await,
             ConfigCommand::PersonaWait { seconds } => cmd_config_persona_wait(seconds, json).await,
+            ConfigCommand::DlcCache { list, owned } => {
+                cmd_config_dlc_cache(list, owned, json).await
+            }
             ConfigCommand::Experimental { enabled } => cmd_config_experimental(enabled, json).await,
             ConfigCommand::SteamRuntimePolicy { policy } => {
                 cmd_config_steam_runtime_policy(policy, json).await

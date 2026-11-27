@@ -121,6 +121,76 @@ pub(crate) fn detect_installed_platform(install_path: &str) -> Option<String> {
     }
 }
 
+/// Apps whose art needs fetching.
+pub(crate) fn art_to_fetch(
+    ids: &[u32],
+    cache: &std::collections::HashMap<u32, aurelia::core::config::CachedArt>,
+    now: u64,
+) -> Vec<u32> {
+    use aurelia::core::config::ART_CACHE_TTL_SECS;
+    ids.iter()
+        .copied()
+        .filter(|id| {
+            cache
+                .get(id)
+                .is_none_or(|c| c.is_stale(now, ART_CACHE_TTL_SECS))
+        })
+        .collect()
+}
+
+/// Hashed art URLs, else flat.
+pub(crate) fn library_art(
+    app_id: u32,
+    cached: Option<&aurelia::core::config::CachedArt>,
+) -> serde_json::Value {
+    let store = cached.and_then(|c| c.assets.as_ref());
+    let pick = |url: Option<&String>, flat: String| url.cloned().unwrap_or(flat);
+    serde_json::json!({
+        "header": pick(store.and_then(|a| a.header.as_ref()), steam_urls::header_url(app_id)),
+        "capsule": pick(store.and_then(|a| a.capsule.as_ref()), steam_urls::capsule_url(app_id)),
+        "hero": pick(store.and_then(|a| a.hero.as_ref()), steam_urls::hero_url(app_id)),
+        // StoreBrowse has no logo field.
+        "logo": steam_urls::logo_url(app_id),
+    })
+}
+
+/// Cached art, fetching missing apps once.
+async fn resolve_library_art(
+    client: &aurelia::steam_client::SteamClient,
+    games: &[aurelia::core::models::LibraryGame],
+) -> std::collections::HashMap<u32, aurelia::core::config::CachedArt> {
+    use aurelia::core::config::{CachedArt, load_art_cache, save_art_cache};
+    let mut cache = load_art_cache().await;
+    let now = aurelia::core::time::now_unix();
+    let ids: Vec<u32> = games.iter().map(|g| g.app_id).collect();
+    let missing = art_to_fetch(&ids, &cache, now);
+    if missing.is_empty() || !client.is_authenticated() || client.is_offline() {
+        return cache;
+    }
+    let country = resolve_steam_country(None)
+        .await
+        .unwrap_or_else(|_| "US".to_string());
+    match client.fetch_store_art(&missing, &country).await {
+        Ok(mut found) => {
+            for id in missing {
+                let assets = found.remove(&id);
+                cache.insert(
+                    id,
+                    CachedArt {
+                        fetched_at: now,
+                        assets,
+                    },
+                );
+            }
+            if let Err(e) = save_art_cache(&cache).await {
+                tracing::warn!("could not write the art cache: {e:#}");
+            }
+        }
+        Err(e) => tracing::warn!("could not fetch library art: {e:#}"),
+    }
+    cache
+}
+
 pub(crate) async fn cmd_list(
     installed: bool,
     search: Option<String>,
@@ -250,21 +320,13 @@ pub(crate) async fn cmd_list(
     }
 
     if json {
-        // Bake the conventional artwork/store URLs
+        let art = resolve_library_art(&client, &games).await;
         let enriched: Vec<serde_json::Value> = games
             .iter()
             .map(|g| {
                 let mut v = serde_json::to_value(g).unwrap_or_default();
                 if let Some(obj) = v.as_object_mut() {
-                    obj.insert(
-                        "assets".into(),
-                        serde_json::json!({
-                            "header": steam_urls::header_url(g.app_id),
-                            "capsule": steam_urls::capsule_url(g.app_id),
-                            "hero": steam_urls::hero_url(g.app_id),
-                            "logo": steam_urls::logo_url(g.app_id),
-                        }),
-                    );
+                    obj.insert("assets".into(), library_art(g.app_id, art.get(&g.app_id)));
                     obj.insert(
                         "store_url".into(),
                         serde_json::json!(steam_urls::store_url(g.app_id)),

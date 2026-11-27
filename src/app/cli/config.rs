@@ -32,6 +32,15 @@ pub(crate) enum ConfigCommand {
         #[arg(value_parser = clap::value_parser!(u64).range(1..=300))]
         seconds: Option<u64>,
     },
+    /// View or set DLC cache seconds.
+    DlcCache {
+        /// DLC list seconds (default 86400).
+        #[arg(long, value_parser = clap::value_parser!(u64).range(0..=2_592_000))]
+        list: Option<u64>,
+        /// Ownership seconds (default 3600).
+        #[arg(long, value_parser = clap::value_parser!(u64).range(0..=2_592_000))]
+        owned: Option<u64>,
+    },
     /// View or set the price country.
     #[command(alias = "cc")]
     Country {

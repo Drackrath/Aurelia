@@ -200,6 +200,12 @@ pub struct LauncherConfig {
     /// Global download limit in kbit/s; 0 is unlimited.
     #[serde(default)]
     pub download_limit_kbit: u64,
+    /// Seconds a DLC list stays cached.
+    #[serde(default = "default_dlc_list_cache_secs")]
+    pub dlc_list_cache_secs: u64,
+    /// Seconds DLC ownership stays cached.
+    #[serde(default = "default_dlc_owned_cache_secs")]
+    pub dlc_owned_cache_secs: u64,
     /// Unknown keys, kept on save.
     #[serde(flatten)]
     pub extra: ExtraKeys,
@@ -215,6 +221,14 @@ pub const DEFAULT_PERSONA_WAIT_SECS: u64 = 30;
 
 fn default_persona_wait_secs() -> u64 {
     DEFAULT_PERSONA_WAIT_SECS
+}
+
+fn default_dlc_list_cache_secs() -> u64 {
+    DLC_LIST_TTL_SECS
+}
+
+fn default_dlc_owned_cache_secs() -> u64 {
+    DLC_OWNED_TTL_SECS
 }
 
 impl LauncherConfig {
@@ -286,6 +300,8 @@ impl Default for LauncherConfig {
             encrypt_session: false,
             persona_wait_secs: DEFAULT_PERSONA_WAIT_SECS,
             download_limit_kbit: 0,
+            dlc_list_cache_secs: DLC_LIST_TTL_SECS,
+            dlc_owned_cache_secs: DLC_OWNED_TTL_SECS,
             extra: ExtraKeys::new(),
         }
     }
@@ -818,6 +834,137 @@ pub async fn save_info_cache(
         dlc: dlc.to_vec(),
     };
     write_json_pretty(&info_cache_path(app_id, language, country)?, &record).await
+}
+
+/// Default DLC list cache seconds.
+pub const DLC_LIST_TTL_SECS: u64 = 24 * 3600;
+/// Default seconds DLC ownership stays fresh.
+pub const DLC_OWNED_TTL_SECS: u64 = 3600;
+/// Pause after Steam throttled ownership checks.
+pub const DLC_OWNED_BACKOFF_SECS: u64 = 600;
+
+/// Cached DLC result, minus local state.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CachedDlcList {
+    /// When ids and store were fetched.
+    pub fetched_at: u64,
+    pub dlc_ids: Vec<u32>,
+    pub store: Vec<crate::steam_client::StoreAppInfo>,
+    /// When ownership was checked.
+    pub owned_at: u64,
+    pub owned: Vec<u32>,
+    /// No ownership checks before this time.
+    #[serde(default)]
+    pub retry_after: u64,
+    /// Account the ownership set belongs to.
+    #[serde(default)]
+    pub steam_id: Option<u64>,
+    /// Licence list behind `owned`.
+    #[serde(default)]
+    pub licence_fingerprint: Option<u64>,
+}
+
+/// DLC cache parts to fetch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DlcRefresh {
+    pub list: bool,
+    pub owned: bool,
+}
+
+impl CachedDlcList {
+    /// Stale parts at `now`.
+    pub fn refresh_needed(&self, now: u64, list_ttl: u64, owned_ttl: u64) -> DlcRefresh {
+        // TTL 0 means always fetch.
+        let list = now.saturating_sub(self.fetched_at) >= list_ttl;
+        // New ids need fresh ownership.
+        let owned = list || self.owned_at == 0 || now.saturating_sub(self.owned_at) >= owned_ttl;
+        DlcRefresh { list, owned }
+    }
+
+    /// Drop ownership cached for another account.
+    pub fn bind_account(&mut self, steam_id: Option<u64>) {
+        if self.steam_id != steam_id {
+            self.owned.clear();
+            self.owned_at = 0;
+            self.steam_id = steam_id;
+        }
+    }
+
+    /// Newer licence list: ownership is stale.
+    pub fn bind_licences(&mut self, live: Option<u64>) {
+        if live.is_some() && self.licence_fingerprint != live {
+            self.owned_at = 0;
+        }
+    }
+
+    /// Steam throttled us recently; don't ask.
+    pub fn ownership_paused(&self, now: u64) -> bool {
+        now < self.retry_after
+    }
+}
+
+fn dlc_cache_path(app_id: u32, language: &str, country: &str) -> Result<PathBuf> {
+    let info = info_cache_path(app_id, language, country)?;
+    let name = info
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(info_cache_dir()?.join("dlc").join(name))
+}
+
+/// Cached DLC list, any age.
+pub async fn load_dlc_cache(app_id: u32, language: &str, country: &str) -> Option<CachedDlcList> {
+    let path = dlc_cache_path(app_id, language, country).ok()?;
+    let raw = fs::read_to_string(&path).await.ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+/// Persist a DLC list for `app_id`.
+pub async fn save_dlc_cache(
+    app_id: u32,
+    language: &str,
+    country: &str,
+    record: &CachedDlcList,
+) -> Result<()> {
+    write_json_pretty(&dlc_cache_path(app_id, language, country)?, record).await
+}
+
+/// Seconds cached library art stays fresh.
+pub const ART_CACHE_TTL_SECS: u64 = 14 * 24 * 3600;
+
+/// Store artwork of one app.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CachedArt {
+    pub fetched_at: u64,
+    /// `None`: store has no hashed art.
+    pub assets: Option<crate::steam_client::StoreAppAssets>,
+}
+
+impl CachedArt {
+    /// Older than `ttl` seconds.
+    pub fn is_stale(&self, now: u64, ttl: u64) -> bool {
+        now.saturating_sub(self.fetched_at) >= ttl
+    }
+}
+
+fn art_cache_path() -> Result<PathBuf> {
+    Ok(info_cache_dir()?.join("art_cache.json"))
+}
+
+/// Library art cache; empty if unreadable.
+pub async fn load_art_cache() -> HashMap<u32, CachedArt> {
+    let Ok(path) = art_cache_path() else {
+        return HashMap::new();
+    };
+    let Ok(raw) = fs::read_to_string(&path).await else {
+        return HashMap::new();
+    };
+    serde_json::from_str(&raw).unwrap_or_default()
+}
+
+/// Persist the library art cache.
+pub async fn save_art_cache(cache: &HashMap<u32, CachedArt>) -> Result<()> {
+    write_json_pretty(&art_cache_path()?, cache).await
 }
 
 fn tag_name_cache_path(language: &str) -> Result<PathBuf> {

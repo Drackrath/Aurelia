@@ -69,6 +69,7 @@ mod achievements;
 pub mod connection;
 mod dlc;
 mod download;
+pub mod licence_list;
 pub mod pics;
 mod registry;
 mod store_mapping;

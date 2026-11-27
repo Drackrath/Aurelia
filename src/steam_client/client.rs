@@ -152,22 +152,7 @@ impl SteamClient {
     }
 
     pub async fn get_app_ticket(&self, appid: u32) -> Result<Vec<u8>> {
-        let connection = self.require_connection()?;
-
-        let mut request = CMsgClientGetAppOwnershipTicket::new();
-        request.set_app_id(appid);
-
-        let response: steam_vent_proto::steammessages_clientserver::CMsgClientGetAppOwnershipTicketResponse =
-            connection
-                .job(request)
-                .await
-                .context("failed requesting app ownership ticket")?;
-
-        let ticket = response.ticket().to_vec();
-        if ticket.is_empty() {
-            bail!("Steam returned an empty app ownership ticket for app {appid}");
-        }
-        Ok(ticket)
+        app_ticket(self.require_connection()?, appid).await
     }
 
     /// Request an encrypted app ticket.
@@ -733,4 +718,33 @@ pub(crate) fn extract_encrypted_ticket(
         .write_to_bytes()
         .context("failed serializing encrypted app ticket")?;
     Ok(EncryptedTicketOutcome::Issued(bytes))
+}
+
+/// App ownership ticket over `connection`.
+pub(crate) async fn app_ticket(connection: &Connection, appid: u32) -> Result<Vec<u8>> {
+    let mut request = CMsgClientGetAppOwnershipTicket::new();
+    request.set_app_id(appid);
+
+    let response: steam_vent_proto::steammessages_clientserver::CMsgClientGetAppOwnershipTicketResponse =
+        connection
+            .job(request)
+            .await
+            .context("failed requesting app ownership ticket")?;
+
+    // Keep Steam's code for error classification.
+    let code = response.eresult();
+    if code != 1 {
+        let result =
+            steam_vent::EResult::try_from(code as i32).unwrap_or(steam_vent::EResult::Fail);
+        return Err(
+            anyhow::Error::new(steam_vent::NetworkError::ApiError(result)).context(format!(
+                "Steam refused the app ownership ticket for app {appid} ({result:?})"
+            )),
+        );
+    }
+    let ticket = response.ticket().to_vec();
+    if ticket.is_empty() {
+        bail!("Steam returned an empty app ownership ticket for app {appid}");
+    }
+    Ok(ticket)
 }

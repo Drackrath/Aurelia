@@ -153,12 +153,15 @@ pub(super) fn purchase_option_summary(
 /// Artwork URLs for a store app. Built from the StoreBrowse `assets` block when
 /// present, falling back to Steam's conventional per-appid CDN paths so a caller
 /// (e.g. Heroic) always has usable URLs instead of guessing them itself.
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct StoreAppAssets {
     /// Wide store header / capsule (`header.jpg`).
     pub header: Option<String>,
     /// Portrait library cover (`library_600x900`).
     pub capsule: Option<String>,
+    /// Small store capsule (`capsule_231x87`).
+    #[serde(default)]
+    pub small_capsule: Option<String>,
     /// Wide library hero background.
     pub hero: Option<String>,
     /// Store-page background.
@@ -377,7 +380,7 @@ pub(super) fn asset_url(fmt: &str, filename: &str) -> Option<String> {
     Some(if path.starts_with("http") {
         path
     } else {
-        format!("https://shared.cloudflare.steamstatic.com/store_item_assets/{path}")
+        format!("https://shared.steamstatic.com/store_item_assets/{path}")
     })
 }
 
@@ -402,7 +405,7 @@ pub(super) fn store_screenshots(item: &StoreItem) -> Vec<String> {
 pub(super) fn screenshot_url(fmt: &str, filename: &str) -> Option<String> {
     if filename.starts_with("steam/") {
         return Some(format!(
-            "https://shared.cloudflare.steamstatic.com/store_item_assets/{filename}"
+            "https://shared.steamstatic.com/store_item_assets/{filename}"
         ));
     }
     asset_url(fmt, filename)
@@ -459,7 +462,7 @@ pub(super) fn store_assets(item: &StoreItem) -> StoreAppAssets {
             Some(path)
         } else {
             Some(format!(
-                "https://shared.cloudflare.steamstatic.com/store_item_assets/{path}"
+                "https://shared.steamstatic.com/store_item_assets/{path}"
             ))
         }
     };
@@ -469,6 +472,10 @@ pub(super) fn store_assets(item: &StoreItem) -> StoreAppAssets {
 
     StoreAppAssets {
         header: pick(assets.and_then(|a| from_fmt(a.header())), "header.jpg"),
+        small_capsule: pick(
+            assets.and_then(|a| from_fmt(a.small_capsule())),
+            "capsule_231x87.jpg",
+        ),
         capsule: pick(
             assets.and_then(|a| from_fmt(a.library_capsule_2x())),
             "library_600x900_2x.jpg",
