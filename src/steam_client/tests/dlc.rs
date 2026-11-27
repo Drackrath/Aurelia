@@ -95,3 +95,30 @@ fn installed_dlc_depots_reads_dlcappid_tags() {
         [1977574u64].into_iter().collect()
     );
 }
+
+fn api_error(result: steam_vent::EResult) -> anyhow::Error {
+    anyhow::Error::new(steam_vent::NetworkError::ApiError(result)).context("ticket refused")
+}
+
+#[test]
+fn rate_limited_ownership_check_is_inconclusive() {
+    assert!(manifests::ownership_check_inconclusive(&api_error(
+        steam_vent::EResult::RateLimitExceeded
+    )));
+}
+
+#[test]
+fn timed_out_ownership_check_is_inconclusive() {
+    let err = anyhow::Error::new(steam_vent::NetworkError::Timeout);
+    assert!(manifests::ownership_check_inconclusive(&err));
+}
+
+#[test]
+fn denied_ownership_ticket_means_not_owned() {
+    assert!(!manifests::ownership_check_inconclusive(&api_error(
+        steam_vent::EResult::AccessDenied
+    )));
+    assert!(!manifests::ownership_check_inconclusive(&anyhow::anyhow!(
+        "Steam returned an empty app ownership ticket for app 10"
+    )));
+}

@@ -568,6 +568,8 @@ impl SteamClient {
     ///
     /// Steam issues an ownership ticket only for licensed apps. PICS access
     /// tokens are no substitute: Steam grants them for unowned DLC too.
+    /// Rate limits, timeouts and dropped connections fail the whole check
+    /// instead of reading as "not owned", so nothing wrong gets cached.
     /// Without a connection every app reads as not owned.
     pub async fn owned_among(&self, app_ids: &[u32]) -> Result<HashSet<u32>> {
         let mut owned = HashSet::new();
@@ -579,18 +581,34 @@ impl SteamClient {
             for &app_id in chunk {
                 let connection = connection.clone();
                 set.spawn(async move {
-                    let ok = super::client::app_ticket(&connection, app_id).await.is_ok();
-                    (app_id, ok)
+                    let result = super::client::app_ticket(&connection, app_id).await;
+                    (app_id, result)
                 });
             }
             while let Some(joined) = set.join_next().await {
-                if let Ok((app_id, true)) = joined {
-                    owned.insert(app_id);
+                let (app_id, result) = joined.context("ownership check task failed")?;
+                match result {
+                    Ok(_) => {
+                        owned.insert(app_id);
+                    }
+                    Err(e) if ownership_check_inconclusive(&e) => {
+                        return Err(e.context(format!("could not check ownership of app {app_id}")));
+                    }
+                    Err(_) => {}
                 }
             }
         }
         Ok(owned)
     }
+}
+
+/// Failure says nothing about the licence.
+pub(super) fn ownership_check_inconclusive(err: &anyhow::Error) -> bool {
+    use crate::core::error::{ErrorKind, classify};
+    matches!(
+        classify(err).kind,
+        ErrorKind::RateLimited | ErrorKind::NetworkTimeout | ErrorKind::Offline
+    )
 }
 
 /// One lexical token of VDF text.
