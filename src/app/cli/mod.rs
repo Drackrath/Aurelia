@@ -340,6 +340,9 @@ pub(crate) enum Command {
         /// Also list retired DLC the store no longer has.
         #[arg(long)]
         all: bool,
+        /// Skip the DLC cache and fetch fresh.
+        #[arg(long)]
+        no_cache: bool,
     },
     /// Enable an installed DLC for its base game.
     Enable {

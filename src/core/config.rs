@@ -820,6 +820,68 @@ pub async fn save_info_cache(
     write_json_pretty(&info_cache_path(app_id, language, country)?, &record).await
 }
 
+/// Hours an `aurelia dlc` list stays fresh.
+pub const DLC_LIST_TTL_SECS: u64 = 24 * 3600;
+/// Hour DLC ownership stays fresh.
+pub const DLC_OWNED_TTL_SECS: u64 = 3600;
+
+/// A cached `aurelia dlc` result, minus local state.
+///
+/// Installed/disabled come from the appmanifest on every call.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CachedDlcList {
+    /// When ids and store data were fetched.
+    pub fetched_at: u64,
+    pub dlc_ids: Vec<u32>,
+    pub store: Vec<crate::steam_client::StoreAppInfo>,
+    /// When ownership was checked.
+    pub owned_at: u64,
+    pub owned: Vec<u32>,
+}
+
+/// Which parts of a DLC cache need fetching.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DlcRefresh {
+    pub list: bool,
+    pub owned: bool,
+}
+
+impl CachedDlcList {
+    /// Stale parts at `now` for the given TTLs.
+    pub fn refresh_needed(&self, now: u64, list_ttl: u64, owned_ttl: u64) -> DlcRefresh {
+        let list = now.saturating_sub(self.fetched_at) > list_ttl;
+        // New ids need a fresh ownership check.
+        let owned = list || now.saturating_sub(self.owned_at) > owned_ttl;
+        DlcRefresh { list, owned }
+    }
+}
+
+fn dlc_cache_path(app_id: u32, language: &str, country: &str) -> Result<PathBuf> {
+    let info = info_cache_path(app_id, language, country)?;
+    let name = info
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(info_cache_dir()?.join("dlc").join(name))
+}
+
+/// Cached DLC list for `app_id`, any age.
+pub async fn load_dlc_cache(app_id: u32, language: &str, country: &str) -> Option<CachedDlcList> {
+    let path = dlc_cache_path(app_id, language, country).ok()?;
+    let raw = fs::read_to_string(&path).await.ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+/// Persist a DLC list for `app_id`.
+pub async fn save_dlc_cache(
+    app_id: u32,
+    language: &str,
+    country: &str,
+    record: &CachedDlcList,
+) -> Result<()> {
+    write_json_pretty(&dlc_cache_path(app_id, language, country)?, record).await
+}
+
 fn tag_name_cache_path(language: &str) -> Result<PathBuf> {
     let lang: String = language
         .chars()

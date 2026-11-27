@@ -525,10 +525,22 @@ impl SteamClient {
 
     /// Resolve the ownership / install / enable status of each DLC of a base game.
     ///
-    /// `owned` comes from the account (an app ownership ticket is issued only for
+    /// `owned` comes from the account (Steam grants a PICS token only for
     /// licensed apps). `installed` and `disabled` are read from the base game's
     /// appmanifest — if the base game isn't installed, both are `false` for every DLC.
     pub async fn dlc_states(&self, base_appid: u32, dlc_ids: &[u32]) -> Result<Vec<DlcState>> {
+        let owned = self.owned_among(dlc_ids).await?;
+        self.dlc_states_with_owned(base_appid, dlc_ids, &owned)
+            .await
+    }
+
+    /// DLC states from a known owned set; reads only the appmanifest.
+    pub async fn dlc_states_with_owned(
+        &self,
+        base_appid: u32,
+        dlc_ids: &[u32],
+        owned: &HashSet<u32>,
+    ) -> Result<Vec<DlcState>> {
         // Local install/enable state lives in the base game's appmanifest.
         let (installed, disabled) = match self.appmanifest_path(base_appid).await {
             Ok(path) if path.exists() => {
@@ -541,8 +553,6 @@ impl SteamClient {
             }
             _ => (HashSet::new(), HashSet::new()),
         };
-
-        let owned = self.owned_among(dlc_ids).await?;
         Ok(dlc_ids
             .iter()
             .map(|&dlc_id| DlcState {
@@ -557,7 +567,7 @@ impl SteamClient {
     /// Owned apps among `app_ids`, from one batched token request.
     ///
     /// Without a connection every app reads as not owned.
-    async fn owned_among(&self, app_ids: &[u32]) -> Result<HashSet<u32>> {
+    pub async fn owned_among(&self, app_ids: &[u32]) -> Result<HashSet<u32>> {
         let Some(connection) = self.connection() else {
             return Ok(HashSet::new());
         };

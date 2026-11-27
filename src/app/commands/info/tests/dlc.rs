@@ -35,7 +35,11 @@ fn dlc_with_named_store_item_is_live() {
 
 #[test]
 fn retired_unowned_dlc_is_hidden() {
-    assert!(!dlc_is_listed(true, Some(&state(false, false, false)), false));
+    assert!(!dlc_is_listed(
+        true,
+        Some(&state(false, false, false)),
+        false
+    ));
     assert!(!dlc_is_listed(true, None, false));
 }
 
@@ -61,7 +65,10 @@ fn dlc_image_prefers_store_assets() {
     let mut info = store("Tarnished Pack");
     info.assets.header = Some("https://example/hashed/header.jpg".into());
     info.assets.small_capsule = Some("https://example/hashed/capsule.jpg".into());
-    assert_eq!(dlc_image(Some(&info), 3655690), "https://example/hashed/header.jpg");
+    assert_eq!(
+        dlc_image(Some(&info), 3655690),
+        "https://example/hashed/header.jpg"
+    );
     assert_eq!(
         dlc_fallback_image(Some(&info), 3655690),
         "https://example/hashed/capsule.jpg"
@@ -71,5 +78,8 @@ fn dlc_image_prefers_store_assets() {
 #[test]
 fn dlc_image_without_store_item_uses_cdn() {
     assert_eq!(dlc_image(None, 10), steam_urls::header_url(10));
-    assert_eq!(dlc_fallback_image(None, 10), steam_urls::small_capsule_url(10));
+    assert_eq!(
+        dlc_fallback_image(None, 10),
+        steam_urls::small_capsule_url(10)
+    );
 }

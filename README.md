@@ -290,6 +290,7 @@ aurelia news 275850                  # recent announcements
 aurelia reviews 275850 -t negative   # user reviews, paged via --cursor
 aurelia dlc 690830                   # list a game's DLC with ownership and install status
 aurelia dlc 690830 --all             # include retired DLC the store dropped
+aurelia dlc 690830 --no-cache        # skip the 24 h list / 1 h ownership cache
 aurelia drm 690830                   # verify DRM/ownership tickets headlessly (no Steam client)
 aurelia achievements 620             # your achievements for a game (unlock state + rarity)
 aurelia achievements 620 --lang german  # localize achievement names and descriptions
