@@ -81,7 +81,11 @@ pub(super) fn parse_product_info_envelope(vdf: &str) -> Result<ProductInfoEnvelo
         .context("product info envelope was empty")
 }
 
-pub(super) fn parse_launch_info_from_vdf(appid: u32, raw_vdf: &str) -> Result<Vec<LaunchInfo>> {
+pub(super) fn parse_launch_info_from_vdf(
+    appid: u32,
+    raw_vdf: &str,
+    host: DepotPlatform,
+) -> Result<Vec<LaunchInfo>> {
     let parsed: ProductInfoEnvelope =
         parse_product_info_envelope(raw_vdf).context("failed to parse product info VDF")?;
 
@@ -105,12 +109,14 @@ pub(super) fn parse_launch_info_from_vdf(appid: u32, raw_vdf: &str) -> Result<Ve
         // Pick the launch target from the entry's oslist, falling back to the
         // executable extension and finally the host OS.
         let target = if let Some(os) = os_list {
-            if os.contains("linux") {
+            if host == DepotPlatform::Macos && os.contains("macos") {
+                LaunchTarget::NativeMacos
+            } else if os.contains("linux") {
                 LaunchTarget::NativeLinux
             } else if os.contains("windows") {
                 LaunchTarget::WindowsProton
             } else if os.contains("macos") {
-                continue; // we don't launch macOS builds
+                LaunchTarget::NativeMacos
             } else {
                 LaunchTarget::WindowsProton
             }
@@ -119,19 +125,12 @@ pub(super) fn parse_launch_info_from_vdf(appid: u32, raw_vdf: &str) -> Result<Ve
         } else if exe.contains("linux") || exe.ends_with(".sh") {
             LaunchTarget::NativeLinux
         } else {
-            #[cfg(target_os = "linux")]
-            {
-                LaunchTarget::NativeLinux
-            }
-            #[cfg(target_os = "windows")]
-            {
-                LaunchTarget::WindowsProton
-            }
-            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-            {
-                LaunchTarget::WindowsProton
-            }
+            LaunchTarget::from(host)
         };
+        // Only a Mac runs Mac builds, and a Mac runs no others since Proton is Linux-only.
+        if (target == LaunchTarget::NativeMacos) != (host == DepotPlatform::Macos) {
+            continue;
+        }
 
         options.push(LaunchInfo {
             app_id: appid,
@@ -462,10 +461,6 @@ pub(super) struct ProductLaunchEntry {
 pub(super) struct ProductLaunchConfigInner {
     #[serde(default)]
     oslist: Option<String>,
-}
-
-pub(super) fn split_args(args: &str) -> Vec<String> {
-    args.split_whitespace().map(ToString::to_string).collect()
 }
 
 /// One-app PICS `ProductInfo` buffer request.

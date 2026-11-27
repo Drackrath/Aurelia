@@ -2,7 +2,7 @@ use crate::core::config::LauncherConfig;
 use crate::core::models::{LibraryGame, UserAppConfig};
 use crate::steam_client::LaunchInfo;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct LaunchContext {
@@ -40,34 +40,19 @@ impl LaunchContext {
         unsafe { f(&mut *self.verification_ptr) }
     }
 
-    /// Resolve install dir, executable, workingdir.
-    pub fn game_paths(
-        &self,
-    ) -> std::result::Result<(PathBuf, PathBuf, PathBuf), crate::launch::error::LaunchError> {
+    /// The install dir this launch's entry resolves under (`LaunchInfo::command`).
+    pub fn install_dir(&self) -> std::result::Result<&Path, crate::launch::error::LaunchError> {
         use crate::launch::error::{LaunchError, LaunchErrorKind};
-        let install_dir = PathBuf::from(self.app.install_path.clone().ok_or_else(|| {
-            LaunchError::new(
-                LaunchErrorKind::GameData,
-                format!("game {} is not installed", self.app.app_id),
-            )
-        })?);
-
-        let exe_rel = self.launch_info.executable.replace('\\', "/");
-        let executable = if std::path::Path::new(&exe_rel).is_absolute() {
-            PathBuf::from(&exe_rel)
-        } else {
-            install_dir.join(&exe_rel)
-        };
-        let working_dir = self
-            .launch_info
-            .workingdir
+        self.app
+            .install_path
             .as_deref()
-            .filter(|s| !s.is_empty())
-            .map(|wd| install_dir.join(wd.replace('\\', "/")))
-            .or_else(|| executable.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| install_dir.clone());
-
-        Ok((install_dir, executable, working_dir))
+            .map(Path::new)
+            .ok_or_else(|| {
+                LaunchError::new(
+                    LaunchErrorKind::GameData,
+                    format!("game {} is not installed", self.app.app_id),
+                )
+            })
     }
 }
 

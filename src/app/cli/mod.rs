@@ -294,8 +294,8 @@ pub(crate) enum Command {
         force: bool,
     },
     /// List the ways an installed game can be launched: each installed build
-    /// (native Linux / Windows) and, for Windows, each available Steam mode, with
-    /// the `play` flags selecting it and which one plain `play` would pick.
+    /// (native Linux, native macOS or Windows) and, for Windows, each available Steam
+    /// mode, with the `play` flags selecting it and which one plain `play` would pick.
     LaunchTargets {
         app_id: u32,
         /// Compute the default as for `play --steam`.
@@ -340,14 +340,14 @@ pub(crate) enum Command {
     Enable {
         app_id: u32,
         /// Stop Steam while applying the change, then restart it, so the running
-        /// client picks it up (Windows and Linux). Steam reads DLC state only at startup.
+        /// client picks it up. Steam reads DLC state only at startup.
         #[arg(short = 'r', long)]
         restart_steam: bool,
     },
     /// Disable a DLC for its base game.
     Disable {
         app_id: u32,
-        /// Stop Steam while applying the change, then restart it (Windows and Linux).
+        /// Stop Steam while applying the change, then restart it.
         #[arg(short = 'r', long)]
         restart_steam: bool,
     },

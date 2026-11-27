@@ -45,16 +45,21 @@ impl SteamClient {
             .is_some_and(|user| user != 0)
     }
 
+    #[cfg(target_os = "macos")]
+    pub fn steam_is_logged_on() -> bool {
+        crate::core::steam_host::steam_is_logged_on()
+    }
+
     /// Make sure the desktop Steam client is up for a `--steam` launch: start it
     /// silently if it isn't running, then wait (up to `timeout`) for it to sign in
     /// so Steamworks/DRM can initialise. Best-effort, like the Linux path: on
     /// failure or timeout the game launches anyway and the reason is logged.
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     pub async fn ensure_host_steam_ready(timeout: std::time::Duration) {
         if SteamClient::steam_is_running() {
             tracing::info!("Steam client already running; not starting it");
         } else {
-            tracing::info!("Steam client not running; starting `steam.exe -silent` (tray)");
+            tracing::info!("Steam client not running; starting it with -silent");
             if let Err(e) = SteamClient::start_steam() {
                 tracing::warn!("could not start Steam client: {e:#}");
                 return;
@@ -74,14 +79,9 @@ impl SteamClient {
         tracing::info!("host Steam logged on; proceeding with launch");
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub fn steam_is_running() -> bool {
         crate::core::steam_host::is_steam_running()
-    }
-
-    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-    pub fn steam_is_running() -> bool {
-        false
     }
 
     /// Ask the desktop Steam client to shut down, and wait for it to fully exit.
@@ -121,14 +121,18 @@ impl SteamClient {
         Ok(())
     }
 
-    /// Stop host Steam and wait (Linux).
-    #[cfg(target_os = "linux")]
+    /// Stop host Steam and wait (Linux, macOS).
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub fn shutdown_steam() -> Result<()> {
-        // `-shutdown` would start a stopped Steam.
+        // Either request would start a stopped Steam.
         if !SteamClient::steam_is_running() {
             return Ok(());
         }
+        #[cfg(target_os = "linux")]
         crate::core::steam_host::start_steam_detached(&["-shutdown"])
+            .context("failed to signal Steam shutdown")?;
+        #[cfg(target_os = "macos")]
+        SteamClient::open_in_background(&["steam://exit"])
             .context("failed to signal Steam shutdown")?;
         let stopped = crate::core::time::wait_until(
             || !SteamClient::steam_is_running(),
@@ -147,14 +151,30 @@ impl SteamClient {
         crate::core::steam_host::start_steam_detached(&["-silent"]).context("failed to start Steam")
     }
 
-    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-    pub fn shutdown_steam() -> Result<()> {
-        bail!("automatic Steam control is only supported on Windows and Linux")
+    /// Start host Steam silently (macOS).
+    #[cfg(target_os = "macos")]
+    pub fn start_steam() -> Result<()> {
+        SteamClient::open_in_background(&["-b", "com.valvesoftware.steam", "--args", "-silent"])
+            .context("failed to start Steam (is Steam.app installed?)")
     }
 
-    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-    pub fn start_steam() -> Result<()> {
-        bail!("automatic Steam control is only supported on Windows and Linux")
+    /// `open -g` runs Steam under launchd, as the Dock does, so there is no child to reap.
+    #[cfg(target_os = "macos")]
+    fn open_in_background(args: &[&str]) -> Result<()> {
+        let output = Command::new("/usr/bin/open")
+            .arg("-g")
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .context("failed to run open")?;
+        if !output.status.success() {
+            bail!(
+                "`open -g {}` failed: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        Ok(())
     }
 
     /// Stop a game previously launched by `aurelia play`. Looks up the launch
@@ -420,22 +440,18 @@ NoSavePersonalInfo=1
     }
 
     /// Launch a Windows game's executable directly, with no Proton/Wine layer.
-    /// Resolve install dir, executable, args, workingdir.
+    /// The entry's command, plus the user's launch-option arguments.
     async fn resolve_exec_plan(
         &self,
         app: &LibraryGame,
         launch_info: &LaunchInfo,
         user_config: Option<&crate::core::models::UserAppConfig>,
-    ) -> Result<(PathBuf, PathBuf, Vec<String>, PathBuf)> {
+    ) -> Result<GameCommand> {
         let install_dir = match app.install_path.as_ref().map(PathBuf::from) {
             Some(p) if p.exists() => p,
             _ => self.install_root_for_app(app.app_id).await?,
         };
-
-        // Normalize VDF backslash paths.
-        let exe_relative = launch_info.executable.replace('\\', "/");
-        let executable = install_dir.join(&exe_relative);
-        let mut args = split_args(&launch_info.arguments);
+        let mut game = launch_info.command(&install_dir);
 
         if let Some(config) = user_config.filter(|c| !c.launch_options.trim().is_empty()) {
             use crate::launch::stages::user_launch_options::parse_launch_options;
@@ -447,19 +463,10 @@ NoSavePersonalInfo=1
                     "launch option environment and wrappers are ignored for direct Windows launches"
                 );
             }
-            args.extend(options.args);
+            game.args.extend(options.args);
         }
 
-        // Workingdir, exe parent, install dir.
-        let game_working_dir: PathBuf = launch_info
-            .workingdir
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .map(|wd| install_dir.join(wd.replace('\\', "/")))
-            .or_else(|| executable.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| install_dir.clone());
-
-        Ok((install_dir, executable, args, game_working_dir))
+        Ok(game)
     }
 
     /// Used on Windows hosts (and when `--windows` is forced), where the game's
@@ -470,10 +477,16 @@ NoSavePersonalInfo=1
         launch_info: &LaunchInfo,
         user_config: Option<&crate::core::models::UserAppConfig>,
     ) -> Result<crate::launch::game_process::GameProcess> {
-        let (_install_dir, executable, args, game_working_dir) = self
+        let GameCommand {
+            program: executable,
+            args,
+            cwd: game_working_dir,
+        } = self
             .resolve_exec_plan(app, launch_info, user_config)
             .await?;
 
+        // Steam creates a missing workingdir.
+        tokio::fs::create_dir_all(&game_working_dir).await?;
         // Standard Steam identity fallback so the game can resolve its app id.
         crate::core::fsutil::ensure_steam_appid_logged(&game_working_dir, app.app_id);
 
@@ -603,7 +616,11 @@ NoSavePersonalInfo=1
         _launcher_config: &crate::core::config::LauncherConfig,
         user_config: Option<&crate::core::models::UserAppConfig>,
     ) -> Result<std::process::Child> {
-        let (install_dir, executable, args, game_working_dir) = self
+        let GameCommand {
+            program: executable,
+            args,
+            cwd: game_working_dir,
+        } = self
             .resolve_exec_plan(app, launch_info, user_config)
             .await?;
 
@@ -623,7 +640,7 @@ NoSavePersonalInfo=1
 
                 let mut cmd = Command::new(&executable);
                 cmd.args(&args);
-                cmd.current_dir(&install_dir);
+                cmd.current_dir(&game_working_dir);
 
                 let bin_dir = executable.parent().unwrap_or_else(|| Path::new("."));
                 let existing_ld = std::env::var("LD_LIBRARY_PATH").unwrap_or_default();
@@ -654,9 +671,9 @@ NoSavePersonalInfo=1
                     .map(crate::logging::relay::attach)
                     .context("failed to spawn native linux game")
             }
-            LaunchTarget::WindowsProton => {
+            target @ (LaunchTarget::WindowsProton | LaunchTarget::NativeMacos) => {
                 bail!(
-                    "WindowsProton targets must be launched via the Pipeline and Runner abstraction. Ad-hoc bypass is prohibited."
+                    "{target:?} targets must be launched via the Pipeline and Runner abstraction. Ad-hoc bypass is prohibited."
                 );
             }
         }

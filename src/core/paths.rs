@@ -228,11 +228,7 @@ pub fn game_save_prefix(
 /// listing, not `exists()`: on a case-insensitive filesystem (NTFS, exFAT) any
 /// spelling "exists", which would hand back the caller's spelling instead.
 pub fn resolve_path_ignore_case(base: &Path, rel: &str) -> Option<PathBuf> {
-    let mut current = if rel.starts_with('/') {
-        PathBuf::from("/")
-    } else {
-        base.to_path_buf()
-    };
+    let mut current = base.to_path_buf();
     for part in rel
         .split(['/', '\\'])
         .filter(|p| !p.is_empty() && *p != ".")

@@ -157,7 +157,42 @@ fn proc_entry_is_live(proc_dir: &Path) -> bool {
         .is_some_and(|state| state.trim_start().starts_with('Z'))
 }
 
-#[cfg(not(target_os = "linux"))]
+/// Whether this user's Steam client is running. Scans the process list because
+/// `SteamPID` in `registry.vdf` lags startup and a second `steam_osx` overwrites it.
+#[cfg(target_os = "macos")]
+pub fn is_steam_running() -> bool {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    let Ok(mut sys) = System::new() else {
+        return false;
+    };
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing().with_user(UpdateKind::OnlyIfNotSet),
+    );
+    let uid = unsafe { libc::getuid() };
+    steam_running_among(
+        sys.processes()
+            .values()
+            .map(|p| (p.name(), p.user_id().map(|u| **u))),
+        uid,
+    )
+}
+
+/// Testable core of the macOS [`is_steam_running`]. `Steam Helper` exits with the
+/// `steam_osx` client and launchd respawns `ipcserver` after every quit, so neither
+/// counts.
+#[cfg(target_os = "macos")]
+fn steam_running_among<N: AsRef<std::ffi::OsStr>>(
+    processes: impl IntoIterator<Item = (N, Option<u32>)>,
+    uid: u32,
+) -> bool {
+    processes
+        .into_iter()
+        .any(|(name, owner)| name.as_ref() == "steam_osx" && owner == Some(uid))
+}
+
+#[cfg(target_os = "windows")]
 pub fn is_steam_running() -> bool {
     false
 }
@@ -296,7 +331,7 @@ pub fn start_steam_detached(args: &[&str]) -> Result<()> {
 }
 
 /// Latest logged-on state in connection-log text.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn connection_log_logged_on(text: &str) -> Option<bool> {
     let mut state = None;
     for line in text.lines() {
@@ -310,7 +345,7 @@ fn connection_log_logged_on(text: &str) -> Option<bool> {
 }
 
 /// Read the final `max_bytes` of a file.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn read_tail(path: &Path, max_bytes: u64) -> Option<String> {
     use std::io::{Read, Seek, SeekFrom};
     let mut f = std::fs::File::open(path).ok()?;
@@ -323,7 +358,7 @@ fn read_tail(path: &Path, max_bytes: u64) -> Option<String> {
 }
 
 /// Host Steam finished logging on.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn steam_is_logged_on() -> bool {
     let Some(root) = crate::core::config::detect_steam_path() else {
         return false;
@@ -335,7 +370,7 @@ pub fn steam_is_logged_on() -> bool {
     connection_log_logged_on(&text).unwrap_or(false)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
 pub fn steam_is_logged_on() -> bool {
     true
 }

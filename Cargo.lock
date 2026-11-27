@@ -299,7 +299,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "aurelia-steam"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "aes 0.9.4",
  "anyhow",
@@ -313,6 +313,8 @@ dependencies = [
  "cbc 0.2.1",
  "chacha20poly1305",
  "clap",
+ "core-foundation 0.10.1",
+ "core-foundation-sys",
  "directories",
  "flate2",
  "hex",
@@ -348,9 +350,9 @@ dependencies = [
 
 [[package]]
 name = "aurelia-steam-cdn"
-version = "5.1.0"
+version = "5.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "808fbf282b110fa58df25cd9ec50162f793fcba528757fea639c1508d584ab73"
+checksum = "12b4a74fca944e1d798390af99c61d5f197cbb2c2a3b2c50a6f05d98bc773879"
 dependencies = [
  "aes 0.9.4",
  "aurelia-steam-vent",

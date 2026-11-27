@@ -7,7 +7,7 @@ use async_trait::async_trait;
 
 use crate::launch::runners::{CommandSpec, LaunchContext, Runner};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub struct ResolveComponentsStage;
 
@@ -41,26 +41,27 @@ impl Runner for NativeRunner {
         &self,
         ctx: &LaunchContext,
     ) -> std::result::Result<CommandSpec, LaunchError> {
-        let install_path =
-            ctx.app.install_path.as_ref().ok_or_else(|| {
-                LaunchError::new(LaunchErrorKind::GameData, "Install path missing")
-            })?;
-
-        let exe_rel = ctx.launch_info.executable.replace('\\', "/");
-        let args: Vec<String> = ctx
-            .launch_info
-            .arguments
-            .split_whitespace()
-            .map(str::to_string)
-            .collect();
-        let program = PathBuf::from(install_path).join(&exe_rel);
+        let install_dir = ctx.install_dir()?;
+        let crate::steam_client::GameCommand { program, args, cwd } =
+            ctx.launch_info.command(install_dir);
+        // Steam names most Mac builds by their bundle, which can't be exec'd.
+        let bundled = if ctx.launch_info.target == crate::steam_client::LaunchTarget::NativeMacos {
+            bundle_program(&program).await?
+        } else {
+            None
+        };
+        // LaunchServices starts apps in `/`, and Mac games locate their data through the bundle.
+        let (program, cwd) = match bundled {
+            Some(binary) => (binary, PathBuf::from("/")),
+            None => (program, cwd),
+        };
         // Only mutated on Linux.
         #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
         let mut env = self.build_env(ctx).await?;
 
         // 32-bit natives need scout runtime libraries.
         #[cfg(target_os = "linux")]
-        if needs_scout_libs(&program, std::path::Path::new(install_path)) {
+        if needs_scout_libs(&program, install_dir) {
             if let Some(libs) = scout_library_path() {
                 let existing = env
                     .get("LD_LIBRARY_PATH")
@@ -84,7 +85,7 @@ impl Runner for NativeRunner {
         Ok(CommandSpec {
             program,
             args,
-            cwd: Some(PathBuf::from(install_path)),
+            cwd: Some(cwd),
             env,
         })
     }
@@ -133,6 +134,97 @@ impl Runner for NativeRunner {
                 .with_source(anyhow::anyhow!(e))
         })
     }
+}
+
+/// The binary macOS runs for `program`, when `program` is an `.app` bundle.
+async fn bundle_program(program: &Path) -> std::result::Result<Option<PathBuf>, LaunchError> {
+    let is_bundle = program
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("app"))
+        && tokio::fs::metadata(program)
+            .await
+            .is_ok_and(|meta| meta.is_dir());
+    if !is_bundle {
+        return Ok(None);
+    }
+    let not_found = || {
+        LaunchError::new(
+            LaunchErrorKind::GameData,
+            format!("no executable macOS would run in {}", program.display()),
+        )
+    };
+    let bundle = program.to_path_buf();
+    let binary = tokio::task::spawn_blocking(move || {
+        bundle_binary(&bundle, read_bundle_executable(&bundle))
+    })
+    .await
+    .map_err(|e| not_found().with_source(anyhow::anyhow!(e)))?;
+    Ok(Some(binary.ok_or_else(not_found)?))
+}
+
+/// What `Info.plist` says about a bundle's executable.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+enum BundleExecutable {
+    /// No `Info.plist`, or a missing or empty `CFBundleExecutable`: macOS runs the binary
+    /// named after the bundle.
+    Unnamed,
+    Named(String),
+    /// A `CFBundleExecutable` that isn't a string, which macOS won't launch.
+    Invalid,
+}
+
+/// Reads `bundle`'s `Info.plist` from disk on every call.
+///
+/// Not through `CFBundleCreate`: CF caches bundles per process, and `aurelia play` runs in
+/// the long-lived daemon, so a game update that renames its executable would launch the old one.
+#[cfg(target_os = "macos")]
+fn read_bundle_executable(bundle: &Path) -> BundleExecutable {
+    use core_foundation::base::{CFType, TCFType};
+    use core_foundation::dictionary::CFDictionary;
+    use core_foundation::string::CFString;
+    use core_foundation::url::CFURL;
+    use core_foundation_sys::bundle::CFBundleCopyInfoDictionaryForURL;
+
+    let info = CFURL::from_path(bundle, true).and_then(|url| {
+        // SAFETY: `url` outlives the call, and a non-null result is ours to release (Create rule).
+        unsafe {
+            let raw = CFBundleCopyInfoDictionaryForURL(url.as_concrete_TypeRef());
+            (!raw.is_null()).then(|| CFDictionary::<CFString, CFType>::wrap_under_create_rule(raw))
+        }
+    });
+    let Some(value) = info
+        .as_ref()
+        .and_then(|info| info.find(CFString::from_static_string("CFBundleExecutable")))
+    else {
+        return BundleExecutable::Unnamed;
+    };
+    match value.downcast::<CFString>().map(|name| name.to_string()) {
+        Some(name) if name.is_empty() => BundleExecutable::Unnamed,
+        Some(name) => BundleExecutable::Named(name),
+        None => BundleExecutable::Invalid,
+    }
+}
+
+/// Only a Mac keeps macOS launch entries (`parse_launch_info_from_vdf`), so no bundle gets here.
+#[cfg(not(target_os = "macos"))]
+fn read_bundle_executable(_bundle: &Path) -> BundleExecutable {
+    unreachable!("macOS launch entries exist only on a Mac")
+}
+
+/// The file `executable` names under `bundle`'s `Contents/MacOS`, if it resolves inside the
+/// bundle, which rules out `/bin/sh` and escapes through `..` or symlinks.
+///
+/// Keeps the joined path rather than the resolved one: preflight only chmods a program under
+/// the install path as spelled, and macOS also runs a symlinked binary by its own path.
+fn bundle_binary(bundle: &Path, executable: BundleExecutable) -> Option<PathBuf> {
+    let name = match executable {
+        BundleExecutable::Unnamed => PathBuf::from(bundle.file_stem()?),
+        BundleExecutable::Named(name) => PathBuf::from(name),
+        BundleExecutable::Invalid => return None,
+    };
+    let binary = bundle.join("Contents/MacOS").join(name);
+    let real = binary.canonicalize().ok()?;
+    (real.is_file() && real.starts_with(bundle.canonicalize().ok()?)).then_some(binary)
 }
 
 /// First `n` bytes of the file.
@@ -292,7 +384,9 @@ impl PipelineStage for ResolveComponentsStage {
                 ));
             };
             ctx.runner = Some(match info.target {
-                LaunchTarget::NativeLinux => Box::new(NativeRunner) as Box<dyn Runner>,
+                LaunchTarget::NativeLinux | LaunchTarget::NativeMacos => {
+                    Box::new(NativeRunner) as Box<dyn Runner>
+                }
                 LaunchTarget::WindowsProton => Box::new(WineTkgRunner),
             });
         }

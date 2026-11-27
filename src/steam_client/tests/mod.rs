@@ -6,6 +6,7 @@ mod dlc;
 mod download;
 mod install_dir;
 mod launch;
+mod launch_command;
 mod launch_legacy;
 mod licences;
 mod login;

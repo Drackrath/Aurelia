@@ -191,18 +191,11 @@ impl Runner for WineTkgRunner {
                 .collect();
         }
 
-        let (_install_dir, executable, game_working_dir) = ctx.game_paths()?;
+        let game = ctx.launch_info.command(ctx.install_dir()?);
 
-        spec.cwd = Some(game_working_dir);
-        spec.args.push(executable.to_string_lossy().to_string());
-
-        // Split args from launch_info
-        let args = ctx
-            .launch_info
-            .arguments
-            .split_whitespace()
-            .map(ToString::to_string);
-        spec.args.extend(args);
+        spec.cwd = Some(game.cwd);
+        spec.args.push(game.program.to_string_lossy().to_string());
+        spec.args.extend(game.args);
 
         spec.env = self.build_env(ctx).await?;
 

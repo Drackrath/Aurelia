@@ -5,28 +5,9 @@ use crate::launch::{
     pipeline::PipelineStage,
 };
 use async_trait::async_trait;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub struct ResolveDllProvidersStage;
-
-/// Derive the full executable path and its containing directory from the install
-/// path and an optional launch-info executable (whose separators are normalized
-/// to `/`). When no executable is given, both fall back to the install path.
-fn exe_paths_from(install_path: &str, executable: Option<&str>) -> (PathBuf, PathBuf) {
-    let install = PathBuf::from(install_path);
-    match executable {
-        Some(exe) => {
-            let exe_path = install.join(exe.replace('\\', "/"));
-            // Joining a relative parent is equivalent to taking the parent of the
-            // joined path; fall back to the install dir when there is no parent.
-            let exe_dir = exe_path
-                .parent()
-                .map_or_else(|| install.clone(), PathBuf::from);
-            (exe_path, exe_dir)
-        }
-        None => (install.clone(), install),
-    }
-}
 
 #[async_trait]
 impl PipelineStage for ResolveDllProvidersStage {
@@ -39,18 +20,19 @@ impl PipelineStage for ResolveDllProvidersStage {
             .app
             .as_ref()
             .ok_or_else(|| LaunchError::new(LaunchErrorKind::Validation, "App context missing"))?;
-        let install_path = app
-            .install_path
-            .as_ref()
-            .ok_or_else(|| LaunchError::new(LaunchErrorKind::GameData, "Install path missing"))?;
+        let install =
+            app.install_path.as_deref().map(Path::new).ok_or_else(|| {
+                LaunchError::new(LaunchErrorKind::GameData, "Install path missing")
+            })?;
 
-        // Derive the executable path and its directory once; with launch info we
-        // can be more precise about the exe dir than just the install root.
-        let executable = ctx
-            .launch_info
-            .as_ref()
-            .map(|info| info.executable.as_str());
-        let (exe_path, game_exe_dir) = exe_paths_from(install_path, executable);
+        let (exe_path, game_exe_dir) = match &ctx.launch_info {
+            Some(info) => {
+                let exe = info.command(install).program;
+                let dir = exe.parent().unwrap_or(install).to_path_buf();
+                (exe, dir)
+            }
+            None => (install.to_path_buf(), install.to_path_buf()),
+        };
 
         let nvapi_enabled = ctx
             .user_config

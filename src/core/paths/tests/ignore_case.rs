@@ -30,6 +30,14 @@ fn backslash_separators_are_split() {
 }
 
 #[test]
+fn leading_slash_stays_inside_base() {
+    let tmp = tempfile::tempdir().unwrap();
+    touch(&tmp.path().join("Game.app/Contents/MacOS/Game"));
+    let got = resolve_path_ignore_case(tmp.path(), "/Game.app/Contents/MacOS/Game").unwrap();
+    assert_eq!(got, tmp.path().join("Game.app/Contents/MacOS/Game"));
+}
+
+#[test]
 fn exact_match_beats_case_variant() {
     let tmp = tempfile::tempdir().unwrap();
     touch(&tmp.path().join("Game.exe"));

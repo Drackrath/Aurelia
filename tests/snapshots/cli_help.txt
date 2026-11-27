@@ -24,7 +24,7 @@ Commands:
   update          List installed games with an update available, or update one by app id
   play            Launch a game and wait for it to exit
   shaders         Pre-compile a game's Vulkan shaders from its Steam pipeline cache (`steamapps/shadercache/<appid>`), as Steam's "Processing Vulkan shaders" does. `play` does this automatically unless `config shader-precache off`
-  launch-targets  List the ways an installed game can be launched: each installed build (native Linux / Windows) and, for Windows, each available Steam mode, with the `play` flags selecting it and which one plain `play` would pick
+  launch-targets  List the ways an installed game can be launched: each installed build (native Linux, native macOS or Windows) and, for Windows, each available Steam mode, with the `play` flags selecting it and which one plain `play` would pick
   stop            Stop a running game previously launched with `aurelia play`
   running         List the games Aurelia is currently running
   uninstall       Uninstall a game
@@ -1019,7 +1019,7 @@ Arguments:
   <APP_ID>  
 
 Options:
-  -r, --restart-steam  Stop Steam while applying the change, then restart it (Windows and Linux)
+  -r, --restart-steam  Stop Steam while applying the change, then restart it
   -j, --json           Emit output (and errors) as JSON. Works with every command
   -v, --verbose...     Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
   -h, --help           Print help
@@ -1106,7 +1106,7 @@ Arguments:
   <APP_ID>  
 
 Options:
-  -r, --restart-steam  Stop Steam while applying the change, then restart it, so the running client picks it up (Windows and Linux). Steam reads DLC state only at startup
+  -r, --restart-steam  Stop Steam while applying the change, then restart it, so the running client picks it up. Steam reads DLC state only at startup
   -j, --json           Emit output (and errors) as JSON. Works with every command
   -v, --verbose...     Increase log verbosity (repeatable: -v, -vv, -vvv). Without it only warnings and errors are logged. -v adds progress/debug logs and a launched game's own output; -vv/-vvv unmute the Steam networking stack so a stalled command shows where it is stuck. `RUST_LOG` / `AURELIA_LOG` override the logs
   -h, --help           Print help
@@ -1257,7 +1257,7 @@ Arguments:
 
 Options:
   -p, --platform <PLATFORM>  Depot platform to install. Auto-detected if omitted [possible values: windows, linux]
-  -r, --restart-steam        When installing a DLC, restart the Steam client afterward so the running client picks up the change (Windows and Linux). Without this it only warns
+  -r, --restart-steam        When installing a DLC, restart the Steam client afterward so the running client picks up the change. Without this it only warns
   -d, --dry-run              Don't install — just report the estimated download and on-disk size and the language choices (from PICS, no files fetched). Pair with `--json` for tooling
   -l, --library <LIBRARY>    Steam library folder (drive/location) to install into. A library root containing a `steamapps` directory, as listed by `aurelia libraries`. Defaults to the configured `steam_library_path`
       --language <LANGUAGE>  Steam language to install, e.g. `german`. Must be one of the `languages` that `--dry-run --json` lists; recorded like a Steam language choice. Defaults to the manifest, Steam client or config language, falling back to English
@@ -1367,7 +1367,7 @@ Options:
   -h, --help        Print help
 
 ===== aurelia launch-targets =====
-List the ways an installed game can be launched: each installed build (native Linux / Windows) and, for Windows, each available Steam mode, with the `play` flags selecting it and which one plain `play` would pick
+List the ways an installed game can be launched: each installed build (native Linux, native macOS or Windows) and, for Windows, each available Steam mode, with the `play` flags selecting it and which one plain `play` would pick
 
 Usage: aurelia launch-targets [OPTIONS] <APP_ID>
 

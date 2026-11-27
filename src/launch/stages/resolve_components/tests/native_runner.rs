@@ -53,3 +53,24 @@ async fn native_runner_leaves_launch_options_to_their_stage() {
     // UserLaunchOptionsStage adds them later.
     assert_eq!(spec.args, vec!["-v"]);
 }
+
+#[tokio::test]
+async fn resolve_components_runs_mac_builds_natively() {
+    let mut ctx = PipelineContext::new(2379780);
+    ctx.launch_info = Some(LaunchInfo {
+        app_id: 2379780,
+        id: "0".into(),
+        description: "Balatro".into(),
+        executable: "Balatro.app".into(),
+        arguments: String::new(),
+        workingdir: None,
+        target: LaunchTarget::NativeMacos,
+    });
+
+    ResolveComponentsStage.execute(&mut ctx).await.unwrap();
+
+    assert_eq!(
+        ctx.runner.map(|r| r.name().to_string()).as_deref(),
+        Some("Native")
+    );
+}
