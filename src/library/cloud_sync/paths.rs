@@ -109,7 +109,7 @@ impl CloudPathResolver {
     pub fn resolve_root(&self, root_token: &str) -> Option<PathBuf> {
         let lookup = |token: &str| {
             resolve_root_token(
-                token,
+                RootToken::from_name(token)?,
                 self.install_dir.as_deref(),
                 self.wine_prefix.as_deref(),
             )
@@ -228,27 +228,113 @@ pub(super) fn join_relative(base: &Path, rel: &str) -> PathBuf {
     out
 }
 
-/// Resolve a Steam Cloud root token (without the surrounding `%`) to an OS directory.
+/// A Steam Cloud root token, named as Steam's client names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RootToken {
+    GameInstall,
+    WinMyDocuments,
+    WinAppDataLocal,
+    WinAppDataRoaming,
+    SteamUserBaseStorage,
+    MacHome,
+    MacAppSupport,
+    MacDocuments,
+    WinSavedGames,
+    WinProgramData,
+    SteamCloudDocuments,
+    WinAppDataLocalLow,
+    MacCaches,
+    LinuxHome,
+    LinuxXdgDataHome,
+    LinuxXdgConfigHome,
+    AndroidSteamPackageRoot,
+    WindowsHome,
+    AndroidExternalData,
+    AndroidInternalData,
+    /// Aurelia's own alias for `WinMyDocuments`, not a Steam name.
+    WinDocuments,
+}
+
+impl RootToken {
+    /// Every token.
+    pub(super) const ALL: [Self; 21] = [
+        Self::GameInstall,
+        Self::WinMyDocuments,
+        Self::WinAppDataLocal,
+        Self::WinAppDataRoaming,
+        Self::SteamUserBaseStorage,
+        Self::MacHome,
+        Self::MacAppSupport,
+        Self::MacDocuments,
+        Self::WinSavedGames,
+        Self::WinProgramData,
+        Self::SteamCloudDocuments,
+        Self::WinAppDataLocalLow,
+        Self::MacCaches,
+        Self::LinuxHome,
+        Self::LinuxXdgDataHome,
+        Self::LinuxXdgConfigHome,
+        Self::AndroidSteamPackageRoot,
+        Self::WindowsHome,
+        Self::AndroidExternalData,
+        Self::AndroidInternalData,
+        Self::WinDocuments,
+    ];
+
+    /// The token's name between the `%` signs.
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::GameInstall => "GameInstall",
+            Self::WinMyDocuments => "WinMyDocuments",
+            Self::WinAppDataLocal => "WinAppDataLocal",
+            Self::WinAppDataRoaming => "WinAppDataRoaming",
+            Self::SteamUserBaseStorage => "SteamUserBaseStorage",
+            Self::MacHome => "MacHome",
+            Self::MacAppSupport => "MacAppSupport",
+            Self::MacDocuments => "MacDocuments",
+            Self::WinSavedGames => "WinSavedGames",
+            Self::WinProgramData => "WinProgramData",
+            Self::SteamCloudDocuments => "SteamCloudDocuments",
+            Self::WinAppDataLocalLow => "WinAppDataLocalLow",
+            Self::MacCaches => "MacCaches",
+            Self::LinuxHome => "LinuxHome",
+            Self::LinuxXdgDataHome => "LinuxXdgDataHome",
+            Self::LinuxXdgConfigHome => "LinuxXdgConfigHome",
+            Self::AndroidSteamPackageRoot => "AndroidSteamPackageRoot",
+            Self::WindowsHome => "WindowsHome",
+            Self::AndroidExternalData => "AndroidExternalData",
+            Self::AndroidInternalData => "AndroidInternalData",
+            Self::WinDocuments => "WinDocuments",
+        }
+    }
+
+    /// The token [`as_str`](Self::as_str) names.
+    fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|t| t.as_str() == name)
+    }
+}
+
+/// Resolve a Steam Cloud root token to an OS directory.
 /// `%GameInstall%` needs the game's install directory; the rest derive from the
 /// user's home / known folders.
 #[cfg(windows)]
 pub(super) fn resolve_root_token(
-    token: &str,
+    token: RootToken,
     install_dir: Option<&Path>,
     _wine_prefix: Option<&Path>,
 ) -> Option<PathBuf> {
     let user = || std::env::var_os("USERPROFILE").map(PathBuf::from);
     match token {
-        "GameInstall" => install_dir.map(Path::to_path_buf),
-        "WinMyDocuments" | "WinDocuments" => user().map(|u| u.join("Documents")),
-        "WinAppDataLocal" => std::env::var_os("LOCALAPPDATA")
+        RootToken::GameInstall => install_dir.map(Path::to_path_buf),
+        RootToken::WinMyDocuments | RootToken::WinDocuments => user().map(|u| u.join("Documents")),
+        RootToken::WinAppDataLocal => std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
             .or_else(|| user().map(|u| u.join("AppData").join("Local"))),
-        "WinAppDataLocalLow" => user().map(|u| u.join("AppData").join("LocalLow")),
-        "WinAppDataRoaming" => std::env::var_os("APPDATA")
+        RootToken::WinAppDataLocalLow => user().map(|u| u.join("AppData").join("LocalLow")),
+        RootToken::WinAppDataRoaming => std::env::var_os("APPDATA")
             .map(PathBuf::from)
             .or_else(|| user().map(|u| u.join("AppData").join("Roaming"))),
-        "WinSavedGames" => user().map(|u| u.join("Saved Games")),
+        RootToken::WinSavedGames => user().map(|u| u.join("Saved Games")),
         _ => None,
     }
 }
@@ -259,44 +345,46 @@ pub(super) fn resolve_root_token(
 /// and the file is skipped with a warning.
 #[cfg(not(windows))]
 pub(super) fn resolve_root_token(
-    token: &str,
+    token: RootToken,
     install_dir: Option<&Path>,
     wine_prefix: Option<&Path>,
 ) -> Option<PathBuf> {
     // Proton runs the game as the fixed `steamuser` account inside the prefix.
     let win_user = || wine_prefix.map(|p| p.join("drive_c/users/steamuser"));
     match token {
-        "GameInstall" => install_dir.map(Path::to_path_buf),
-        "WinMyDocuments" | "WinDocuments" => win_user().map(|u| u.join("Documents")),
-        "WinAppDataLocal" => win_user().map(|u| u.join("AppData/Local")),
-        "WinAppDataLocalLow" => win_user().map(|u| u.join("AppData/LocalLow")),
-        "WinAppDataRoaming" => win_user().map(|u| u.join("AppData/Roaming")),
-        "WinSavedGames" => win_user().map(|u| u.join("Saved Games")),
+        RootToken::GameInstall => install_dir.map(Path::to_path_buf),
+        RootToken::WinMyDocuments | RootToken::WinDocuments => {
+            win_user().map(|u| u.join("Documents"))
+        }
+        RootToken::WinAppDataLocal => win_user().map(|u| u.join("AppData/Local")),
+        RootToken::WinAppDataLocalLow => win_user().map(|u| u.join("AppData/LocalLow")),
+        RootToken::WinAppDataRoaming => win_user().map(|u| u.join("AppData/Roaming")),
+        RootToken::WinSavedGames => win_user().map(|u| u.join("Saved Games")),
         _ => resolve_native_root_token(token),
     }
 }
 
 #[cfg(target_os = "macos")]
-fn resolve_native_root_token(token: &str) -> Option<PathBuf> {
+fn resolve_native_root_token(token: RootToken) -> Option<PathBuf> {
     let home = || std::env::var_os("HOME").map(PathBuf::from);
     match token {
-        "MacHome" => home(),
-        "MacAppSupport" => home().map(|h| h.join("Library/Application Support")),
-        "MacDocuments" => home().map(|h| h.join("Documents")),
-        "MacCaches" => home().map(|h| h.join("Library/Caches")),
+        RootToken::MacHome => home(),
+        RootToken::MacAppSupport => home().map(|h| h.join("Library/Application Support")),
+        RootToken::MacDocuments => home().map(|h| h.join("Documents")),
+        RootToken::MacCaches => home().map(|h| h.join("Library/Caches")),
         _ => None,
     }
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-fn resolve_native_root_token(token: &str) -> Option<PathBuf> {
+fn resolve_native_root_token(token: RootToken) -> Option<PathBuf> {
     let home = || std::env::var_os("HOME").map(PathBuf::from);
     match token {
-        "LinuxHome" => home(),
-        "LinuxXdgDataHome" => std::env::var_os("XDG_DATA_HOME")
+        RootToken::LinuxHome => home(),
+        RootToken::LinuxXdgDataHome => std::env::var_os("XDG_DATA_HOME")
             .map(PathBuf::from)
             .or_else(|| home().map(|h| h.join(".local/share"))),
-        "LinuxXdgConfigHome" => std::env::var_os("XDG_CONFIG_HOME")
+        RootToken::LinuxXdgConfigHome => std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
             .or_else(|| home().map(|h| h.join(".config"))),
         _ => None,
