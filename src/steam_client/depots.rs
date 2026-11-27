@@ -32,6 +32,15 @@ pub(crate) fn skip_key_failure(error: &anyhow::Error, is_override: bool, require
             .is_some_and(|e| e.eresult == 15 || !required)
 }
 
+/// `total` without the estimated size of each skipped depot.
+pub(crate) fn accessible_total(total: u64, sizes: &HashMap<u32, u64>, skipped: &[u32]) -> u64 {
+    let skipped_bytes: u64 = skipped
+        .iter()
+        .filter_map(|depot_id| sizes.get(depot_id))
+        .sum();
+    total.saturating_sub(skipped_bytes)
+}
+
 /// Installed DLC depots are optional.
 pub(crate) fn mark_dlc_optional(selections: &mut [ManifestSelection], dlc_depots: &HashSet<u64>) {
     for selection in selections {

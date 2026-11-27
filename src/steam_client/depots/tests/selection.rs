@@ -27,6 +27,19 @@ fn key_failures_skip_only_automatic_optional_or_denied_depots() {
 }
 
 #[test]
+fn accessible_total_drops_skipped_depot_sizes() {
+    let sizes: HashMap<u32, u64> = [(750921, 34_000), (849165, 2_000), (849166, 1_500)]
+        .into_iter()
+        .collect();
+    assert_eq!(accessible_total(37_500, &sizes, &[]), 37_500);
+    assert_eq!(accessible_total(37_500, &sizes, &[849165, 849166]), 34_000);
+    // Depots without a known size leave the total alone.
+    assert_eq!(accessible_total(37_500, &sizes, &[999_999]), 37_500);
+    // Never underflows.
+    assert_eq!(accessible_total(1_000, &sizes, &[750921]), 0);
+}
+
+#[test]
 fn installed_dlc_depots_become_optional() {
     let mut selections = vec![
         ManifestSelection {

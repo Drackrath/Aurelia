@@ -810,6 +810,7 @@ impl SteamClient {
                     verify_mode,
                     grand_total_bytes: 0,
                     manifest_overrides: None,
+                    depot_sizes: HashMap::new(),
                 },
             )
             .await
