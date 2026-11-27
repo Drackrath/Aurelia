@@ -140,7 +140,7 @@ mod manage;
 pub use launch::{
     LaunchFlags, LaunchTargetChoice, check_launch_option_target, find_launch_option,
     forced_steam_reason, hide_uninstalled_launch_options, launch_executable_installed,
-    launch_targets, select_launch_entry,
+    launch_targets, require_windows_build, select_launch_entry,
 };
 
 mod cloudconfig;

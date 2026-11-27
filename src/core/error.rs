@@ -33,6 +33,8 @@ pub enum ErrorKind {
     Offline,
     /// Steam wants other depots.
     SteamConfigMismatch,
+    /// Requested platform build missing.
+    BuildNotInstalled,
     Unknown,
 }
 
@@ -55,6 +57,7 @@ impl ErrorKind {
         Self::DiskFull,
         Self::Offline,
         Self::SteamConfigMismatch,
+        Self::BuildNotInstalled,
         Self::Unknown,
     ];
 
@@ -76,6 +79,9 @@ impl ErrorKind {
                 "Steam wants a different platform or language depot set; check the game's \
                  language and compatibility tool in Steam (`aurelia proton mappings` lists dangling tools)",
             ),
+            Self::BuildNotInstalled => Some(
+                "install that platform's build with `aurelia install <app> --platform <platform>`",
+            ),
             _ => None,
         }
     }
@@ -93,6 +99,7 @@ impl ErrorKind {
             Self::DiskFull => 85,
             Self::Offline => 86,
             Self::SteamConfigMismatch => 87,
+            Self::BuildNotInstalled => 88,
             _ => 1,
         }
     }
