@@ -169,6 +169,9 @@ pub(crate) struct GameConfigArgs {
     #[arg(short = 'P', long, conflicts_with = "proton")]
     pub(crate) clear_proton: bool,
     /// Force the game's platform target (`windows` runs through Proton on Linux).
+    /// On Linux, `play` then runs only that build: a build Steam swapped for the
+    /// other platform is installed again first (not with `--no-update`), and a
+    /// missing one fails. `play --platform` overrides this for one launch.
     #[arg(short = 't', long)]
     pub(crate) platform: Option<PlatformArg>,
     /// Clear the platform preference (back to auto-detection).

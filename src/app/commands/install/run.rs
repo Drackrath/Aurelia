@@ -84,6 +84,20 @@ pub(crate) struct InstallRequest {
 
 /// Install, keeping the backlog in step.
 pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<()> {
+    let mut client = authed_client().await?;
+    let result = install_with(&mut client, request, json).await?;
+    if json {
+        print_result_line(result);
+    }
+    Ok(())
+}
+
+/// Install on `client`; returns the result object.
+pub(crate) async fn install_with(
+    client: &mut SteamClient,
+    request: InstallRequest,
+    json: bool,
+) -> Result<serde_json::Value> {
     let InstallRequest {
         app_id,
         platform,
@@ -93,7 +107,6 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
         auto_attempts,
         language,
     } = request;
-    let mut client = authed_client().await?;
 
     // Note whether this is a DLC so we can refresh Steam's view afterward.
     let is_dlc = client.resolve_dlc_parent(app_id).await.is_some();
@@ -280,18 +293,15 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
         cli_eprintln!("      be recognized in-game.");
     }
 
-    if json {
-        print_result_line(serde_json::json!({
-            "app_id": app_id,
-            "status": "installed",
-            "dlc": is_dlc,
-            "steam_restart_required": steam_restart_required,
-            "steam_restarted": steam_restarted,
-            "compat_tool": applied.added,
-            "compat_tool_removed": applied.removed,
-        }));
-    }
-    Ok(())
+    Ok(serde_json::json!({
+        "app_id": app_id,
+        "status": "installed",
+        "dlc": is_dlc,
+        "steam_restart_required": steam_restart_required,
+        "steam_restarted": steam_restarted,
+        "compat_tool": applied.added,
+        "compat_tool_removed": applied.removed,
+    }))
 }
 
 /// Log, never fail on, backlog writes.

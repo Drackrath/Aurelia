@@ -609,7 +609,7 @@ Options:
           Clear the per-game Proton version (fall back to the global default)
 
   -t, --platform <PLATFORM>
-          Force the game's platform target (`windows` runs through Proton on Linux)
+          Force the game's platform target (`windows` runs through Proton on Linux). On Linux, `play` then runs only that build: a build Steam swapped for the other platform is installed again first (not with `--no-update`), and a missing one fails. `play --platform` overrides this for one launch
           
           [possible values: windows, linux]
 
