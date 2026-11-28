@@ -1,6 +1,7 @@
 //! Install, dry run, resume and backlog.
 
 use super::*;
+use aurelia::steam_client::PlatformOverride;
 
 /// Prefer the Windows depot off a Mac; Proton runs it on Linux.
 ///
@@ -111,11 +112,9 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
             (chosen, Some(buffer), Some(platforms))
         }
     };
-    // Steam swaps dual-platform installs to Linux.
+    // Steam swaps dual-platform builds on start.
     let host = DepotPlatform::host();
-    let could_swap =
-        windows_build::steam_prefers_linux(host, platform, &[DepotPlatform::Linux], is_dlc);
-    if could_swap && platforms.is_none() {
+    if host == DepotPlatform::Linux && !is_dlc && platforms.is_none() {
         let (found, buffer) = client
             .get_available_platforms(app_id)
             .await
@@ -123,17 +122,21 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
         platforms = Some(found);
         cached_vdf = Some(buffer);
     }
-    let platform_override = windows_build::steam_prefers_linux(
-        host,
-        platform,
-        platforms.as_deref().unwrap_or_default(),
-        is_dlc,
-    );
-    let pending_mapping = if platform_override {
-        windows_build::plan_mapping(app_id, restart_steam)?
-    } else {
-        None
-    };
+    let available = platforms.as_deref().unwrap_or_default();
+    let (platform_override, pending_mapping) =
+        if windows_build::steam_prefers_linux(host, platform, available, is_dlc) {
+            (
+                PlatformOverride::WindowsOnLinux,
+                windows_build::plan_mapping(app_id, restart_steam)?,
+            )
+        } else if windows_build::native_with_windows_twin(host, platform, available, is_dlc) {
+            (
+                PlatformOverride::Clear,
+                windows_build::plan_unmapping(app_id, restart_steam)?,
+            )
+        } else {
+            (PlatformOverride::Keep, None)
+        };
 
     // Fail before any download.
     let language = match language {
@@ -193,9 +196,10 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
     // Stop late; nothing below `?`-returns.
     let manage_steam =
         steam_guard_stop_optional(restart_steam && (is_dlc || pending_mapping.is_some()), json)?;
-    let compat_tool = pending_mapping
+    let applied = pending_mapping
         .as_ref()
-        .and_then(|p| windows_build::apply_mapping(p, app_id, json));
+        .map(|p| windows_build::apply_mapping(p, app_id, json))
+        .unwrap_or_default();
 
     // Recorded first, so a crash stays resumable.
     let started = aurelia::core::time::now_unix();
@@ -283,7 +287,8 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
             "dlc": is_dlc,
             "steam_restart_required": steam_restart_required,
             "steam_restarted": steam_restarted,
-            "compat_tool": compat_tool,
+            "compat_tool": applied.added,
+            "compat_tool_removed": applied.removed,
         }));
     }
     Ok(())
