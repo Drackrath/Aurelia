@@ -31,7 +31,7 @@ fn file(path: &str, chunks: &[&[u8]]) -> ListedFile {
 }
 
 #[test]
-fn unchanged_file_moves_to_its_new_path() {
+fn unchanged_file_is_linked_and_the_old_build_stays_whole() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("share/data")).unwrap();
     std::fs::write(dir.path().join("share/data/a.tiger"), b"aaaabbbb").unwrap();
@@ -45,7 +45,7 @@ fn unchanged_file_moves_to_its_new_path() {
         std::fs::read(dir.path().join("a.tiger")).unwrap(),
         b"aaaabbbb"
     );
-    assert!(!dir.path().join("share/data/a.tiger").exists());
+    assert!(dir.path().join("share/data/a.tiger").exists());
 }
 
 #[test]

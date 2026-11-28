@@ -1,8 +1,10 @@
 //! Reuse the installed build when an install switches platform.
 //!
-//! Like Steam: files whose content didn't change are moved to their new
+//! Like Steam: files whose content didn't change are linked to their new
 //! paths, and changed files are rebuilt from any old chunk with the same
-//! hash, so only chunks found nowhere on disk are downloaded.
+//! hash, so only chunks found nowhere on disk are downloaded. The old build
+//! stays whole until the switch finishes, so an interrupted one leaves a
+//! valid install behind.
 use super::depot_files::ListedFile;
 use super::*;
 use crate::library::depot_browser::{EntryKind, entry_kind};
@@ -151,7 +153,7 @@ fn key(path: &str) -> String {
 pub(crate) fn reuse_old_build(root: &Path, old: &[ListedFile], new: &[ListedFile]) -> u64 {
     let new_paths: HashSet<String> = new.iter().map(|f| key(&f.raw.path)).collect();
     let mut old_at = HashMap::new();
-    let mut movable = HashMap::new();
+    let mut linkable = HashMap::new();
     let mut chunks: HashMap<&[u8], ChunkSource<'_>> = HashMap::new();
     let present: Vec<(&ListedFile, PathBuf)> = old
         .iter()
@@ -166,17 +168,18 @@ pub(crate) fn reuse_old_build(root: &Path, old: &[ListedFile], new: &[ListedFile
         })
         .collect();
     for (f, path) in &present {
-        // Whole files only move when the new build no longer uses their path.
+        // A path the new build rewrites can't share its file.
         if !new_paths.contains(&key(&f.raw.path)) {
-            movable.entry(f.raw.sha_content.as_slice()).or_insert(path);
+            linkable.entry(f.raw.sha_content.as_slice()).or_insert(path);
         }
         for (sha, offset, _) in &f.chunks {
             chunks.entry(sha.as_slice()).or_insert((path, *offset));
         }
     }
 
-    // Read everything before renaming anything, so every source stays put.
+    // Read everything before placing anything, so every source stays put.
     let mut missing = 0;
+    let mut links = Vec::new();
     let mut renames = Vec::new();
     for f in new.iter().filter(|f| regular(f) && f.raw.size > 0) {
         let content = f.raw.sha_content.as_slice();
@@ -187,12 +190,12 @@ pub(crate) fn reuse_old_build(root: &Path, old: &[ListedFile], new: &[ListedFile
             missing += f.raw.size;
             continue;
         };
-        if let Some(from) = movable.remove(content) {
-            renames.push((from.to_path_buf(), to));
+        if let Some(from) = linkable.get(content) {
+            links.push((from.to_path_buf(), to));
             continue;
         }
         let at_target = std::fs::metadata(&to).is_ok_and(|m| m.len() == f.raw.size);
-        // Moved here by an earlier, interrupted switch.
+        // Placed by an earlier, interrupted switch.
         if at_target && old_at.values().any(|&sha| sha == content) {
             continue;
         }
@@ -221,11 +224,17 @@ pub(crate) fn reuse_old_build(root: &Path, old: &[ListedFile], new: &[ListedFile
         };
         missing += f.raw.size - found;
     }
-    for (from, to) in renames {
+    for (from, to) in &links {
         if let Some(parent) = to.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let _ = std::fs::rename(&from, &to);
+        let _ = std::fs::remove_file(to);
+        if std::fs::hard_link(from, to).is_err() {
+            let _ = std::fs::rename(from, to);
+        }
+    }
+    for (part, to) in renames {
+        let _ = std::fs::rename(&part, &to);
     }
     missing
 }
