@@ -145,3 +145,67 @@ fn interrupted_switch_counts_files_already_in_place() {
 
     assert_eq!(missing, 4);
 }
+
+#[test]
+fn switch_without_room_is_refused_before_anything_changes() {
+    use platform_switch::{NoRoom, reuse_old_build_within};
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("win")).unwrap();
+    std::fs::write(dir.path().join("win/same.pak"), b"aaaabbbb").unwrap();
+    std::fs::write(dir.path().join("win/game.exe"), b"11112222").unwrap();
+    std::fs::write(dir.path().join("shared.cfg"), b"oldc").unwrap();
+    let old = [
+        file("win/same.pak", &[b"aaaa", b"bbbb"]),
+        file("win/game.exe", &[b"1111", b"2222"]),
+        file("shared.cfg", &[b"oldc"]),
+    ];
+    let new = [
+        // Linked: free.
+        file("linux/same.pak", &[b"aaaa", b"bbbb"]),
+        // Rebuilt beside old: 8 bytes.
+        file("linux/game", &[b"2222", b"9999"]),
+        // Downloaded whole: 6 bytes.
+        file("linux/extra.so", &[b"xxxxxx"]),
+        // Overwrites 4 bytes: 2 more.
+        file("shared.cfg", &[b"newcfg"]),
+    ];
+
+    assert_eq!(
+        reuse_old_build_within(dir.path(), &old, &new, Some(15)),
+        Err(NoRoom {
+            needed: 16,
+            free: 15
+        })
+    );
+    // Refused: nothing changed.
+    assert!(!dir.path().join("linux").exists());
+    assert_eq!(
+        std::fs::read(dir.path().join("shared.cfg")).unwrap(),
+        b"oldc"
+    );
+
+    assert_eq!(
+        reuse_old_build_within(dir.path(), &old, &new, Some(16)),
+        Ok(4 + 6 + 6)
+    );
+    assert!(dir.path().join("linux/same.pak").exists());
+    assert!(dir.path().join("win/game.exe").exists());
+}
+
+#[test]
+fn resumed_switch_needs_no_room_for_what_is_already_placed() {
+    use platform_switch::reuse_old_build_within;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("moved.bin"), b"aaaa").unwrap();
+    std::fs::write(dir.path().join("fetched.bin"), b"bbbb\x00\x00\x00\x00").unwrap();
+    let old = [file("share/moved.bin", &[b"aaaa"])];
+    let new = [
+        file("moved.bin", &[b"aaaa"]),
+        file("fetched.bin", &[b"bbbb", b"cccc"]),
+    ];
+
+    assert_eq!(
+        reuse_old_build_within(dir.path(), &old, &new, Some(0)),
+        Ok(4)
+    );
+}

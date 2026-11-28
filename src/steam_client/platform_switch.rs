@@ -65,14 +65,15 @@ impl PlatformSwitch {
     }
 
     /// Put the old build's content where the new one expects it. Returns the
-    /// new build's size and the bytes of it still to fetch.
+    /// new build's size and the bytes of it still to fetch. Fails with
+    /// `DiskFull` before any change.
     pub(crate) async fn prepare(
         &mut self,
         client: &SteamClient,
         root: &Path,
         installed: &HashMap<u64, u64>,
         selections: &[ManifestSelection],
-    ) -> Option<(u64, u64)> {
+    ) -> Result<Option<(u64, u64)>> {
         let new: Vec<Depot> = selections
             .iter()
             .map(|s| (s.app_id, s.depot_id, s.manifest_id))
@@ -91,12 +92,24 @@ impl PlatformSwitch {
             .collect();
         let files = client.switch_files(&old, &new, &self.kept).await;
         let root = root.to_path_buf();
-        let (files, missing) = tokio::task::spawn_blocking(move || {
-            let missing = reuse_old_build(&root, &files.old, &files.new);
-            (files, missing)
+        let free = crate::core::fsutil::available_space(&root);
+        let Ok((files, reused)) = tokio::task::spawn_blocking(move || {
+            let reused = reuse_old_build_within(&root, &files.old, &files.new, free);
+            (files, reused)
         })
         .await
-        .ok()?;
+        else {
+            return Ok(None);
+        };
+        let missing = reused.map_err(|NoRoom { needed, free }| {
+            anyhow!(crate::core::error::TypedError::new(
+                crate::core::error::ErrorKind::DiskFull,
+                format!(
+                    "not enough space to switch platform: needs {needed} more bytes \
+                     beside the installed build but only {free} are free"
+                ),
+            ))
+        })?;
         let total = files
             .new
             .iter()
@@ -104,7 +117,7 @@ impl PlatformSwitch {
             .map(|f| f.raw.size)
             .sum();
         self.files = Some(files);
-        Some((total, missing))
+        Ok(Some((total, missing)))
     }
 
     /// Delete what only the old build used and unlist its depots.
@@ -154,11 +167,44 @@ fn key(path: &str) -> String {
     path.to_ascii_lowercase()
 }
 
+/// One new file's handling.
+enum Step {
+    /// Linked from an identical old file.
+    Link(PathBuf, PathBuf),
+    /// Rebuilt beside its target.
+    Rebuild(PathBuf),
+    /// At its target, gaps downloaded.
+    Held(PathBuf),
+    /// Downloaded whole.
+    Fetch,
+}
+
+/// The switch doesn't fit the disk.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct NoRoom {
+    pub needed: u64,
+    pub free: u64,
+}
+
 /// Put the old build's content where the new build expects it. Returns the
 /// new-build bytes found nowhere on disk.
+#[cfg(test)]
 pub(crate) fn reuse_old_build(root: &Path, old: &[ListedFile], new: &[ListedFile]) -> u64 {
+    reuse_old_build_within(root, old, new, None).unwrap_or(0)
+}
+
+/// [`reuse_old_build`], refused when over `free`.
+///
+/// Rebuilt and downloaded files need room. Linked and unchanged ones don't.
+pub(crate) fn reuse_old_build_within(
+    root: &Path,
+    old: &[ListedFile],
+    new: &[ListedFile],
+    free: Option<u64>,
+) -> Result<u64, NoRoom> {
     let new_paths: HashSet<String> = new.iter().map(|f| key(&f.raw.path)).collect();
     let mut old_at = HashMap::new();
+    let mut old_contents = HashSet::new();
     let mut linkable = HashMap::new();
     let mut chunks: HashMap<&[u8], ChunkSource<'_>> = HashMap::new();
     let present: Vec<(&ListedFile, PathBuf)> = old
@@ -166,6 +212,7 @@ pub(crate) fn reuse_old_build(root: &Path, old: &[ListedFile], new: &[ListedFile
         .filter(|f| regular(f))
         .inspect(|f| {
             old_at.insert(key(&f.raw.path), f.raw.sha_content.as_slice());
+            old_contents.insert(f.raw.sha_content.as_slice());
         })
         .filter_map(|f| {
             let path = super::language::confined_path(root, &f.raw.path)?;
@@ -183,50 +230,75 @@ pub(crate) fn reuse_old_build(root: &Path, old: &[ListedFile], new: &[ListedFile
         }
     }
 
-    // Read everything before placing anything, so every source stays put.
-    let mut missing = 0;
-    let mut links = Vec::new();
-    let mut renames = Vec::new();
+    // Plan first, write later.
+    let mut steps = Vec::new();
+    let mut needed = 0u64;
     for f in new.iter().filter(|f| regular(f) && f.raw.size > 0) {
         let content = f.raw.sha_content.as_slice();
         if old_at.get(&key(&f.raw.path)) == Some(&content) {
             continue;
         }
         let Some(to) = super::language::confined_path(root, &f.raw.path) else {
-            missing += f.raw.size;
+            steps.push((f, Step::Fetch));
             continue;
         };
         if let Some(from) = linkable.get(content) {
-            links.push((from.to_path_buf(), to));
+            steps.push((f, Step::Link(from.to_path_buf(), to)));
             continue;
         }
-        let at_target = std::fs::metadata(&to).is_ok_and(|m| m.len() == f.raw.size);
+        let at_target = std::fs::metadata(&to).ok().map(|m| m.len());
+        let in_place = at_target == Some(f.raw.size);
         // Placed by an earlier, interrupted switch.
-        if at_target && old_at.values().any(|&sha| sha == content) {
+        if in_place && old_contents.contains(content) {
             continue;
         }
-        let found = if f
-            .chunks
+        if f.chunks
             .iter()
             .any(|(sha, ..)| chunks.contains_key(sha.as_slice()))
         {
-            let part = part_path(&to);
-            match rebuild(&part, &to, f, &chunks) {
-                Ok(0) => 0,
-                Ok(found) => {
-                    renames.push((part, to));
-                    found
-                }
-                Err(e) => {
-                    tracing::warn!("could not rebuild {} from the old build: {e}", f.raw.path);
-                    let _ = std::fs::remove_file(&part);
-                    0
+            needed += f.raw.size;
+            steps.push((f, Step::Rebuild(to)));
+        } else if in_place {
+            steps.push((f, Step::Held(to)));
+        } else {
+            // Overwrites the file there.
+            needed += f.raw.size.saturating_sub(at_target.unwrap_or(0));
+            steps.push((f, Step::Fetch));
+        }
+    }
+    if let Some(free) = free
+        && needed > free
+    {
+        return Err(NoRoom { needed, free });
+    }
+
+    // Read everything before placing anything, so every source stays put.
+    let mut missing = 0;
+    let mut links = Vec::new();
+    let mut renames = Vec::new();
+    for (f, step) in steps {
+        let found = match step {
+            Step::Link(from, to) => {
+                links.push((from, to));
+                continue;
+            }
+            Step::Rebuild(to) => {
+                let part = part_path(&to);
+                match rebuild(&part, &to, f, &chunks) {
+                    Ok(0) => 0,
+                    Ok(found) => {
+                        renames.push((part, to));
+                        found
+                    }
+                    Err(e) => {
+                        tracing::warn!("could not rebuild {} from the old build: {e}", f.raw.path);
+                        let _ = std::fs::remove_file(&part);
+                        0
+                    }
                 }
             }
-        } else if at_target {
-            held_bytes(&to, f)
-        } else {
-            0
+            Step::Held(to) => held_bytes(&to, f),
+            Step::Fetch => 0,
         };
         missing += f.raw.size - found;
     }
@@ -247,7 +319,7 @@ pub(crate) fn reuse_old_build(root: &Path, old: &[ListedFile], new: &[ListedFile
     for (part, to) in renames {
         let _ = std::fs::rename(&part, &to);
     }
-    missing
+    Ok(missing)
 }
 
 fn part_path(to: &Path) -> PathBuf {

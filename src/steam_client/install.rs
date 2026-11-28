@@ -512,9 +512,23 @@ impl SteamClient {
             }
 
             if let Some(switch) = switch.as_mut() {
-                let prepared = switch
+                let prepared = match switch
                     .prepare(&client_clone, &install_dir, &installed, &selections)
-                    .await;
+                    .await
+                {
+                    Ok(prepared) => prepared,
+                    Err(err) => {
+                        // Nothing was touched yet.
+                        tracing::error!("platform switch of app {appid} not started: {err:#}");
+                        if let Ok(mut state) = shared_state_clone.write() {
+                            state.finish("Download failed");
+                        }
+                        let _ = tx
+                            .send(DownloadProgress::failed_with("platform switch", &err))
+                            .await;
+                        return;
+                    }
+                };
                 if let (Some((total, fetch)), Ok(mut state)) =
                     (prepared, shared_state_clone.write())
                 {
