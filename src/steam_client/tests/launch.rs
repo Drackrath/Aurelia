@@ -528,3 +528,50 @@ fn launch_selection_follows_the_installed_depots() {
         assert_eq!(picked.id, id, "{case}");
     }
 }
+
+#[test]
+fn explicit_windows_needs_a_windows_build() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("ShadowOfTheTombRaider.sh"), b"").unwrap();
+    let mut app = LibraryGame {
+        app_id: 750920,
+        name: "Shadow of the Tomb Raider".to_string(),
+        install_path: Some(tmp.path().to_string_lossy().into_owned()),
+        is_installed: true,
+        playtime_forever_minutes: None,
+        active_branch: "public".to_string(),
+        update_available: false,
+        steam_config_mismatch: false,
+        update_queued: false,
+        local_manifest_ids: HashMap::new(),
+        is_owned: true,
+        is_family_shared: false,
+        online_required: None,
+        platform: Some("linux".to_string()),
+        from_windows_steam: false,
+        size_on_disk: None,
+    };
+    let options = vec![
+        launch_option("0", "SOTTR.exe", LaunchTarget::WindowsProton),
+        launch_option("1", "ShadowOfTheTombRaider.sh", LaunchTarget::NativeLinux),
+    ];
+
+    // Only Linux on disk: typed error.
+    let err = launch::require_windows_build(&options, &app).unwrap_err();
+    assert_eq!(
+        crate::core::error::classify(&err).kind,
+        crate::core::error::ErrorKind::BuildNotInstalled
+    );
+    assert_eq!(
+        err.to_string(),
+        "Windows build not installed; run aurelia install 750920 --platform windows"
+    );
+
+    // Windows exe present, any case.
+    std::fs::write(tmp.path().join("sottr.exe"), b"").unwrap();
+    assert!(launch::require_windows_build(&options, &app).is_ok());
+
+    // Not installed counts as missing.
+    app.is_installed = false;
+    assert!(launch::require_windows_build(&options, &app).is_err());
+}

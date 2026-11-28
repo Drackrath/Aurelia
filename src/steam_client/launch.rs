@@ -128,6 +128,23 @@ pub(super) fn require_launch_option_installed(entry: &LaunchInfo, app: &LibraryG
     Ok(())
 }
 
+/// Fail unless a Windows build exists.
+pub fn require_windows_build(options: &[LaunchInfo], app: &LibraryGame) -> Result<()> {
+    let found = options.iter().any(|o| {
+        o.target == LaunchTarget::WindowsProton && launch_executable_installed(app, &o.executable)
+    });
+    if found {
+        return Ok(());
+    }
+    Err(anyhow!(crate::core::error::TypedError::new(
+        crate::core::error::ErrorKind::BuildNotInstalled,
+        format!(
+            "Windows build not installed; run aurelia install {} --platform windows",
+            app.app_id
+        ),
+    )))
+}
+
 /// On-disk spelling of `rel`, ignoring case.
 ///
 /// Windows manifests ignore path case.

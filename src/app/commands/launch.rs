@@ -454,6 +454,14 @@ pub(crate) async fn cmd_play(
         let entry = aurelia::steam_client::find_launch_option(&options, id)?;
         aurelia::steam_client::check_launch_option_target(entry, required)?;
     }
+    // No silent fallback to Linux.
+    if matches!(target.platform, Some(PlatformArg::Windows)) && game.is_installed {
+        let (options, _) = client
+            .get_product_info(&game)
+            .await
+            .with_context(|| format!("failed to load launch options for app {app_id}"))?;
+        aurelia::steam_client::require_windows_build(&options, &game)?;
+    }
 
     // Family-Shared games are pinned to the owner's current build — a stale
     // install simply won't launch — so for them the pre-launch update is

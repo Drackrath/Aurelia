@@ -70,7 +70,8 @@ fn ordinal(kind: ErrorKind) -> usize {
         ErrorKind::DiskFull => 13,
         ErrorKind::Offline => 14,
         ErrorKind::SteamConfigMismatch => 15,
-        ErrorKind::Unknown => 16,
+        ErrorKind::BuildNotInstalled => 16,
+        ErrorKind::Unknown => 17,
     }
 }
 
@@ -78,7 +79,7 @@ fn ordinal(kind: ErrorKind) -> usize {
 fn all_lists_every_kind_once() {
     let mut seen: Vec<usize> = ErrorKind::ALL.iter().map(|k| ordinal(*k)).collect();
     seen.sort_unstable();
-    assert_eq!(seen, (0..=16).collect::<Vec<_>>());
+    assert_eq!(seen, (0..=17).collect::<Vec<_>>());
 }
 
 #[test]
