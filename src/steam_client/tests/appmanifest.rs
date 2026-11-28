@@ -316,3 +316,22 @@ fn native_install_drops_override_keys() {
     assert!(raw.contains("\"MountedConfig\"\n\t{\n\t}"), "{raw}");
     assert!(steam_vdf_parser::parse_text(&raw).is_ok());
 }
+
+#[test]
+fn override_keys_sharing_a_line_keep_their_neighbours() {
+    let block = "\"UserConfig\" { \"language\" \"german\" \"platform_override_dest\" \"linux\" \
+                 \"platform_override_source\" \"windows\" }";
+    let out = manifests::without_platform_override(block);
+    assert!(!out.contains("platform_override"), "{out}");
+    let parsed = steam_vdf_parser::parse_text(&out).unwrap();
+    assert_eq!(parsed.key(), "UserConfig");
+    assert!(out.contains("\"language\" \"german\""), "{out}");
+    assert!(out.trim_end().ends_with('}'), "{out}");
+
+    // Shared with one neighbour only.
+    let mixed = "\"UserConfig\"\n\t{\n\t\t\"platform_override_dest\"\t\t\"linux\" \"language\"\t\t\"german\"\n\t}";
+    let out = manifests::without_platform_override(mixed);
+    assert!(!out.contains("platform_override"), "{out}");
+    assert!(out.contains("\"language\"\t\t\"german\""), "{out}");
+    assert!(steam_vdf_parser::parse_text(&out).is_ok());
+}

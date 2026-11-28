@@ -718,8 +718,8 @@ fn with_platform_override(block: Option<String>, name: &str) -> String {
     block_with_key(&base, "platform_override_source", "windows")
 }
 
-/// Drop the override keys' lines.
-fn without_platform_override(block: &str) -> String {
+/// Drop the override keys.
+pub(super) fn without_platform_override(block: &str) -> String {
     let mut out = block.to_string();
     for key in ["platform_override_dest", "platform_override_source"] {
         let toks = vdf_tokens(&out);
@@ -741,7 +741,14 @@ fn without_platform_override(block: &str) -> String {
         let Some((start, end)) = range else { continue };
         let line_start = out[..start].rfind('\n').map_or(start, |n| n + 1);
         let line_end = out[end..].find('\n').map_or(end, |n| end + n + 1);
-        out.replace_range(line_start..line_end, "");
+        // Whole line only when alone.
+        let alone =
+            out[line_start..start].trim().is_empty() && out[end..line_end].trim().is_empty();
+        if alone {
+            out.replace_range(line_start..line_end, "");
+        } else {
+            out.replace_range(start..end, "");
+        }
     }
     out
 }
