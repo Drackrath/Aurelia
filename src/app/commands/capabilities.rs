@@ -25,6 +25,7 @@ pub(crate) const EVENTS: &[&str] = &[
     "other",
     "progress",
     "pausing",
+    "platform_install",
     "qr_challenge",
     "qr_scanned",
     "ready",

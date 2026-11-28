@@ -311,11 +311,23 @@ async fn ensure_pinned_build(
         game.name,
         wanted.as_str()
     );
+    // Drivers list it as a download.
+    let announce = |state: &str| {
+        if json {
+            eprint_json_line(&serde_json::json!({
+                "event": "platform_install",
+                "state": state,
+                "app_id": app_id,
+                "platform": wanted.as_str(),
+            }));
+        }
+    };
     if json {
         eprint_json_line(&serde_json::json!({ "event": "message", "message": message }));
     } else {
         cli_println!("{message}");
     }
+    announce("started");
     // Same library as the current install.
     let library = game
         .install_path
@@ -334,9 +346,13 @@ async fn ensure_pinned_build(
         auto_attempts: 0,
         language: None,
     };
-    crate::app::commands::install::install_with(client, request, json)
-        .await
-        .with_context(|| format!("failed to install the {} build", wanted.as_str()))?;
+    let installed = crate::app::commands::install::install_with(client, request, json).await;
+    announce(if installed.is_ok() {
+        "finished"
+    } else {
+        "failed"
+    });
+    installed.with_context(|| format!("failed to install the {} build", wanted.as_str()))?;
 
     *game = find_game(client, app_id).await?;
     match pinned_state(client, game, wanted).await? {
