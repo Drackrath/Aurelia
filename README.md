@@ -91,7 +91,7 @@ aurelia play 1245620
 | **Download engine** | CDN + P2P LAN | Standard CDN | Standard CDN | Multi-threaded CDN |
 | **Authentication** | Full | Core | Full (+ anonymous) | Full (tokens, mobile app, Guard) |
 | **Steam integration** | Native | Partial | Content only | Deep (PICS, CDN, Cloud, tickets) |
-| **Platforms** | Windows, Linux, macOS | Windows, Linux | Windows, Linux, macOS | Linux (first), Windows |
+| **Platforms** | Windows, Linux, macOS | Windows, Linux | Windows, Linux, macOS | Linux (first), Windows, macOS |
 | **Open source** | No | Yes | No | Yes (GPL-3.0-or-later) |
 
 **vs. SteamCMD.** [SteamCMD](https://developer.valvesoftware.com/wiki/SteamCMD) is Valve's
@@ -107,7 +107,7 @@ proprietary and ships only as a prebuilt binary. Aurelia is open source (GPL-3.0
 
 ## Project status
 
-Aurelia is in **experimental beta**. The core is highly functional: authentication,
+Aurelia is in **beta**. The core is highly functional: authentication,
 library management, installs and updates, integrity verification, DLC handling, Steam Cloud
 sync, and Proton or Wine launching all work today.
 
@@ -165,10 +165,10 @@ Grab the `.deb` for your architecture from the
 sudo apt install ./aurelia_*_amd64.deb
 ```
 
-### Prebuilt binaries (Linux, Windows)
+### Prebuilt binaries (Linux, Windows, macOS)
 
 Every release ships static-ish binaries for `linux_x86_64`, `linux_arm64`,
-`windows_x86_64` and `windows_arm64`.
+`windows_x86_64`, `windows_arm64`, `macos_arm64` and `macos_x86_64`.
 See the [releases page](https://github.com/Drackrath/Aurelia/releases/latest).
 
 ```bash
@@ -673,8 +673,8 @@ Under ~50 MB idle, against roughly 400 to 800 MB for the official Steam desktop 
 
 ### Which platforms are supported?
 
-Linux is the primary target (x86_64 and arm64), and Windows is supported. Releases no longer
-include macOS binaries. See [Install](#install).
+Linux is the primary target (x86_64 and arm64). Windows and macOS (Apple Silicon and Intel)
+are supported too. See [Install](#install).
 
 ### Can I use it to script my Steam library?
 
