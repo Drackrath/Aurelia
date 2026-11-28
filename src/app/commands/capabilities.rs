@@ -236,6 +236,7 @@ fn table(head: &[&str; 4], rows: &[[String; 4]], width: usize) -> String {
 const LIST_FIELDS: &[(&str, &str)] = &[
     ("Name", "name"),
     ("Version", "version"),
+    ("Codename", "codename"),
     ("Schema", "schema"),
     ("OS", "os"),
     ("Arch", "arch"),
@@ -320,7 +321,8 @@ pub(crate) fn capabilities() -> Value {
         .collect();
     json!({
         "name": "aurelia",
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": aurelia::core::version::NUMBER,
+        "codename": aurelia::core::version::CODENAME,
         "schema": JSON_SCHEMA,
         "os": std::env::consts::OS,
         "arch": std::env::consts::ARCH,

@@ -13,7 +13,7 @@ fn render_all_help() -> String {
         let text = err
             .render()
             .to_string()
-            .replace(env!("CARGO_PKG_VERSION"), "<version>");
+            .replace(aurelia::core::version::DISPLAY, "<version>");
         out.push_str(&format!("===== {} =====\n{}\n", path.join(" "), text));
         let mut subs: Vec<&clap::Command> = cmd.get_subcommands().collect();
         subs.sort_by_key(|s| s.get_name().to_string());

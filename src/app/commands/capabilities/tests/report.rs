@@ -45,6 +45,7 @@ fn report_has_the_contract_fields() {
     let r = capabilities();
     assert_eq!(r["name"], "aurelia");
     assert_eq!(r["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(r["codename"], aurelia::core::version::CODENAME);
     assert_eq!(r["schema"], JSON_SCHEMA);
     assert!(
         r["global_flags"]
