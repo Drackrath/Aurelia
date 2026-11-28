@@ -131,6 +131,8 @@ pub(crate) use content::ContentHost;
 
 mod language;
 
+mod platform_switch;
+
 mod launch;
 
 mod library;

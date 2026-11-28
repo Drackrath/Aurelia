@@ -12,6 +12,7 @@ mod licence_list;
 mod licences;
 mod login;
 mod pics;
+mod platform_switch;
 mod pools;
 mod registry;
 mod store_mapping;
