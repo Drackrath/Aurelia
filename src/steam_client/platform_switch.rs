@@ -65,14 +65,14 @@ impl PlatformSwitch {
     }
 
     /// Put the old build's content where the new one expects it. Returns the
-    /// bytes still to fetch.
+    /// new build's size and the bytes of it still to fetch.
     pub(crate) async fn prepare(
         &mut self,
         client: &SteamClient,
         root: &Path,
         installed: &HashMap<u64, u64>,
         selections: &[ManifestSelection],
-    ) -> Option<u64> {
+    ) -> Option<(u64, u64)> {
         let new: Vec<Depot> = selections
             .iter()
             .map(|s| (s.app_id, s.depot_id, s.manifest_id))
@@ -97,8 +97,14 @@ impl PlatformSwitch {
         })
         .await
         .ok()?;
+        let total = files
+            .new
+            .iter()
+            .filter(|f| regular(f))
+            .map(|f| f.raw.size)
+            .sum();
         self.files = Some(files);
-        Some(missing)
+        Some((total, missing))
     }
 
     /// Delete what only the old build used and unlist its depots.
@@ -224,6 +230,11 @@ pub(crate) fn reuse_old_build(root: &Path, old: &[ListedFile], new: &[ListedFile
         };
         missing += f.raw.size - found;
     }
+    tracing::info!(
+        "Reusing the installed build: {} file(s) linked, {} rebuilt, {missing} byte(s) to fetch",
+        links.len(),
+        renames.len()
+    );
     for (from, to) in &links {
         if let Some(parent) = to.parent() {
             let _ = std::fs::create_dir_all(parent);

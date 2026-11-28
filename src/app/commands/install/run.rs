@@ -82,6 +82,17 @@ pub(crate) struct InstallRequest {
 }
 
 /// Install, keeping the backlog in step.
+/// Bytes already installed for `app_id` in `library`.
+fn installed_size(library: &str, app_id: u32) -> u64 {
+    let steamapps = std::path::Path::new(library).join("steamapps");
+    std::fs::read_to_string(steamapps.join(format!("appmanifest_{app_id}.acf")))
+        .ok()
+        .and_then(|raw| aurelia::core::acf::parse_app_manifest(&raw).install_dir)
+        .map_or(0, |dir| {
+            aurelia::core::fsutil::dir_size(&steamapps.join("common").join(dir))
+        })
+}
+
 pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<()> {
     let InstallRequest {
         app_id,
@@ -145,8 +156,9 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
             .await
             .with_context(|| format!("failed to estimate install size for app {app_id}"))?;
         if let Some(free) = available_space_for(std::path::Path::new(&library_root)) {
-            // A resume's partial files already count.
-            if est.disk_size.saturating_sub(on_disk) > free {
+            // A resume's partial files, or a reinstall's existing ones, already count.
+            let present = on_disk.max(installed_size(&library_root, app_id));
+            if est.disk_size.saturating_sub(present) > free {
                 return Err(aurelia::core::error::TypedError::new(
                     aurelia::core::error::ErrorKind::DiskFull,
                     format!(

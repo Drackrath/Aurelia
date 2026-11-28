@@ -512,11 +512,14 @@ impl SteamClient {
             }
 
             if let Some(switch) = switch.as_mut() {
-                let fetch = switch
+                let prepared = switch
                     .prepare(&client_clone, &install_dir, &installed, &selections)
                     .await;
-                if let Ok(mut state) = shared_state_clone.write() {
-                    state.fetch_bytes = fetch;
+                if let (Some((total, fetch)), Ok(mut state)) =
+                    (prepared, shared_state_clone.write())
+                {
+                    state.total_bytes = total;
+                    state.fetch_bytes = Some(fetch);
                 }
             }
 
