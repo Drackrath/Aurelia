@@ -6,6 +6,17 @@ use anyhow::Result;
 
 use walkdir::WalkDir;
 
+/// Free bytes on `path`'s filesystem.
+pub fn available_space(path: &Path) -> Option<u64> {
+    let disks = sysinfo::Disks::new_with_refreshed_list().ok()?;
+    disks
+        .iter()
+        .filter(|disk| path.starts_with(disk.mount_point()))
+        // Longest matching mount point wins.
+        .max_by_key(|disk| disk.mount_point().as_os_str().len())
+        .map(|disk| disk.available_space())
+}
+
 /// Regular-file bytes under `path`; 0 if missing.
 pub fn dir_size(path: &Path) -> u64 {
     WalkDir::new(path)

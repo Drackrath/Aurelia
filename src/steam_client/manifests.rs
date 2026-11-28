@@ -853,6 +853,17 @@ pub(crate) fn switch_language_in_manifest(
     dlc: &HashMap<u32, u32>,
     language: &str,
 ) -> String {
+    let out = replace_depots_in_manifest(raw, remove, add, dlc);
+    switch_language_tail(out, language)
+}
+
+/// Drop `remove` and add `add` in `InstalledDepots`, keeping `SizeOnDisk` in step.
+pub(crate) fn replace_depots_in_manifest(
+    raw: &str,
+    remove: &HashSet<u32>,
+    add: &[(u32, u64, u64)],
+    dlc: &HashMap<u32, u32>,
+) -> String {
     let mut out = raw.to_string();
     let new_entries: String = add
         .iter()
@@ -906,7 +917,11 @@ pub(crate) fn switch_language_in_manifest(
     {
         out = block_set_key(&out, "SizeOnDisk", &size.to_string());
     }
+    out
+}
 
+/// Record `language` in `UserConfig` and, when present, `MountedConfig`.
+fn switch_language_tail(mut out: String, language: &str) -> String {
     match top_level_range(&out, "UserConfig") {
         Some(range) => {
             let updated = block_set_key(&out[range.clone()], "language", language);

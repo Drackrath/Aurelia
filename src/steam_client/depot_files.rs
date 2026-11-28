@@ -42,6 +42,14 @@ macro_rules! raw_entry {
     }};
 }
 
+/// One manifest entry with its chunks.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ListedFile {
+    pub raw: RawEntry,
+    /// `(sha, offset, size)` of each chunk.
+    pub chunks: Vec<(Vec<u8>, u64, u32)>,
+}
+
 impl SteamClient {
     /// Resolve owning app and manifest id.
     async fn manifest_access(
@@ -128,6 +136,16 @@ impl SteamClient {
         depot_id: u32,
         access: &ManifestAccess,
     ) -> Result<Vec<ManifestFileEntry>> {
+        let listing = self.manifest_listing(depot_id, access).await?;
+        Ok(browser::entries(listing.into_iter().map(|f| f.raw)))
+    }
+
+    /// Every entry of an access's manifest, chunks included.
+    async fn manifest_listing(
+        &self,
+        depot_id: u32,
+        access: &ManifestAccess,
+    ) -> Result<Vec<ListedFile>> {
         let hosts = self.browser_hosts().await?;
         let mut run = PoolRun::default();
         for pool in host_pools(&hosts) {
@@ -146,9 +164,18 @@ impl SteamClient {
                     )
                     .await
                     .map_err(|e| PoolError::Next(anyhow!("failed to get manifest: {e}")))?;
-                Ok(browser::entries(
-                    listing.files().iter().map(|f| raw_entry!(f)),
-                ))
+                Ok(listing
+                    .files()
+                    .iter()
+                    .map(|f| ListedFile {
+                        raw: raw_entry!(f),
+                        chunks: f
+                            .chunks()
+                            .iter()
+                            .map(|c| (c.sha(), c.offset(), c.original_size()))
+                            .collect(),
+                    })
+                    .collect())
             }
             .await;
             if let Some(done) = run.step(outcome) {
@@ -179,6 +206,17 @@ impl SteamClient {
     ) -> Result<Vec<ManifestFileEntry>> {
         let access = self.access_for(source_app, depot_id, manifest_id).await?;
         self.manifest_rows(depot_id, &access).await
+    }
+
+    /// Every entry of a source app's manifest, chunks included.
+    pub(crate) async fn fetch_manifest_listing(
+        &self,
+        source_app: u32,
+        depot_id: u32,
+        manifest_id: u64,
+    ) -> Result<Vec<ListedFile>> {
+        let access = self.access_for(source_app, depot_id, manifest_id).await?;
+        self.manifest_listing(depot_id, &access).await
     }
 
     /// Download one depot file, SHA-1 checked.

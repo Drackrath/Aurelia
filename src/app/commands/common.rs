@@ -475,13 +475,7 @@ impl Drop for InstallGuard {
 /// Free bytes on the filesystem/drive that `path` lives on, or `None` if it
 /// can't be determined (no mounted disk contains the path).
 pub(crate) fn available_space_for(path: &std::path::Path) -> Option<u64> {
-    let disks = sysinfo::Disks::new_with_refreshed_list().ok()?;
-    disks
-        .iter()
-        .filter(|disk| path.starts_with(disk.mount_point()))
-        // Longest matching mount point wins (a nested mount over its parent).
-        .max_by_key(|disk| disk.mount_point().as_os_str().len())
-        .map(|disk| disk.available_space())
+    aurelia::core::fsutil::available_space(path)
 }
 
 /// Format a byte count as a human-readable size (binary units).
@@ -781,6 +775,8 @@ pub(crate) fn emit_progress_json(
         "bytes_downloaded": p.bytes_downloaded,
         // Part of it verified from disk.
         "reused_bytes": p.reused_bytes,
+        // Network bytes still expected, when known up front.
+        "fetch_bytes": p.fetch_bytes,
         "total_bytes": p.total_bytes,
         "percent": percent_of(p.bytes_downloaded, p.total_bytes),
         // Current depot progress.
