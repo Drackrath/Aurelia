@@ -12,11 +12,15 @@ pub(crate) fn platform_depot_rows<'a, 'text>(
     Option<&'a steam_vdf_parser::Obj<'text>>,
 )> {
     let mut rows = Vec::new();
+    let superseded = depots::superseded_32bit(depots, platform);
     for (key, value) in depots.iter() {
         // Only numeric keys are depots.
         let Ok(depot_id) = key.parse::<u32>() else {
             continue;
         };
+        if superseded.contains(&depot_id) {
+            continue;
+        }
         let Some(obj) = value.as_obj() else { continue };
         // Exclude DLC content depots.
         if obj.get("dlcappid").is_some() {

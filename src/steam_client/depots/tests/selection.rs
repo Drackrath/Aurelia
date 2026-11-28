@@ -519,3 +519,39 @@ fn existing_manifest_language_is_kept_verbatim() {
     assert!(raw.contains(&block.replace("polish", "german")));
     assert_eq!(raw.matches("\"language\"").count(), 1);
 }
+
+#[test]
+fn legacy_32bit_depots_yield_to_a_64bit_sibling() {
+    // Factorio: both ship `data/base`.
+    let vdf = appinfo(
+        r#""depots" {
+            "427521" { "config" { "osarch" "64" "oslist" "windows" } "manifests" { "public" { "gid" "1" "size" "100" } } }
+            "427522" { "config" { "osarch" "32" "oslist" "windows" } "manifests" { "public" { "gid" "2" "size" "10" } } }
+            "427523" { "config" { "osarch" "64" "oslist" "linux" } "manifests" { "public" { "gid" "3" "size" "100" } } }
+            "427524" { "config" { "osarch" "32" "oslist" "linux" } "manifests" { "public" { "gid" "4" "size" "10" } } }
+            "645393" { "config" { "osarch" "64" "oslist" "windows" } "dlcappid" "645390" }
+            "900001" { "config" { "osarch" "32" "oslist" "windows" } "dlcappid" "900000" }
+            "900002" { "config" { "osarch" "32" "oslist" "macos" } }
+        }"#,
+    );
+    let rows = vdf.value().get_obj(&["depots"]).unwrap();
+
+    let windows = superseded_32bit(rows, DepotPlatform::Windows);
+    assert_eq!(windows, HashSet::from([427522]));
+    assert_eq!(
+        superseded_32bit(rows, DepotPlatform::Linux),
+        HashSet::from([427524])
+    );
+    // No 64-bit sibling: the only build.
+    assert!(superseded_32bit(rows, DepotPlatform::Macos).is_empty());
+
+    let kept: Vec<u32> = pics::platform_depot_rows(rows, DepotPlatform::Windows)
+        .into_iter()
+        .map(|(id, ..)| id)
+        .collect();
+    assert_eq!(kept, vec![427521]);
+    assert_eq!(
+        estimate_from_rows(rows, DepotPlatform::Windows).disk_size,
+        100
+    );
+}

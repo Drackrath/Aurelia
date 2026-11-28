@@ -145,6 +145,44 @@ pub(crate) fn depot_oslist<'a>(value: &'a Value<'_>) -> Option<&'a str> {
         .and_then(|o| o.as_str())
 }
 
+/// A depot row's `config/osarch`, if set.
+pub(crate) fn depot_osarch<'a>(value: &'a Value<'_>) -> Option<&'a str> {
+    value
+        .get_obj(&["config"])
+        .and_then(|c| c.get("osarch"))
+        .and_then(|o| o.as_str())
+        .map(str::trim)
+}
+
+/// DLC app a depot belongs to.
+fn depot_owner(row: &Value<'_>) -> Option<String> {
+    row.as_obj()
+        .and_then(|o| o.get("dlcappid"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+}
+
+/// 32-bit depots a 64-bit sibling replaces.
+///
+/// Steam installs only the 64-bit one on a 64-bit system; both can ship the
+/// same paths with different content.
+pub(crate) fn superseded_32bit(rows: &Obj<'_>, platform: DepotPlatform) -> HashSet<u32> {
+    if !cfg!(target_pointer_width = "64") {
+        return HashSet::new();
+    }
+    let on_platform = |row: &Value<'_>| pics::should_keep_depot(depot_oslist(row), platform);
+    let has_64 = |wanted: Option<String>| {
+        rows.values().any(|row| {
+            depot_osarch(row) == Some("64") && on_platform(row) && depot_owner(row) == wanted
+        })
+    };
+    rows.iter()
+        .filter(|(_, row)| depot_osarch(row) == Some("32") && on_platform(row))
+        .filter(|(_, row)| has_64(depot_owner(row)))
+        .filter_map(|(key, _)| key.parse().ok())
+        .collect()
+}
+
 /// Whether a depot serves `language`.
 pub(crate) fn depot_matches_language(value: &Value<'_>, language: &str) -> bool {
     depot_language(value).is_none_or(|l| l.eq_ignore_ascii_case(language))
