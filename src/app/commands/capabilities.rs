@@ -47,6 +47,8 @@ pub(crate) const FEATURES: &[&str] = &[
     "play.shader_precache",
     // `result` lines carry `schema`.
     "result.schema",
+    // `config game --platform` is enforced.
+    "play.pinned_platform",
 ];
 
 pub(crate) fn cmd_capabilities(path: &[String], json: bool) -> Result<()> {
