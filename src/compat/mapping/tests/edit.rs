@@ -96,3 +96,52 @@ fn ensure_backs_up_and_writes_once() {
         .collect();
     assert_eq!(names.len(), 2, "{names:?}");
 }
+
+#[test]
+fn remove_restores_the_original_bytes() {
+    let mapped = add_app_mapping(CONFIG, 750920, "proton_experimental")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        remove_app_mapping(&mapped, 750920).unwrap().unwrap(),
+        CONFIG
+    );
+    // Absent entry or block: nothing.
+    assert_eq!(remove_app_mapping(CONFIG, 750920).unwrap(), None);
+    let no_block = "\"InstallConfigStore\"\n{\n\t\"Software\"\n\t{\n\t}\n}\n";
+    assert_eq!(remove_app_mapping(no_block, 1).unwrap(), None);
+    assert!(remove_app_mapping("\"InstallConfigStore\"\n{\n", 1).is_err());
+}
+
+#[test]
+fn remove_file_backs_up_first() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("config")).unwrap();
+    let path = root.path().join("config").join("config.vdf");
+    std::fs::write(&path, CONFIG).unwrap();
+
+    assert!(remove_app_mapping_file(root.path(), 1245620).unwrap());
+    let backup = root.path().join("config").join("config.vdf.aurelia-backup");
+    assert_eq!(std::fs::read_to_string(backup).unwrap(), CONFIG);
+    assert!(mappings_from_config(&std::fs::read_to_string(&path).unwrap()).is_empty());
+    assert!(!remove_app_mapping_file(root.path(), 1245620).unwrap());
+}
+
+#[test]
+fn windows_tools_are_told_apart() {
+    let vdf = "\"compatibilitytools\"\n{\n  \"compat_tools\"\n  {\n    \"GE-Proton11-11-x86_64\"\n    {\n      \"from_oslist\"  \"windows\"\n      \"to_oslist\"    \"linux\"\n    }\n    \"proton-cachyos-native\"\n    {\n      \"from_oslist\"  \"linux\"\n    }\n  }\n}\n";
+    let declared = declared_tool_platforms(vdf);
+    assert_eq!(
+        declared,
+        vec![
+            ("GE-Proton11-11-x86_64".to_string(), true),
+            ("proton-cachyos-native".to_string(), false),
+        ]
+    );
+    assert!(runs_windows_builds("GE-Proton11-11-x86_64", &declared));
+    assert!(!runs_windows_builds("proton-cachyos-native", &declared));
+    // Undeclared: judged by name.
+    assert!(runs_windows_builds("proton_experimental", &declared));
+    assert!(runs_windows_builds("GE-Proton-latest", &declared));
+    assert!(!runs_windows_builds("steamlinuxruntime_sniper", &declared));
+}

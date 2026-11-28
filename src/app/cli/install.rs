@@ -19,9 +19,10 @@ pub(crate) struct InstallArgs {
         short = 'r',
         long,
         help = "Stop Steam around the install and restart it afterward: for a DLC so the \
-                running client picks it up, and for a Windows build of a game that also \
-                ships a Linux build so Aurelia can set its Steam Play tool. Without this a \
-                DLC install only warns, and the Windows case refuses while Steam is running"
+                running client picks it up, and for either build of a game that ships both \
+                Windows and Linux builds so Aurelia can set or remove its Steam Play tool. \
+                Without this a DLC install only warns, and those installs refuse while \
+                Steam is running"
     )]
     pub(crate) restart_steam: bool,
     /// Don't install — just report the estimated download and on-disk size

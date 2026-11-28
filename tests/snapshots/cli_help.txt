@@ -1272,7 +1272,7 @@ Arguments:
 
 Options:
   -p, --platform <PLATFORM>  Depot platform to install. Auto-detected if omitted [possible values: windows, linux]
-  -r, --restart-steam        Stop Steam around the install and restart it afterward: for a DLC so the running client picks it up, and for a Windows build of a game that also ships a Linux build so Aurelia can set its Steam Play tool. Without this a DLC install only warns, and the Windows case refuses while Steam is running
+  -r, --restart-steam        Stop Steam around the install and restart it afterward: for a DLC so the running client picks it up, and for either build of a game that ships both Windows and Linux builds so Aurelia can set or remove its Steam Play tool. Without this a DLC install only warns, and those installs refuse while Steam is running
   -d, --dry-run              Don't install — just report the estimated download and on-disk size and the language choices (from PICS, no files fetched). Pair with `--json` for tooling
   -l, --library <LIBRARY>    Steam library folder (drive/location) to install into. A library root containing a `steamapps` directory, as listed by `aurelia libraries`. Defaults to the configured `steam_library_path`
       --language <LANGUAGE>  Steam language to install, e.g. `german`. Must be one of the `languages` that `--dry-run --json` lists; recorded like a Steam language choice. Defaults to the manifest, Steam client or config language, falling back to English

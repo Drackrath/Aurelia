@@ -17,8 +17,19 @@ pub struct AppManifestSpec<'a> {
     pub fully_installed: bool,
     pub pin_updates: bool,
     pub language: Option<&'a str>,
+    pub platform_override: PlatformOverride,
+}
+
+/// Manifest `platform_override_*` handling.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PlatformOverride {
+    /// Copy existing keys verbatim.
+    #[default]
+    Keep,
     /// Windows build on Linux host.
-    pub platform_override: bool,
+    WindowsOnLinux,
+    /// Native build: drop the keys.
+    Clear,
 }
 
 impl SteamClient {
@@ -419,10 +430,17 @@ impl SteamClient {
         };
         let mut user_config = user_config;
         let mut mounted_config = mounted_config.map(str::to_string);
-        if platform_override {
-            // Steam writes these with a tool.
-            user_config = Some(with_platform_override(user_config, "UserConfig"));
-            mounted_config = Some(with_platform_override(mounted_config, "MountedConfig"));
+        match platform_override {
+            PlatformOverride::Keep => {}
+            PlatformOverride::WindowsOnLinux => {
+                // Steam writes these with a tool.
+                user_config = Some(with_platform_override(user_config, "UserConfig"));
+                mounted_config = Some(with_platform_override(mounted_config, "MountedConfig"));
+            }
+            PlatformOverride::Clear => {
+                user_config = user_config.map(|b| without_platform_override(&b));
+                mounted_config = mounted_config.map(|b| without_platform_override(&b));
+            }
         }
         for block in user_config
             .iter()
@@ -698,6 +716,34 @@ fn with_platform_override(block: Option<String>, name: &str) -> String {
     let base = block.unwrap_or_else(|| format!("\"{name}\"\n\t{{\n\t}}"));
     let base = block_with_key(&base, "platform_override_dest", "linux");
     block_with_key(&base, "platform_override_source", "windows")
+}
+
+/// Drop the override keys' lines.
+fn without_platform_override(block: &str) -> String {
+    let mut out = block.to_string();
+    for key in ["platform_override_dest", "platform_override_source"] {
+        let toks = vdf_tokens(&out);
+        let mut depth = 0usize;
+        let mut range = None;
+        for (i, tok) in toks.iter().enumerate() {
+            match *tok {
+                Tok::Open(_) => depth += 1,
+                Tok::Close(_) => depth = depth.saturating_sub(1),
+                Tok::Str(start, k) if depth == 1 && k.eq_ignore_ascii_case(key) => {
+                    if let Some(Tok::Str(vs, v)) = toks.get(i + 1) {
+                        range = Some((start, vs + v.len() + 2));
+                        break;
+                    }
+                }
+                Tok::Str(..) => {}
+            }
+        }
+        let Some((start, end)) = range else { continue };
+        let line_start = out[..start].rfind('\n').map_or(start, |n| n + 1);
+        let line_end = out[end..].find('\n').map_or(end, |n| end + n + 1);
+        out.replace_range(line_start..line_end, "");
+    }
+    out
 }
 
 /// Add `key` unless already present.

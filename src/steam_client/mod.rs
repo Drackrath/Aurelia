@@ -148,7 +148,7 @@ mod cloudconfig;
 mod collections;
 
 mod manifests;
-pub use manifests::AppManifestSpec;
+pub use manifests::{AppManifestSpec, PlatformOverride};
 
 mod process;
 

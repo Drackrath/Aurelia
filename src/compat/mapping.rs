@@ -340,11 +340,118 @@ pub fn ensure_app_mapping(steam_root: &Path, app_id: u32, tool: &str) -> Result<
             .unwrap_or_default();
         return Ok(MappingWrite::Existing(existing));
     };
-    let backup = path.with_file_name("config.vdf.aurelia-backup");
-    std::fs::copy(&path, &backup)
-        .with_context(|| format!("failed backing up {}", path.display()))?;
-    crate::core::atomic::write_atomic(&path, updated.as_bytes())?;
+    replace_config(&path, &updated)?;
     Ok(MappingWrite::Added)
+}
+
+/// Back up, then replace atomically.
+fn replace_config(path: &Path, text: &str) -> Result<()> {
+    let backup = path.with_file_name("config.vdf.aurelia-backup");
+    std::fs::copy(path, &backup)
+        .with_context(|| format!("failed backing up {}", path.display()))?;
+    crate::core::atomic::write_atomic(path, text.as_bytes())
+}
+
+/// Splice out one entry; `None` if absent.
+pub fn remove_app_mapping(raw: &str, app_id: u32) -> Result<Option<String>> {
+    if steam_vdf_parser::parse_text(raw).is_err() {
+        bail!("config.vdf is not valid VDF; left unchanged");
+    }
+    let toks = vdf_tokens(raw);
+    let mut open = None;
+    for key in MAPPING_PATH.iter().copied().chain(["CompatToolMapping"]) {
+        let Some((_, o, _)) = child_block(&toks, open, key) else {
+            return Ok(None);
+        };
+        open = Some(o);
+    }
+    let Some((key, _, close)) = child_block(&toks, open, &app_id.to_string()) else {
+        return Ok(None);
+    };
+    let key_pos = tok_pos(toks[key]);
+    let close_pos = tok_pos(toks[close]);
+    // Whole lines when the entry owns them.
+    let line_start = raw[..key_pos].rfind('\n').map_or(0, |n| n + 1);
+    let start = if raw[line_start..key_pos].trim().is_empty() {
+        line_start
+    } else {
+        key_pos
+    };
+    let line_end = raw[close_pos..].find('\n').map(|n| close_pos + n + 1);
+    let end = match line_end {
+        Some(end) if raw[close_pos + 1..end].trim().is_empty() => end,
+        _ => close_pos + 1,
+    };
+    let mut out = raw.to_string();
+    out.replace_range(start..end, "");
+
+    // Read back before trusting it.
+    let expected: Vec<(u64, String)> = mappings_from_config(raw)
+        .into_iter()
+        .filter(|(app, _)| *app != u64::from(app_id))
+        .collect();
+    if steam_vdf_parser::parse_text(&out).is_err() || mappings_from_config(&out) != expected {
+        bail!("config.vdf edit did not verify; left unchanged");
+    }
+    Ok(Some(out))
+}
+
+/// Drop `app_id`'s mapping; Steam closed.
+pub fn remove_app_mapping_file(steam_root: &Path, app_id: u32) -> Result<bool> {
+    let path = steam_root.join("config").join("config.vdf");
+    let raw = std::fs::read_to_string(&path)
+        .with_context(|| format!("failed reading {}", path.display()))?;
+    let Some(updated) = remove_app_mapping(&raw, app_id)? else {
+        return Ok(false);
+    };
+    replace_config(&path, &updated)?;
+    Ok(true)
+}
+
+/// Tools and whether they run Windows builds.
+pub fn declared_tool_platforms(raw: &str) -> Vec<(String, bool)> {
+    let Ok(vdf) = steam_vdf_parser::parse_text(raw) else {
+        return Vec::new();
+    };
+    let Some(tools) = child(vdf.value(), "compat_tools").and_then(Value::as_obj) else {
+        return Vec::new();
+    };
+    tools
+        .iter()
+        .map(|(name, tool)| {
+            let windows = child(tool, "from_oslist")
+                .and_then(Value::as_str)
+                .is_some_and(|os| os.to_ascii_lowercase().contains("windows"));
+            (name.to_string(), windows)
+        })
+        .collect()
+}
+
+/// Installed tools with their platform.
+pub fn installed_tool_platforms(steam_root: &Path) -> Vec<(String, bool)> {
+    let mut out = Vec::new();
+    for dir in compat_tool_dirs(steam_root) {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let vdf = entry.path().join("compatibilitytool.vdf");
+            if let Ok(raw) = std::fs::read_to_string(&vdf) {
+                out.extend(declared_tool_platforms(&raw));
+            }
+        }
+    }
+    out
+}
+
+/// Whether `tool` runs Windows builds.
+pub fn runs_windows_builds(tool: &str, declared: &[(String, bool)]) -> bool {
+    if let Some((_, windows)) = declared.iter().find(|(name, _)| name == tool) {
+        return *windows;
+    }
+    // Undeclared: judge by name.
+    let lower = tool.to_ascii_lowercase();
+    !VALVE_RUNTIMES.contains(&lower.as_str()) && lower.contains("proton")
 }
 
 #[cfg(test)]

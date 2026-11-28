@@ -96,8 +96,8 @@ pub struct InstallOptions {
     pub branch: Option<String>,
     /// Chosen language, already validated.
     pub language: Option<String>,
-    /// Record Windows-on-Linux in the manifest.
-    pub platform_override: bool,
+    /// Manifest platform override handling.
+    pub platform_override: crate::steam_client::PlatformOverride,
 }
 
 /// One depot to download or verify.

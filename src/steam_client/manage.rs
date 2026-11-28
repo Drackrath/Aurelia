@@ -439,7 +439,7 @@ impl SteamClient {
                 fully_installed: true,
                 pin_updates: false,
                 language: None,
-                platform_override: false,
+                platform_override: crate::steam_client::PlatformOverride::Keep,
             },
         )?;
 

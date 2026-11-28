@@ -21,7 +21,7 @@ fn write_appmanifest_preserves_owner_and_branch() {
             fully_installed: true,
             pin_updates: false,
             language: None,
-            platform_override: false,
+            platform_override: crate::steam_client::PlatformOverride::Keep,
         },
     )
     .unwrap();
@@ -62,7 +62,7 @@ fn write_appmanifest_fresh_has_no_owner_or_branch() {
             fully_installed: false,
             pin_updates: false,
             language: None,
-            platform_override: false,
+            platform_override: crate::steam_client::PlatformOverride::Keep,
         },
     )
     .unwrap();
@@ -94,7 +94,7 @@ fn write_appmanifest_keeps_user_and_mounted_config() {
             fully_installed: true,
             pin_updates: false,
             language: Some("english"),
-            platform_override: false,
+            platform_override: crate::steam_client::PlatformOverride::Keep,
         },
     )
     .unwrap();
@@ -129,7 +129,7 @@ fn write_appmanifest_records_language_on_fresh_install() {
             fully_installed: true,
             pin_updates: false,
             language: Some("german"),
-            platform_override: false,
+            platform_override: crate::steam_client::PlatformOverride::Keep,
         },
     )
     .unwrap();
@@ -167,7 +167,7 @@ fn write_appmanifest_keeps_steam_fields_and_dlc_tags() {
             fully_installed: true,
             pin_updates: false,
             language: None,
-            platform_override: false,
+            platform_override: crate::steam_client::PlatformOverride::Keep,
         },
     )
     .unwrap();
@@ -213,7 +213,7 @@ fn write_appmanifest_keeps_target_build_while_updating() {
             fully_installed: false,
             pin_updates: false,
             language: None,
-            platform_override: false,
+            platform_override: crate::steam_client::PlatformOverride::Keep,
         },
     )
     .unwrap();
@@ -223,7 +223,7 @@ fn write_appmanifest_keeps_target_build_while_updating() {
 
 #[test]
 fn write_appmanifest_records_windows_on_linux() {
-    let spec = |platform_override| AppManifestSpec {
+    let spec = |platform_override: PlatformOverride| AppManifestSpec {
         appid: 750920,
         game_name: "Shadow of the Tomb Raider",
         installdir: "Shadow of the Tomb Raider",
@@ -238,7 +238,7 @@ fn write_appmanifest_records_windows_on_linux() {
 
     // Fresh manifest gets both blocks.
     let fresh = dir.path().join("appmanifest_750920.acf");
-    SteamClient::write_appmanifest(&fresh, spec(true)).unwrap();
+    SteamClient::write_appmanifest(&fresh, spec(PlatformOverride::WindowsOnLinux)).unwrap();
     let raw = std::fs::read_to_string(&fresh).unwrap();
     for name in ["UserConfig", "MountedConfig"] {
         let block = manifests::top_level_block(&raw, name).unwrap();
@@ -262,21 +262,57 @@ fn write_appmanifest_records_windows_on_linux() {
          \t\"MountedConfig\"\n\t{\n\t\t\"language\"\t\t\"german\"\n\t}\n}\n",
     )
     .unwrap();
-    SteamClient::write_appmanifest(&existing, spec(true)).unwrap();
+    SteamClient::write_appmanifest(&existing, spec(PlatformOverride::WindowsOnLinux)).unwrap();
     let raw = std::fs::read_to_string(&existing).unwrap();
     assert_eq!(raw.matches("\"platform_override_source\"").count(), 2);
     assert_eq!(raw.matches("\"language\"\t\t\"german\"").count(), 2);
     // Rewrite adds nothing twice.
-    SteamClient::write_appmanifest(&existing, spec(true)).unwrap();
+    SteamClient::write_appmanifest(&existing, spec(PlatformOverride::WindowsOnLinux)).unwrap();
     let again = std::fs::read_to_string(&existing).unwrap();
     assert_eq!(again.matches("\"platform_override_dest\"").count(), 2);
 
     // Off: no keys.
     let plain = dir.path().join("appmanifest_2.acf");
-    SteamClient::write_appmanifest(&plain, spec(false)).unwrap();
+    SteamClient::write_appmanifest(&plain, spec(PlatformOverride::Keep)).unwrap();
     assert!(
         !std::fs::read_to_string(&plain)
             .unwrap()
             .contains("platform_override")
     );
+}
+
+#[test]
+fn native_install_drops_override_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("appmanifest_380840.acf");
+    std::fs::write(
+        &path,
+        "\"AppState\"\n{\n\t\"appid\"\t\t\"380840\"\n\
+         \t\"UserConfig\"\n\t{\n\t\t\"language\"\t\t\"german\"\n\
+         \t\t\"platform_override_dest\"\t\t\"linux\"\n\
+         \t\t\"platform_override_source\"\t\t\"windows\"\n\t}\n\
+         \t\"MountedConfig\"\n\t{\n\t\t\"platform_override_dest\"\t\t\"linux\"\n\
+         \t\t\"platform_override_source\"\t\t\"windows\"\n\t}\n}\n",
+    )
+    .unwrap();
+    SteamClient::write_appmanifest(
+        &path,
+        AppManifestSpec {
+            appid: 380840,
+            game_name: "Teeworlds",
+            installdir: "Teeworlds",
+            installed_depots: vec![(380843, 5, 50)],
+            buildid: Some("1"),
+            fully_installed: true,
+            pin_updates: false,
+            language: None,
+            platform_override: PlatformOverride::Clear,
+        },
+    )
+    .unwrap();
+    let raw = std::fs::read_to_string(&path).unwrap();
+    assert!(!raw.contains("platform_override"), "{raw}");
+    assert!(raw.contains("\"language\"\t\t\"german\""));
+    assert!(raw.contains("\"MountedConfig\"\n\t{\n\t}"), "{raw}");
+    assert!(steam_vdf_parser::parse_text(&raw).is_ok());
 }
