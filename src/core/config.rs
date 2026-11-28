@@ -115,6 +115,17 @@ impl ChatPresence {
     }
 }
 
+/// `config platform-switch-install` modes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlatformSwitchInstall {
+    /// Download on the next `play`.
+    #[default]
+    Play,
+    /// Download when the platform is set.
+    Switch,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LauncherConfig {
     pub steam_library_path: String,
@@ -174,6 +185,9 @@ pub struct LauncherConfig {
     /// Whether the daemon resumes interrupted installs on start.
     #[serde(default)]
     pub install_resume: crate::library::backlog::InstallResume,
+    /// When a newly pinned platform downloads.
+    #[serde(default)]
+    pub platform_switch_install: PlatformSwitchInstall,
     /// Vulkan shader pre-caching before launch.
     #[serde(default)]
     pub shader_precache: crate::launch::shaders::ShaderPrecache,
@@ -293,6 +307,7 @@ impl Default for LauncherConfig {
             proxy: ProxyConfig::default(),
             steam_runtime_policy: crate::core::models::SteamRuntimePolicy::default(),
             install_resume: crate::library::backlog::InstallResume::default(),
+            platform_switch_install: PlatformSwitchInstall::default(),
             shader_precache: crate::launch::shaders::ShaderPrecache::default(),
             hide_uninstalled_launch_options: true,
             anticheat_auto_install: true,

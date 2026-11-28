@@ -470,6 +470,34 @@ pub(crate) async fn cmd_config_download_limit(kbit: Option<u64>, json: bool) -> 
     Ok(())
 }
 
+/// `config platform-switch-install [play|switch]`.
+pub(crate) async fn cmd_config_platform_switch_install(
+    mode: Option<PlatformSwitchInstallArg>,
+    json: bool,
+) -> Result<()> {
+    use aurelia::core::config::PlatformSwitchInstall;
+    let (config, changed) = view_or_set(mode, |c, m| c.platform_switch_install = m.into()).await?;
+    if json {
+        print_json(&serde_json::json!({
+            "platform_switch_install": config.platform_switch_install
+        }));
+        return Ok(());
+    }
+    let label = match config.platform_switch_install {
+        PlatformSwitchInstall::Play => {
+            "play (a switched platform downloads on the next `aurelia play`)"
+        }
+        PlatformSwitchInstall::Switch => {
+            "switch (a switched platform downloads when `config game --platform` sets it)"
+        }
+    };
+    cli_println!("Platform switch install: {label}");
+    if changed {
+        cli_println!("Saved.");
+    }
+    Ok(())
+}
+
 /// `config install-resume [manual|auto]`.
 pub(crate) async fn cmd_config_install_resume(
     mode: Option<InstallResumeArg>,
@@ -801,6 +829,16 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
     if changed {
         cfg.save().await.context("failed saving game config")?;
     }
+    // `platform-switch-install switch`: fetch it now.
+    let install_now = platform.is_some()
+        && cfg.platform_switch_install == aurelia::core::config::PlatformSwitchInstall::Switch;
+    let platform_installed = if install_now {
+        crate::app::commands::launch::install_pinned_now(app_id, json)
+            .await
+            .context("the platform is saved, but its build could not be installed")?
+    } else {
+        false
+    };
 
     let entry = cfg.game_configs.get(&app_id).cloned().unwrap_or_default();
     let ua = user_configs.get(&app_id).cloned().unwrap_or_default();
@@ -854,6 +892,7 @@ pub(crate) async fn cmd_config_game(args: GameConfigArgs, json: bool) -> Result<
             "app_id": app_id,
             "forced_proton_version": entry.forced_proton_version,
             "platform_preference": entry.platform_preference,
+            "platform_installed": platform_installed,
             "runner": entry.runner,
             "launch_script": entry.launch_script,
             "steam_runtime_policy": ua.steam_runtime_policy,

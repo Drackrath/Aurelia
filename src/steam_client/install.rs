@@ -382,6 +382,7 @@ impl SteamClient {
                         .map(|s| s.to_string());
 
                     if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
+                        let superseded = depots::superseded_32bit(depots, platform);
                         for (key, value) in depots.iter() {
                             if let Ok(d_id) = key.parse::<u32>() {
                                 let oslist = depots::depot_oslist(value);
@@ -402,7 +403,8 @@ impl SteamClient {
                                     Some(mid)
                                 } else {
                                     let match_os = should_keep_depot(oslist, platform)
-                                        && depots::depot_matches_language(value, &language);
+                                        && depots::depot_matches_language(value, &language)
+                                        && !superseded.contains(&d_id);
 
                                     let depot_id_u64 = d_id as u64;
                                     let is_allowed = filter_depots

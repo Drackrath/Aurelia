@@ -9,7 +9,7 @@ use crate::app::cli::{PlatformArg, SteamModeArg};
 use anyhow::{Context, Result, bail};
 use aurelia::core::config::load_launcher_config;
 use aurelia::core::config::load_user_configs;
-use aurelia::core::models::DownloadState;
+use aurelia::core::models::{DepotPlatform, DownloadState, LibraryGame};
 use aurelia::steam_client::SteamClient;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
@@ -255,6 +255,133 @@ pub(crate) struct PlayRun {
     pub steam: bool,
 }
 
+/// Platform pinned by `config game --platform`.
+async fn pinned_platform(app_id: u32) -> Result<Option<DepotPlatform>> {
+    // Steam only swaps builds on Linux.
+    if DepotPlatform::host() != DepotPlatform::Linux {
+        return Ok(None);
+    }
+    let config = load_launcher_config().await?;
+    let preference = config
+        .game_configs
+        .get(&app_id)
+        .and_then(|c| c.platform_preference.as_deref());
+    Ok(match preference {
+        Some("linux") => Some(DepotPlatform::Linux),
+        Some("windows") => Some(DepotPlatform::Windows),
+        _ => None,
+    })
+}
+
+/// Install a just-pinned build if Steam swapped it.
+///
+/// Returns whether anything was installed.
+pub(crate) async fn install_pinned_now(app_id: u32, json: bool) -> Result<bool> {
+    let Some(wanted) = pinned_platform(app_id).await? else {
+        return Ok(false);
+    };
+    let mut client = authed_client().await?;
+    let mut game = find_game(&mut client, app_id).await?;
+    if !game.is_installed || game.from_windows_steam {
+        return Ok(false);
+    }
+    if pinned_state(&mut client, &game, wanted).await?
+        != aurelia::steam_client::PinnedBuild::Swapped
+    {
+        return Ok(false);
+    }
+    ensure_pinned_build(&mut client, &mut game, wanted, false, json).await?;
+    Ok(true)
+}
+
+/// Pinned build state from Steam's metadata.
+async fn pinned_state(
+    client: &mut SteamClient,
+    game: &LibraryGame,
+    wanted: DepotPlatform,
+) -> Result<aurelia::steam_client::PinnedBuild> {
+    let (options, installed) = client
+        .get_product_info(game)
+        .await
+        .with_context(|| format!("failed to load launch options for app {}", game.app_id))?;
+    Ok(aurelia::steam_client::pinned_build_state(
+        &options, game, installed, wanted,
+    ))
+}
+
+/// Make the pinned build launchable, or fail.
+///
+/// A build Steam swapped away is installed again.
+async fn ensure_pinned_build(
+    client: &mut SteamClient,
+    game: &mut LibraryGame,
+    wanted: DepotPlatform,
+    no_update: bool,
+    json: bool,
+) -> Result<()> {
+    use aurelia::steam_client::{PinnedBuild, build_not_installed};
+    let app_id = game.app_id;
+    match pinned_state(client, game, wanted).await? {
+        PinnedBuild::Ready => return Ok(()),
+        PinnedBuild::Swapped if !no_update => {}
+        _ => return Err(build_not_installed(app_id, wanted)),
+    }
+
+    let message = format!(
+        "{} is pinned to its {} build, but another build is installed; installing it ...",
+        game.name,
+        wanted.as_str()
+    );
+    // Drivers list it as a download.
+    let announce = |state: &str| {
+        if json {
+            eprint_json_line(&serde_json::json!({
+                "event": "platform_install",
+                "state": state,
+                "app_id": app_id,
+                "platform": wanted.as_str(),
+            }));
+        }
+    };
+    if json {
+        eprint_json_line(&serde_json::json!({ "event": "message", "message": message }));
+    } else {
+        cli_println!("{message}");
+    }
+    announce("started");
+    // Same library as the current install.
+    let library = game
+        .install_path
+        .as_deref()
+        .and_then(|path| {
+            aurelia::core::paths::library_from_install_path(std::path::Path::new(path), app_id)
+        })
+        .map(|root| root.to_string_lossy().into_owned());
+    let request = crate::app::commands::install::InstallRequest {
+        app_id,
+        platform: Some(wanted),
+        // Steam would undo the swap otherwise.
+        restart_steam: true,
+        library,
+        on_disk: 0,
+        auto_attempts: 0,
+        language: None,
+    };
+    let installed = crate::app::commands::install::install_with(client, request, json).await;
+    announce(if installed.is_ok() {
+        "finished"
+    } else {
+        "failed"
+    });
+    installed.with_context(|| format!("failed to install the {} build", wanted.as_str()))?;
+
+    *game = find_game(client, app_id).await?;
+    match pinned_state(client, game, wanted).await? {
+        PinnedBuild::Ready => Ok(()),
+        _ => Err(build_not_installed(app_id, wanted)),
+    }
+}
+
 pub(crate) async fn cmd_play(
     app_id: u32,
     run: PlayRun,
@@ -461,6 +588,15 @@ pub(crate) async fn cmd_play(
             .await
             .with_context(|| format!("failed to load launch options for app {app_id}"))?;
         aurelia::steam_client::require_windows_build(&options, &game)?;
+    }
+
+    // `config game --platform`: that build only.
+    let pinned = match target.platform {
+        Some(_) => None,
+        None => pinned_platform(app_id).await?,
+    };
+    if let Some(wanted) = pinned {
+        ensure_pinned_build(&mut client, &mut game, wanted, no_update, json).await?;
     }
 
     // Family-Shared games are pinned to the owner's current build — a stale
