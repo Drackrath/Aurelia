@@ -89,6 +89,13 @@ pub(crate) enum ConfigCommand {
         /// `manual` or `auto`. Omit to print the current setting.
         mode: Option<InstallResumeArg>,
     },
+    /// View or set when a game switched to another platform with `config game
+    /// --platform` downloads that build (Linux). `play` (default) downloads it on
+    /// the next `play`; `switch` downloads it as soon as the platform is set.
+    PlatformSwitchInstall {
+        /// `play` or `switch`. Omit to print the current setting.
+        mode: Option<PlatformSwitchInstallArg>,
+    },
     /// View or set the global download limit.
     ///
     /// Caps all game downloads together, in kbit/s (8000 = 1 MB/s). `0` or `off`

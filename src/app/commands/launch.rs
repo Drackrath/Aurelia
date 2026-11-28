@@ -273,6 +273,27 @@ async fn pinned_platform(app_id: u32) -> Result<Option<DepotPlatform>> {
     })
 }
 
+/// Install a just-pinned build if Steam swapped it.
+///
+/// Returns whether anything was installed.
+pub(crate) async fn install_pinned_now(app_id: u32, json: bool) -> Result<bool> {
+    let Some(wanted) = pinned_platform(app_id).await? else {
+        return Ok(false);
+    };
+    let mut client = authed_client().await?;
+    let mut game = find_game(&mut client, app_id).await?;
+    if !game.is_installed || game.from_windows_steam {
+        return Ok(false);
+    }
+    if pinned_state(&mut client, &game, wanted).await?
+        != aurelia::steam_client::PinnedBuild::Swapped
+    {
+        return Ok(false);
+    }
+    ensure_pinned_build(&mut client, &mut game, wanted, false, json).await?;
+    Ok(true)
+}
+
 /// Pinned build state from Steam's metadata.
 async fn pinned_state(
     client: &mut SteamClient,
