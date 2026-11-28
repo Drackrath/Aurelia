@@ -430,6 +430,7 @@ fn fresh_install(dir: &Path, existing: Option<&str>, rows: &str, steam: &str) ->
             fully_installed: true,
             pin_updates: false,
             language: recorded.as_deref(),
+            platform_override: false,
         },
     )
     .unwrap();

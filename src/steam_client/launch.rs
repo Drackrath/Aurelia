@@ -844,6 +844,7 @@ impl SteamClient {
                     fully_installed: true,
                     pin_updates: false,
                     language: None,
+                    platform_override: false,
                 },
             ) {
                 tracing::warn!("failed writing appmanifest for {}: {}", appid, err);

@@ -15,9 +15,14 @@ pub(crate) struct InstallArgs {
     /// Depot platform to install. Auto-detected if omitted.
     #[arg(short, long)]
     pub(crate) platform: Option<PlatformArg>,
-    /// When installing a DLC, restart the Steam client afterward so the running
-    /// client picks up the change. Without this it only warns.
-    #[arg(short = 'r', long)]
+    #[arg(
+        short = 'r',
+        long,
+        help = "Stop Steam around the install and restart it afterward: for a DLC so the \
+                running client picks it up, and for a Windows build of a game that also \
+                ships a Linux build so Aurelia can set its Steam Play tool. Without this a \
+                DLC install only warns, and the Windows case refuses while Steam is running"
+    )]
     pub(crate) restart_steam: bool,
     /// Don't install — just report the estimated download and on-disk size
     /// and the language choices (from PICS, no files fetched). Pair with

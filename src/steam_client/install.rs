@@ -96,6 +96,8 @@ pub struct InstallOptions {
     pub branch: Option<String>,
     /// Chosen language, already validated.
     pub language: Option<String>,
+    /// Record Windows-on-Linux in the manifest.
+    pub platform_override: bool,
 }
 
 /// One depot to download or verify.
@@ -204,6 +206,7 @@ impl SteamClient {
             manifest_overrides,
             branch,
             language: chosen_language,
+            platform_override,
         } = opts;
         let connection = self.require_connection_owned()?;
 
@@ -511,6 +514,7 @@ impl SteamClient {
                         fully_installed: false,
                         pin_updates,
                         language: recorded_language.as_deref(),
+                        platform_override,
                     },
                 ) {
                     tracing::warn!("failed writing initial appmanifest for app {appid}: {e}");
@@ -583,6 +587,7 @@ impl SteamClient {
                         fully_installed: true,
                         pin_updates,
                         language: recorded_language.as_deref(),
+                        platform_override,
                     },
                 )
             };
