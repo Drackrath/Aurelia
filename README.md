@@ -6,7 +6,7 @@
 
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](LICENSE)
 [![Built with Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
-[![Status: Beta](https://img.shields.io/badge/status-experimental%20beta-yellow.svg)](#project-status)
+[![Status: Beta](https://img.shields.io/badge/status-beta-yellow.svg)](#project-status)
 [![AUR](https://img.shields.io/badge/AUR-aurelia-1793d1.svg)](https://aur.archlinux.org/packages/aurelia)
 [![crates.io](https://img.shields.io/crates/v/aurelia-steam.svg)](https://crates.io/crates/aurelia-steam)
 
