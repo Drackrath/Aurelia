@@ -294,6 +294,7 @@ pub(crate) fn spawn_progress_reporter(
                     s.depot_id,
                     s.depot_downloaded_bytes,
                     s.depot_total_bytes,
+                    s.fetch_bytes,
                 )),
                 Err(_) => None,
             };
@@ -306,6 +307,7 @@ pub(crate) fn spawn_progress_reporter(
                 depot_id,
                 depot_downloaded,
                 depot_total,
+                fetch_bytes,
             )) = snapshot
             else {
                 break;
@@ -324,6 +326,7 @@ pub(crate) fn spawn_progress_reporter(
                     depot_id,
                     depot_bytes_downloaded: depot_downloaded,
                     depot_total_bytes: depot_total,
+                    fetch_bytes,
                     error_kind: None,
                 })
                 .await

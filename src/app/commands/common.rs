@@ -781,6 +781,8 @@ pub(crate) fn emit_progress_json(
         "bytes_downloaded": p.bytes_downloaded,
         // Part of it verified from disk.
         "reused_bytes": p.reused_bytes,
+        // Network bytes still expected, when known up front.
+        "fetch_bytes": p.fetch_bytes,
         "total_bytes": p.total_bytes,
         "percent": percent_of(p.bytes_downloaded, p.total_bytes),
         // Current depot progress.
