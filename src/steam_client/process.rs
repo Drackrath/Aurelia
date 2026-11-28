@@ -2,6 +2,8 @@
 //!
 //! Shares the parent's imports via `use super::*`.
 use super::*;
+#[cfg(target_os = "macos")]
+use crate::compat::proc_admin::{MacProcess, macos_process_list};
 
 impl SteamClient {
     /// Whether the desktop Steam client appears to be running.
@@ -237,7 +239,7 @@ impl SteamClient {
 
         #[cfg(target_os = "macos")]
         {
-            for (pid, _cmd, env, _cwd) in Self::macos_process_list() {
+            for MacProcess { pid, env, .. } in macos_process_list() {
                 if env.split(' ').any(|entry| entry == needle) {
                     unsafe {
                         libc::kill(pid, signal);
@@ -294,42 +296,6 @@ impl SteamClient {
         Some(String::from_utf8_lossy(&bytes).replace('\0', " "))
     }
 
-    /// `(pid, cmdline, environ, cwd)` for every visible process, on macOS.
-    #[cfg(target_os = "macos")]
-    fn macos_process_list() -> Vec<(i32, String, String, Option<String>)> {
-        use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
-        let Ok(mut sys) = System::new() else {
-            return Vec::new();
-        };
-        sys.refresh_processes_specifics(
-            ProcessesToUpdate::All,
-            true,
-            ProcessRefreshKind::nothing()
-                .with_cmd(UpdateKind::OnlyIfNotSet)
-                .with_environ(UpdateKind::OnlyIfNotSet)
-                .with_cwd(UpdateKind::OnlyIfNotSet),
-        );
-        sys.processes()
-            .iter()
-            .map(|(pid, process)| {
-                let cmd = process
-                    .cmd()
-                    .iter()
-                    .map(|part| part.to_string_lossy())
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                let env = process
-                    .environ()
-                    .iter()
-                    .map(|entry| entry.to_string_lossy())
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                let cwd = process.cwd().map(|dir| dir.to_string_lossy().into_owned());
-                (pid.as_u32() as i32, cmd, env, cwd)
-            })
-            .collect()
-    }
-
     /// Signal every process matching `pred`.
     #[cfg(all(unix, not(target_os = "macos")))]
     fn sweep_proc_pids(signal: i32, mut pred: impl FnMut(&Path) -> bool) {
@@ -357,7 +323,7 @@ impl SteamClient {
 
         #[cfg(target_os = "macos")]
         {
-            for (pid, _cmd, env, cwd) in Self::macos_process_list() {
+            for MacProcess { pid, env, cwd, .. } in macos_process_list() {
                 if env.contains(&prefix_str)
                     || cwd
                         .as_deref()
@@ -383,7 +349,10 @@ impl SteamClient {
 
             #[cfg(target_os = "macos")]
             {
-                for (pid, cmd, env, cwd) in Self::macos_process_list() {
+                for MacProcess {
+                    pid, cmd, env, cwd, ..
+                } in macos_process_list()
+                {
                     let cmd = cmd.to_lowercase();
                     let in_prefix = env.contains(&prefix_str)
                         || cwd
@@ -425,9 +394,9 @@ impl SteamClient {
 
             #[cfg(target_os = "macos")]
             {
-                Self::macos_process_list()
+                macos_process_list()
                     .into_iter()
-                    .any(|(_, cmd, env, cwd)| {
+                    .any(|MacProcess { cmd, env, cwd, .. }| {
                         let cmd = cmd.to_lowercase();
                         let in_prefix = env.contains(&prefix_str)
                             || cwd
@@ -467,9 +436,9 @@ impl SteamClient {
 
             #[cfg(target_os = "macos")]
             {
-                Self::macos_process_list()
+                macos_process_list()
                     .into_iter()
-                    .any(|(_, cmd, env, cwd)| {
+                    .any(|MacProcess { cmd, env, cwd, .. }| {
                         let in_prefix = env.contains(&prefix_str)
                             || cwd
                                 .as_deref()
@@ -522,9 +491,9 @@ impl SteamClient {
 
             #[cfg(target_os = "macos")]
             {
-                Self::macos_process_list()
+                macos_process_list()
                     .into_iter()
-                    .any(|(_, cmd, env, cwd)| {
+                    .any(|MacProcess { cmd, env, cwd, .. }| {
                         let cmd = cmd.to_lowercase();
                         let in_prefix = env.contains(&prefix_str)
                             || cwd

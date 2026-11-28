@@ -227,7 +227,7 @@ pub(crate) fn files_to_delete(removed: &[Vec<String>], remaining: &[Vec<String>]
 }
 
 /// Relative manifest path, safely under `root`.
-fn confined_path(root: &Path, rel: &str) -> Option<PathBuf> {
+pub(crate) fn confined_path(root: &Path, rel: &str) -> Option<PathBuf> {
     let rel = Path::new(rel);
     let safe = rel
         .components()
@@ -236,7 +236,7 @@ fn confined_path(root: &Path, rel: &str) -> Option<PathBuf> {
 }
 
 /// Delete files, then emptied folders.
-fn delete_files(root: &Path, files: &[String]) -> usize {
+pub(crate) fn delete_files(root: &Path, files: &[String]) -> usize {
     let mut removed = 0;
     let mut dirs = HashSet::new();
     for rel in files {

@@ -1,6 +1,7 @@
 //! `SteamClient` methods: branches, platform detection, install.
 //!
 //! Shares the parent's imports via `use super::*`.
+use super::platform_switch::PlatformSwitch;
 use super::*;
 use crate::core::acf;
 use crate::core::error::{ErrorKind, TypedError, io_kind, message_kind};
@@ -96,6 +97,8 @@ pub struct InstallOptions {
     pub branch: Option<String>,
     /// Chosen language, already validated.
     pub language: Option<String>,
+    /// Manifest platform override handling.
+    pub platform_override: crate::steam_client::PlatformOverride,
 }
 
 /// One depot to download or verify.
@@ -204,6 +207,7 @@ impl SteamClient {
             manifest_overrides,
             branch,
             language: chosen_language,
+            platform_override,
         } = opts;
         let connection = self.require_connection_owned()?;
 
@@ -303,6 +307,14 @@ impl SteamClient {
             state.install_dir = Some(install_dir.clone());
         }
 
+        let installed = if dlc_appid.is_none() && filter_depots.is_none() {
+            std::fs::read_to_string(&manifest_path)
+                .map(|raw| acf::installed_depots(&raw))
+                .unwrap_or_default()
+        } else {
+            HashMap::new()
+        };
+
         let (tx, rx) = tokio::sync::mpsc::channel(128);
         let client_clone = self.clone();
         let shared_state_clone = shared_state.clone();
@@ -343,6 +355,7 @@ impl SteamClient {
             let mut recorded_language = None;
 
             let mut has_windows = false;
+            let mut switch = None;
             if find_vdf_in_pics(appinfo_vdf_bytes).is_ok() {
                 if let Ok(vdf) = find_vdf_in_pics(appinfo_vdf_bytes) {
                     let resolved = match depots::resolve(&connection, appid, vdf).await {
@@ -379,6 +392,7 @@ impl SteamClient {
                         .map(|s| s.to_string());
 
                     if let Some(depots) = depots_val.and_then(|v| v.as_obj()) {
+                        let superseded = depots::superseded_32bit(depots, platform);
                         for (key, value) in depots.iter() {
                             if let Ok(d_id) = key.parse::<u32>() {
                                 let oslist = depots::depot_oslist(value);
@@ -399,7 +413,8 @@ impl SteamClient {
                                     Some(mid)
                                 } else {
                                     let match_os = should_keep_depot(oslist, platform)
-                                        && depots::depot_matches_language(value, &language);
+                                        && depots::depot_matches_language(value, &language)
+                                        && !superseded.contains(&d_id);
 
                                     let depot_id_u64 = d_id as u64;
                                     let is_allowed = filter_depots
@@ -451,6 +466,7 @@ impl SteamClient {
                             }
                         }
                     }
+                    switch = PlatformSwitch::plan(&installed, &selections, &resolved, platform);
                 }
             } else {
                 tracing::error!("VDF parse failed for app {appid}");
@@ -478,7 +494,12 @@ impl SteamClient {
 
             let _ = tx
                 .send(DownloadProgress {
-                    state: DownloadProgressState::Downloading,
+                    // A platform switch starts by checking the installed build.
+                    state: if switch.is_some() {
+                        DownloadProgressState::Verifying
+                    } else {
+                        DownloadProgressState::Downloading
+                    },
                     total_bytes: grand_total_bytes,
                     current_file: format!("starting download of {} depots", selections.len()),
                     ..Default::default()
@@ -495,6 +516,32 @@ impl SteamClient {
                 );
             }
 
+            if let Some(switch) = switch.as_mut() {
+                let prepared = match switch
+                    .prepare(&client_clone, &install_dir, &installed, &selections)
+                    .await
+                {
+                    Ok(prepared) => prepared,
+                    Err(err) => {
+                        // Nothing was touched yet.
+                        tracing::error!("platform switch of app {appid} not started: {err:#}");
+                        if let Ok(mut state) = shared_state_clone.write() {
+                            state.finish("Download failed");
+                        }
+                        let _ = tx
+                            .send(DownloadProgress::failed_with("platform switch", &err))
+                            .await;
+                        return;
+                    }
+                };
+                if let (Some((total, fetch)), Ok(mut state)) =
+                    (prepared, shared_state_clone.write())
+                {
+                    state.total_bytes = total;
+                    state.fetch_bytes = Some(fetch);
+                }
+            }
+
             // Register the install start with Steam: write an "update required"
             // appmanifest up front so the launcher sees the app as installing rather
             // than missing. (Skipped for DLC, whose content lives in the base game's
@@ -506,11 +553,15 @@ impl SteamClient {
                         appid,
                         game_name: &game_name,
                         installdir: &installdir,
-                        installed_depots: Vec::new(),
+                        installed_depots: switch
+                            .as_ref()
+                            .map(PlatformSwitch::pending_depots)
+                            .unwrap_or_default(),
                         buildid: build_id.as_deref(),
                         fully_installed: false,
                         pin_updates,
                         language: recorded_language.as_deref(),
+                        platform_override,
                     },
                 ) {
                     tracing::warn!("failed writing initial appmanifest for app {appid}: {e}");
@@ -578,14 +629,19 @@ impl SteamClient {
                         appid,
                         game_name: &game_name,
                         installdir: &installdir,
-                        installed_depots: successful_depots,
+                        installed_depots: successful_depots.clone(),
                         buildid: build_id.as_deref(),
                         fully_installed: true,
                         pin_updates,
                         language: recorded_language.as_deref(),
+                        platform_override,
                     },
                 )
             };
+            let manifest_result = manifest_result.and_then(|()| match &switch {
+                Some(switch) => switch.finish(&install_dir, &manifest_path, &successful_depots),
+                None => Ok(()),
+            });
             if let Err(err) = manifest_result {
                 tracing::warn!("failed updating appmanifest for {}: {}", appid, err);
             } else if dlc_appid.is_none() {

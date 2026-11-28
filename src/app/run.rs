@@ -595,6 +595,9 @@ async fn run(mut cli: Cli) -> Result<()> {
                 cmd_config_steam_runtime_policy(policy, json).await
             }
             ConfigCommand::InstallResume { mode } => cmd_config_install_resume(mode, json).await,
+            ConfigCommand::PlatformSwitchInstall { mode } => {
+                cmd_config_platform_switch_install(mode, json).await
+            }
             ConfigCommand::DownloadLimit { kbit } => cmd_config_download_limit(kbit, json).await,
             ConfigCommand::ShaderPrecache { mode } => cmd_config_shader_precache(mode, json).await,
             ConfigCommand::HideUninstalledLaunchOptions { mode } => {

@@ -128,6 +128,67 @@ pub(super) fn require_launch_option_installed(entry: &LaunchInfo, app: &LibraryG
     Ok(())
 }
 
+/// Fail unless a Windows build exists.
+pub fn require_windows_build(options: &[LaunchInfo], app: &LibraryGame) -> Result<()> {
+    let found = options.iter().any(|o| {
+        o.target == LaunchTarget::WindowsProton && launch_executable_installed(app, &o.executable)
+    });
+    if found {
+        return Ok(());
+    }
+    Err(build_not_installed(app.app_id, DepotPlatform::Windows))
+}
+
+/// Typed error for a missing build.
+pub fn build_not_installed(app_id: u32, platform: DepotPlatform) -> anyhow::Error {
+    let name = match platform {
+        DepotPlatform::Windows => "Windows",
+        DepotPlatform::Linux => "Linux",
+        DepotPlatform::Macos => "macOS",
+    };
+    anyhow!(crate::core::error::TypedError::new(
+        crate::core::error::ErrorKind::BuildNotInstalled,
+        format!(
+            "{name} build not installed; run aurelia install {app_id} --platform {}",
+            platform.as_str()
+        ),
+    ))
+}
+
+/// State of a game's pinned build.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinnedBuild {
+    /// Installed and launchable.
+    Ready,
+    /// Another platform's depots are installed.
+    Swapped,
+    /// Not on disk.
+    Missing,
+}
+
+/// Check the build `config game --platform` pins.
+///
+/// The manifest's depots outrank leftover executables.
+pub fn pinned_build_state(
+    options: &[LaunchInfo],
+    app: &LibraryGame,
+    installed: Option<DepotPlatform>,
+    wanted: DepotPlatform,
+) -> PinnedBuild {
+    if installed.is_some_and(|platform| platform != wanted) {
+        return PinnedBuild::Swapped;
+    }
+    let target = LaunchTarget::from(wanted);
+    let on_disk = options
+        .iter()
+        .any(|o| o.target == target && launch_executable_installed(app, &o.executable));
+    if on_disk {
+        PinnedBuild::Ready
+    } else {
+        PinnedBuild::Missing
+    }
+}
+
 /// On-disk spelling of `rel`, ignoring case.
 ///
 /// Windows manifests ignore path case.
@@ -528,6 +589,7 @@ impl SteamClient {
             cloud_specs = ufs.savefiles;
         }
 
+        let steam_exit_sync = crate::core::steam_host::SteamExitSync::before_launch(app.app_id);
         let mut child = if native_windows {
             self.spawn_windows_native(app, &launch_info, user_config)
                 .await?
@@ -604,6 +666,7 @@ impl SteamClient {
         if cloud_enabled
             && let (Some(client), Some(resolver)) = (cloud_client.as_ref(), cloud_resolver.as_ref())
         {
+            steam_exit_sync.wait().await;
             // The game has already run and exited, so a cloud-upload failure must not
             // be surfaced as a launch failure. Log it and continue (this mirrors the
             // best-effort sync_down before launch).
@@ -842,6 +905,7 @@ impl SteamClient {
                     fully_installed: true,
                     pin_updates: false,
                     language: None,
+                    platform_override: crate::steam_client::PlatformOverride::Keep,
                 },
             ) {
                 tracing::warn!("failed writing appmanifest for {}: {}", appid, err);

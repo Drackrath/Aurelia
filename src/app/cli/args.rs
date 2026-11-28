@@ -71,6 +71,24 @@ pub(crate) fn parse_download_limit(raw: &str) -> Result<u64, String> {
         .map_err(|_| format!("`{raw}` is not a number of kbit/s or `off`"))
 }
 
+/// `config platform-switch-install` choices.
+#[derive(Clone, Copy, ValueEnum)]
+pub(crate) enum PlatformSwitchInstallArg {
+    /// Download on the next `play`.
+    Play,
+    /// Download when the platform is set.
+    Switch,
+}
+
+impl From<PlatformSwitchInstallArg> for aurelia::core::config::PlatformSwitchInstall {
+    fn from(value: PlatformSwitchInstallArg) -> Self {
+        match value {
+            PlatformSwitchInstallArg::Play => Self::Play,
+            PlatformSwitchInstallArg::Switch => Self::Switch,
+        }
+    }
+}
+
 /// `config install-resume` choices.
 #[derive(Clone, Copy, ValueEnum)]
 pub(crate) enum InstallResumeArg {

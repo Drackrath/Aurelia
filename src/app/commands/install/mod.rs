@@ -19,6 +19,7 @@ mod manifests;
 mod relocate;
 mod run;
 mod update;
+mod windows_build;
 
 pub(crate) use control::*;
 pub(crate) use duplicates::*;

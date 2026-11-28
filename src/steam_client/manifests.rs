@@ -3,6 +3,7 @@
 //! Shares the parent's imports via `use super::*`.
 use super::*;
 use crate::core::acf;
+use crate::core::vdf_text::{Tok, vdf_tokens};
 
 /// Fields of one appmanifest.
 #[derive(Clone, Debug, Default)]
@@ -16,6 +17,19 @@ pub struct AppManifestSpec<'a> {
     pub fully_installed: bool,
     pub pin_updates: bool,
     pub language: Option<&'a str>,
+    pub platform_override: PlatformOverride,
+}
+
+/// Manifest `platform_override_*` handling.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PlatformOverride {
+    /// Copy existing keys verbatim.
+    #[default]
+    Keep,
+    /// Windows build on Linux host.
+    WindowsOnLinux,
+    /// Native build: drop the keys.
+    Clear,
 }
 
 impl SteamClient {
@@ -297,6 +311,7 @@ impl SteamClient {
             fully_installed,
             pin_updates,
             language,
+            platform_override,
         } = spec;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -413,7 +428,25 @@ impl SteamClient {
             )),
             (block, None) => block,
         };
-        for block in user_config.iter().map(String::as_str).chain(mounted_config) {
+        let mut user_config = user_config;
+        let mut mounted_config = mounted_config.map(str::to_string);
+        match platform_override {
+            PlatformOverride::Keep => {}
+            PlatformOverride::WindowsOnLinux => {
+                // Steam writes these with a tool.
+                user_config = Some(with_platform_override(user_config, "UserConfig"));
+                mounted_config = Some(with_platform_override(mounted_config, "MountedConfig"));
+            }
+            PlatformOverride::Clear => {
+                user_config = user_config.map(|b| without_platform_override(&b));
+                mounted_config = mounted_config.map(|b| without_platform_override(&b));
+            }
+        }
+        for block in user_config
+            .iter()
+            .chain(mounted_config.iter())
+            .map(String::as_str)
+        {
             content.push('\t');
             content.push_str(block);
             content.push('\n');
@@ -624,45 +657,6 @@ pub(super) fn ownership_check_inconclusive(err: &anyhow::Error) -> bool {
     )
 }
 
-/// One lexical token of VDF text.
-#[derive(Clone, Copy)]
-enum Tok<'a> {
-    /// Quoted string, with its start offset.
-    Str(usize, &'a str),
-    Open,
-    /// Closing brace offset.
-    Close(usize),
-}
-
-/// Lex quoted strings and braces.
-fn vdf_tokens(raw: &str) -> Vec<Tok<'_>> {
-    let bytes = raw.as_bytes();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'"' => {
-                let start = i;
-                i += 1;
-                while i < bytes.len() && bytes[i] != b'"' {
-                    // Skip escaped characters.
-                    if bytes[i] == b'\\' {
-                        i += 1;
-                    }
-                    i += 1;
-                }
-                let end = i.min(bytes.len());
-                out.push(Tok::Str(start, raw.get(start + 1..end).unwrap_or("")));
-            }
-            b'{' => out.push(Tok::Open),
-            b'}' => out.push(Tok::Close(i)),
-            _ => {}
-        }
-        i += 1;
-    }
-    out
-}
-
 /// Raw top-level `name` block text.
 pub(crate) fn top_level_block<'a>(raw: &'a str, name: &str) -> Option<&'a str> {
     let toks = vdf_tokens(raw);
@@ -670,7 +664,7 @@ pub(crate) fn top_level_block<'a>(raw: &'a str, name: &str) -> Option<&'a str> {
     let mut start = None;
     for (idx, tok) in toks.iter().enumerate() {
         match *tok {
-            Tok::Open => {
+            Tok::Open(_) => {
                 if depth == 1
                     && start.is_none()
                     && let Some(Tok::Str(s, key)) = idx.checked_sub(1).map(|p| toks[p])
@@ -702,7 +696,7 @@ fn block_pairs(block: &str) -> Vec<(&str, &str)> {
     let mut i = 0;
     while i < toks.len() {
         match toks[i] {
-            Tok::Open => depth += 1,
+            Tok::Open(_) => depth += 1,
             Tok::Close(_) => depth = depth.saturating_sub(1),
             Tok::Str(_, key) if depth == 1 => {
                 if let Some(Tok::Str(_, value)) = toks.get(i + 1) {
@@ -715,6 +709,48 @@ fn block_pairs(block: &str) -> Vec<(&str, &str)> {
         i += 1;
     }
     pairs
+}
+
+/// Add the Windows-on-Linux override keys.
+fn with_platform_override(block: Option<String>, name: &str) -> String {
+    let base = block.unwrap_or_else(|| format!("\"{name}\"\n\t{{\n\t}}"));
+    let base = block_with_key(&base, "platform_override_dest", "linux");
+    block_with_key(&base, "platform_override_source", "windows")
+}
+
+/// Drop the override keys.
+pub(super) fn without_platform_override(block: &str) -> String {
+    let mut out = block.to_string();
+    for key in ["platform_override_dest", "platform_override_source"] {
+        let toks = vdf_tokens(&out);
+        let mut depth = 0usize;
+        let mut range = None;
+        for (i, tok) in toks.iter().enumerate() {
+            match *tok {
+                Tok::Open(_) => depth += 1,
+                Tok::Close(_) => depth = depth.saturating_sub(1),
+                Tok::Str(start, k) if depth == 1 && k.eq_ignore_ascii_case(key) => {
+                    if let Some(Tok::Str(vs, v)) = toks.get(i + 1) {
+                        range = Some((start, vs + v.len() + 2));
+                        break;
+                    }
+                }
+                Tok::Str(..) => {}
+            }
+        }
+        let Some((start, end)) = range else { continue };
+        let line_start = out[..start].rfind('\n').map_or(start, |n| n + 1);
+        let line_end = out[end..].find('\n').map_or(end, |n| end + n + 1);
+        // Whole line only when alone.
+        let alone =
+            out[line_start..start].trim().is_empty() && out[end..line_end].trim().is_empty();
+        if alone {
+            out.replace_range(line_start..line_end, "");
+        } else {
+            out.replace_range(start..end, "");
+        }
+    }
+    out
 }
 
 /// Add `key` unless already present.
@@ -745,7 +781,7 @@ fn child_blocks(block: &str) -> Vec<(&str, usize, usize)> {
     let mut open: Option<(&str, usize)> = None;
     for (idx, tok) in toks.iter().enumerate() {
         match *tok {
-            Tok::Open => {
+            Tok::Open(_) => {
                 if depth == 1
                     && let Some(Tok::Str(s, key)) = idx.checked_sub(1).map(|p| toks[p])
                 {
@@ -774,7 +810,7 @@ fn block_set_key(block: &str, key: &str, value: &str) -> String {
     let mut i = 0;
     while i < toks.len() {
         match toks[i] {
-            Tok::Open => depth += 1,
+            Tok::Open(_) => depth += 1,
             Tok::Close(_) => depth = depth.saturating_sub(1),
             Tok::Str(_, k) if depth == 1 => {
                 if let Some(Tok::Str(vs, old)) = toks.get(i + 1) {
@@ -816,6 +852,17 @@ pub(crate) fn switch_language_in_manifest(
     add: &[(u32, u64, u64)],
     dlc: &HashMap<u32, u32>,
     language: &str,
+) -> String {
+    let out = replace_depots_in_manifest(raw, remove, add, dlc);
+    switch_language_tail(out, language)
+}
+
+/// Drop `remove` and add `add` in `InstalledDepots`, keeping `SizeOnDisk` in step.
+pub(crate) fn replace_depots_in_manifest(
+    raw: &str,
+    remove: &HashSet<u32>,
+    add: &[(u32, u64, u64)],
+    dlc: &HashMap<u32, u32>,
 ) -> String {
     let mut out = raw.to_string();
     let new_entries: String = add
@@ -870,7 +917,11 @@ pub(crate) fn switch_language_in_manifest(
     {
         out = block_set_key(&out, "SizeOnDisk", &size.to_string());
     }
+    out
+}
 
+/// Record `language` in `UserConfig` and, when present, `MountedConfig`.
+fn switch_language_tail(mut out: String, language: &str) -> String {
     match top_level_range(&out, "UserConfig") {
         Some(range) => {
             let updated = block_set_key(&out[range.clone()], "language", language);

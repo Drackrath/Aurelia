@@ -1,6 +1,7 @@
 //! Install, dry run, resume and backlog.
 
 use super::*;
+use aurelia::steam_client::PlatformOverride;
 
 /// Prefer the Windows depot off a Mac; Proton runs it on Linux.
 ///
@@ -82,7 +83,32 @@ pub(crate) struct InstallRequest {
 }
 
 /// Install, keeping the backlog in step.
+/// Bytes already installed for `app_id` in `library`.
+fn installed_size(library: &str, app_id: u32) -> u64 {
+    let steamapps = std::path::Path::new(library).join("steamapps");
+    std::fs::read_to_string(steamapps.join(format!("appmanifest_{app_id}.acf")))
+        .ok()
+        .and_then(|raw| aurelia::core::acf::parse_app_manifest(&raw).install_dir)
+        .map_or(0, |dir| {
+            aurelia::core::fsutil::dir_size(&steamapps.join("common").join(dir))
+        })
+}
+
 pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<()> {
+    let mut client = authed_client().await?;
+    let result = install_with(&mut client, request, json).await?;
+    if json {
+        print_result_line(result);
+    }
+    Ok(())
+}
+
+/// Install on `client`; returns the result object.
+pub(crate) async fn install_with(
+    client: &mut SteamClient,
+    request: InstallRequest,
+    json: bool,
+) -> Result<serde_json::Value> {
     let InstallRequest {
         app_id,
         platform,
@@ -92,13 +118,12 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
         auto_attempts,
         language,
     } = request;
-    let mut client = authed_client().await?;
 
     // Note whether this is a DLC so we can refresh Steam's view afterward.
     let is_dlc = client.resolve_dlc_parent(app_id).await.is_some();
 
-    let (platform, cached_vdf) = match platform {
-        Some(p) => (p, None),
+    let (platform, mut cached_vdf, mut platforms) = match platform {
+        Some(p) => (p, None, None),
         None => {
             let (platforms, buffer) = client
                 .get_available_platforms(app_id)
@@ -108,9 +133,34 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
             if !json {
                 cli_println!("Auto-selected platform: {chosen:?}");
             }
-            (chosen, Some(buffer))
+            (chosen, Some(buffer), Some(platforms))
         }
     };
+    // Steam swaps dual-platform builds on start.
+    let host = DepotPlatform::host();
+    if host == DepotPlatform::Linux && !is_dlc && platforms.is_none() {
+        let (found, buffer) = client
+            .get_available_platforms(app_id)
+            .await
+            .context("failed to detect available platforms")?;
+        platforms = Some(found);
+        cached_vdf = Some(buffer);
+    }
+    let available = platforms.as_deref().unwrap_or_default();
+    let (platform_override, pending_mapping) =
+        if windows_build::steam_prefers_linux(host, platform, available, is_dlc) {
+            (
+                PlatformOverride::WindowsOnLinux,
+                windows_build::plan_mapping(app_id, restart_steam)?,
+            )
+        } else if windows_build::native_with_windows_twin(host, platform, available, is_dlc) {
+            (
+                PlatformOverride::Clear,
+                windows_build::plan_unmapping(app_id, restart_steam)?,
+            )
+        } else {
+            (PlatformOverride::Keep, None)
+        };
 
     // Fail before any download.
     let language = match language {
@@ -145,8 +195,10 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
             .await
             .with_context(|| format!("failed to estimate install size for app {app_id}"))?;
         if let Some(free) = available_space_for(std::path::Path::new(&library_root)) {
-            // A resume's partial files already count.
-            if est.disk_size.saturating_sub(on_disk) > free {
+            // A resume's partial files, or a reinstall's existing ones, already count.
+            // A switch rechecks its real need.
+            let present = on_disk.max(installed_size(&library_root, app_id));
+            if est.disk_size.saturating_sub(present) > free {
                 return Err(aurelia::core::error::TypedError::new(
                     aurelia::core::error::ErrorKind::DiskFull,
                     format!(
@@ -168,7 +220,12 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
     let _install_guard = InstallGuard::register(app_id, Arc::clone(&state))?;
 
     // Stop late; nothing below `?`-returns.
-    let manage_steam = steam_guard_stop_optional(restart_steam && is_dlc, json)?;
+    let manage_steam =
+        steam_guard_stop_optional(restart_steam && (is_dlc || pending_mapping.is_some()), json)?;
+    let applied = pending_mapping
+        .as_ref()
+        .map(|p| windows_build::apply_mapping(p, app_id, json))
+        .unwrap_or_default();
 
     // Recorded first, so a crash stays resumable.
     let started = aurelia::core::time::now_unix();
@@ -199,6 +256,7 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
                 cached_vdf,
                 library_override: Some(library_root.clone()),
                 language,
+                platform_override,
                 ..Default::default()
             },
             Arc::clone(&state),
@@ -248,16 +306,15 @@ pub(crate) async fn run_install(request: InstallRequest, json: bool) -> Result<(
         cli_eprintln!("      be recognized in-game.");
     }
 
-    if json {
-        print_result_line(serde_json::json!({
-            "app_id": app_id,
-            "status": "installed",
-            "dlc": is_dlc,
-            "steam_restart_required": steam_restart_required,
-            "steam_restarted": steam_restarted,
-        }));
-    }
-    Ok(())
+    Ok(serde_json::json!({
+        "app_id": app_id,
+        "status": "installed",
+        "dlc": is_dlc,
+        "steam_restart_required": steam_restart_required,
+        "steam_restarted": steam_restarted,
+        "compat_tool": applied.added,
+        "compat_tool_removed": applied.removed,
+    }))
 }
 
 /// Log, never fail on, backlog writes.

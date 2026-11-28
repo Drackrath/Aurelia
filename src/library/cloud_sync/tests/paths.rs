@@ -87,6 +87,62 @@ fn discovers_local_saves_from_ufs_specs() {
     );
 }
 
+#[test]
+fn discovery_matches_steam_on_root_case_and_marker() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("userdata")).unwrap();
+    std::fs::write(tmp.path().join("userdata/powder.pref"), b"x").unwrap();
+    std::fs::write(tmp.path().join("userdata/steam_autocloud.vdf"), b"x").unwrap();
+
+    let resolver = CloudPathResolver::new(PathBuf::from("/unused"), Some(tmp.path().to_path_buf()));
+    let specs = [UfsSaveSpec {
+        root: "gameinstall".into(),
+        path: "userdata".into(),
+        pattern: "*".into(),
+        recursive: true,
+    }];
+
+    let names: Vec<_> = discover_local_saves(&specs, &resolver)
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect();
+    assert_eq!(names, vec!["%GameInstall%userdata/powder.pref".to_string()]);
+}
+
+// Adding a variant breaks this match.
+fn ordinal(token: RootToken) -> usize {
+    match token {
+        RootToken::GameInstall => 0,
+        RootToken::WinMyDocuments => 1,
+        RootToken::WinAppDataLocal => 2,
+        RootToken::WinAppDataRoaming => 3,
+        RootToken::SteamUserBaseStorage => 4,
+        RootToken::MacHome => 5,
+        RootToken::MacAppSupport => 6,
+        RootToken::MacDocuments => 7,
+        RootToken::WinSavedGames => 8,
+        RootToken::WinProgramData => 9,
+        RootToken::SteamCloudDocuments => 10,
+        RootToken::WinAppDataLocalLow => 11,
+        RootToken::MacCaches => 12,
+        RootToken::LinuxHome => 13,
+        RootToken::LinuxXdgDataHome => 14,
+        RootToken::LinuxXdgConfigHome => 15,
+        RootToken::AndroidSteamPackageRoot => 16,
+        RootToken::WindowsHome => 17,
+        RootToken::AndroidExternalData => 18,
+        RootToken::AndroidInternalData => 19,
+        RootToken::WinDocuments => 20,
+    }
+}
+
+#[test]
+fn all_lists_every_root_token_once() {
+    let mut seen: Vec<usize> = RootToken::ALL.iter().map(|t| ordinal(*t)).collect();
+    seen.sort_unstable();
+    assert_eq!(seen, (0..=20).collect::<Vec<_>>());
+}
+
 fn linux_override() -> UfsRootOverride {
     UfsRootOverride {
         root: "WinAppDataRoaming".into(),
